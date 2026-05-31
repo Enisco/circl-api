@@ -1,0 +1,126 @@
+model User {
+  id               String            @id @default(uuid())
+  firstName        String            @map("first_name")
+  lastName         String            @map("last_name")
+  profileImageUrl  String?           @map("profile_image_url")
+  isStaff          Boolean           @default(false) @map("is_staff")
+  email            String            @unique @map("email")
+  status           UserAccountStatus @default(PENDING) @map("status")
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt        DateTime?         @map("deleted_at") @db.Timestamptz
+
+  userAuth          UserAuth?
+  profile           UserProfile?
+  adminProfile      AdminProfile?
+  sessions          UserSession[]
+  userRole          UserRole?
+  socialAuths       UserSocialAuth[]
+  notificationPrefs UserNotificationPrefs?
+
+  @@index([email])
+  @@map("users")
+}
+
+// Social login providers (Apple Sign-In, Google Sign-In)
+model UserSocialAuth {
+  id         String         @id @default(uuid())
+  userId     String         @map("user_id")
+  provider   SocialProvider @map("provider")
+  providerId String         @map("provider_id") // Subject claim from the identity token
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerId])
+  @@unique([userId, provider])
+  @@index([userId])
+  @@map("user_social_auth")
+}
+
+model UserAuth {
+  id                  String    @id @default(uuid())
+  userId              String    @unique @map("user_id")
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  password            String?   @map("password")
+  isBlocked           Boolean   @default(false) @map("is_blocked")
+  failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
+  lastFailedLoginAt   DateTime? @map("last_failed_login_at") @db.Timestamptz
+  lastLoginAt         DateTime? @map("last_login_at") @db.Timestamptz
+  emailVerifiedAt     DateTime? @map("email_verified_at") @db.Timestamptz
+  passwordUpdatedAt   DateTime? @map("password_updated_at") @db.Timestamptz
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([userId])
+  @@map("user_auth")
+}
+
+model AdminProfile {
+  id        String   @id @default(uuid())
+  userId    String   @unique @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  avatar    String?  @map("avatar")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("admin_profile")
+}
+
+model UserProfile {
+  id                      String         @id @default(uuid())
+  userId                  String         @unique @map("user_id")
+  user                    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  avatar                  String?        @map("avatar")
+  phoneNumberDiallingCode String?        @map("phone_number_dialling_code")
+  phoneNumber             String?        @map("phone_number")
+  additionalInfo          Json?          @map("additional_info")
+
+  // ── Core profile fields ────────────────────────────────────────────────────
+  gender            Gender?        @map("gender")
+  dateOfBirth       DateTime?      @map("date_of_birth") @db.Timestamptz
+  unitPreference    UnitPreference @default(KG) @map("unit_preference")
+
+  onboardingStep      Int     @default(0) @map("onboarding_step")
+  onboardingCompleted Boolean @default(false) @map("onboarding_completed")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("user_profile")
+}
+
+model UserSession {
+  id                String    @id() @default(uuid())
+  userId            String    @map("user_id")
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userAgent         String    @map("user_agent")
+  deviceType        String    @map("device_type")
+  browserName       String    @map("browser_name")
+  operatingSystem   String    @map("operating_system")
+  ipAddress         String    @map("ip_address")
+  isActive          Boolean   @default(false) @map("is_active")
+  deviceFingerprint String    @map("device_fingerprint")
+  refreshToken      String?   @map("refresh_token")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  lastActiveAt      DateTime  @default(now()) @map("last_active_at") @db.Timestamptz
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz
+
+  @@unique([userId, deviceFingerprint])
+  @@index([userId])
+  @@index([userId, isActive])
+  @@map("user_sessions")
+}
+
+model UserNotificationPrefs {
+  id              String   @id @default(uuid())
+  userId          String   @unique @map("user_id")
+  devicePushToken String?  @map("device_push_token")
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_notification_prefs")
+}

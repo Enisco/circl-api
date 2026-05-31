@@ -1,0 +1,100 @@
+// ─── User / Profile Enums ───────────────────────────────────────────────────
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum UnitPreference {
+  LB
+  KG
+}
+
+enum ExperienceLevel {
+  NOVICE
+  INTERMEDIATE
+  ADVANCED
+}
+
+// ─── Social Auth ─────────────────────────────────────────────────────────────
+
+enum SocialProvider {
+  APPLE
+  GOOGLE
+}
+
+// ─── Notification Enums ───────────────────────────────────────────────────────
+
+enum NotificationType {
+  ACCOUNT_CREATED
+  ACCOUNT_VERIFIED
+  ACCOUNT_BLOCKED
+  USER_LOGIN_OTP
+  USER_FORGOT_PASSWORD
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  PUSH
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+// ─── Access Control ───────────────────────────────────────────────────────────
+
+enum RoleType {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum PermissionAction {
+  CREATE
+  READ
+  UPDATE
+  DELETE
+  MANAGE
+}
+
+enum ResourceType {
+  USER
+  ADMIN
+  SYSTEM
+}
+
+// ─── System ───────────────────────────────────────────────────────────────────
+
+enum SystemConfigType {
+  STRING
+  NUMBER
+  BOOLEAN
+  JSON
+}
+
+enum TokenType {
+  ACCESS
+  REFRESH
+  SIGNUP
+}
+
+// ─── Queue / Job Enums ───────────────────────────────────────────────────────
+
+enum QueueJobStatus {
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
+// ─── User Account ────────────────────────────────────────────────────────────
+
+enum UserAccountStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+}
