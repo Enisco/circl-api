@@ -1,7 +1,13 @@
 import { HttpStatus } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiBody, ApiHeader } from '@nestjs/swagger';
 import { ApiDocs } from '@/common/decorators';
-import { SendVerificationTokenDto, VerifyEmailDto, LogoutDto, SocialAuthDto } from '../dtos';
+import {
+  RegisterUserDto,
+  SendVerificationTokenDto,
+  VerifyEmailDto,
+  LogoutDto,
+  SocialAuthDto,
+} from '../dtos';
 import { SHARED_HEADERS } from '@/common';
 
 const MOBILE_REFRESH_TOKEN_HEADER = ApiHeader({
@@ -22,6 +28,31 @@ export const AuthSwagger = {
       description:
         'Creates a new account using a short-lived signup token issued after OTP or social verification. ' +
         'If the email already exists (race condition), logs the user in instead.',
+    }),
+    ApiBody({
+      type: RegisterUserDto,
+      examples: {
+        email: {
+          summary: 'Email sign-up (A-05)',
+          value: {
+            signupToken:
+              'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6InVzZXJAZXhhbXBsZS5jb20ifQ.sig',
+            firstName: 'John',
+            lastName: 'Doe',
+            gender: 'MALE',
+          },
+        },
+        social: {
+          summary: 'Social sign-up — Google / Apple (A-05)',
+          value: {
+            signupToken:
+              'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6InVzZXJAZXhhbXBsZS5jb20ifQ.sig',
+            firstName: 'Jane',
+            lastName: 'Smith',
+            gender: 'FEMALE',
+          },
+        },
+      },
     }),
     ApiResponse({
       status: HttpStatus.CREATED,

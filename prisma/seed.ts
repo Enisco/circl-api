@@ -2,6 +2,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import 'dotenv/config';
 import { Pool } from 'pg';
+import { seedCities } from './seeders/city.seeder';
 import { seedPermissions } from './seeders/permission.seeder';
 import { seedRoles } from './seeders/role.seeder';
 
@@ -18,6 +19,7 @@ const main = async () => {
 
     await seedPermissions(prisma);
     await seedRoles(prisma);
+    await seedCities(prisma);
 
     console.info('Database seeding completed successfully');
   } catch (error) {

@@ -1,11 +1,10 @@
-import { IsValidBirthDate, Sanitize } from '@/common';
+import { Sanitize } from '@/common';
 import { ApiProperty } from '@nestjs/swagger';
-import { Gender, UnitPreference } from '@prisma/client';
+import { Gender } from '@prisma/client';
 import {
   IsBoolean,
   IsEnum,
   IsInt,
-  IsISO8601,
   IsOptional,
   IsString,
   IsUrl,
@@ -50,7 +49,42 @@ export class UpdateProfileDto {
   lastName?: string;
 
   @ApiProperty({
-    description: 'ITU E.164 dialling code without the leading +. Accepts +1 to +999.',
+    example: 'john_doe',
+    description:
+      'Unique handle. 3–30 characters; lowercase letters, numbers, underscores, and dots only.',
+    pattern: '^[a-z][a-z0-9_.]{2,29}$',
+    required: false,
+  })
+  @Matches(/^[a-z][a-z0-9_.]{2,29}$/, {
+    message:
+      'username must be 3–30 characters and contain only lowercase letters, numbers, underscores, and dots',
+  })
+  @IsString()
+  @IsOptional()
+  username?: string;
+
+  @ApiProperty({
+    example: 'LONDON',
+    description: 'City ID from the cities list (e.g. "LONDON", "MANCHESTER")',
+    required: false,
+  })
+  @Matches(/^[A-Z_]+$/, { message: 'cityId must be an uppercase city identifier (e.g. LONDON)' })
+  @IsString()
+  @IsOptional()
+  cityId?: string;
+
+  @ApiProperty({
+    example: 'Nigeria',
+    description: "User's country of origin",
+    required: false,
+  })
+  @MaxLength(100, { message: 'countryOfOrigin must be 100 characters or fewer' })
+  @IsString()
+  @IsOptional()
+  countryOfOrigin?: string;
+
+  @ApiProperty({
+    description: 'ITU E.164 dialling code with leading +. Accepts +1 to +999.',
     example: '+44',
     pattern: '^\\+[1-9]\\d{0,3}$',
     required: false,
@@ -81,21 +115,35 @@ export class UpdateProfileDto {
   gender?: Gender;
 
   @ApiProperty({
-    description: 'ISO 8601 date string. User must be at least 13 years old.',
-    example: '1995-06-15',
+    example: 'I moved to the UK in 2022. Love helping newcomers navigate life here.',
+    description: 'Short personal bio shown on the community profile.',
+    maxLength: 500,
     required: false,
   })
-  @IsValidBirthDate()
-  @IsISO8601({}, { message: 'dateOfBirth must be a valid ISO 8601 date (YYYY-MM-DD)' })
+  @MaxLength(500, { message: 'bio must be 500 characters or fewer' })
+  @IsString()
   @IsOptional()
-  dateOfBirth?: string;
+  bio?: string;
 
-  @ApiProperty({ enum: UnitPreference, required: false })
-  @IsEnum(UnitPreference, {
-    message: `unitPreference must be one of: ${Object.values(UnitPreference).join(', ')}`,
+  @ApiProperty({
+    example: 'Visa applications, bank account setup, NHS registration',
+    description: 'Topics the user can help others with — shown on their community profile.',
+    maxLength: 500,
+    required: false,
   })
+  @MaxLength(500, { message: 'canHelpWith must be 500 characters or fewer' })
+  @IsString()
   @IsOptional()
-  unitPreference?: UnitPreference;
+  canHelpWith?: string;
+
+  @ApiProperty({
+    example: true,
+    description: 'When true, anyone can message the user directly.',
+    required: false,
+  })
+  @IsBoolean({ message: 'openInbox must be a boolean' })
+  @IsOptional()
+  openInbox?: boolean;
 
   @ApiProperty({ example: false, required: false })
   @IsBoolean({ message: 'onboardingCompleted must be a boolean' })

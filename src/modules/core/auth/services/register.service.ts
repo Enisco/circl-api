@@ -16,13 +16,12 @@ export class RegisterService {
   ) {}
 
   async register(dto: RegisterUserDto, deviceInfo: DeviceInfo): Promise<LoginResponse> {
-    const { signupToken, firstName, lastName, phoneNumberDiallingCode, phoneNumber, gender } = dto;
+    const { signupToken, firstName, lastName, gender } = dto;
 
     // Verify and decode the signup token — throws if invalid/expired
     const { email, provider, providerId } = await this.signupTokenService.verify(signupToken);
 
     try {
-      // Race condition guard: if user already exists, log them in instead of duplicating
       const existingUser = await this.database.user.findUnique({
         where: { email },
         select: {
@@ -32,19 +31,10 @@ export class RegisterService {
       });
 
       if (existingUser) {
-        const { sessionId, tokenPair } = await this.sessionService.createSession({
-          userId: existingUser.id,
-          deviceInfo,
+        throw new ConflictException({
+          message: ErrorMessage.EMAIL_ALREADY_REGISTERED,
+          errorType: 'EmailAlreadyRegistered',
         });
-
-        return {
-          message: SuccessMessage.LOGIN_SUCCESSFUL,
-          sessionId,
-          accessToken: tokenPair.accessToken,
-          refreshToken: tokenPair.refreshToken,
-          onboardingCompleted: existingUser.profile?.onboardingCompleted ?? false,
-          onboardingStep: existingUser.profile?.onboardingStep ?? 0,
-        };
       }
 
       const isSocial = provider !== 'email';
@@ -63,7 +53,7 @@ export class RegisterService {
               create: { role: { connect: { code: USER_ROLE_CODE } } },
             },
             profile: {
-              create: { phoneNumberDiallingCode, phoneNumber, gender },
+              create: { gender },
             },
             ...(isSocial && providerId
               ? {
@@ -96,6 +86,14 @@ export class RegisterService {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === PrismaError.RequiredRecordNotFound) {
           throw new ConflictException(ErrorMessage.RESOURCE_NOT_FOUND('Role'));
+        }
+
+        // Two concurrent requests slipped past the findUnique guard
+        if (error.code === PrismaError.UniqueConstraintViolation) {
+          throw new ConflictException({
+            message: ErrorMessage.EMAIL_ALREADY_REGISTERED,
+            errorType: 'EmailAlreadyRegistered',
+          });
         }
       }
 

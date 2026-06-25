@@ -8,17 +8,21 @@ const fullProfileExample = {
   id: '945b5de5-8dbd-458f-b401-130d7ec1217a',
   firstName: 'John',
   lastName: 'Doe',
+  username: 'john_doe',
   profileImageUrl: 'https://r2.circl.app/avatars/945b5de5.jpg',
   email: 'john@example.com',
   createdAt: '2024-01-15T10:00:00.000Z',
   profile: {
+    gender: 'MALE',
+    city: { id: 'LONDON', name: 'London' },
+    countryOfOrigin: 'Nigeria',
     phoneNumberDiallingCode: '+44',
     phoneNumber: '7911123456',
-    gender: 'MALE',
-    dateOfBirth: '1995-06-15T00:00:00.000Z',
-    unitPreference: 'KG',
-    onboardingStep: 1,
-    onboardingCompleted: false,
+    bio: 'Moved to the UK in 2022. Happy to help newcomers.',
+    canHelpWith: 'Visa applications, bank account setup, NHS registration',
+    openInbox: true,
+    onboardingStep: 2,
+    onboardingCompleted: true,
   },
 };
 
@@ -59,20 +63,29 @@ export const ProfileSwagger = {
       summary: 'Update current user profile',
       description:
         'Partially updates the authenticated user profile. All fields are optional. ' +
-        'Name fields update the user record; all other fields upsert the UserProfile record.',
+        'Name / username fields update the user record; all other fields upsert the UserProfile record.',
     }),
     ApiBody({
       type: UpdateProfileDto,
       description: 'Profile fields to update (all optional)',
       examples: {
-        basicUpdate: {
-          summary: 'Basic profile update',
+        arrivalStep: {
+          summary: 'A-06 — Your Arrival step',
           value: {
-            firstName: 'John',
-            lastName: 'Doe',
-            gender: 'MALE',
-            dateOfBirth: '1995-06-15',
-            unitPreference: 'KG',
+            username: 'john_doe',
+            cityId: 'LONDON',
+            countryOfOrigin: 'Nigeria',
+            phoneNumberDiallingCode: '+44',
+            phoneNumber: '7911123456',
+            onboardingStep: 2,
+          },
+        },
+        editProfile: {
+          summary: 'Edit community profile (PRF-02)',
+          value: {
+            bio: 'Moved to the UK in 2022. Happy to help newcomers.',
+            canHelpWith: 'Visa applications, bank account setup',
+            openInbox: true,
           },
         },
         onboardingComplete: {
@@ -94,6 +107,11 @@ export const ProfileSwagger = {
     ApiResponse({
       status: HttpStatus.BAD_REQUEST,
       description: 'Validation error',
+      type: ErrorResponseDto,
+    }),
+    ApiResponse({
+      status: HttpStatus.CONFLICT,
+      description: 'Username already taken',
       type: ErrorResponseDto,
     }),
     ApiResponse({

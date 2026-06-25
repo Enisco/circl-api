@@ -1,14 +1,24 @@
+model City {
+  id   String @id @map("id") // e.g. "LONDON"
+  name String @map("name")   // e.g. "London"
+
+  profiles UserProfile[]
+
+  @@map("cities")
+}
+
 model User {
-  id               String            @id @default(uuid())
-  firstName        String            @map("first_name")
-  lastName         String            @map("last_name")
-  profileImageUrl  String?           @map("profile_image_url")
-  isStaff          Boolean           @default(false) @map("is_staff")
-  email            String            @unique @map("email")
-  status           UserAccountStatus @default(PENDING) @map("status")
-  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt        DateTime?         @map("deleted_at") @db.Timestamptz
+  id              String            @id @default(uuid())
+  firstName       String            @map("first_name")
+  lastName        String            @map("last_name")
+  username        String?           @unique @map("username")
+  profileImageUrl String?           @map("profile_image_url")
+  isStaff         Boolean           @default(false) @map("is_staff")
+  email           String            @unique @map("email")
+  status          UserAccountStatus @default(PENDING) @map("status")
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt       DateTime?         @map("deleted_at") @db.Timestamptz
 
   userAuth          UserAuth?
   profile           UserProfile?
@@ -19,6 +29,7 @@ model User {
   notificationPrefs UserNotificationPrefs?
 
   @@index([email])
+  @@index([username])
   @@map("users")
 }
 
@@ -69,25 +80,33 @@ model AdminProfile {
 }
 
 model UserProfile {
-  id                      String         @id @default(uuid())
-  userId                  String         @unique @map("user_id")
-  user                    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  avatar                  String?        @map("avatar")
-  phoneNumberDiallingCode String?        @map("phone_number_dialling_code")
-  phoneNumber             String?        @map("phone_number")
-  additionalInfo          Json?          @map("additional_info")
+  id     String @id @default(uuid())
+  userId String @unique @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // ── Core profile fields ────────────────────────────────────────────────────
-  gender            Gender?        @map("gender")
-  dateOfBirth       DateTime?      @map("date_of_birth") @db.Timestamptz
-  unitPreference    UnitPreference @default(KG) @map("unit_preference")
+  // ── Identity ──────────────────────────────────────────────────────────────
+  gender          Gender? @map("gender")
+  cityId          String? @map("city_id")
+  city            City?   @relation(fields: [cityId], references: [id])
+  countryOfOrigin String? @map("country_of_origin")
 
+  // ── Contact ───────────────────────────────────────────────────────────────
+  phoneNumberDiallingCode String? @map("phone_number_dialling_code")
+  phoneNumber             String? @map("phone_number")
+
+  // ── Community presence ────────────────────────────────────────────────────
+  bio         String? @map("bio")
+  canHelpWith String? @map("can_help_with")
+  openInbox   Boolean @default(true) @map("open_inbox")
+
+  // ── Onboarding ────────────────────────────────────────────────────────────
   onboardingStep      Int     @default(0) @map("onboarding_step")
   onboardingCompleted Boolean @default(false) @map("onboarding_completed")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
+  @@index([cityId])
   @@map("user_profile")
 }
 
@@ -117,7 +136,15 @@ model UserNotificationPrefs {
   id              String   @id @default(uuid())
   userId          String   @unique @map("user_id")
   devicePushToken String?  @map("device_push_token")
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  // ── In-app notification toggles (PRF-03) ─────────────────────────────────
+  newOffersOnMyRequests Boolean @default(true) @map("new_offers_on_my_requests")
+  newMessages           Boolean @default(true) @map("new_messages")
+  groupActivity         Boolean @default(true) @map("group_activity")
+  connectionRequests    Boolean @default(true) @map("connection_requests")
+  platformUpdates       Boolean @default(true) @map("platform_updates")
+
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

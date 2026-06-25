@@ -37,5 +37,5 @@ export interface RefreshResult {
   message?: string;
 }
 
-export type VerifyOtpResponse = LoginResponse | SignupTokenResponse;
+export type VerifyOtpResponse = SocialLoginResponse | SignupTokenResponse;
 export type SocialAuthResponse = SocialLoginResponse | SignupTokenResponse;

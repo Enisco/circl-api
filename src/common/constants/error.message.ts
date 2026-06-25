@@ -35,6 +35,8 @@ export class ErrorMessage {
   public static readonly INVALID_SOCIAL_TOKEN = 'Social identity token could not be verified';
   public static readonly SOCIAL_TOKEN_EXPIRED = 'Social identity token has expired';
   public static readonly SOCIAL_EMAIL_MISMATCH = 'Email in token does not match the provided email';
+  public static readonly EMAIL_ALREADY_REGISTERED =
+    'An account with this email address already exists';
   public static readonly PASSWORD_SAME_AS_OLD =
     'Your new password cannot be a recently used password. Please choose a different password';
 }

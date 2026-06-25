@@ -3,18 +3,8 @@
 enum Gender {
   MALE
   FEMALE
+  NON_BINARY
   OTHER
-}
-
-enum UnitPreference {
-  LB
-  KG
-}
-
-enum ExperienceLevel {
-  NOVICE
-  INTERMEDIATE
-  ADVANCED
 }
 
 // ─── Social Auth ─────────────────────────────────────────────────────────────

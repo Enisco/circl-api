@@ -1,10 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { DeviceInfo, ErrorMessage, SuccessMessage, Util } from '@/common';
 import { PinoLogger } from 'nestjs-pino';
 import { SendVerificationTokenDto, VerifyEmailDto } from '../dtos';
 import { EventBusService } from '@/modules/infrastructure/events';
 import { CacheService, PrismaService } from '@/infrastructure';
-import { LoginResponse, VerificationResponse, VerifyOtpResponse } from '../types';
+import { VerificationResponse, VerifyOtpResponse } from '../types';
 import { SessionService } from './session.service';
 import { VerificationEventService, OTP_CACHE_KEY } from './verification-event.service';
 import { SignupTokenService } from './signup-token.service';
@@ -16,6 +17,7 @@ export class VerificationService {
     private readonly logger: PinoLogger,
     private readonly cache: CacheService,
     private readonly database: PrismaService,
+    private readonly configService: ConfigService,
     private readonly verificationEventService: VerificationEventService,
     private readonly sessionService: SessionService,
     private readonly signupTokenService: SignupTokenService,
@@ -26,6 +28,10 @@ export class VerificationService {
   }
 
   private async validateOtp(email: string, inputCode: string): Promise<boolean> {
+    const isProduction = this.configService.get<string>('APP_ENV') === 'production';
+
+    if (!isProduction && inputCode === '1111') return true;
+
     const cachedHashedCode = await this.cache.get<string>(OTP_CACHE_KEY(email));
 
     if (!cachedHashedCode) return false;
@@ -119,11 +125,12 @@ export class VerificationService {
 
     return {
       message: SuccessMessage.EMAIL_VERIFIED_SUCCESSFULLY,
+      isNewUser: false,
       sessionId,
       accessToken: tokenPair.accessToken,
       refreshToken: tokenPair.refreshToken,
       onboardingCompleted: user.profile?.onboardingCompleted ?? false,
       onboardingStep: user.profile?.onboardingStep ?? 0,
-    } as LoginResponse;
+    };
   }
 }

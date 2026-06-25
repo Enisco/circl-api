@@ -37,30 +37,6 @@ export class RegisterUserDto {
   @IsNotEmpty({ message: 'lastName is required' })
   lastName: string;
 
-  @ApiProperty({
-    description: 'ITU E.164 dialling code with leading +',
-    example: '+44',
-    pattern: '^\\+[1-9]\\d{0,3}$',
-  })
-  @Matches(/^\+[1-9]\d{0,3}$/, {
-    message: 'phoneNumberDiallingCode must be a valid dialling code (e.g. +44, +1, +234)',
-  })
-  @IsString()
-  @IsNotEmpty({ message: 'phoneNumberDiallingCode is required' })
-  phoneNumberDiallingCode: string;
-
-  @ApiProperty({
-    description: 'Subscriber number, digits only, 5–15 characters',
-    example: '7911123456',
-    pattern: '^[0-9]{5,15}$',
-  })
-  @Matches(/^[0-9]{5,15}$/, {
-    message: 'phoneNumber must contain 5 to 15 digits with no spaces or dashes',
-  })
-  @IsString()
-  @IsNotEmpty({ message: 'phoneNumber is required' })
-  phoneNumber: string;
-
   @ApiProperty({ enum: Gender, example: Gender.MALE })
   @IsEnum(Gender, { message: `gender must be one of: ${Object.values(Gender).join(', ')}` })
   @IsNotEmpty({ message: 'gender is required' })
