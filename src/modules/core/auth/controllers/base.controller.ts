@@ -17,7 +17,9 @@ export class BaseController {
   }
 
   protected isMobileClient(req: Request): boolean {
-    return req.headers['x-client-platform'] === ClientPlatform.MOBILE;
+    const platform = (req.headers['x-client-platform'] as string)?.toLowerCase();
+
+    return platform === ClientPlatform.MOBILE;
   }
 
   protected handleAuthResponse(

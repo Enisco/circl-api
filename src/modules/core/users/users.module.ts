@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { RouterModule } from '@nestjs/core';
-import { NotificationPrefsController, ProfileController } from './controllers';
+import { NotificationPrefsController, ProfileController, UsernameController } from './controllers';
 import { NotificationPrefsService, ProfileService } from './services';
 
 @Module({
@@ -9,11 +9,11 @@ import { NotificationPrefsService, ProfileService } from './services';
       {
         path: 'api/v1/users',
         module: UsersModule,
-        children: [ProfileController, NotificationPrefsController],
+        children: [ProfileController, NotificationPrefsController, UsernameController],
       },
     ]),
   ],
-  controllers: [ProfileController, NotificationPrefsController],
+  controllers: [ProfileController, NotificationPrefsController, UsernameController],
   providers: [ProfileService, NotificationPrefsService],
 })
 export class UsersModule {}

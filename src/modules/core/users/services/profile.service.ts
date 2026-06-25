@@ -49,6 +49,18 @@ export class ProfileService {
     return { message: 'Profile retrieved successfully', data: user };
   }
 
+  async checkUsername(username: string) {
+    const existing = await this.database.user.findFirst({
+      where: { username },
+      select: { id: true },
+    });
+
+    return {
+      message: existing ? 'Username is already taken' : 'Username is available',
+      data: { available: !existing },
+    };
+  }
+
   async updateProfile(userId: string, dto: UpdateProfileDto) {
     const { firstName, lastName, profileImageUrl, username } = dto;
 

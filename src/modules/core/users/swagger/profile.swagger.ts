@@ -1,7 +1,7 @@
 import { ErrorResponseDto } from '@/common';
 import { ApiDocs } from '@/common/decorators';
 import { HttpStatus } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiQuery, ApiResponse } from '@nestjs/swagger';
 import { UpdateProfileDto } from '../dtos';
 
 const fullProfileExample = {
@@ -27,6 +27,57 @@ const fullProfileExample = {
 };
 
 export const ProfileSwagger = {
+  checkUsername: ApiDocs(
+    ApiBearerAuth(),
+    ApiOperation({
+      summary: 'Check username availability',
+      description:
+        'Returns whether a username is available and valid. ' +
+        'Rules: 3–30 characters, must start with a lowercase letter, ' +
+        'and may only contain lowercase letters (a–z), digits (0–9), and underscores (_). ' +
+        'Returns a 400 if the format is invalid; 200 with `available: false` if already taken.',
+    }),
+    ApiQuery({
+      name: 'username',
+      required: true,
+      example: 'john_doe',
+      description: 'The username to check',
+    }),
+    ApiResponse({
+      status: HttpStatus.OK,
+      schema: {
+        examples: {
+          available: {
+            summary: 'Username is free',
+            value: {
+              status: 'success',
+              message: 'Username is available',
+              data: { available: true },
+            },
+          },
+          taken: {
+            summary: 'Username is taken',
+            value: {
+              status: 'success',
+              message: 'Username is already taken',
+              data: { available: false },
+            },
+          },
+        },
+      },
+    }),
+    ApiResponse({
+      status: HttpStatus.BAD_REQUEST,
+      description: 'username query param is missing or fails format validation',
+      type: ErrorResponseDto,
+    }),
+    ApiResponse({
+      status: HttpStatus.UNAUTHORIZED,
+      description: 'Missing or expired access token',
+      type: ErrorResponseDto,
+    }),
+  ),
+
   getProfile: ApiDocs(
     ApiBearerAuth(),
     ApiOperation({
