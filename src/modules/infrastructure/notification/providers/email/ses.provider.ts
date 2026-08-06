@@ -1,8 +1,8 @@
+import { SESClient, SendRawEmailCommand } from '@aws-sdk/client-ses';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SESClient, SendRawEmailCommand } from '@aws-sdk/client-ses';
-import { ProviderError } from '../../errors';
 import { PinoLogger } from 'nestjs-pino';
+import { ProviderError } from '../../errors';
 import { EmailProvider, EmailProviderOptions } from './views/interfaces';
 @Injectable()
 export class SesProvider implements EmailProvider {

@@ -123,8 +123,8 @@ pnpm db:seed
 pnpm start:dev
 ```
 
-The API is available at `http://localhost:8008`.
-Swagger UI is available at `http://localhost:8008/docs` (local and development environments only).
+The API is available at `http://localhost:4000`.
+Swagger UI is available at `http://localhost:4000/docs` (local and development environments only).
 
 ---
 
@@ -150,7 +150,7 @@ Copy `.env.example` to `.env.local` and fill in all required values.
 | --------------------------- | -------- | -------------------------------------------------------------- |
 | `APP_ENV`                   | Yes      | `local`, `development`, or `production`                        |
 | `APP_NAME`                  | Yes      | Application name (e.g. `circl`)                                |
-| `APP_PORT`                  | Yes      | Port to listen on (default `8008`)                             |
+| `APP_PORT`                  | Yes      | Port to listen on (default `4000`)                             |
 | `DATABASE_URL`              | Yes      | PostgreSQL connection string                                    |
 | `REDIS_URL`                 | Yes      | Redis connection string                                         |
 | `GOOGLE_CLIENT_ID`          | Yes      | Google OAuth web client ID                                      |
