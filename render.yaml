@@ -12,9 +12,10 @@ services:
     branch: main
 
     buildCommand: pnpm install --frozen-lockfile && pnpm prisma generate && pnpm run build
-    # Runs after the build, before the new instance takes traffic. All three seeders
-    # upsert, so this is safe to re-run on every deploy.
-    preDeployCommand: pnpm db:migrate-deploy && pnpm db:seed
+    # Migrations and seeding run from start:prod rather than preDeployCommand, because
+    # preDeployCommand requires a paid instance type and is skipped otherwise. All three
+    # seeders upsert, so re-running on every boot and restart is harmless.
+    # Use start:server instead if you ever move this back to a preDeployCommand.
     startCommand: pnpm start:prod
 
     # Reports 503 when the database is unreachable, so a bad DATABASE_URL fails the
