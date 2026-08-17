@@ -1,0 +1,118 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Node runtime, not Docker: the Dockerfile and entrypoint.sh are NOT used by this
+# service, so RUN_MIGRATIONS / RUN_SEED are never read. Migrations and seeding run
+# through preDeployCommand instead.
+services:
+  - type: web
+    name: circl-api
+    runtime: node
+    plan: starter
+    region: oregon
+    branch: main
+
+    buildCommand: pnpm install --frozen-lockfile && pnpm prisma generate && pnpm run build
+    # Runs after the build, before the new instance takes traffic. All three seeders
+    # upsert, so this is safe to re-run on every deploy.
+    preDeployCommand: pnpm db:migrate-deploy && pnpm db:seed
+    startCommand: pnpm start:prod
+
+    # Reports 503 when the database is unreachable, so a bad DATABASE_URL fails the
+    # deploy instead of going live and erroring per-request.
+    healthCheckPath: /health
+
+    envVars:
+      # ─── Application ───────────────────────────────────────────────────────────
+      # staging enables `trust proxy` and the CORS allowlist (CLIENT_URL +
+      # ADMIN_CLIENT_URL) in main.ts; swagger stays served at /docs.
+      - key: APP_ENV
+        value: staging
+      # Deliberately NOT "production": prisma, ts-node, typescript and @nestjs/cli are
+      # devDependencies, and pnpm skips those when NODE_ENV=production — which would
+      # break both buildCommand and preDeployCommand. Only prisma.config.ts reads this
+      # value (it checks for 'local'), so any non-production value is safe.
+      - key: NODE_ENV
+        value: staging
+      - key: APP_NAME
+        value: circl
+      # Render injects PORT and main.ts reads it first; APP_PORT is the local fallback.
+      - key: APP_PORT
+        value: 4000
+      # package.json only requires >=24, which resolves to the latest major. Pinned so
+      # deploys are reproducible.
+      - key: NODE_VERSION
+        value: 24
+
+      # ─── Datastores ────────────────────────────────────────────────────────────
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+
+      # ─── Clients / CORS origins ────────────────────────────────────────────────
+      - key: CLIENT_URL
+        value: https://circl.com
+      - key: ADMIN_CLIENT_URL
+        value: https://admin.circl.com
+
+      # ─── JWT ───────────────────────────────────────────────────────────────────
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_ACCESS_EXPIRY
+        value: 15m
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: JWT_REFRESH_EXPIRY
+        value: 14d
+      - key: JWT_SIGNUP_SECRET
+        sync: false
+      - key: JWT_SIGNUP_EXPIRY
+        value: 15m
+
+      # ─── Social auth ───────────────────────────────────────────────────────────
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_IOS_CLIENT_ID
+        sync: false
+      - key: GOOGLE_ANDROID_CLIENT_ID
+        sync: false
+      - key: APPLE_BUNDLE_ID
+        value: com.circl.circlMobile
+      - key: APPLE_JWKS_URI
+        value: https://appleid.apple.com/auth/keys
+
+      # ─── Email ─────────────────────────────────────────────────────────────────
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_FROM_NAME
+        value: Circl
+      - key: SUPPORT_EMAIL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+
+      # ─── AWS (SES email provider) ──────────────────────────────────────────────
+      - key: AWS_REGION
+        value: eu-west-2
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+
+      # ─── Firebase Cloud Messaging ──────────────────────────────────────────────
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+
+      # ─── OpenAI ────────────────────────────────────────────────────────────────
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o
+      - key: AI_TEMPERATURE
+        value: 0.7
+      - key: AI_MAX_TOKENS
+        value: 1024
