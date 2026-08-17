@@ -110,4 +110,19 @@ async function bootstrap() {
     logger.info(`Circl API is running on port ${port}`);
   });
 }
-bootstrap();
+// Nest's buffered logs are discarded when bootstrap throws, so these write straight to the
+// platform log stream. Both exit non-zero to keep Node's default crash semantics.
+process.on('unhandledRejection', reason => {
+  console.error('[fatal] Unhandled promise rejection:', reason);
+  process.exit(1);
+});
+
+process.on('uncaughtException', error => {
+  console.error('[fatal] Uncaught exception:', error);
+  process.exit(1);
+});
+
+bootstrap().catch(error => {
+  console.error('[fatal] Circl API failed to start:', error);
+  process.exit(1);
+});

@@ -28,17 +28,19 @@ export class HttpExceptionsFilter implements ExceptionFilter {
     // Extract status, single-string message, and a string errorType
     const { status, message, errorType } = this.extractErrorDetails(exception);
 
-    // Log the full details for debugging/monitoring
-    this.logger.error(
-      `Error on ${request.method} ${request.url}`,
-      JSON.stringify({
-        status,
-        message,
-        errorType,
-        timestamp: new Date().toISOString(),
-        stack: exception instanceof Error ? exception.stack : undefined,
-      }),
-    );
+    // Log the full details for debugging/monitoring. The details are folded into the message
+    // because Nest's Logger treats a trailing string argument as the context and drops it
+    // otherwise — deployed logs would carry no status, errorType or stack.
+    // Client errors log at warn so genuine server faults stay findable amongst the 4xx noise.
+    const summary = `Error on ${request.method} ${request.url} — [${status} ${errorType}] ${message}`;
+
+    if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+      const stack = exception instanceof Error ? exception.stack : undefined;
+
+      this.logger.error(stack ? `${summary}\n${stack}` : summary);
+    } else {
+      this.logger.warn(summary);
+    }
 
     // Build the standardized response shape
     const errorResponse: ErrorResponse = {

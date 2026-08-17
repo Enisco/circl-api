@@ -20,7 +20,10 @@ export const getLoggerConfig = (configService: ConfigService) => {
             query: req.query,
             headers: {
               ...req.headers,
+              // Credentials must never reach the platform log stream
               authorization: req.headers.authorization ? '****' : undefined,
+              cookie: req.headers.cookie ? '****' : undefined,
+              'x-refresh-token': req.headers['x-refresh-token'] ? '****' : undefined,
             },
             remoteAddress: req.remoteAddress,
             remotePort: req.remotePort,
@@ -32,8 +35,12 @@ export const getLoggerConfig = (configService: ConfigService) => {
           };
         },
         err: err => ({
+          type: err.name,
           message: err.message,
           stack: err.stack,
+          // Prisma/HTTP errors carry these; they are the useful bits when reading deployed logs
+          status: err.status,
+          code: err.code,
         }),
       },
       transport: isDevelopment
