@@ -91,8 +91,8 @@ async function bootstrap() {
       .setTitle('Circl API')
       .setDescription('Circl API — backend for the Circl platform.')
       .setVersion('1.0')
+      .addServer('/', `current host (${appEnv})`)
       .addServer('http://localhost:4000', 'local')
-      // .addServer('https://dev-api.circl.app', 'development')
       .addBearerAuth()
       .build();
     const document = SwaggerModule.createDocument(app, swaggerConfig);
