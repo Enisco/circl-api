@@ -85,8 +85,8 @@ async function bootstrap() {
 
   app.enableShutdownHooks();
 
-  // Enable swagger in local and development environments
-  if (['local', 'development'].includes(appEnv)) {
+  // Enable swagger in local, development and staging environments
+  if (['local', 'development', 'staging'].includes(appEnv)) {
     const swaggerConfig = new DocumentBuilder()
       .setTitle('Circl API')
       .setDescription('Circl API — backend for the Circl platform.')
