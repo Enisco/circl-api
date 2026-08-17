@@ -1,3 +1,6 @@
+overrides:
+  ajv: ^8.17.1
+
 allowBuilds:
   '@firebase/util': true
   '@nestjs/core': true
@@ -9,6 +12,7 @@ allowBuilds:
   prisma: true
   protobufjs: true
   unrs-resolver: true
+
 onlyBuiltDependencies:
   - '@firebase/util'
   - '@nestjs/core'
