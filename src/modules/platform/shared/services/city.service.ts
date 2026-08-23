@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { City } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException } from '@/common';
@@ -8,6 +8,8 @@ export const ANYWHERE = 'ANYWHERE';
 
 @Injectable()
 export class CityService {
+  private readonly logger = new Logger(CityService.name);
+
   private cache: Map<string, City> | null = null;
   private byName: Map<string, City> | null = null;
   private loadedAt = 0;
@@ -75,6 +77,11 @@ export class CityService {
 
     if (cityName) {
       await this.ensureLoaded();
+
+      // Logged so there is evidence for when the deprecated parameter can be
+      // removed. "The client has stopped sending it" is a claim somebody has to
+      // be able to check, and silence in the logs is that check.
+      this.logger.log(`Deprecated \`city\` name parameter used: "${cityName}"`);
 
       return this.byName!.get(cityName.trim().toLowerCase()) ?? null;
     }

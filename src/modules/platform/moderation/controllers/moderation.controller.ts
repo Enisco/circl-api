@@ -11,7 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { CurrentUserId, JwtAuthGuard, SuccessMessage } from '@/common';
+import { CurrentUserId, JwtAuthGuard, SuccessMessage, RateLimit } from '@/common';
 import { CreateBlockDto, CreateReportDto, ListBlocksDto } from '../dtos/moderation.dto';
 import { ModerationService } from '../services/moderation.service';
 
@@ -30,6 +30,7 @@ export class ModerationController {
       'what happened to the reported content. SAFETY_CONCERN routes into Circl Guard rather than ' +
       'the standard moderation queue.',
   })
+  @RateLimit('REPORT')
   async report(@CurrentUserId() userId: string, @Body() dto: CreateReportDto) {
     await this.moderation.report(userId, dto);
 

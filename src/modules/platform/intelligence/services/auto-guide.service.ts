@@ -201,7 +201,13 @@ export class AutoGuideService {
    */
   private async draft(
     clusterId: string,
-    cluster: { categoryCode: string; cityId: string | null; label: string; requestIds: string[]; askers: Set<string> },
+    cluster: {
+      categoryCode: string;
+      cityId: string | null;
+      label: string;
+      requestIds: string[];
+      askers: Set<string>;
+    },
   ): Promise<string | null> {
     // Only credited or well-received answers. An unanswered thread has nothing to
     // extract, and an uncredited reply is not evidence of anything.
@@ -235,7 +241,8 @@ export class AutoGuideService {
       .filter(
         entry =>
           (entry.credited ||
-            (entry.response.isHelpOffer && entry.response.request.status === RequestStatus.RESOLVED)) &&
+            (entry.response.isHelpOffer &&
+              entry.response.request.status === RequestStatus.RESOLVED)) &&
           entry.response.content.trim().length >= 60,
       )
       .slice(0, 8);

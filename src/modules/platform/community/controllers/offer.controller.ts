@@ -12,7 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
+import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage, RateLimit } from '@/common';
 import { CreateOfferDto, ListOffersDto, UpdateOfferDto } from '../dtos/offer.dto';
 import { OfferService } from '../services/offer.service';
 
@@ -55,6 +55,7 @@ export class OfferController {
       'Service fork that continues to professional verification does NOT call this — it routes ' +
       'into Professionals and creates nothing here, or the member ends up listed twice.',
   })
+  @RateLimit('CREATE')
   async create(@CurrentUserId() userId: string, @Body() dto: CreateOfferDto) {
     const data = await this.offers.create(userId, dto);
 

@@ -99,7 +99,11 @@ export class ListingService {
     const profile = user.profile;
     // Labelled, so the client can say "from your profile" rather than passing
     // prefilled text off as something the member wrote here (2.1.2).
-    const aboutSource = profile?.bio ? 'PROFILE_BIO' : profile?.canHelpWith ? 'CAN_HELP_WITH' : null;
+    const aboutSource = profile?.bio
+      ? 'PROFILE_BIO'
+      : profile?.canHelpWith
+        ? 'CAN_HELP_WITH'
+        : null;
     const categoryLabels = await this.taxonomy.labels(TaxonomyKind.COMMUNITY_CATEGORY);
 
     const suggestions = await Promise.all(
@@ -160,7 +164,11 @@ export class ListingService {
     });
 
     const steps: RegistrationStep[] = [
-      { key: 'LISTING', status: listing ? 'SATISFIED' : 'REQUIRED', source: listing ? 'LISTING' : null },
+      {
+        key: 'LISTING',
+        status: listing ? 'SATISFIED' : 'REQUIRED',
+        source: listing ? 'LISTING' : null,
+      },
     ];
 
     // D13: verification does not ship this release, so no IDENTITY,
@@ -419,12 +427,7 @@ export class ListingService {
     return toServiceView(service);
   }
 
-  async updateService(
-    userId: string,
-    listingId: string,
-    serviceId: string,
-    dto: UpdateServiceDto,
-  ) {
+  async updateService(userId: string, listingId: string, serviceId: string, dto: UpdateServiceDto) {
     const listing = await this.assertOwned(userId, listingId);
     const service = await this.database.professionalService.findUnique({
       where: { id: serviceId },
@@ -648,7 +651,10 @@ export class ListingService {
     });
 
     if (!listing || listing.deletedAt) {
-      throw ApiException.notFound('That listing could not be found.', ApiErrorCode.LISTING_NOT_FOUND);
+      throw ApiException.notFound(
+        'That listing could not be found.',
+        ApiErrorCode.LISTING_NOT_FOUND,
+      );
     }
 
     if (listing.userId !== userId) {

@@ -43,8 +43,10 @@ export interface ProfessionalServiceView {
   isActive: boolean;
 }
 
-export interface ProfessionalProfileView
-  extends Omit<ProfessionalSummaryView, 'type' | 'category'> {
+export interface ProfessionalProfileView extends Omit<
+  ProfessionalSummaryView,
+  'type' | 'category'
+> {
   experienceLevel: ExperienceLevel;
   yearsExperience: number | null;
   about: string;

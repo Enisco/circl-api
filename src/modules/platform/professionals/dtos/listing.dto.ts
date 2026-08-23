@@ -59,22 +59,33 @@ export class CreateListingDto {
   about: string;
 
   @ApiPropertyOptional({ description: "Defaults to the member's city. Prefilled, editable." })
-  @Trim() @IsString() @IsOptional()
+  @Trim()
+  @IsString()
+  @IsOptional()
   cityId?: string;
 
   @ApiPropertyOptional({ enum: DeliveryMode, default: DeliveryMode.IN_PERSON })
-  @IsEnum(DeliveryMode) @IsOptional()
+  @IsEnum(DeliveryMode)
+  @IsOptional()
   deliveryMode?: DeliveryMode;
 
   @ApiPropertyOptional({ description: 'Pence.' })
-  @Type(() => Number) @IsInt() @Min(0) @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @IsOptional()
   priceFrom?: number;
 
   @ApiPropertyOptional({ enum: PriceBasis, default: PriceBasis.NEGOTIABLE })
-  @IsEnum(PriceBasis) @IsOptional()
+  @IsEnum(PriceBasis)
+  @IsOptional()
   priceBasis?: PriceBasis;
 
-  @ApiPropertyOptional() @Type(() => Number) @IsInt() @Min(0) @IsOptional()
+  @ApiPropertyOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @IsOptional()
   yearsExperience?: number;
 
   @ApiProperty({
@@ -88,45 +99,75 @@ export class CreateListingDto {
   consentAccepted: boolean;
 
   @ApiPropertyOptional({ description: 'Prefer POST /listings/from-offer/{id}.' })
-  @IsString() @IsOptional()
+  @IsString()
+  @IsOptional()
   sourceOfferId?: string;
 }
 
 export class UpdateListingDto {
   @ApiPropertyOptional({ type: [String] })
-  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(3) @IsString({ each: true }) @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(3)
+  @IsString({ each: true })
+  @IsOptional()
   categoryCodes?: string[];
 
   @ApiPropertyOptional({ minLength: 3, maxLength: 80 })
-  @Trim() @IsString() @MinLength(3) @MaxLength(80) @IsOptional()
+  @Trim()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(80)
+  @IsOptional()
   professionTitle?: string;
 
   @ApiPropertyOptional({ enum: ExperienceLevel })
-  @IsEnum(ExperienceLevel) @IsOptional()
+  @IsEnum(ExperienceLevel)
+  @IsOptional()
   experienceLevel?: ExperienceLevel;
 
   @ApiPropertyOptional({ minLength: 20, maxLength: 4000 })
-  @Trim() @IsString() @MinLength(20) @MaxLength(4000) @IsOptional()
+  @Trim()
+  @IsString()
+  @MinLength(20)
+  @MaxLength(4000)
+  @IsOptional()
   about?: string;
 
-  @ApiPropertyOptional() @Trim() @IsString() @IsOptional()
+  @ApiPropertyOptional()
+  @Trim()
+  @IsString()
+  @IsOptional()
   cityId?: string;
 
   @ApiPropertyOptional({ enum: DeliveryMode })
-  @IsEnum(DeliveryMode) @IsOptional()
+  @IsEnum(DeliveryMode)
+  @IsOptional()
   deliveryMode?: DeliveryMode;
 
-  @ApiPropertyOptional() @Type(() => Number) @IsInt() @Min(0) @IsOptional()
+  @ApiPropertyOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @IsOptional()
   priceFrom?: number;
 
   @ApiPropertyOptional({ enum: PriceBasis })
-  @IsEnum(PriceBasis) @IsOptional()
+  @IsEnum(PriceBasis)
+  @IsOptional()
   priceBasis?: PriceBasis;
 
-  @ApiPropertyOptional() @Type(() => Number) @IsInt() @Min(0) @IsOptional()
+  @ApiPropertyOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @IsOptional()
   yearsExperience?: number;
 
-  @ApiPropertyOptional() @Bool() @IsBoolean() @IsOptional()
+  @ApiPropertyOptional()
+  @Bool()
+  @IsBoolean()
+  @IsOptional()
   freeConsultation?: boolean;
 }
 
@@ -137,66 +178,111 @@ export class PromoteOfferDto {
       'The professional category, a different taxonomy from community categories. Usually the ' +
       'only field the member has to supply, because the community category suggests it.',
   })
-  @Trim() @IsString() @IsOptional()
+  @Trim()
+  @IsString()
+  @IsOptional()
   professionCode?: string;
 
-  @ApiPropertyOptional() @Trim() @IsString() @MinLength(3) @MaxLength(80) @IsOptional()
+  @ApiPropertyOptional()
+  @Trim()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(80)
+  @IsOptional()
   title?: string;
 
-  @ApiPropertyOptional() @Trim() @IsString() @MinLength(20) @MaxLength(4000) @IsOptional()
+  @ApiPropertyOptional()
+  @Trim()
+  @IsString()
+  @MinLength(20)
+  @MaxLength(4000)
+  @IsOptional()
   about?: string;
 
-  @ApiPropertyOptional() @Trim() @IsString() @IsOptional()
+  @ApiPropertyOptional()
+  @Trim()
+  @IsString()
+  @IsOptional()
   cityId?: string;
 
   @ApiPropertyOptional({ enum: ExperienceLevel })
-  @IsEnum(ExperienceLevel) @IsOptional()
+  @IsEnum(ExperienceLevel)
+  @IsOptional()
   experienceLevel?: ExperienceLevel;
 
   @ApiPropertyOptional({ description: 'Must be true if the member has not already consented.' })
-  @Bool() @IsBoolean() @IsOptional()
+  @Bool()
+  @IsBoolean()
+  @IsOptional()
   consentAccepted?: boolean;
 }
 
 export class ServiceDto {
   @ApiProperty({ minLength: 2, maxLength: 80 })
-  @Trim() @IsString() @MinLength(2) @MaxLength(80)
+  @Trim()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(80)
   name: string;
 
   @ApiPropertyOptional({ maxLength: 500 })
-  @Trim() @IsString() @MaxLength(500) @IsOptional()
+  @Trim()
+  @IsString()
+  @MaxLength(500)
+  @IsOptional()
   description?: string;
 
   @ApiPropertyOptional({ description: 'Pence. Null means "on request".' })
-  @Type(() => Number) @IsInt() @Min(0) @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @IsOptional()
   price?: number;
 
   @ApiPropertyOptional({ enum: PriceBasis })
-  @IsEnum(PriceBasis) @IsOptional()
+  @IsEnum(PriceBasis)
+  @IsOptional()
   priceBasis?: PriceBasis;
 
   @ApiPropertyOptional({ default: true })
-  @Bool() @IsBoolean() @IsOptional()
+  @Bool()
+  @IsBoolean()
+  @IsOptional()
   isActive?: boolean;
 }
 
 export class UpdateServiceDto {
   @ApiPropertyOptional({ minLength: 2, maxLength: 80 })
-  @Trim() @IsString() @MinLength(2) @MaxLength(80) @IsOptional()
+  @Trim()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(80)
+  @IsOptional()
   name?: string;
 
   @ApiPropertyOptional({ maxLength: 500 })
-  @Trim() @IsString() @MaxLength(500) @IsOptional()
+  @Trim()
+  @IsString()
+  @MaxLength(500)
+  @IsOptional()
   description?: string;
 
-  @ApiPropertyOptional() @Type(() => Number) @IsInt() @Min(0) @IsOptional()
+  @ApiPropertyOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @IsOptional()
   price?: number;
 
   @ApiPropertyOptional({ enum: PriceBasis })
-  @IsEnum(PriceBasis) @IsOptional()
+  @IsEnum(PriceBasis)
+  @IsOptional()
   priceBasis?: PriceBasis;
 
-  @ApiPropertyOptional() @Bool() @IsBoolean() @IsOptional()
+  @ApiPropertyOptional()
+  @Bool()
+  @IsBoolean()
+  @IsOptional()
   isActive?: boolean;
 }
 
@@ -209,6 +295,7 @@ export class ReplaceServicesDto {
 
 export class AvailabilityDto {
   @ApiProperty()
-  @Bool() @IsBoolean()
+  @Bool()
+  @IsBoolean()
   isAcceptingWork: boolean;
 }

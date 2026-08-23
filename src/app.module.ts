@@ -5,6 +5,7 @@ import {
   CommonModule,
   CustomThrottlerGuard,
   IdempotencyInterceptor,
+  RATE_LIMITS,
 } from '@/common';
 import { MODULES } from '@/modules';
 import { configValidationSchema } from '@/config';
@@ -27,13 +28,18 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
     AppLoggerModule,
     AppQueueModule,
     ...MODULES,
+    // Spec 0.14. Each action class gets its own named bucket, so writing does
+    // not eat a member's allowance to read. `default` is the backstop for
+    // anything not explicitly classified.
+    // Spec 0.14. Exactly two throttlers are registered, because every named
+    // throttler applies to every route: a third bucket at 20-an-hour would cap
+    // reads at 20 an hour too. `@RateLimit()` overrides these per route instead.
     ThrottlerModule.forRoot({
       throttlers: [
-        {
-          name: 'default',
-          limit: 100,
-          ttl: 60000, // 1 minute
-        },
+        { name: 'default', limit: RATE_LIMITS.READ.limit, ttl: RATE_LIMITS.READ.ttl },
+        // A second window, used only by messaging (5.7). Effectively unlimited
+        // until a route overrides it, so it never constrains anything else.
+        { name: 'secondary', limit: 100_000, ttl: 3_600_000 },
       ],
     }),
   ],

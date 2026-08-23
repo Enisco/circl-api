@@ -120,7 +120,7 @@ export class UpdateService {
     if (!update) throw ApiException.notFound('This post could not be found.');
     if (update.deletedAt) throw ApiException.deleted('This post');
 
-    if (await this.activity.countView('update', id, viewerId)) {
+    if (await this.activity.countView('update', id, viewerId, update.authorId)) {
       await this.database.communityUpdate.update({
         where: { id },
         data: { viewCount: { increment: 1 } },

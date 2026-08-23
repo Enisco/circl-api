@@ -28,7 +28,11 @@ export class PulseController {
   })
   @ApiQuery({ name: 'surface', enum: SuggestionSurface })
   @ApiQuery({ name: 'cityId', required: false })
-  @ApiQuery({ name: 'exclude', required: false, description: 'Comma list of codes already covered.' })
+  @ApiQuery({
+    name: 'exclude',
+    required: false,
+    description: 'Comma list of codes already covered.',
+  })
   async suggestions(
     @CurrentUserId() userId: string,
     @Query('surface') surface: SuggestionSurface,
@@ -43,7 +47,12 @@ export class PulseController {
     const data = await this.demand.suggestionsFor({
       surface,
       cityId: cityId ?? profile?.cityId ?? null,
-      excludeCodes: exclude ? exclude.split(',').map(code => code.trim()).filter(Boolean) : [],
+      excludeCodes: exclude
+        ? exclude
+            .split(',')
+            .map(code => code.trim())
+            .filter(Boolean)
+        : [],
     });
 
     return { data, message: SuccessMessage.RESOURCE_FETCHED('Suggestions') };

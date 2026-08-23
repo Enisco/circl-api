@@ -67,7 +67,8 @@ export class ReputationService {
       review => review.reviewerCountryOfOrigin && review.reviewerCountryOfOrigin !== UK_CODE,
     );
     const immigrantAverage = immigrantReviews.length
-      ? immigrantReviews.reduce((total, review) => total + review.rating, 0) / immigrantReviews.length
+      ? immigrantReviews.reduce((total, review) => total + review.rating, 0) /
+        immigrantReviews.length
       : 0;
 
     const byContext = (context: ReviewContext) =>
@@ -124,7 +125,16 @@ export class ReputationService {
   }
 
   /** The shape a profile renders, including the distribution bar chart (2.4). */
-  toRatingView(summary: { average: number; countedTotal: number; excludedTotal: number; star1: number; star2: number; star3: number; star4: number; star5: number }) {
+  toRatingView(summary: {
+    average: number;
+    countedTotal: number;
+    excludedTotal: number;
+    star1: number;
+    star2: number;
+    star3: number;
+    star4: number;
+    star5: number;
+  }) {
     return {
       average: summary.average,
       count: summary.countedTotal,

@@ -329,9 +329,7 @@ export class EnquiryService {
         // Same principle as bookings: the rule lives in one place so the count on
         // My Store matches the list (4.7.2).
         needsYourAction:
-          role === 'SELLER'
-            ? row.state === JobState.ACCEPTED
-            : row.state === JobState.DELIVERED,
+          role === 'SELLER' ? row.state === JobState.ACCEPTED : row.state === JobState.DELIVERED,
         createdAt: row.createdAt.toISOString(),
       })),
       meta: buildPageMeta(query, total),
@@ -501,7 +499,12 @@ export class EnquiryService {
       await tx.enquiryEvent.upsert({
         where: { enquiryId_stage: { enquiryId: id, stage: options.stage } },
         update: { reachedAt: now, actorId: userId },
-        create: { enquiryId: id, stage: options.stage, actorId: userId, note: options.reason ?? null },
+        create: {
+          enquiryId: id,
+          stage: options.stage,
+          actorId: userId,
+          note: options.reason ?? null,
+        },
       });
 
       if (enquiry.conversationId) {

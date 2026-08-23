@@ -16,15 +16,23 @@ const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.t
  */
 export class CreateGuardThreadDto {
   @ApiProperty({ minLength: 6, maxLength: 200, description: 'What this is about, in a line.' })
-  @Trim() @IsString() @MinLength(6) @MaxLength(200)
+  @Trim()
+  @IsString()
+  @MinLength(6)
+  @MaxLength(200)
   subject: string;
 
   @ApiProperty({ minLength: 1, maxLength: 4000 })
-  @Trim() @IsString() @MinLength(1) @MaxLength(4000)
+  @Trim()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(4000)
   message: string;
 
   @ApiPropertyOptional({ description: 'A community category code, if the member picked one.' })
-  @Trim() @IsString() @IsOptional()
+  @Trim()
+  @IsString()
+  @IsOptional()
   categoryCode?: string;
 }
 

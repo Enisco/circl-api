@@ -86,7 +86,7 @@ export class ConnectController {
     description:
       'Removes the profile and all pending requests in both directions. Existing conversations ' +
       'survive, because a conversation belongs to two people rather than to a section — and this ' +
-      'does not touch interests, languages, heritage or date of birth, which were never Connect\'s ' +
+      "does not touch interests, languages, heritage or date of birth, which were never Connect's " +
       'to own.',
   })
   async remove(@CurrentUserId() userId: string) {
@@ -104,10 +104,7 @@ export class ConnectController {
       'a request there is a wasted step. Rate limited to 20 a day; a declined pair has a 30-day ' +
       'cooldown.',
   })
-  async createRequest(
-    @CurrentUserId() userId: string,
-    @Body() dto: CreateConnectionRequestDto,
-  ) {
+  async createRequest(@CurrentUserId() userId: string, @Body() dto: CreateConnectionRequestDto) {
     const data = await this.requests.create(userId, dto);
 
     return { data, message: 'Request sent' };
@@ -116,10 +113,7 @@ export class ConnectController {
   @Get('requests')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Received and sent requests', description: 'Both tabs read this.' })
-  async listRequests(
-    @CurrentUserId() userId: string,
-    @Query() query: ListConnectionRequestsDto,
-  ) {
+  async listRequests(@CurrentUserId() userId: string, @Query() query: ListConnectionRequestsDto) {
     const { data, meta } = await this.requests.list(userId, query);
 
     return { data, meta, message: SuccessMessage.RESOURCE_FETCHED('Requests') };
@@ -129,7 +123,8 @@ export class ConnectController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Accept a request',
-    description: 'Creates the conversation and returns its id, so the client opens the chat directly.',
+    description:
+      'Creates the conversation and returns its id, so the client opens the chat directly.',
   })
   async accept(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.requests.accept(userId, id);
@@ -141,7 +136,8 @@ export class ConnectController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Decline a request',
-    description: 'Silent: the sender is not told why. `alsoBlock` applies the block in the same transaction.',
+    description:
+      'Silent: the sender is not told why. `alsoBlock` applies the block in the same transaction.',
   })
   async decline(
     @CurrentUserId() userId: string,
@@ -184,7 +180,7 @@ export class ConnectController {
   @ApiOperation({
     summary: "Another member's Connect profile",
     description:
-      'Accepts a Connect profile id or the person\'s user id. Hidden, deleted and blocked all ' +
+      "Accepts a Connect profile id or the person's user id. Hidden, deleted and blocked all " +
       'return the same 404: telling someone they have been blocked is itself a safety problem.',
   })
   async findOne(@CurrentUserId() userId: string, @Param('id') id: string) {

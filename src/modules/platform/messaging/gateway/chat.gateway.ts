@@ -15,6 +15,7 @@ import { Server, Socket } from 'socket.io';
 import { PrismaService } from '@/infrastructure';
 import { ConversationService } from '../services/conversation.service';
 import { MessageService } from '../services/message.service';
+import { MessagePushService } from '../services/message-push.service';
 import { SendMessageDto } from '../dtos/message.dto';
 
 interface AuthedSocket extends Socket {
@@ -26,6 +27,18 @@ const CLOSE_UNAUTHORISED = 4401;
 
 /** A typing state expires after 5 seconds without a refresh (5.2.2). */
 const TYPING_TTL_MS = 5000;
+
+/**
+ * 5.7: 60 messages a minute and 300 an hour, per member.
+ *
+ * The HTTP throttler cannot see this path, and the socket is the PRIMARY way
+ * messages are sent — so without this the documented limit would apply only to
+ * the fallback, which is the one nobody uses.
+ */
+const SEND_LIMITS = [
+  { windowMs: 60_000, max: 60 },
+  { windowMs: 3_600_000, max: 300 },
+];
 
 /**
  * The live half of messaging (5.2).
@@ -59,12 +72,16 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
   private readonly typingTimers = new Map<string, NodeJS.Timeout>();
 
+  /** Send timestamps per member, trimmed to the longest window on each check. */
+  private readonly sendHistory = new Map<string, number[]>();
+
   constructor(
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly database: PrismaService,
     private readonly conversations: ConversationService,
     private readonly messages: MessageService,
+    private readonly push: MessagePushService,
   ) {}
 
   // ─── 5.2.1 Connection ──────────────────────────────────────────────────────
@@ -151,6 +168,10 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
     if (!sockets?.size) {
       this.connections.delete(userId);
+      // Send history goes with the last socket: it is a burst guard, not a
+      // durable quota, and holding it for every member who ever connected is an
+      // unbounded map on a long-running process.
+      this.sendHistory.delete(userId);
       this.broadcastPresence(userId, false);
     }
   }
@@ -165,6 +186,21 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     const userId = socket.data.userId;
 
     if (!userId) return this.reject(socket);
+
+    const retryAfter = this.sendAllowance(userId);
+
+    if (retryAfter !== null) {
+      socket.emit('message.status', {
+        conversationId: payload.conversationId,
+        clientId: payload.clientId,
+        status: 'FAILED',
+        error: 'RATE_LIMITED',
+        retryAfterSeconds: retryAfter,
+        message: 'You are sending messages too quickly.',
+      });
+
+      return;
+    }
 
     try {
       const message = await this.messages.send(userId, payload.conversationId, payload);
@@ -188,8 +224,19 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       }
 
       // Anyone with a live socket has it on their device, which is what
-      // DELIVERED means (5.4).
+      // DELIVERED means (5.4). Everyone else gets a push (5.6) — that split is
+      // the whole rule, and it is why the connection map is kept.
       const connected = recipients.filter(id => this.connections.has(id));
+      const offline = recipients.filter(id => !this.connections.has(id));
+
+      if (offline.length) {
+        this.push.notify({
+          conversationId: payload.conversationId,
+          messageId: message.id,
+          senderId: userId,
+          recipientIds: offline,
+        });
+      }
 
       if (connected.length) {
         await Promise.all(connected.map(id => this.messages.markDelivered(id, [message.id])));
@@ -350,6 +397,32 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         }
       }, TYPING_TTL_MS),
     );
+  }
+
+  /**
+   * Returns null when the send is allowed, or the seconds to wait when it is
+   * not. Both windows are checked, because the minute limit alone permits 3,600
+   * an hour and the hour limit alone permits a burst of 300 in one second.
+   */
+  private sendAllowance(userId: string): number | null {
+    const now = Date.now();
+    const longest = Math.max(...SEND_LIMITS.map(limit => limit.windowMs));
+    const history = (this.sendHistory.get(userId) ?? []).filter(at => now - at < longest);
+
+    for (const limit of SEND_LIMITS) {
+      const inWindow = history.filter(at => now - at < limit.windowMs);
+
+      if (inWindow.length >= limit.max) {
+        this.sendHistory.set(userId, history);
+
+        return Math.ceil((limit.windowMs - (now - inWindow[0])) / 1000);
+      }
+    }
+
+    history.push(now);
+    this.sendHistory.set(userId, history);
+
+    return null;
   }
 
   private async recipientsOf(conversationId: string, senderId: string): Promise<string[]> {

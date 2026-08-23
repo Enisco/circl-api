@@ -1,11 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  Conversation,
-  MessageKind,
-  Prisma,
-  ThreadContextType,
-  ThreadKind,
-} from '@prisma/client';
+import { Conversation, MessageKind, Prisma, ThreadContextType, ThreadKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta } from '@/common';
 import { AuthorView, BlockingService, authorSelect, toAuthorView } from '../../shared';
@@ -87,15 +81,41 @@ export class ConversationService {
     };
 
     if (query.q) {
-      // D31: names and context titles at launch. Both are short, indexed columns.
-      // Full-text over message bodies is separate work behind this same param, so
-      // adding it later changes no contract.
+      // D31: names and CONTEXT TITLES at launch — both short, so both stay fast.
+      // Full-text over message bodies is a separate piece of work behind this
+      // same `q` parameter, which is why adding it later changes no contract, and
+      // why it is deliberately not done here: scanning every body on every inbox
+      // search is the query that would take the inbox down first.
+      //
+      // The title lives inside contextSnapshot, so it is matched with a JSON path
+      // filter rather than a column comparison.
       where.AND = [
         {
           OR: [
-            { participants: { some: { user: { firstName: { contains: query.q, mode: 'insensitive' } } } } },
-            { participants: { some: { user: { lastName: { contains: query.q, mode: 'insensitive' } } } } },
-            { messages: { some: { body: { contains: query.q, mode: 'insensitive' }, deletedAt: null } } },
+            {
+              participants: {
+                some: { user: { firstName: { contains: query.q, mode: 'insensitive' } } },
+              },
+            },
+            {
+              participants: {
+                some: { user: { lastName: { contains: query.q, mode: 'insensitive' } } },
+              },
+            },
+            {
+              contextSnapshot: {
+                path: ['title'],
+                string_contains: query.q,
+                mode: 'insensitive',
+              },
+            },
+            {
+              contextSnapshot: {
+                path: ['subtitle'],
+                string_contains: query.q,
+                mode: 'insensitive',
+              },
+            },
           ],
         },
       ];
@@ -288,7 +308,14 @@ export class ConversationService {
   private async lastMessages(conversationIds: string[]) {
     const map = new Map<
       string,
-      { id: string; kind: MessageKind; body: string | null; senderId: string | null; status: string; sentAt: Date }
+      {
+        id: string;
+        kind: MessageKind;
+        body: string | null;
+        senderId: string | null;
+        status: string;
+        sentAt: Date;
+      }
     >();
 
     if (!conversationIds.length) return map;

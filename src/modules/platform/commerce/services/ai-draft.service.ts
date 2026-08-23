@@ -212,13 +212,16 @@ export class AiDraftService {
     const categoryCode = categories.some(c => c.code === parsed.categoryCode)
       ? (parsed.categoryCode as string)
       : null;
-    const unitCode = units.some(u => u.code === parsed.unitCode) ? (parsed.unitCode as string) : null;
+    const unitCode = units.some(u => u.code === parsed.unitCode)
+      ? (parsed.unitCode as string)
+      : null;
 
     return {
       name: typeof parsed.name === 'string' ? parsed.name.slice(0, 100) : null,
       // Enforced here rather than trusted to the prompt.
       description:
-        confidence >= AiDraftService.DESCRIPTION_CONFIDENCE && typeof parsed.description === 'string'
+        confidence >= AiDraftService.DESCRIPTION_CONFIDENCE &&
+        typeof parsed.description === 'string'
           ? parsed.description.slice(0, 1000)
           : null,
       categoryCode,
@@ -287,7 +290,9 @@ const safeParse = (content: string | null | undefined): Record<string, unknown> 
   try {
     const parsed: unknown = JSON.parse(content);
 
-    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : null;
+    return typeof parsed === 'object' && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }

@@ -177,7 +177,7 @@ export class GuideService {
     if (!guide) throw ApiException.notFound('This guide could not be found.');
     if (guide.deletedAt) throw ApiException.deleted('This guide');
 
-    if (await this.activity.countView('guide', id, viewerId)) {
+    if (await this.activity.countView('guide', id, viewerId, guide.authorId)) {
       await this.database.guide.update({ where: { id }, data: { viewCount: { increment: 1 } } });
       guide.viewCount += 1;
     }

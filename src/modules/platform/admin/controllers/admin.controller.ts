@@ -76,7 +76,8 @@ export class AdminController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Claim a queue item',
-    description: 'Conflicts if someone else already has it: two people working one disclosure is worse than one.',
+    description:
+      'Conflicts if someone else already has it: two people working one disclosure is worse than one.',
   })
   async claim(@CurrentUserId() adminId: string, @Param('id') id: string) {
     const data = await this.moderation.claim(adminId, id);
@@ -108,7 +109,8 @@ export class AdminController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'The audit trail for one piece of content or one member',
-    description: 'A safeguarding decision nobody can review afterwards is not one anyone should make.',
+    description:
+      'A safeguarding decision nobody can review afterwards is not one anyone should make.',
   })
   async actions(
     @Param('targetType') targetType: ReportTargetType,
@@ -151,7 +153,8 @@ export class AdminController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Assign or move a Guard case',
-    description: 'Assigning joins the staff member to the thread: a case you cannot read is one you cannot work.',
+    description:
+      'Assigning joins the staff member to the thread: a case you cannot read is one you cannot work.',
   })
   async updateGuardCase(
     @CurrentUserId() adminId: string,
@@ -208,7 +211,8 @@ export class AdminController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Every term of one kind, active or not',
-    description: 'Unlike the public endpoint, this shows the deactivated ones so they can be turned on.',
+    description:
+      'Unlike the public endpoint, this shows the deactivated ones so they can be turned on.',
   })
   async listTaxonomy(@Param('kind') kind: TaxonomyKind) {
     const data = await this.taxonomy.list(kind);
@@ -223,7 +227,7 @@ export class AdminController {
     summary: 'Add a term, reword a label, or activate one',
     description:
       'This is what makes "reword without an app release" true. Bumps the taxonomy version, which ' +
-      'invalidates every process\'s cache and the client\'s ETag in one write. Reword labels freely; ' +
+      "invalidates every process's cache and the client's ETag in one write. Reword labels freely; " +
       'never rename a code that has shipped.',
   })
   async upsertTaxonomy(@Body() dto: UpsertTaxonomyTermDto) {
@@ -254,7 +258,8 @@ export class AdminController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Suspend or restore a member',
-    description: 'Suspension revokes every session immediately — one that leaves a live session running is not one.',
+    description:
+      'Suspension revokes every session immediately — one that leaves a live session running is not one.',
   })
   async setUserStatus(
     @CurrentUserId() adminId: string,

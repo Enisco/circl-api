@@ -1,11 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  ActivitySubject,
-  ActivityVerb,
-  Prisma,
-  StoreStatus,
-  TaxonomyKind,
-} from '@prisma/client';
+import { ActivitySubject, ActivityVerb, Prisma, StoreStatus, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { buildPageMeta, daysAgo, distanceMiles } from '@/common';
 import { ActivityService, MediaService, TaxonomyService, toTermView } from '../../shared';
@@ -66,9 +60,7 @@ export class CommerceBrowseService {
     }
 
     const effectiveTotal = needsPostFilter ? summaries.length : total;
-    const page = needsPostFilter
-      ? summaries.slice(query.skip, query.skip + query.take)
-      : summaries;
+    const page = needsPostFilter ? summaries.slice(query.skip, query.skip + query.take) : summaries;
 
     return { data: page, meta: buildPageMeta(query, effectiveTotal) };
   }
@@ -206,7 +198,10 @@ export class CommerceBrowseService {
     ]);
 
     const origin = this.originOf(query);
-    const media = await this.media.forOwners(ITEM_MEDIA_OWNER, rows.map(row => row.id));
+    const media = await this.media.forOwners(
+      ITEM_MEDIA_OWNER,
+      rows.map(row => row.id),
+    );
 
     const views = await Promise.all(
       rows.map(async row => {
@@ -350,16 +345,18 @@ export class CommerceBrowseService {
     });
     const stockedTerms = new Set(stocked.map(item => item.name.toLowerCase()));
 
-    return searches
-      // Three searches in a month is not demand. Below that the card would be
-      // noise dressed as insight.
-      .filter(row => row._count._all >= 3 && row.term && !stockedTerms.has(row.term))
-      .slice(0, 3)
-      .map(row => ({
-        term: row.term!,
-        searches: row._count._all,
-        cityName: city?.name ?? null,
-      }));
+    return (
+      searches
+        // Three searches in a month is not demand. Below that the card would be
+        // noise dressed as insight.
+        .filter(row => row._count._all >= 3 && row.term && !stockedTerms.has(row.term))
+        .slice(0, 3)
+        .map(row => ({
+          term: row.term!,
+          searches: row._count._all,
+          cityName: city?.name ?? null,
+        }))
+    );
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────────

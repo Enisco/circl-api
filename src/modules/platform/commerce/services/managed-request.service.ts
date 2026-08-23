@@ -33,11 +33,7 @@ export class ManagedRequestService {
 
   async create(userId: string, dto: ManagedRequestDto) {
     if (dto.helpAreas?.length) {
-      await this.taxonomy.assertAllValid(
-        TaxonomyKind.STORE_HELP_AREA,
-        dto.helpAreas,
-        'helpAreas',
-      );
+      await this.taxonomy.assertAllValid(TaxonomyKind.STORE_HELP_AREA, dto.helpAreas, 'helpAreas');
     }
 
     const store =
@@ -93,7 +89,7 @@ export class ManagedRequestService {
         await this.conversations.postSystemMessage(
           conversation.id,
           SystemMessageType.SUPPORT_OPENED,
-          'Circl\'s team has your request. Only Circl staff can see this thread.',
+          "Circl's team has your request. Only Circl staff can see this thread.",
           {
             managedRequestId: request.id,
             // Attached from records already held, so the member is not asked to

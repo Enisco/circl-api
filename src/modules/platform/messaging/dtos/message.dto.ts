@@ -22,21 +22,28 @@ const Bool = () => Transform(({ value }) => value === true || value === 'true');
 
 export class ListConversationsDto extends PageOptionsDto {
   @ApiPropertyOptional({ enum: ThreadKind, description: 'Backs the filter tabs.' })
-  @IsEnum(ThreadKind) @IsOptional()
+  @IsEnum(ThreadKind)
+  @IsOptional()
   kind?: ThreadKind;
 
   @ApiPropertyOptional({ default: false, description: 'The Unread tab.' })
-  @Bool() @IsBoolean() @IsOptional()
+  @Bool()
+  @IsBoolean()
+  @IsOptional()
   unreadOnly?: boolean;
 
   @ApiPropertyOptional({
     description: 'Participant name, message body, and context title (D31).',
   })
-  @Trim() @IsString() @IsOptional()
+  @Trim()
+  @IsString()
+  @IsOptional()
   q?: string;
 
   @ApiPropertyOptional({ default: false })
-  @Bool() @IsBoolean() @IsOptional()
+  @Bool()
+  @IsBoolean()
+  @IsOptional()
   includeArchived?: boolean;
 }
 
@@ -46,15 +53,21 @@ export class ListConversationsDto extends PageOptionsDto {
  */
 export class ListMessagesDto {
   @ApiPropertyOptional({ description: 'Older than this message.' })
-  @IsString() @IsOptional()
+  @IsString()
+  @IsOptional()
   before?: string;
 
   @ApiPropertyOptional({ description: 'Newer than this one. Used by `sync` after a reconnect.' })
-  @IsString() @IsOptional()
+  @IsString()
+  @IsOptional()
   after?: string;
 
   @ApiPropertyOptional({ default: 30, maximum: 100 })
-  @Type(() => Number) @IsInt() @Min(1) @Max(100) @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  @IsOptional()
   limit?: number;
 }
 
@@ -65,7 +78,10 @@ export class SendMessageDto {
       'Client-generated and unique per message. Echoed back in the acknowledgement so the pending ' +
       'bubble is replaced rather than duplicated, and it doubles as the idempotency key on a retry.',
   })
-  @Trim() @IsString() @MinLength(1) @MaxLength(64)
+  @Trim()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
   clientId: string;
 
   @ApiPropertyOptional({
@@ -73,21 +89,27 @@ export class SendMessageDto {
     default: MessageKind.TEXT,
     description: 'SYSTEM is server-only.',
   })
-  @IsEnum(MessageKind) @IsOptional()
+  @IsEnum(MessageKind)
+  @IsOptional()
   kind?: MessageKind;
 
   @ApiPropertyOptional({
     maxLength: 4000,
     description: 'Required for TEXT, 1 to 4000 chars. An optional caption on media, max 1000.',
   })
-  @Trim() @IsString() @MaxLength(4000) @IsOptional()
+  @Trim()
+  @IsString()
+  @MaxLength(4000)
+  @IsOptional()
   body?: string;
 
   @ApiPropertyOptional({
     type: [String],
     description: 'Required for the media kinds. Max 5 images, or 1 video, or 1 audio.',
   })
-  @IsArray() @ArrayMaxSize(5) @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsOptional()
   attachmentIds?: string[];
 }
 
@@ -97,18 +119,23 @@ export class StartThreadDto {
       'Only for a plain DM with no subject. Every subject-bearing thread is created by the section ' +
       'that owns the subject and returns its id.',
   })
-  @Trim() @IsString()
+  @Trim()
+  @IsString()
   recipientUserId: string;
 }
 
 export class MarkReadDto {
-  @ApiProperty({ description: 'Marks everything up to this message read, clearing a backlog in one call.' })
-  @Trim() @IsString()
+  @ApiProperty({
+    description: 'Marks everything up to this message read, clearing a backlog in one call.',
+  })
+  @Trim()
+  @IsString()
   lastReadMessageId: string;
 }
 
 export class MuteDto {
   @ApiPropertyOptional({ description: 'Null or omitted mutes indefinitely.' })
-  @IsDateString() @IsOptional()
+  @IsDateString()
+  @IsOptional()
   until?: string;
 }

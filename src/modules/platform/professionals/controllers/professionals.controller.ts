@@ -73,7 +73,8 @@ export class ProfessionalsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: "The caller's own listing",
-    description: '404 when they have none, which is how the home screen knows to show the mode cards.',
+    description:
+      '404 when they have none, which is how the home screen knows to show the mode cards.',
   })
   async me(@CurrentUserId() userId: string) {
     const data = await this.listings.findMine(userId);
@@ -222,7 +223,10 @@ export class ProfessionalsController {
 
   @Put('listings/:id/services')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Replace the whole service set', description: "The manage panel's bulk save." })
+  @ApiOperation({
+    summary: 'Replace the whole service set',
+    description: "The manage panel's bulk save.",
+  })
   async replaceServices(
     @CurrentUserId() userId: string,
     @Param('id') id: string,

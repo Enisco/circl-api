@@ -1,10 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  ListingVerificationStatus,
-  Prisma,
-  TaxonomyKind,
-  ThreadContextType,
-} from '@prisma/client';
+import { ListingVerificationStatus, Prisma, TaxonomyKind, ThreadContextType } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import {
   ApiErrorCode,
@@ -69,7 +64,8 @@ export class BrowseService {
     // With both types in play the two result sets are merged and re-paged in
     // memory over one window, which is what keeps the page boundaries honest.
     const sorted = this.applySort(items, query.sort);
-    const paged = listingType === 'BOTH' ? sorted.slice(query.skip, query.skip + query.take) : sorted;
+    const paged =
+      listingType === 'BOTH' ? sorted.slice(query.skip, query.skip + query.take) : sorted;
 
     const total = listings.total + offers.total;
     const meta: PageMeta = buildPageMeta(query, total);
@@ -144,7 +140,9 @@ export class BrowseService {
     // With BOTH, a wide window is pulled and re-paged in memory after the merge;
     // otherwise the database does the paging.
     const window: { skip: number; take: number } =
-      query.listingType === 'BOTH' ? { skip: 0, take: 200 } : { skip: query.skip, take: query.take };
+      query.listingType === 'BOTH'
+        ? { skip: 0, take: 200 }
+        : { skip: query.skip, take: query.take };
 
     const [total, rows] = await this.database.$transaction([
       this.database.professionalListing.count({ where }),
@@ -203,7 +201,9 @@ export class BrowseService {
     // itself needs the city's coordinates. Only ever narrows a nearMe query.
     const filtered =
       origin && query.radiusMiles
-        ? mapped.filter(item => item.distanceMiles !== null && item.distanceMiles <= query.radiusMiles!)
+        ? mapped.filter(
+            item => item.distanceMiles !== null && item.distanceMiles <= query.radiusMiles!,
+          )
         : mapped;
 
     return { rows: filtered, total: origin && query.radiusMiles ? filtered.length : total };
@@ -234,7 +234,9 @@ export class BrowseService {
     if (query.q) where.title = { contains: query.q, mode: Prisma.QueryMode.insensitive };
 
     const window: { skip: number; take: number } =
-      query.listingType === 'BOTH' ? { skip: 0, take: 100 } : { skip: query.skip, take: query.take };
+      query.listingType === 'BOTH'
+        ? { skip: 0, take: 100 }
+        : { skip: query.skip, take: query.take };
 
     const [total, rows] = await this.database.$transaction([
       this.database.communityOffer.count({ where }),
@@ -287,10 +289,14 @@ export class BrowseService {
     };
   }
 
-  private applySort<T extends { rating: { average: number; count: number }; distanceMiles: number | null; priceFrom: { amount: number } | null; medianResponseMinutes: number | null }>(
-    items: T[],
-    sort: BrowseProfessionalsDto['sort'],
-  ): T[] {
+  private applySort<
+    T extends {
+      rating: { average: number; count: number };
+      distanceMiles: number | null;
+      priceFrom: { amount: number } | null;
+      medianResponseMinutes: number | null;
+    },
+  >(items: T[], sort: BrowseProfessionalsDto['sort']): T[] {
     const byNullsLast = (a: number | null, b: number | null) =>
       a === null ? 1 : b === null ? -1 : a - b;
 
@@ -378,7 +384,11 @@ export class BrowseService {
       },
     });
 
-    if (!listing) throw ApiException.notFound('That professional could not be found.', ApiErrorCode.LISTING_NOT_FOUND);
+    if (!listing)
+      throw ApiException.notFound(
+        'That professional could not be found.',
+        ApiErrorCode.LISTING_NOT_FOUND,
+      );
 
     const isOwner = listing.userId === viewerId;
 

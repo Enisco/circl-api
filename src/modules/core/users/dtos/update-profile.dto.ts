@@ -200,7 +200,8 @@ export class UpdateProfileDto {
 
   @ApiProperty({
     example: 'JUST_ARRIVED',
-    description: 'One journey-stage code. Powers feed ranking and the Connect "new to the UK" filter.',
+    description:
+      'One journey-stage code. Powers feed ranking and the Connect "new to the UK" filter.',
     required: false,
   })
   @IsString()

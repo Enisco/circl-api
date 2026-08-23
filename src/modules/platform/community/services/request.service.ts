@@ -187,7 +187,7 @@ export class RequestService {
 
     // Counted on GET, deduplicated per user per resource per 24 hours (0.13).
     // There is deliberately no "increment view" endpoint.
-    if (await this.activity.countView('request', id, viewerId)) {
+    if (await this.activity.countView('request', id, viewerId, request.authorId)) {
       await this.database.communityRequest.update({
         where: { id },
         data: { viewCount: { increment: 1 } },

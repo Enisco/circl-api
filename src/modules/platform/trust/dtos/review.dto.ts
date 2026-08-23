@@ -20,14 +20,22 @@ const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.t
 
 export class CreateReviewDto {
   @ApiProperty({ description: 'Cannot be the caller.' })
-  @Trim() @IsString()
+  @Trim()
+  @IsString()
   subjectUserId: string;
 
   @ApiProperty({ minimum: 1, maximum: 5 })
-  @Type(() => Number) @IsInt() @Min(1) @Max(5)
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(5)
   rating: number;
 
-  @ApiProperty({ minLength: 20, maxLength: 2000, description: 'The composer blocks below 20 and counts down.' })
+  @ApiProperty({
+    minLength: 20,
+    maxLength: 2000,
+    description: 'The composer blocks below 20 and counts down.',
+  })
   @Trim()
   @IsString()
   @MinLength(20, { message: 'comment must be at least 20 characters' })
@@ -43,40 +51,59 @@ export class CreateReviewDto {
       'Required for BOOKING (the booking id), ORDER (the enquiry id) and COMMUNITY (the request ' +
       'id). Absent for PRIOR_WORK.',
   })
-  @Trim() @IsString() @IsOptional()
+  @Trim()
+  @IsString()
+  @IsOptional()
   sourceId?: string;
 
   @ApiPropertyOptional({ type: [String], description: 'Max 5, from the taxonomy help-tag list.' })
-  @IsArray() @ArrayMaxSize(5) @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsOptional()
   tags?: string[];
 }
 
 export class UpdateReviewDto {
   @ApiPropertyOptional({ minimum: 1, maximum: 5 })
-  @Type(() => Number) @IsInt() @Min(1) @Max(5) @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  @IsOptional()
   rating?: number;
 
   @ApiPropertyOptional({ minLength: 20, maxLength: 2000 })
-  @Trim() @IsString() @MinLength(20) @MaxLength(2000) @IsOptional()
+  @Trim()
+  @IsString()
+  @MinLength(20)
+  @MaxLength(2000)
+  @IsOptional()
   comment?: string;
 
   @ApiPropertyOptional({ type: [String] })
-  @IsArray() @ArrayMaxSize(5) @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsOptional()
   tags?: string[];
 }
 
 export class ReviewReplyDto {
   @ApiProperty({ minLength: 1, maxLength: 1000 })
-  @Trim() @IsString() @MinLength(1) @MaxLength(1000)
+  @Trim()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(1000)
   comment: string;
 }
 
 export class ListReviewsDto extends PageOptionsDto {
   @ApiPropertyOptional({ enum: [...Object.values(ReviewContext), 'ALL'], default: 'ALL' })
-  @IsString() @IsOptional()
+  @IsString()
+  @IsOptional()
   context?: ReviewContext | 'ALL';
 
   @ApiPropertyOptional({ enum: ['RECENT', 'HIGHEST', 'LOWEST'], default: 'RECENT' })
-  @IsIn(['RECENT', 'HIGHEST', 'LOWEST']) @IsOptional()
+  @IsIn(['RECENT', 'HIGHEST', 'LOWEST'])
+  @IsOptional()
   sort?: 'RECENT' | 'HIGHEST' | 'LOWEST';
 }

@@ -269,7 +269,7 @@ export class BriefService {
         await this.conversations.postSystemMessage(
           conversation.id,
           SystemMessageType.BRIEF_ATTACHED,
-          'Circl\'s team has your brief and will find someone for you. Only Circl staff can see this thread.',
+          "Circl's team has your brief and will find someone for you. Only Circl staff can see this thread.",
           { briefId: brief.id },
           tx,
         );

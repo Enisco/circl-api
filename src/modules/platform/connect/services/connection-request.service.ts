@@ -292,11 +292,9 @@ export class ConnectionRequestService {
     }
 
     if (request.state !== ConnectionRequestState.PENDING) {
-      throw ApiException.conflict(
-        ApiErrorCode.CONFLICT,
-        'That request is no longer pending.',
-        { data: { state: request.state } },
-      );
+      throw ApiException.conflict(ApiErrorCode.CONFLICT, 'That request is no longer pending.', {
+        data: { state: request.state },
+      });
     }
 
     await this.database.connectionRequest.update({
@@ -316,11 +314,9 @@ export class ConnectionRequestService {
     }
 
     if (request.state !== ConnectionRequestState.PENDING) {
-      throw ApiException.conflict(
-        ApiErrorCode.CONFLICT,
-        'That request is no longer pending.',
-        { data: { state: request.state } },
-      );
+      throw ApiException.conflict(ApiErrorCode.CONFLICT, 'That request is no longer pending.', {
+        data: { state: request.state },
+      });
     }
 
     return { request, own };

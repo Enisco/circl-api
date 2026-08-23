@@ -16,7 +16,7 @@ export class ManagedRequestController {
     summary: 'Ask Circl to take something on',
     description:
       'One resource for both the managed storefront upsell and the professional manual-placement ' +
-      'fallback: from the member\'s side they are the same request, and they land in one team inbox. ' +
+      "fallback: from the member's side they are the same request, and they land in one team inbox. " +
       'The store, contact details and item count are attached server-side from records already held.',
   })
   async create(@CurrentUserId() userId: string, @Body() dto: ManagedRequestDto) {

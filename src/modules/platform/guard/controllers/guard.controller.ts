@@ -26,7 +26,7 @@ export class GuardController {
   @ApiOperation({
     summary: 'Private to Circl',
     description:
-      'Opens a private thread with Circl\'s team. Invisible to the community, and it creates no ' +
+      "Opens a private thread with Circl's team. Invisible to the community, and it creates no " +
       'public post of any kind. No response time is promised: the opening system message says what ' +
       'the channel is and who can see it, and commits to no timeframe. Returns the conversationId, ' +
       'so the member continues in the ordinary chat.',

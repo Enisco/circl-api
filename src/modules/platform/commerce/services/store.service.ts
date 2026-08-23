@@ -12,12 +12,7 @@ import {
   toTermView,
 } from '../../shared';
 import { ReputationService } from '../../trust/services/reputation.service';
-import {
-  CreateStoreDto,
-  StoreContactDto,
-  StoreStatusDto,
-  UpdateStoreDto,
-} from '../dtos/store.dto';
+import { CreateStoreDto, StoreContactDto, StoreStatusDto, UpdateStoreDto } from '../dtos/store.dto';
 import {
   isOpenNow,
   storeDistance,
@@ -123,11 +118,9 @@ export class StoreService {
     });
 
     if (existing) {
-      throw ApiException.conflict(
-        ApiErrorCode.STORE_ALREADY_EXISTS,
-        'You already have a store.',
-        { data: { store: await this.toDetail(existing, userId, null) } },
-      );
+      throw ApiException.conflict(ApiErrorCode.STORE_ALREADY_EXISTS, 'You already have a store.', {
+        data: { store: await this.toDetail(existing, userId, null) },
+      });
     }
 
     const cityId = dto.cityId ?? (await this.profileCityId(userId));
@@ -383,7 +376,11 @@ export class StoreService {
     };
   }
 
-  async toDetail(store: StoreRow, viewerId: string | null, origin: { latitude: number; longitude: number } | null) {
+  async toDetail(
+    store: StoreRow,
+    viewerId: string | null,
+    origin: { latitude: number; longitude: number } | null,
+  ) {
     const summary = await this.toSummary(store, origin);
     const categoryLabels = await this.taxonomy.labels(TaxonomyKind.ITEM_CATEGORY);
 
@@ -459,11 +456,7 @@ export class StoreService {
     }
 
     if (dto.categories?.length) {
-      await this.taxonomy.assertAllValid(
-        TaxonomyKind.ITEM_CATEGORY,
-        dto.categories,
-        'categories',
-      );
+      await this.taxonomy.assertAllValid(TaxonomyKind.ITEM_CATEGORY, dto.categories, 'categories');
     }
   }
 
@@ -531,7 +524,9 @@ export class StoreService {
             throw ApiException.unprocessable(
               ApiErrorCode.UNKNOWN_TAXONOMY_CODE,
               `"${contact.channel}" is not a contact channel we support.`,
-              { details: [{ field: `contact[${index}].channel`, message: 'Unsupported channel.' }] },
+              {
+                details: [{ field: `contact[${index}].channel`, message: 'Unsupported channel.' }],
+              },
             );
         }
       });

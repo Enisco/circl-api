@@ -86,8 +86,15 @@ export class DiscoveryService {
 
     const [views, sharedContexts, conversationIds, connections] = await Promise.all([
       Promise.all(withinAge.map(row => this.profiles.toView(row))),
-      this.sharedContexts(viewerId, withinAge.map(row => row.userId), viewerProfile),
-      this.conversationIds(viewerId, withinAge.map(row => row.userId)),
+      this.sharedContexts(
+        viewerId,
+        withinAge.map(row => row.userId),
+        viewerProfile,
+      ),
+      this.conversationIds(
+        viewerId,
+        withinAge.map(row => row.userId),
+      ),
       this.connectedUserIds(own.id),
     ]);
 
@@ -133,7 +140,10 @@ export class DiscoveryService {
 
     if (cityId && cityId !== 'ANYWHERE') {
       // The override is where they want to be found, so it wins when set.
-      where.OR = [{ cityIdOverride: cityId }, { cityIdOverride: null, user: { profile: { cityId } } }];
+      where.OR = [
+        { cityIdOverride: cityId },
+        { cityIdOverride: null, user: { profile: { cityId } } },
+      ];
     }
 
     const userFilters: Prisma.UserWhereInput = { isAnonymised: false };

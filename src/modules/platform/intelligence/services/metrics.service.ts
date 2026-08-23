@@ -73,7 +73,10 @@ export class MetricsService {
   /** Recomputes every section for every city with enough activity to publish. */
   async rebuild(period: MetricPeriod = 'MONTH'): Promise<number> {
     const since = period === 'WEEK' ? daysAgo(7) : period === 'MONTH' ? daysAgo(30) : new Date(0);
-    const cities = await this.database.city.findMany({ where: { isActive: true }, select: { id: true } });
+    const cities = await this.database.city.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
 
     let written = 0;
 
@@ -217,7 +220,12 @@ export class MetricsService {
       jobsThisPeriod: [{ label: 'Jobs completed', value: jobs }],
       averageResponseMinutes:
         (response._count._all ?? 0) >= CONTENT_FLOOR
-          ? [{ label: 'Median response', value: Math.round(response._avg.medianResponseMinutes ?? 0) }]
+          ? [
+              {
+                label: 'Median response',
+                value: Math.round(response._avg.medianResponseMinutes ?? 0),
+              },
+            ]
           : [],
     });
   }
@@ -302,7 +310,9 @@ export class MetricsService {
    */
   private async rebuildConnect(cityId: string | null, period: MetricPeriod, since: Date) {
     const scope = cityId
-      ? { OR: [{ cityIdOverride: cityId }, { cityIdOverride: null, user: { profile: { cityId } } }] }
+      ? {
+          OR: [{ cityIdOverride: cityId }, { cityIdOverride: null, user: { profile: { cityId } } }],
+        }
       : {};
 
     const [types, heritage] = await Promise.all([

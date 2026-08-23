@@ -1,10 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  ActivityVerb,
-  Prisma,
-  SuggestionSurface,
-  TaxonomyKind,
-} from '@prisma/client';
+import { ActivityVerb, Prisma, SuggestionSurface, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { daysAgo } from '@/common';
 import { TaxonomyService } from '../../shared';
@@ -71,10 +66,12 @@ export class DemandService {
     });
 
     const cityName = options.cityId
-      ? (await this.database.city.findUnique({
-          where: { id: options.cityId },
-          select: { name: true },
-        }))?.name
+      ? (
+          await this.database.city.findUnique({
+            where: { id: options.cityId },
+            select: { name: true },
+          })
+        )?.name
       : null;
 
     return rows

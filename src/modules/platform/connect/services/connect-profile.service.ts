@@ -191,7 +191,11 @@ export class ConnectProfileService {
         throw ApiException.forbidden(
           ApiErrorCode.DOB_LOCKED,
           'Your date of birth is already set. Contact support if it needs to change.',
-          { details: [{ field: 'dateOfBirth', message: 'Already set. Contact support to change it.' }] },
+          {
+            details: [
+              { field: 'dateOfBirth', message: 'Already set. Contact support to change it.' },
+            ],
+          },
         );
       }
 

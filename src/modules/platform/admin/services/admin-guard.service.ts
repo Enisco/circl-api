@@ -68,7 +68,10 @@ export class AdminGuardService {
         id: row.id,
         subject: row.subject,
         category: row.categoryCode
-          ? { code: row.categoryCode, label: categoryLabels.get(row.categoryCode) ?? row.categoryCode }
+          ? {
+              code: row.categoryCode,
+              label: categoryLabels.get(row.categoryCode) ?? row.categoryCode,
+            }
           : null,
         state: row.state,
         member: toAuthorView(row.user),

@@ -78,7 +78,7 @@ export class OfferService {
     if (!offer) throw ApiException.notFound('This offer could not be found.');
     if (offer.deletedAt) throw ApiException.deleted('This offer');
 
-    if (await this.activity.countView('offer', id, viewerId)) {
+    if (await this.activity.countView('offer', id, viewerId, offer.authorId)) {
       await this.database.communityOffer.update({
         where: { id },
         data: { viewCount: { increment: 1 } },

@@ -12,7 +12,14 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { CurrentUserId, Idempotent, JwtAuthGuard, PageOptionsDto, SuccessMessage } from '@/common';
+import {
+  CurrentUserId,
+  Idempotent,
+  JwtAuthGuard,
+  PageOptionsDto,
+  SuccessMessage,
+  RateLimit,
+} from '@/common';
 import {
   CreateGroupDto,
   CreateGroupPostDto,
@@ -51,6 +58,7 @@ export class GroupController {
     summary: 'Create a group',
     description: 'The creator becomes the first member and the first admin.',
   })
+  @RateLimit('CREATE')
   async create(@CurrentUserId() userId: string, @Body() dto: CreateGroupDto) {
     const data = await this.groups.create(userId, dto);
 
@@ -96,6 +104,7 @@ export class GroupController {
       'OPEN policy joins immediately; APPROVAL creates a pending request and notifies the admins. ' +
       'Returns the updated viewer state and memberCount so the client reconciles without a refetch.',
   })
+  @RateLimit('REACT')
   async join(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.groups.join(userId, id);
 
@@ -108,6 +117,7 @@ export class GroupController {
     summary: 'Leave, or withdraw a pending request',
     description: 'The last admin of a group with other members in it cannot leave.',
   })
+  @RateLimit('REACT')
   async leave(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.groups.leave(userId, id);
 
@@ -179,6 +189,7 @@ export class GroupController {
   @Idempotent()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Post to a group', description: 'Members only, always.' })
+  @RateLimit('CREATE')
   async createPost(
     @CurrentUserId() userId: string,
     @Param('id') id: string,
@@ -222,6 +233,7 @@ export class GroupController {
   @Post(':groupId/posts/:postId/replies')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Reply to a group post', description: 'One level deep.' })
+  @RateLimit('CREATE')
   async createPostReply(
     @CurrentUserId() userId: string,
     @Param('groupId') groupId: string,

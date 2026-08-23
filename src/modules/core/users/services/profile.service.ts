@@ -1,4 +1,12 @@
-import { ageFromDateOfBirth, ApiErrorCode, ApiException, ErrorMessage, SuccessMessage, toDateOnly, toJsonOrUndefined } from '@/common';
+import {
+  ageFromDateOfBirth,
+  ApiErrorCode,
+  ApiException,
+  ErrorMessage,
+  SuccessMessage,
+  toDateOnly,
+  toJsonOrUndefined,
+} from '@/common';
 import { PrismaService } from '@/infrastructure';
 import { TaxonomyService } from '@/modules/platform';
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
@@ -219,7 +227,11 @@ export class ProfileService {
       throw ApiException.forbidden(
         ApiErrorCode.DOB_LOCKED,
         'Your date of birth is already set. Contact support if it needs to change.',
-        { details: [{ field: 'dateOfBirth', message: 'Already set. Contact support to change it.' }] },
+        {
+          details: [
+            { field: 'dateOfBirth', message: 'Already set. Contact support to change it.' },
+          ],
+        },
       );
     }
 

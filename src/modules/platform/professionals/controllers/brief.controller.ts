@@ -60,7 +60,8 @@ export class BriefController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Choose a match',
-    description: 'Creates the booking from the brief and returns it. Do not also call POST /bookings.',
+    description:
+      'Creates the booking from the brief and returns it. Do not also call POST /bookings.',
   })
   async choose(
     @CurrentUserId() userId: string,
@@ -76,7 +77,8 @@ export class BriefController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Ask a human',
-    description: "The fallback the managed promise implies. Opens a Circl-team thread with the brief attached.",
+    description:
+      'The fallback the managed promise implies. Opens a Circl-team thread with the brief attached.',
   })
   async manualPlacement(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.briefs.manualPlacement(userId, id);

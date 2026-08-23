@@ -106,7 +106,9 @@ export class DisputeService {
     // rather than creating a parallel case (2.10).
     const existing = await this.database.dispute.findFirst({
       where: {
-        ...(context.bookingId ? { bookingId: context.bookingId } : { enquiryId: context.enquiryId }),
+        ...(context.bookingId
+          ? { bookingId: context.bookingId }
+          : { enquiryId: context.enquiryId }),
         state: { in: [DisputeState.OPEN, DisputeState.IN_REVIEW] },
       },
     });
@@ -191,6 +193,59 @@ export class DisputeService {
     };
   }
 
+  /** One dispute, readable by either party. */
+  async findOne(userId: string, disputeId: string) {
+    const dispute = await this.database.dispute.findUnique({
+      where: { id: disputeId },
+      include: {
+        booking: true,
+        enquiry: true,
+        evidence: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+
+    if (!dispute) throw ApiException.notFound('That issue could not be found.');
+
+    if (!this.partiesOf(dispute).includes(userId)) {
+      throw ApiException.forbidden(ApiErrorCode.FORBIDDEN, 'This issue is not yours.');
+    }
+
+    return {
+      id: dispute.id,
+      subjectType: dispute.subjectType,
+      subjectId: dispute.bookingId ?? dispute.enquiryId,
+      reasonCode: dispute.reasonCode,
+      description: dispute.description,
+      state: dispute.state,
+      conversationId: dispute.conversationId,
+      expectedResolutionAt: dispute.expectedResolutionAt?.toISOString() ?? null,
+      resolvedAt: dispute.resolvedAt?.toISOString() ?? null,
+      evidence: dispute.evidence.map(item => ({
+        id: item.id,
+        submittedById: item.submittedById,
+        isMine: item.submittedById === userId,
+        note: item.note,
+        createdAt: item.createdAt.toISOString(),
+      })),
+      viewer: {
+        // Either party may keep adding until it closes (2.10).
+        canAddEvidence:
+          dispute.state === DisputeState.OPEN || dispute.state === DisputeState.IN_REVIEW,
+      },
+      createdAt: dispute.createdAt.toISOString(),
+    };
+  }
+
+  private partiesOf(dispute: {
+    booking: { clientId: string; professionalId: string } | null;
+    enquiry: { buyerId: string; sellerId: string } | null;
+  }): string[] {
+    if (dispute.booking) return [dispute.booking.clientId, dispute.booking.professionalId];
+    if (dispute.enquiry) return [dispute.enquiry.buyerId, dispute.enquiry.sellerId];
+
+    return [];
+  }
+
   /**
    * "Both of you can add evidence" is promised on the screen, so it has to be
    * true after submission and not only during (2.10).
@@ -203,22 +258,14 @@ export class DisputeService {
 
     if (!dispute) throw ApiException.notFound('That issue could not be found.');
 
-    const parties = dispute.booking
-      ? [dispute.booking.clientId, dispute.booking.professionalId]
-      : dispute.enquiry
-        ? [dispute.enquiry.buyerId, dispute.enquiry.sellerId]
-        : [];
-
-    if (!parties.includes(userId)) {
+    if (!this.partiesOf(dispute).includes(userId)) {
       throw ApiException.forbidden(ApiErrorCode.FORBIDDEN, 'This issue is not yours.');
     }
 
     if (dispute.state === DisputeState.RESOLVED || dispute.state === DisputeState.WITHDRAWN) {
-      throw ApiException.conflict(
-        ApiErrorCode.CONFLICT,
-        'This issue has been closed.',
-        { data: { state: dispute.state } },
-      );
+      throw ApiException.conflict(ApiErrorCode.CONFLICT, 'This issue has been closed.', {
+        data: { state: dispute.state },
+      });
     }
 
     const media = await this.media.validate(dto.mediaIds, userId);

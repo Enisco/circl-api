@@ -1,11 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  MediaType,
-  MessageKind,
-  MessageStatus,
-  Prisma,
-  ThreadKind,
-} from '@prisma/client';
+import { MediaType, MessageKind, MessageStatus, Prisma, ThreadKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException } from '@/common';
 import {
@@ -184,6 +178,16 @@ export class MessageService {
     return this.toView(message, userId);
   }
 
+  /** The other participants in a thread, for delivery and push decisions. */
+  async recipientIdsOf(conversationId: string, senderId: string): Promise<string[]> {
+    const rows = await this.database.conversationParticipant.findMany({
+      where: { conversationId, userId: { not: senderId } },
+      select: { userId: true },
+    });
+
+    return rows.map(row => row.userId);
+  }
+
   // ─── 5.4 Read receipts ─────────────────────────────────────────────────────
 
   /**
@@ -246,7 +250,11 @@ export class MessageService {
 
       for (const message of candidates) {
         const readCount = await tx.messageReceipt.count({
-          where: { messageId: message.id, userId: { not: message.senderId! }, readAt: { not: null } },
+          where: {
+            messageId: message.id,
+            userId: { not: message.senderId! },
+            readAt: { not: null },
+          },
         });
 
         if (readCount >= recipientCount) {
@@ -295,7 +303,10 @@ export class MessageService {
     }
 
     if (message.senderId !== userId) {
-      throw ApiException.forbidden(ApiErrorCode.FORBIDDEN, 'You can only delete your own messages.');
+      throw ApiException.forbidden(
+        ApiErrorCode.FORBIDDEN,
+        'You can only delete your own messages.',
+      );
     }
 
     if (Date.now() - message.sentAt.getTime() > DELETE_WINDOW_MS) {

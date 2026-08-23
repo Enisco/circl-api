@@ -12,7 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
+import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage, RateLimit } from '@/common';
 import {
   CreateRequestDto,
   ListRequestsDto,
@@ -62,6 +62,7 @@ export class RequestController {
 
   @Post()
   @Idempotent()
+  @RateLimit('CREATE')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Post a request',
@@ -145,6 +146,7 @@ export class RequestController {
       'Both the "I can help" and "Just replying" modes post here; they differ only by isHelpOffer. ' +
       'Returns the updated parent counts so the client does not need a refetch.',
   })
+  @RateLimit('CREATE')
   async createResponse(
     @CurrentUserId() userId: string,
     @Param('id') id: string,

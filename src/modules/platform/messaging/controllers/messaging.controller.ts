@@ -11,7 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
+import { CurrentUserId, Idempotent, JwtAuthGuard, RateLimit, SuccessMessage } from '@/common';
 import {
   ListConversationsDto,
   ListMessagesDto,
@@ -20,7 +20,9 @@ import {
   SendMessageDto,
   StartThreadDto,
 } from '../dtos/message.dto';
+import { ChatGateway } from '../gateway/chat.gateway';
 import { ConversationService } from '../services/conversation.service';
+import { MessagePushService } from '../services/message-push.service';
 import { MessageService } from '../services/message.service';
 
 @Controller('messages')
@@ -30,6 +32,8 @@ export class MessagingController {
   constructor(
     private readonly conversations: ConversationService,
     private readonly messages: MessageService,
+    private readonly push: MessagePushService,
+    private readonly gateway: ChatGateway,
   ) {}
 
   @Get()
@@ -61,7 +65,10 @@ export class MessagingController {
   async start(@CurrentUserId() userId: string, @Body() dto: StartThreadDto) {
     const { conversation, created } = await this.conversations.startDirect(userId, dto);
 
-    return { data: conversation, message: created ? 'Conversation started' : 'Conversation opened' };
+    return {
+      data: conversation,
+      message: created ? 'Conversation started' : 'Conversation opened',
+    };
   }
 
   @Get('unread')
@@ -108,6 +115,7 @@ export class MessagingController {
   }
 
   @Post(':conversationId/messages')
+  @RateLimit('MESSAGE_MINUTE', 'MESSAGE_HOUR')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Send a message (REST fallback)',
@@ -122,6 +130,17 @@ export class MessagingController {
     @Body() dto: SendMessageDto,
   ) {
     const data = await this.messages.send(userId, id, dto);
+
+    // The REST path is the fallback, so the sender has no socket — but the
+    // RECIPIENT may well have one, and pushing to someone already looking at the
+    // thread is the notification people complain about. Only the offline ones
+    // get a push (5.6).
+    const recipientIds = await this.messages.recipientIdsOf(id, userId);
+    const offline = recipientIds.filter(recipientId => !this.gateway.isConnected(recipientId));
+
+    if (offline.length) {
+      this.push.notify({ conversationId: id, messageId: data.id, senderId: userId, recipientIds: offline });
+    }
 
     return { data, message: 'Message sent' };
   }
@@ -164,7 +183,8 @@ export class MessagingController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Mute a thread',
-    description: 'Silences the notification, not the count. A muted thread still increments unread.',
+    description:
+      'Silences the notification, not the count. A muted thread still increments unread.',
   })
   async mute(
     @CurrentUserId() userId: string,

@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { DeflectionOutcome } from '@prisma/client';
-import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
+import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage, RateLimit } from '@/common';
 import {
   CreateGuideDto,
   GuideDeflectionDto,
@@ -86,6 +86,7 @@ export class GuideController {
   @Idempotent()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Write a guide' })
+  @RateLimit('CREATE')
   async create(@CurrentUserId() userId: string, @Body() dto: CreateGuideDto) {
     const data = await this.guides.create(userId, dto);
 
@@ -111,6 +112,7 @@ export class GuideController {
   @Post(':id/bookmark')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Bookmark a guide' })
+  @RateLimit('REACT')
   async bookmark(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.guides.setBookmark(userId, id, true);
 
@@ -120,6 +122,7 @@ export class GuideController {
   @Delete(':id/bookmark')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Remove a bookmark' })
+  @RateLimit('REACT')
   async unbookmark(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.guides.setBookmark(userId, id, false);
 
@@ -129,6 +132,7 @@ export class GuideController {
   @Post(':id/reactions')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Like a guide' })
+  @RateLimit('REACT')
   async like(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.guides.react(userId, id, true);
 
@@ -138,6 +142,7 @@ export class GuideController {
   @Delete(':id/reactions')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Remove a like' })
+  @RateLimit('REACT')
   async unlike(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.guides.react(userId, id, false);
 

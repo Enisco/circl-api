@@ -7,7 +7,9 @@ import { DiscoveryService } from './services/discovery.service';
 
 @Module({
   imports: [
-    RouterModule.register([{ path: 'api/v1', module: ConnectModule, children: [ConnectController] }]),
+    RouterModule.register([
+      { path: 'api/v1', module: ConnectModule, children: [ConnectController] },
+    ]),
   ],
   controllers: [ConnectController],
   providers: [ConnectProfileService, DiscoveryService, ConnectionRequestService],

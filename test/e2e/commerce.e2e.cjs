@@ -288,10 +288,12 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
 
   console.log('\n── 4.1.3 One dispute resource, shared with bookings ─────────');
 
-  r = await api(buyer.token, 'POST', `/commerce/enquiries/${enquiryId}/disputes`, {
-    reasonCode: 'NOT_AS_DESCRIBED', description: 'The whiting was not fresh and the bag had been opened already.',
+  // 4.1.3: one polymorphic endpoint, not a near-identical one per section.
+  r = await api(buyer.token, 'POST', '/disputes', {
+    subjectType: 'ORDER', subjectId: enquiryId, reasonCode: 'NOT_AS_DESCRIBED',
+    description: 'The whiting was not fresh and the bag had been opened already.',
   });
-  check('raise an order dispute → 201', r.status === 201, r.body?.error);
+  check('raise an order dispute via POST /disputes → 201', r.status === 201, r.body?.error);
   const dispute = await prisma.dispute.findFirst({ where: { enquiryId } });
   check('stored with subjectType ORDER on the SHARED table', dispute?.subjectType === 'ORDER', dispute?.subjectType);
   check('reuses the enquiry thread rather than opening a new one', dispute?.conversationId === enquiryConv, { dispute: dispute?.conversationId, enquiry: enquiryConv });

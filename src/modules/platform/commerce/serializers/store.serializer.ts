@@ -116,7 +116,10 @@ export const toContactView = (contact: { channel: string; value: string }) => {
     case 'TIKTOK':
       return { ...contact, display: `@${contact.value}` };
     case 'WEBSITE':
-      return { ...contact, display: contact.value.replace(/^https?:\/\//, '').replace(/^www\./, '') };
+      return {
+        ...contact,
+        display: contact.value.replace(/^https?:\/\//, '').replace(/^www\./, ''),
+      };
     case 'PHONE':
     case 'WHATSAPP':
       return { ...contact, display: formatPhone(contact.value) };

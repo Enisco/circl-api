@@ -93,7 +93,10 @@ export class BookingService {
     });
 
     if (!listing || listing.deletedAt) {
-      throw ApiException.notFound('That listing could not be found.', ApiErrorCode.LISTING_NOT_FOUND);
+      throw ApiException.notFound(
+        'That listing could not be found.',
+        ApiErrorCode.LISTING_NOT_FOUND,
+      );
     }
 
     if (listing.userId === clientId) {
@@ -655,7 +658,9 @@ export class BookingService {
       [JobState.DISPUTED]: 'An issue was raised. Circl is reviewing it.',
     };
 
-    return note ? `${base[state] ?? 'This booking was updated.'} ${note}` : (base[state] ?? 'This booking was updated.');
+    return note
+      ? `${base[state] ?? 'This booking was updated.'} ${note}`
+      : (base[state] ?? 'This booking was updated.');
   }
 
   private async loadBrief(userId: string, briefId: string) {

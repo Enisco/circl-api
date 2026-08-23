@@ -209,7 +209,9 @@ export class SmartMatchService {
     const clauses: string[] = [];
 
     if (candidate.ratingCount >= 3 && candidate.ratingAverage >= 4.5) {
-      clauses.push(`rated ${candidate.ratingAverage.toFixed(1)} by ${candidate.ratingCount} people`);
+      clauses.push(
+        `rated ${candidate.ratingAverage.toFixed(1)} by ${candidate.ratingCount} people`,
+      );
     }
 
     if (candidate.similarJobs >= 3) {
@@ -234,7 +236,10 @@ export class SmartMatchService {
 
     if (!clauses.length) return null;
 
-    const sentence = clauses.length === 1 ? clauses[0] : `${clauses.slice(0, -1).join(', ')} and ${clauses.at(-1)}`;
+    const sentence =
+      clauses.length === 1
+        ? clauses[0]
+        : `${clauses.slice(0, -1).join(', ')} and ${clauses.at(-1)}`;
 
     return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`;
   }

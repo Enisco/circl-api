@@ -178,7 +178,14 @@ export class ProfessionalsHomeService {
       this.database.booking.aggregate({
         where: {
           professionalId: userId,
-          state: { in: [JobState.ACCEPTED, JobState.IN_PROGRESS, JobState.DELIVERED, JobState.CHANGES_REQUESTED] },
+          state: {
+            in: [
+              JobState.ACCEPTED,
+              JobState.IN_PROGRESS,
+              JobState.DELIVERED,
+              JobState.CHANGES_REQUESTED,
+            ],
+          },
         },
         _count: { _all: true },
         _sum: { agreedAmount: true },
@@ -213,9 +220,7 @@ export class ProfessionalsHomeService {
       conversion: {
         views: listing.profileViews,
         bookings: bookingCount,
-        rate: listing.profileViews
-          ? Number((bookingCount / listing.profileViews).toFixed(4))
-          : 0,
+        rate: listing.profileViews ? Number((bookingCount / listing.profileViews).toFixed(4)) : 0,
       },
       isAcceptingWork: listing.isAcceptingWork,
     };

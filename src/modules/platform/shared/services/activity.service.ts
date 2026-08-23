@@ -59,10 +59,22 @@ export class ActivityService {
    * this, and the dedupe key lives in Redis because it is high-churn and
    * worthless after a day.
    *
+   * `ownerId` is what stops a post being born with a view on it. Create handlers
+   * return the detail view, so without it every request, offer, update and guide
+   * arrived showing one view before anybody had read it, and an author re-reading
+   * their own post kept inflating it. `counts.views` is a claim about how many
+   * OTHER people looked, so the author never counts toward it.
+   *
    * Returns true when the view was counted.
    */
-  async countView(resource: string, resourceId: string, viewerId: string | null): Promise<boolean> {
+  async countView(
+    resource: string,
+    resourceId: string,
+    viewerId: string | null,
+    ownerId?: string | null,
+  ): Promise<boolean> {
     if (!viewerId) return false;
+    if (ownerId && ownerId === viewerId) return false;
 
     const key = `view:${resource}:${resourceId}:${viewerId}`;
     const seen = await this.cache.get<boolean>(key).catch(() => null);

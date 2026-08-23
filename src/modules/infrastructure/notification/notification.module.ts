@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { FcmService } from './providers/push/fcm.service';
 import { NotificationService } from './services/notification.service';
 import { ResendProvider, SesProvider } from './providers';
 import { NotificationQueue } from '@/modules/infrastructure/workers/queues/notification.queue';
@@ -29,7 +30,11 @@ import { NOTIFICATION_QUEUE } from '@/common';
     NotificationQueue,
     EmailService,
     EmailTemplateRendererService,
+    FcmService,
   ],
-  exports: [NotificationService, NotificationQueue],
+  // FcmService is exported because messaging pushes directly (5.6): the socket
+  // decides per recipient whether a message needs a push, which is a decision
+  // only that path can make.
+  exports: [NotificationService, NotificationQueue, FcmService],
 })
 export class NotificationModule {}

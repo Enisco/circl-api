@@ -26,8 +26,7 @@ import {
   UpdateStoreDto,
   ValidateCartDto,
 } from '../dtos/store.dto';
-import { CancelDto, CreateDisputeDto, TransitionReasonDto } from '../../professionals/dtos/booking.dto';
-import { DisputeService } from '../../professionals/services/dispute.service';
+import { CancelDto, TransitionReasonDto } from '../../professionals/dtos/booking.dto';
 import { AiDraftService } from '../services/ai-draft.service';
 import { CommerceBrowseService } from '../services/commerce-browse.service';
 import { EnquiryService } from '../services/enquiry.service';
@@ -44,7 +43,6 @@ export class CommerceController {
     private readonly browse: CommerceBrowseService,
     private readonly enquiries: EnquiryService,
     private readonly ai: AiDraftService,
-    private readonly disputes: DisputeService,
   ) {}
 
   // ─── 4.3 Home ──────────────────────────────────────────────────────────────
@@ -88,7 +86,10 @@ export class CommerceController {
 
   @Get('stores/me')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'My store', description: '404 when they have none, for the empty state.' })
+  @ApiOperation({
+    summary: 'My store',
+    description: '404 when they have none, for the empty state.',
+  })
   async myStore(@CurrentUserId() userId: string) {
     const data = await this.stores.findMine(userId);
 
@@ -127,7 +128,8 @@ export class CommerceController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Browse items',
-    description: 'The same filter vocabulary as stores; store-level filters read through to the store.',
+    description:
+      'The same filter vocabulary as stores; store-level filters read through to the store.',
   })
   async browseItems(@CurrentUserId() userId: string, @Query() query: BrowseCommerceDto) {
     const { data, meta } = await this.browse.browseItems(userId, query);
@@ -180,7 +182,10 @@ export class CommerceController {
 
   @Get('enquiries/:id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Order detail', description: 'Same shape as a booking, with server-authorised actions.' })
+  @ApiOperation({
+    summary: 'Order detail',
+    description: 'Same shape as a booking, with server-authorised actions.',
+  })
   async findEnquiry(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.enquiries.findOne(userId, id);
 
@@ -202,7 +207,10 @@ export class CommerceController {
     @Param('id') id: string,
     @Body() dto: TransitionReasonDto,
   ) {
-    return { data: await this.enquiries.decline(userId, id, dto.reason), message: 'Enquiry declined' };
+    return {
+      data: await this.enquiries.decline(userId, id, dto.reason),
+      message: 'Enquiry declined',
+    };
   }
 
   @Post('enquiries/:id/ready')
@@ -230,24 +238,16 @@ export class CommerceController {
     @Param('id') id: string,
     @Body() dto: CancelDto,
   ) {
-    return { data: await this.enquiries.cancel(userId, id, dto.reason), message: 'Order cancelled' };
+    return {
+      data: await this.enquiries.cancel(userId, id, dto.reason),
+      message: 'Order cancelled',
+    };
   }
 
-  @Post('enquiries/:id/disputes')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({
-    summary: 'Report a problem with an order',
-    description: 'The same dispute resource bookings use, so it behaves identically here (4.1.3).',
-  })
-  async raiseDispute(
-    @CurrentUserId() userId: string,
-    @Param('id') id: string,
-    @Body() dto: CreateDisputeDto,
-  ) {
-    const data = await this.disputes.openForEnquiry(userId, id, dto);
-
-    return { data, message: 'Issue raised' };
-  }
+  // "Report a problem" on an order goes to POST /disputes with
+  // subjectType: ORDER (4.1.3). Deliberately not duplicated here: the spec calls
+  // out two near-identical endpoints as the thing to avoid, and a second path
+  // into the same service is how the two eventually drift.
 
   // ─── 4.8 Selling ───────────────────────────────────────────────────────────
 
@@ -307,11 +307,7 @@ export class CommerceController {
   @Post('stores/:id/items')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Add an item' })
-  async addItem(
-    @CurrentUserId() userId: string,
-    @Param('id') id: string,
-    @Body() dto: ItemDto,
-  ) {
+  async addItem(@CurrentUserId() userId: string, @Param('id') id: string, @Body() dto: ItemDto) {
     const data = await this.items.create(userId, id, dto);
 
     return { data, message: SuccessMessage.RESOURCE_CREATED('Item') };
@@ -321,7 +317,8 @@ export class CommerceController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'A store catalogue',
-    description: 'Out-of-stock items are included by default: they still tell a buyer what the shop sells.',
+    description:
+      'Out-of-stock items are included by default: they still tell a buyer what the shop sells.',
   })
   async listStoreItems(@Param('id') id: string, @Query() query: ListStoreItemsDto) {
     const { data, meta } = await this.items.listForStore(id, query);

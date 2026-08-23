@@ -5,7 +5,9 @@ import { GuardService } from './services/guard.service';
 
 @Module({
   imports: [
-    RouterModule.register([{ path: 'api/v1', module: CirclGuardModule, children: [GuardController] }]),
+    RouterModule.register([
+      { path: 'api/v1', module: CirclGuardModule, children: [GuardController] },
+    ]),
   ],
   controllers: [GuardController],
   providers: [GuardService],

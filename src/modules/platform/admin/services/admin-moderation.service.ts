@@ -119,11 +119,9 @@ export class AdminModerationService {
     if (!item) throw ApiException.notFound('That queue item could not be found.');
 
     if (item.state === ModerationQueueState.RESOLVED) {
-      throw ApiException.conflict(
-        ApiErrorCode.CONFLICT,
-        'That item has already been decided.',
-        { data: { decision: item.decision, decidedAt: item.decidedAt } },
-      );
+      throw ApiException.conflict(ApiErrorCode.CONFLICT, 'That item has already been decided.', {
+        data: { decision: item.decision, decidedAt: item.decidedAt },
+      });
     }
 
     await this.database.$transaction(async tx => {

@@ -17,46 +17,76 @@ const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.t
 const Bool = () => Transform(({ value }) => value === true || value === 'true');
 const CsvArray = () =>
   Transform(({ value }) =>
-    typeof value === 'string' ? value.split(',').map(v => v.trim()).filter(Boolean) : value,
+    typeof value === 'string'
+      ? value
+          .split(',')
+          .map(v => v.trim())
+          .filter(Boolean)
+      : value,
   );
 
 export class BrowseProfessionalsDto extends PageOptionsDto {
   @ApiPropertyOptional({ description: 'A profession code. "All" omits the param.' })
-  @Trim() @IsString() @IsOptional()
+  @Trim()
+  @IsString()
+  @IsOptional()
   category?: string;
 
   @ApiPropertyOptional({ description: 'Name, profession title, city, category.' })
-  @Trim() @IsString() @IsOptional()
+  @Trim()
+  @IsString()
+  @IsOptional()
   q?: string;
 
-  @ApiPropertyOptional() @IsString() @IsOptional()
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
   cityId?: string;
 
   @ApiPropertyOptional({ description: 'Requires a location permission the client primes first.' })
-  @Bool() @IsBoolean() @IsOptional()
+  @Bool()
+  @IsBoolean()
+  @IsOptional()
   nearMe?: boolean;
 
   @ApiPropertyOptional({ description: 'Only meaningful with nearMe.' })
-  @Type(() => Number) @IsInt() @Min(1) @Max(200) @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  @IsOptional()
   radiusMiles?: number;
 
   @ApiPropertyOptional({ description: 'The device latitude, sent only when nearMe is set.' })
-  @Type(() => Number) @IsNumber() @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @IsOptional()
   latitude?: number;
 
-  @ApiPropertyOptional() @Type(() => Number) @IsNumber() @IsOptional()
+  @ApiPropertyOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @IsOptional()
   longitude?: number;
 
   @ApiPropertyOptional({ example: 4.5 })
-  @Type(() => Number) @IsNumber() @Min(0) @Max(5) @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(5)
+  @IsOptional()
   minRating?: number;
 
   @ApiPropertyOptional({ enum: ['AVAILABLE_NOW', 'ACCEPTING_BOOKINGS'] })
-  @IsIn(['AVAILABLE_NOW', 'ACCEPTING_BOOKINGS']) @IsOptional()
+  @IsIn(['AVAILABLE_NOW', 'ACCEPTING_BOOKINGS'])
+  @IsOptional()
   availability?: 'AVAILABLE_NOW' | 'ACCEPTING_BOOKINGS';
 
   @ApiPropertyOptional({ description: '24 backs "Replies within a day".' })
-  @Type(() => Number) @IsInt() @Min(1) @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @IsOptional()
   maxResponseHours?: number;
 
   @ApiPropertyOptional({
@@ -66,7 +96,9 @@ export class BrowseProfessionalsDto extends PageOptionsDto {
       'filters.verification.isActive false and the client hides the row, because with no checks ' +
       'written nothing would ever match it.',
   })
-  @CsvArray() @IsArray() @IsOptional()
+  @CsvArray()
+  @IsArray()
+  @IsOptional()
   verification?: string[];
 
   @ApiPropertyOptional({
@@ -75,7 +107,9 @@ export class BrowseProfessionalsDto extends PageOptionsDto {
       'averaging 4 stars or above. The rule text ships in GET /taxonomy so the copy beside the ' +
       'filter and the query cannot drift apart.',
   })
-  @Bool() @IsBoolean() @IsOptional()
+  @Bool()
+  @IsBoolean()
+  @IsOptional()
   immigrantFriendly?: boolean;
 
   @ApiPropertyOptional({
@@ -86,20 +120,28 @@ export class BrowseProfessionalsDto extends PageOptionsDto {
       '`type` so the client renders the grey "Community offer" chip and swaps the action to ' +
       'Message (D14).',
   })
-  @IsIn(['PROFESSIONAL', 'COMMUNITY_OFFER', 'BOTH']) @IsOptional()
+  @IsIn(['PROFESSIONAL', 'COMMUNITY_OFFER', 'BOTH'])
+  @IsOptional()
   listingType?: 'PROFESSIONAL' | 'COMMUNITY_OFFER' | 'BOTH';
 
   @ApiPropertyOptional({ description: 'Pence.' })
-  @Type(() => Number) @IsInt() @Min(0) @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @IsOptional()
   maxPrice?: number;
 
-  @ApiPropertyOptional() @Bool() @IsBoolean() @IsOptional()
+  @ApiPropertyOptional()
+  @Bool()
+  @IsBoolean()
+  @IsOptional()
   freeConsultation?: boolean;
 
   @ApiPropertyOptional({
     enum: ['RECOMMENDED', 'RATING', 'REVIEWS', 'NEAREST', 'PRICE', 'RESPONSE'],
     default: 'RECOMMENDED',
   })
-  @IsIn(['RECOMMENDED', 'RATING', 'REVIEWS', 'NEAREST', 'PRICE', 'RESPONSE']) @IsOptional()
+  @IsIn(['RECOMMENDED', 'RATING', 'REVIEWS', 'NEAREST', 'PRICE', 'RESPONSE'])
+  @IsOptional()
   sort?: 'RECOMMENDED' | 'RATING' | 'REVIEWS' | 'NEAREST' | 'PRICE' | 'RESPONSE';
 }

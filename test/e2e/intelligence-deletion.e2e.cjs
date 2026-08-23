@@ -131,7 +131,10 @@ async function plantCode(userId, code) {
   r = await api(helper.token, 'GET', '/pulse/COMMUNITY?cityId=MANCHESTER');
   check('community dashboard → 200', r.status === 200, r.body?.error);
   check('topRequests reflects what was actually asked', r.body?.data?.metrics?.topRequests?.some(m => m.code === 'BANK_ACCOUNT'), r.body?.data?.metrics?.topRequests);
-  check('labels are rendered, not raw codes', r.body?.data?.metrics?.topRequests?.[0]?.label === 'Bank Account', r.body?.data?.metrics?.topRequests?.[0]);
+  // Assert the label is RENDERED rather than which category happens to lead:
+  // the ordering depends on whatever else the run created.
+  const bankRow = r.body?.data?.metrics?.topRequests?.find(m => m.code === 'BANK_ACCOUNT');
+  check('labels are rendered, not raw codes', bankRow?.label === 'Bank Account', bankRow);
 
   check('the suppression thresholds ship with the payload', r.body?.data?.suppression?.peopleFloor === 20, r.body?.data?.suppression);
   check('so an empty list reads as "too few to publish"', /suppressed rather than rounded/.test(r.body?.data?.suppression?.note ?? ''), r.body?.data?.suppression?.note);

@@ -159,7 +159,10 @@ export class ItemService {
       }),
     ]);
 
-    const media = await this.media.forOwners(ITEM_MEDIA_OWNER, rows.map(row => row.id));
+    const media = await this.media.forOwners(
+      ITEM_MEDIA_OWNER,
+      rows.map(row => row.id),
+    );
     const views = await Promise.all(rows.map(row => this.toView(row, media.get(row.id) ?? [])));
 
     return { data: views, meta: buildPageMeta(query, total) };
@@ -175,7 +178,7 @@ export class ItemService {
       throw ApiException.notFound('That item could not be found.');
     }
 
-    if (await this.activity.countView('item', itemId, viewerId)) {
+    if (await this.activity.countView('item', itemId, viewerId, item.store.ownerId)) {
       await this.database.storeItem.update({
         where: { id: itemId },
         data: { viewCount: { increment: 1 } },

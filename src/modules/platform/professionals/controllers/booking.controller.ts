@@ -82,7 +82,10 @@ export class BookingController {
 
   @Post(':id/accept')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Accept a booking', description: 'Professional, from PENDING_ACCEPTANCE.' })
+  @ApiOperation({
+    summary: 'Accept a booking',
+    description: 'Professional, from PENDING_ACCEPTANCE.',
+  })
   async accept(@CurrentUserId() userId: string, @Param('id') id: string) {
     return { data: await this.bookings.accept(userId, id), message: 'Booking accepted' };
   }
@@ -111,17 +114,16 @@ export class BookingController {
     summary: 'Mark as delivered',
     description: 'Stamps `autoCompleteAt` 7 days out, which the screen can then state plainly.',
   })
-  async deliver(
-    @CurrentUserId() userId: string,
-    @Param('id') id: string,
-    @Body() dto: DeliverDto,
-  ) {
+  async deliver(@CurrentUserId() userId: string, @Param('id') id: string, @Body() dto: DeliverDto) {
     return { data: await this.bookings.deliver(userId, id, dto), message: 'Marked as delivered' };
   }
 
   @Post(':id/request-changes')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Ask for changes', description: 'Client, from DELIVERED. Work resumes.' })
+  @ApiOperation({
+    summary: 'Ask for changes',
+    description: 'Client, from DELIVERED. Work resumes.',
+  })
   async requestChanges(
     @CurrentUserId() userId: string,
     @Param('id') id: string,
@@ -146,11 +148,7 @@ export class BookingController {
   @Post(':id/cancel')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Cancel', description: 'Either party, before work starts.' })
-  async cancel(
-    @CurrentUserId() userId: string,
-    @Param('id') id: string,
-    @Body() dto: CancelDto,
-  ) {
+  async cancel(@CurrentUserId() userId: string, @Param('id') id: string, @Body() dto: CancelDto) {
     return { data: await this.bookings.cancel(userId, id, dto), message: 'Booking cancelled' };
   }
 

@@ -278,7 +278,9 @@ export class ReviewService {
 
     await this.database.review.update({
       where: { id },
-      data: { reply: toJsonOrUndefined({ comment: dto.comment, createdAt: new Date().toISOString() }) },
+      data: {
+        reply: toJsonOrUndefined({ comment: dto.comment, createdAt: new Date().toISOString() }),
+      },
     });
 
     return this.toView(
@@ -317,7 +319,11 @@ export class ReviewService {
           throw ApiException.unprocessable(
             ApiErrorCode.REVIEW_NOT_ELIGIBLE,
             'You can review a booking once it is complete, and only if you were part of it.',
-            { details: [{ field: 'sourceId', message: 'Not a completed booking you were part of.' }] },
+            {
+              details: [
+                { field: 'sourceId', message: 'Not a completed booking you were part of.' },
+              ],
+            },
           );
         }
 
@@ -346,7 +352,11 @@ export class ReviewService {
           throw ApiException.unprocessable(
             ApiErrorCode.REVIEW_NOT_ELIGIBLE,
             'You can review someone who helped with a request you posted, once you have resolved it and credited them.',
-            { details: [{ field: 'sourceId', message: 'Not a request you resolved and credited them on.' }] },
+            {
+              details: [
+                { field: 'sourceId', message: 'Not a request you resolved and credited them on.' },
+              ],
+            },
           );
         }
 
@@ -406,7 +416,9 @@ export class ReviewService {
     }
   }
 
-  private assertSourceId(dto: CreateReviewDto): asserts dto is CreateReviewDto & { sourceId: string } {
+  private assertSourceId(
+    dto: CreateReviewDto,
+  ): asserts dto is CreateReviewDto & { sourceId: string } {
     if (!dto.sourceId) {
       throw ApiException.unprocessable(
         ApiErrorCode.VALIDATION_FAILED,

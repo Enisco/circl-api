@@ -93,7 +93,7 @@ export class GuardService {
       await this.conversations.postSystemMessage(
         conversation.id,
         SystemMessageType.SUPPORT_OPENED,
-        'This is a private thread with Circl\'s team. Nobody in the community can see it. ' +
+        "This is a private thread with Circl's team. Nobody in the community can see it. " +
           'Someone will read it and reply here.',
         { guardThreadId: thread.id },
         tx,

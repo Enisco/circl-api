@@ -10,7 +10,9 @@ import { AccountDeletionService } from './services/account-deletion.service';
  */
 @Module({
   imports: [
-    RouterModule.register([{ path: 'api/v1', module: AccountModule, children: [AccountController] }]),
+    RouterModule.register([
+      { path: 'api/v1', module: AccountModule, children: [AccountController] },
+    ]),
   ],
   controllers: [AccountController],
   providers: [AccountDeletionService],

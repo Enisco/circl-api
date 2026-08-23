@@ -11,7 +11,14 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { CurrentUserId, Idempotent, JwtAuthGuard, PageOptionsDto, SuccessMessage } from '@/common';
+import {
+  CurrentUserId,
+  Idempotent,
+  JwtAuthGuard,
+  PageOptionsDto,
+  SuccessMessage,
+  RateLimit,
+} from '@/common';
 import { CreateUpdateDto, CreateUpdateReplyDto, ListUpdatesDto } from '../dtos/update.dto';
 import { UpdateService } from '../services/update.service';
 
@@ -34,6 +41,7 @@ export class UpdateController {
   @Idempotent()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Post an update' })
+  @RateLimit('CREATE')
   async create(@CurrentUserId() userId: string, @Body() dto: CreateUpdateDto) {
     const data = await this.updates.create(userId, dto);
 
@@ -67,6 +75,7 @@ export class UpdateController {
       'authoritative count, because a client-side increment is wrong the moment a second device ' +
       'or another member touches the post.',
   })
+  @RateLimit('REACT')
   async like(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.updates.react(userId, id, true);
 
@@ -76,6 +85,7 @@ export class UpdateController {
   @Delete(':id/reactions')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Remove a like' })
+  @RateLimit('REACT')
   async unlike(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.updates.react(userId, id, false);
 
@@ -100,6 +110,7 @@ export class UpdateController {
   @Post(':id/replies')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Reply to an update' })
+  @RateLimit('CREATE')
   async createReply(
     @CurrentUserId() userId: string,
     @Param('id') id: string,
