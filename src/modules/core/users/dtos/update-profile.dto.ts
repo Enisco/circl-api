@@ -2,7 +2,10 @@ import { Sanitize } from '@/common';
 import { ApiProperty } from '@nestjs/swagger';
 import { Gender } from '@prisma/client';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
+  IsDateString,
   IsEnum,
   IsInt,
   IsOptional,
@@ -144,6 +147,65 @@ export class UpdateProfileDto {
   @IsBoolean({ message: 'openInbox must be a boolean' })
   @IsOptional()
   openInbox?: boolean;
+
+  // ── The four shared fields (D15) ───────────────────────────────────────────
+  // These live on the user rather than on a Connect profile or a professional
+  // listing, because Connect, Professionals and Commerce all read them and a
+  // second copy is guaranteed to disagree with the first.
+
+  @ApiProperty({
+    example: '1994-03-11',
+    description:
+      'YYYY-MM-DD. Collected once and never asked for again (D10). Changing it after it is set ' +
+      'is a support action, not a self-service edit, because it is an age gate — a request to ' +
+      'change it here returns 403 DOB_LOCKED.',
+    required: false,
+  })
+  @IsDateString({}, { message: 'dateOfBirth must be a date in YYYY-MM-DD format' })
+  @IsOptional()
+  dateOfBirth?: string;
+
+  @ApiProperty({
+    type: [String],
+    example: ['JOB_SEARCH', 'FOOD_COOKING'],
+    description: 'Up to 8 interest codes. Shapes the feed, and prefills Connect setup.',
+    required: false,
+  })
+  @IsArray()
+  @ArrayMaxSize(8, { message: 'interests must have 8 entries or fewer' })
+  @IsString({ each: true })
+  @IsOptional()
+  interests?: string[];
+
+  @ApiProperty({
+    type: [String],
+    example: ['ENGLISH', 'YORUBA'],
+    description: 'Up to 6 language codes.',
+    required: false,
+  })
+  @IsArray()
+  @ArrayMaxSize(6, { message: 'languages must have 6 entries or fewer' })
+  @IsString({ each: true })
+  @IsOptional()
+  languages?: string[];
+
+  @ApiProperty({
+    example: 'WEST_AFRICAN',
+    description: 'One heritage code. The same list Commerce uses for store tags (3.1.4).',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  heritageTag?: string;
+
+  @ApiProperty({
+    example: 'JUST_ARRIVED',
+    description: 'One journey-stage code. Powers feed ranking and the Connect "new to the UK" filter.',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  journeyStage?: string;
 
   @ApiProperty({ example: false, required: false })
   @IsBoolean({ message: 'onboardingCompleted must be a boolean' })

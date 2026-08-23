@@ -1,4 +1,5 @@
 import { CommunityModule } from './community/community.module';
+import { ConnectModule } from './connect/connect.module';
 import { IntelligenceModule } from './intelligence/intelligence.module';
 import { MediaModule } from './media/media.module';
 import { MessagingCoreModule } from './messaging/messaging.module';
@@ -25,6 +26,7 @@ export const PLATFORM_MODULES = [
   MediaModule,
   CommunityModule,
   ProfessionalsModule,
+  ConnectModule,
   ModerationModule,
 ];
 
