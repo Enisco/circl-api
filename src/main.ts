@@ -5,6 +5,7 @@ import { SWAGGER_CUSTOM_CSS, SWAGGER_OPTIONS } from '@/config/swagger.config';
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory, Reflector } from '@nestjs/core';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { useContainer } from 'class-validator';
 import compression from 'compression';
@@ -82,6 +83,10 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionsFilter());
 
   useContainer(app.select(AppModule), { fallbackOnErrors: true });
+
+  // The chat gateway (spec 5.2). One connection per device, not one per
+  // conversation, so the client subscribes to everything it participates in.
+  app.useWebSocketAdapter(new IoAdapter(app));
 
   app.enableShutdownHooks();
 
