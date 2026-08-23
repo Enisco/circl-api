@@ -159,11 +159,19 @@ export class HttpExceptionsFilter implements ExceptionFilter {
   }
 
   /**
-   * class-validator prefixes its messages with the property name, which is the
-   * only place the field is recoverable once the pipe has flattened them.
+   * Recovers the offending field from a flattened validation message.
+   *
+   * `field` has to match the request body key exactly, because the client
+   * attaches each message to that input (0.4, 1.2.3). class-validator normally
+   * puts the property first — but ValidationPipe's `forbidNonWhitelisted` writes
+   * "property cityId should not exist", where the first word is the literal
+   * "property" and the key is the second. Getting that wrong points every
+   * unknown-field error at an input that does not exist.
    */
   private fieldFromMessage(message: string): string {
-    return message.trim().split(/\s+/)[0] ?? 'unknown';
+    const words = message.trim().split(/\s+/);
+
+    return (words[0] === 'property' ? words[1] : words[0]) ?? 'unknown';
   }
 
   private codeForStatus(status: number, fallback: string): string {
