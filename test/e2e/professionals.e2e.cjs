@@ -1,51 +1,17 @@
 /* Section 2 end-to-end check. Creates throwaway users, exercises listings,
    promotion, browse, reviews, bookings, briefs and disputes, then cleans up. */
-require('dotenv').config({ path: './.env' });
-const jwt = require('jsonwebtoken');
-const { PrismaClient } = require('@prisma/client');
-const { PrismaPg } = require('@prisma/adapter-pg');
-const { Pool } = require('pg');
+const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness.cjs');
 
-const BASE = 'http://localhost:4000/api/v1';
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
-let pass = 0, fail = 0;
-const check = (name, ok, detail) => {
-  if (ok) { pass++; console.log(`  ✓ ${name}`); }
-  else { fail++; console.log(`  ✗ ${name}${detail !== undefined ? ' — ' + JSON.stringify(detail).slice(0, 300) : ''}`); }
-};
-
-async function api(token, method, path, body, extraHeaders = {}) {
-  const res = await fetch(BASE + path, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extraHeaders },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  const text = await res.text();
-  let json = null;
-  try { json = text ? JSON.parse(text) : null; } catch { json = { raw: text }; }
-  return { status: res.status, body: json };
-}
-
-async function makeUser(tag, extra = {}) {
-  const role = await prisma.role.findUnique({ where: { code: 'user' } });
-  const user = await prisma.user.create({
-    data: {
-      firstName: 'E2E', lastName: tag, email: `e2e-${tag}-${Date.now()}@example.test`,
-      username: `e2e_${tag}_${Date.now()}`, status: 'ACTIVE',
-      userRole: { create: { roleId: role.id } },
-      profile: { create: { cityId: 'MANCHESTER', bio: 'I have worked in immigration law for nine years and I help people navigate it.', ...extra } },
-      trustChecks: { create: { check: 'EMAIL', status: 'VERIFIED', verifiedAt: new Date() } },
-      sessions: { create: { userAgent: 'e2e', deviceType: 'cli', browserName: 'cli', operatingSystem: 'cli', ipAddress: '127.0.0.1', isActive: true, deviceFingerprint: `e2e-${tag}-${Date.now()}` } },
-    },
-    include: { sessions: true },
-  });
-  return { id: user.id, token: jwt.sign({ sub: user.id, sid: user.sessions[0].id }, process.env.JWT_ACCESS_SECRET, { expiresIn: '1h' }) };
-}
 
 (async () => {
-  const pro = await makeUser('pro', { countryOfOrigin: 'NG' });
+  await sweep('pre-run');
+
+  // A bio, so the registration prefill has something to prefill `about` from.
+  const pro = await makeUser('pro', {
+    countryOfOrigin: 'NG',
+    bio: 'I have worked in immigration law for nine years and I help people navigate it.',
+  });
   const client = await makeUser('client', { countryOfOrigin: 'GH' });
   const client2 = await makeUser('client2', { countryOfOrigin: 'KE' });
   const client3 = await makeUser('client3', { countryOfOrigin: 'GB' });
@@ -397,14 +363,7 @@ async function makeUser(tag, extra = {}) {
   check('GET /professionals/me without a listing → 404', r.status === 404 && r.body?.error?.code === 'LISTING_NOT_FOUND', r.body?.error);
 
   console.log('\n── Cleanup ──────────────────────────────────────────────────');
-  await prisma.moderationQueueItem.deleteMany({ where: { subjectUserId: { in: ids } } });
-  await prisma.activityEvent.deleteMany({ where: { userId: { in: ids } } });
-  await prisma.idempotencyRecord.deleteMany({ where: { userId: { in: ids } } });
-  await prisma.conversation.deleteMany({ where: { participants: { some: { userId: { in: ids } } } } });
-  await prisma.user.deleteMany({ where: { id: { in: ids } } });
-  console.log(`  removed ${ids.length} test users and their content`);
+  await sweep('cleanup');
 
-  console.log(`\n═══ ${pass} passed, ${fail} failed ═══\n`);
-  await prisma.$disconnect(); await pool.end();
-  process.exit(fail ? 1 : 0);
-})().catch(async e => { console.error(e); await prisma.$disconnect().catch(()=>{}); await pool.end().catch(()=>{}); process.exit(1); });
+  await finish();
+})().catch(fail);

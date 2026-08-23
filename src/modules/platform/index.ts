@@ -1,3 +1,4 @@
+import { CommerceModule } from './commerce/commerce.module';
 import { CommunityModule } from './community/community.module';
 import { ConnectModule } from './connect/connect.module';
 import { IntelligenceModule } from './intelligence/intelligence.module';
@@ -27,6 +28,7 @@ export const PLATFORM_MODULES = [
   CommunityModule,
   ProfessionalsModule,
   ConnectModule,
+  CommerceModule,
   ModerationModule,
 ];
 
