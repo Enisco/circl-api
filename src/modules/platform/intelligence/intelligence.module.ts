@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { FeedRankerService } from './services/feed-ranker.service';
 import { GuideMatcherService } from './services/guide-matcher.service';
+import { SmartMatchService } from './services/smart-match.service';
 
 /**
  * Circl Intelligence — one algorithm, four outputs.
@@ -11,7 +12,7 @@ import { GuideMatcherService } from './services/guide-matcher.service';
  */
 @Global()
 @Module({
-  providers: [FeedRankerService, GuideMatcherService],
-  exports: [FeedRankerService, GuideMatcherService],
+  providers: [FeedRankerService, GuideMatcherService, SmartMatchService],
+  exports: [FeedRankerService, GuideMatcherService, SmartMatchService],
 })
 export class IntelligenceModule {}
