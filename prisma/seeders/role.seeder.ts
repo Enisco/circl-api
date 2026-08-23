@@ -19,6 +19,33 @@ const defaultRoles: RoleData[] = [
     permissions: ['manage:all'],
   },
   {
+    name: 'Moderator',
+    code: 'moderator',
+    description: 'Works the moderation queue: reported content and anonymous posts',
+    isSystem: true,
+    isAdmin: true,
+    permissions: ['moderation:read', 'moderation:decide', 'users:read', 'guides:publish'],
+  },
+  {
+    // Deliberately separate from Moderator. Reading a domestic-abuse disclosure
+    // is a different job from triaging spam, and not everyone who does the second
+    // should be able to do the first.
+    name: 'Safeguarding',
+    code: 'safeguarding',
+    description: 'Works Circl Guard cases: the private admin channel and the risk queue',
+    isSystem: true,
+    isAdmin: true,
+    permissions: ['guard:read', 'guard:manage', 'users:read', 'moderation:read'],
+  },
+  {
+    name: 'Support',
+    code: 'support',
+    description: 'Works managed requests and disputes',
+    isSystem: true,
+    isAdmin: true,
+    permissions: ['managed:manage', 'users:read'],
+  },
+  {
     name: 'User',
     code: 'user',
     description: 'Basic user role',

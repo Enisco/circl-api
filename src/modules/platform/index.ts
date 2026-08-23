@@ -1,6 +1,10 @@
+import { AccountModule } from './account/account.module';
+import { AdminModule } from './admin/admin.module';
 import { CommerceModule } from './commerce/commerce.module';
+import { PlatformJobsModule } from './jobs/jobs.module';
 import { CommunityModule } from './community/community.module';
 import { ConnectModule } from './connect/connect.module';
+import { CirclGuardModule } from './guard/guard.module';
 import { IntelligenceModule } from './intelligence/intelligence.module';
 import { MediaModule } from './media/media.module';
 import { MessagingCoreModule } from './messaging/messaging.module';
@@ -30,6 +34,10 @@ export const PLATFORM_MODULES = [
   ConnectModule,
   CommerceModule,
   ModerationModule,
+  CirclGuardModule,
+  AccountModule,
+  AdminModule,
+  PlatformJobsModule,
 ];
 
 export * from './shared';

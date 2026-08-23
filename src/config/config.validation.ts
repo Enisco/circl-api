@@ -37,4 +37,9 @@ export const configValidationSchema = Joi.object({
   // local driver, so they are openable from a device rather than only from the
   // host running the server.
   PUBLIC_BASE_URL: Joi.string().uri().optional().allow(''),
+
+  // Scheduled jobs run per process. Set this on every instance but one when
+  // running more than one; every job is idempotent, so a double-run is harmless
+  // rather than wrong.
+  DISABLE_SCHEDULED_JOBS: Joi.string().valid('true', 'false', '').optional(),
 });

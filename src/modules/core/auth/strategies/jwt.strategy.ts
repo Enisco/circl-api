@@ -5,7 +5,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { SessionService } from '../services';
 import { AccessTokenPayload } from '../types';
 import { PrismaService } from '@/infrastructure';
-import { ErrorMessage } from '@/common';
+import { ApiErrorCode, ApiException, ErrorMessage } from '@/common';
 import { UserAccountStatus } from '@prisma/client';
 
 @Injectable()
@@ -35,6 +35,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         id: true,
         email: true,
         status: true,
+        isAnonymised: true,
         userRole: {
           select: {
             role: {
@@ -55,6 +56,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         },
       },
     });
+
+    // A deleted account is gone, not merely refused. 410 rather than 403 so the
+    // client can say so plainly, and so a member who deleted their account and
+    // still has a token on a second device is not left staring at "access
+    // denied" (0.15.3).
+    if (user?.isAnonymised) {
+      throw ApiException.gone(
+        ApiErrorCode.ACCOUNT_ALREADY_DELETED,
+        'This account has been deleted.',
+      );
+    }
 
     if (!user || user.status === UserAccountStatus.SUSPENDED) {
       throw new ForbiddenException(

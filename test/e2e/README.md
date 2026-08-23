@@ -16,3 +16,21 @@ node test/e2e/community.e2e.cjs        # Section 1
 
 Exit code is non-zero if any check fails, so they can go in CI behind a service
 container without further plumbing.
+
+## The suites
+
+| Script | Covers |
+| --- | --- |
+| `community.e2e.cjs` | Section 1: feed, requests, responses, offers, updates, guides, groups, moderation |
+| `professionals.e2e.cjs` | Section 2 and Circl Trust: listings, promotion, browse, bookings, reviews, Smart Match, disputes |
+| `connect.e2e.cjs` | Section 3: the continuity contract, the 18 gate, discovery, requests |
+| `commerce.e2e.cjs` | Section 4: stores, address safety, items, cart, enquiries, demand hints |
+| `messaging.e2e.cjs` | Section 5, including live WebSocket round-trips |
+| `guard-admin.e2e.cjs` | Circl Guard and the staff endpoints |
+| `intelligence-deletion.e2e.cjs` | Auto-Guides, Guided Creation, Pulse, and account deletion (0.15) |
+
+Run them all:
+
+```bash
+for f in test/e2e/*.e2e.cjs; do node "$f" || exit 1; done
+```
