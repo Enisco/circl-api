@@ -1,11 +1,16 @@
 import { MiddlewareConsumer, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { DeviceInfoMiddleware, CommonModule, CustomThrottlerGuard } from '@/common';
+import {
+  DeviceInfoMiddleware,
+  CommonModule,
+  CustomThrottlerGuard,
+  IdempotencyInterceptor,
+} from '@/common';
 import { MODULES } from '@/modules';
 import { configValidationSchema } from '@/config';
 import { AppCacheModule, AppLoggerModule, AppQueueModule, PrismaModule } from '@/infrastructure';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 
 @Module({
   imports: [
@@ -36,6 +41,12 @@ import { APP_GUARD } from '@nestjs/core';
     {
       provide: APP_GUARD,
       useClass: CustomThrottlerGuard,
+    },
+    {
+      // Honours Idempotency-Key on the creates that declare @Idempotent() (0.12).
+      // Registered here rather than in main.ts because it needs Prisma injected.
+      provide: APP_INTERCEPTOR,
+      useClass: IdempotencyInterceptor,
     },
   ],
 })

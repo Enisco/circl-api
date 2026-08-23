@@ -1,0 +1,140 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// Circl Trust — verification and unified reputation
+//
+// Two rules from 2.1.4 shape everything here, and they are the reason the tables
+// hang off the USER and not off a listing:
+//
+//   Trust checks belong to the person. A member who verified their identity to
+//   use Connect has verified their identity, full stop. Professionals reads the
+//   same record, Commerce reads the same record.
+//
+//   Reviews are keyed by the subject user. One reputation, visible everywhere —
+//   a community-service review shows on a professional profile, and a
+//   professional review shows anywhere that person appears.
+//
+// Verification is NOT built this release (D13, and confirmed by the product
+// owner). The table exists so the next release adds a flow rather than a data
+// model, and every check reads NOT_STARTED except EMAIL, granted at signup.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model TrustCheck {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  check  TrustCheckType   @map("check")
+  status TrustCheckStatus @default(NOT_STARTED) @map("status")
+
+  // CREDENTIAL is scoped to a profession code; verifying one never satisfies
+  // another (2.7.4). Null for the unscoped checks.
+  categoryCode String? @map("category_code")
+
+  documentType    String?   @map("document_type")
+  issuingBody     String?   @map("issuing_body")
+  reference       String?   @map("reference")
+  checkedBy       String?   @map("checked_by")
+  rejectionReason String?   @map("rejection_reason")
+  rejectedFields  Json?     @map("rejected_fields")
+
+  submittedAt DateTime? @map("submitted_at") @db.Timestamptz
+  verifiedAt  DateTime? @map("verified_at") @db.Timestamptz
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([userId, check, categoryCode])
+  @@index([userId, status])
+  @@map("trust_checks")
+}
+
+// ─── Reputation ──────────────────────────────────────────────────────────────
+
+// One review table, keyed by subject user, with a context (2.1.4). Do not add a
+// store_reviews table: a seller who is also a professional and also helps in
+// Community has one reputation, and splitting it by section is how a trusted
+// member arrives in Commerce looking like a stranger.
+model Review {
+  id String @id @default(uuid())
+
+  subjectUserId String @map("subject_user_id")
+  subjectUser   User   @relation("ReviewSubject", fields: [subjectUserId], references: [id], onDelete: Cascade)
+
+  reviewerId String @map("reviewer_id")
+  reviewer   User   @relation("ReviewAuthor", fields: [reviewerId], references: [id], onDelete: Cascade)
+
+  rating  Int    @map("rating") // 1..5
+  comment String @map("comment")
+
+  context  ReviewContext @map("context")
+  sourceId String?       @map("source_id")
+
+  // PRIOR_WORK is self-attested reputation portability: excluded from the average
+  // and sorted last (2.1.4). Sent per review rather than inferred from `context`,
+  // so the rule can change server-side without an app release.
+  countsToAverage Boolean @default(true) @map("counts_to_average")
+
+  tags Json? @map("tags")
+
+  // Denormalised at write time so the immigrant-friendly filter (D11) is an index
+  // scan rather than a join back through the reviewer's profile on every query.
+  reviewerCountryOfOrigin String? @map("reviewer_country_of_origin")
+
+  requestId String?           @map("request_id")
+  request   CommunityRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  bookingId String?           @map("booking_id")
+  booking   Booking?          @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  enquiryId String?           @map("enquiry_id")
+  enquiry   Enquiry?          @relation(fields: [enquiryId], references: [id], onDelete: SetNull)
+
+  // Editable for 48 hours, then frozen (2.5.2).
+  editableUntil DateTime? @map("editable_until") @db.Timestamptz
+
+  reply Json? @map("reply") // { comment, createdAt } — the subject replies once
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  // One review per reviewer per source. PRIOR_WORK carries no source, and
+  // Postgres treats NULLs as distinct, so "one per pair, ever" (2.5.2) is a
+  // second partial unique index created in the migration.
+  @@unique([reviewerId, context, sourceId])
+  @@index([subjectUserId, countsToAverage, createdAt])
+  @@index([subjectUserId, context])
+  @@index([reviewerId])
+  @@map("reviews")
+}
+
+// A maintained rollup, so a profile card never sums a page of reviews and a
+// browse query never aggregates per row. Recomputed on every review write.
+model ReputationSummary {
+  userId String @id @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  average       Float @default(0) @map("average")
+  countedTotal  Int   @default(0) @map("counted_total")
+  excludedTotal Int   @default(0) @map("excluded_total")
+
+  star5 Int @default(0) @map("star_5")
+  star4 Int @default(0) @map("star_4")
+  star3 Int @default(0) @map("star_3")
+  star2 Int @default(0) @map("star_2")
+  star1 Int @default(0) @map("star_1")
+
+  communityCount Int @default(0) @map("community_count")
+  bookingCount   Int @default(0) @map("booking_count")
+  orderCount     Int @default(0) @map("order_count")
+  priorWorkCount Int @default(0) @map("prior_work_count")
+
+  // D11: reviewers whose countryOfOrigin is set and is not the United Kingdom.
+  // Qualifies at 3 or more such reviews averaging 4 stars or above.
+  immigrantReviewCount   Int     @default(0) @map("immigrant_review_count")
+  immigrantReviewAverage Float   @default(0) @map("immigrant_review_average")
+  isImmigrantFriendly    Boolean @default(false) @map("is_immigrant_friendly")
+
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([average, countedTotal])
+  @@index([isImmigrantFriendly])
+  @@map("reputation_summaries")
+}

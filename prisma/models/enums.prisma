@@ -88,3 +88,475 @@ enum UserAccountStatus {
   SUSPENDED
   PENDING
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Platform enums — Community, Professionals, Connect, Commerce, Messaging, Guard
+//
+// Every one of these crosses the wire as an UPPER_SNAKE code (spec 0.7). Display
+// labels never live here; they live in taxonomy_terms so they can be reworded
+// without a migration.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── Taxonomy ────────────────────────────────────────────────────────────────
+// One table, many vocabularies. `kind` selects the list.
+
+enum TaxonomyKind {
+  COMMUNITY_CATEGORY
+  GUIDE_TOPIC
+  PROFESSION
+  HERITAGE_TAG
+  JOURNEY_STAGE
+  INTEREST
+  LANGUAGE
+  COUNTRY_OF_ORIGIN
+  CONNECTION_TYPE
+  ITEM_CATEGORY
+  ITEM_UNIT
+  ITEM_PRICE_BAND
+  STORE_TYPE
+  STORE_CONTACT_CHANNEL
+  STORE_HELP_AREA
+  HELP_TAG
+}
+
+// ─── Shared content enums ────────────────────────────────────────────────────
+
+enum PostVisibility {
+  PUBLIC
+  ANONYMOUS
+  PRIVATE_TO_CIRCL
+}
+
+enum DeliveryMode {
+  IN_PERSON
+  ONLINE
+  BOTH
+}
+
+enum PriceBasis {
+  PER_HOUR
+  PER_JOB
+  PER_DAY
+  NEGOTIABLE
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+}
+
+enum MediaStatus {
+  PENDING
+  UPLOADED
+  ATTACHED
+  FAILED
+}
+
+// ─── Community ───────────────────────────────────────────────────────────────
+
+enum RequestStatus {
+  OPEN
+  RESOLVED
+  CLOSED
+  EXPIRED
+  CANCELLED
+}
+
+enum RequestOutcome {
+  HELPED
+  SOLVED_ELSEWHERE
+  NO_LONGER_NEEDED
+}
+
+enum FeedItemType {
+  REQUEST
+  OFFER
+  UPDATE
+  GUIDE
+}
+
+enum FeedFeedbackReason {
+  NOT_RELEVANT
+  WRONG_CITY
+  SEEN_TOO_MUCH
+  OTHER
+}
+
+enum GuideBlockType {
+  HEADING
+  PARAGRAPH
+  STEP
+}
+
+enum GuideSourceType {
+  REQUEST
+  REQUEST_RESPONSE
+  GUIDE
+}
+
+enum DeflectionOutcome {
+  ANSWERED
+  POSTED_ANYWAY
+}
+
+enum JoinPolicy {
+  OPEN
+  APPROVAL
+}
+
+enum GroupMembershipState {
+  PENDING
+  MEMBER
+  ADMIN
+  REJECTED
+  REMOVED
+}
+
+// ─── Moderation & Guard ──────────────────────────────────────────────────────
+
+enum ReportTargetType {
+  REQUEST
+  RESPONSE
+  OFFER
+  UPDATE
+  UPDATE_REPLY
+  GUIDE
+  GROUP
+  GROUP_POST
+  GROUP_POST_REPLY
+  MESSAGE
+  CONVERSATION
+  STORE
+  STORE_ITEM
+  CONNECT_PROFILE
+  PROFESSIONAL_LISTING
+  USER
+}
+
+enum ReportReason {
+  SPAM
+  HARASSMENT
+  SCAM
+  INAPPROPRIATE
+  IMPERSONATION
+  SAFETY_CONCERN
+  OTHER
+}
+
+enum ReportState {
+  RECEIVED
+  TRIAGED
+  ACTIONED
+  DISMISSED
+}
+
+enum ModerationDecision {
+  APPROVE
+  REJECT
+  REMOVE_CONTENT
+  WARN_AUTHOR
+  SUSPEND_AUTHOR
+  NO_ACTION
+}
+
+enum ModerationQueueType {
+  ANONYMOUS_POST
+  REPORTED_CONTENT
+  GUARD_RISK
+  AUTO_GUIDE
+  MANAGED_REQUEST
+}
+
+enum ModerationQueueState {
+  PENDING
+  IN_REVIEW
+  RESOLVED
+}
+
+// Circl Guard — risk bands drive queue ordering, never shown to the member.
+enum RiskLevel {
+  NONE
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum RiskCategory {
+  SELF_HARM
+  DOMESTIC_ABUSE
+  DEPORTATION_RISK
+  SCAM
+  LANDLORD_FRAUD
+  EXPLOITATION
+  MODERN_SLAVERY
+  HATE
+  RESTRICTED_ITEM
+  UNVERIFIED_CREDENTIAL
+  OTHER
+}
+
+enum GuardThreadState {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+// ─── Trust: verification & reputation ────────────────────────────────────────
+
+enum TrustCheckType {
+  EMAIL
+  IDENTITY
+  RIGHT_TO_WORK
+  CREDENTIAL
+}
+
+enum TrustCheckStatus {
+  NOT_STARTED
+  SUBMITTED
+  IN_REVIEW
+  VERIFIED
+  REJECTED
+  EXPIRED
+}
+
+enum ReviewContext {
+  COMMUNITY
+  BOOKING
+  ORDER
+  PRIOR_WORK
+}
+
+// ─── Professionals ───────────────────────────────────────────────────────────
+
+enum ExperienceLevel {
+  BEGINNER
+  MID_LEVEL
+  EXPERT
+}
+
+enum ListingVerificationStatus {
+  DRAFT
+  UNVERIFIED
+  SUBMITTED
+  IN_REVIEW
+  VERIFIED
+  REJECTED
+}
+
+enum BriefUrgency {
+  ASAP
+  THIS_WEEK
+  THIS_MONTH
+  FLEXIBLE
+}
+
+enum BriefState {
+  DRAFT
+  OPEN
+  MATCHED
+  PLACED
+  CLOSED
+}
+
+// "Circl takes no payment, so these are stages of work, never states of money."
+enum JobState {
+  PENDING_ACCEPTANCE
+  ACCEPTED
+  IN_PROGRESS
+  DELIVERED
+  CHANGES_REQUESTED
+  COMPLETED
+  CANCELLED
+  DISPUTED
+  EXPIRED
+}
+
+enum JobStage {
+  REQUESTED
+  ACCEPTED
+  IN_PROGRESS
+  DELIVERED
+  CHANGES_REQUESTED
+  DONE
+  REVIEWED
+  CANCELLED
+  DISPUTED
+  EXPIRED
+}
+
+enum BookingMode {
+  ONLINE
+  IN_PERSON
+}
+
+enum DisputeSubjectType {
+  BOOKING
+  ORDER
+}
+
+enum DisputeReason {
+  NOT_DELIVERED
+  NOT_AS_DESCRIBED
+  QUALITY
+  COMMUNICATION
+  OTHER
+}
+
+enum DisputeState {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+  WITHDRAWN
+}
+
+enum ManagedRequestSubject {
+  STOREFRONT
+  PROFESSIONAL_PLACEMENT
+}
+
+enum ManagedRequestState {
+  OPEN
+  IN_PROGRESS
+  CLOSED
+}
+
+// ─── Connect ─────────────────────────────────────────────────────────────────
+
+enum DmPolicy {
+  OPEN
+  REQUEST_FIRST
+}
+
+enum ConnectionRequestState {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+}
+
+// ─── Commerce ────────────────────────────────────────────────────────────────
+
+enum StoreStatus {
+  OPEN
+  CLOSED
+  HOLIDAY
+}
+
+enum StoreComplianceState {
+  ACTIVE
+  UNDER_REVIEW
+  SUSPENDED
+}
+
+enum Weekday {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum Fulfilment {
+  DELIVERY
+  COLLECTION
+}
+
+// ─── Messaging ───────────────────────────────────────────────────────────────
+
+enum ThreadKind {
+  COMMUNITY
+  PROFESSIONAL
+  CONNECT
+  COMMERCE
+  SUPPORT
+  DIRECT
+}
+
+enum ThreadContextType {
+  REQUEST
+  OFFER
+  PROFESSIONAL
+  BOOKING
+  CONNECT_PROFILE
+  ITEM
+  ORDER
+  SUPPORT
+  BRIEF
+  MANAGED_REQUEST
+  DISPUTE
+}
+
+enum ParticipantRole {
+  MEMBER
+  STAFF
+}
+
+enum MessageKind {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  SYSTEM
+}
+
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum SystemMessageType {
+  SUPPORT_OPENED
+  BOOKING_CREATED
+  BOOKING_STATE_CHANGED
+  ENQUIRY_CREATED
+  ENQUIRY_STATE_CHANGED
+  DISPUTE_OPENED
+  CONNECTION_ACCEPTED
+  PARTICIPANT_LEFT
+  ACCOUNT_DELETED
+  BRIEF_ATTACHED
+}
+
+// ─── Circl Intelligence ──────────────────────────────────────────────────────
+
+enum ActivityVerb {
+  VIEW
+  SEARCH
+  CREATE
+  RESPOND
+  REACT
+  BOOKMARK
+  JOIN
+  ENQUIRE
+  BOOK
+  MESSAGE
+  DISMISS
+}
+
+enum ActivitySubject {
+  REQUEST
+  OFFER
+  UPDATE
+  GUIDE
+  GROUP
+  PROFESSIONAL_LISTING
+  CONNECT_PROFILE
+  STORE
+  STORE_ITEM
+  SEARCH_TERM
+}
+
+enum SuggestionSurface {
+  COMMUNITY_OFFER
+  COMMUNITY_REQUEST
+  PROFESSIONAL_SERVICE
+  STORE_ITEM
+}

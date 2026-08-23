@@ -1,0 +1,185 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// Moderation & Circl Guard (spec 1.8, 1.9, and the Guard layer)
+//
+// Guard is the safeguarding layer, built because Circl serves a population with
+// real vulnerabilities on arrival. Three things live here:
+//
+//   1. Reports and blocks — one shared vocabulary across every content type.
+//   2. The risk-aware admin queue — an algorithm scans posts and private admin
+//      messages for high-risk language and ranks by urgency, so a member in
+//      danger is not sitting behind a queue of spam reports.
+//   3. The anonymous-post approval queue the admin works through.
+//
+// Risk scoring is a deterministic lexicon, not a model. It has to be auditable,
+// it has to run in-request without a network hop, and a safeguarding decision
+// nobody can explain is worse than a slightly less clever one.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model Report {
+  id         String @id @default(uuid())
+  reporterId String @map("reporter_id")
+  reporter   User   @relation("ReportFiler", fields: [reporterId], references: [id], onDelete: Cascade)
+
+  targetType ReportTargetType @map("target_type")
+  targetId   String           @map("target_id")
+
+  // Resolved from the target where it is knowable. Null for a report filed via a
+  // reportToken against anonymous content — the link exists, but not here.
+  targetUserId String? @map("target_user_id")
+  targetUser   User?   @relation("ReportSubject", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  reasonCode ReportReason @map("reason_code")
+  note       String?      @map("note")
+  state      ReportState  @default(RECEIVED) @map("state")
+
+  // A report snapshots the thread/content server-side, so deleting messages
+  // afterwards does not erase the evidence (5.7).
+  snapshot Json? @map("snapshot")
+
+  riskLevel    RiskLevel     @default(NONE) @map("risk_level")
+  riskCategory RiskCategory? @map("risk_category")
+
+  reviewedById String?   @map("reviewed_by_id")
+  reviewedAt   DateTime? @map("reviewed_at") @db.Timestamptz
+  decision     ModerationDecision? @map("decision")
+  decisionNote String?   @map("decision_note")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([state, riskLevel, createdAt])
+  @@index([targetType, targetId])
+  @@index([reporterId])
+  @@map("reports")
+}
+
+// Blocking is symmetric in effect: neither party sees the other's content in
+// feeds, lists or search, and neither can message the other (1.8.2).
+model Block {
+  blockerId String @map("blocker_id")
+  blocker   User   @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedId String @map("blocked_id")
+  blocked   User   @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId])
+  @@map("blocks")
+}
+
+// The admin work queue. One row per thing a human has to look at, whatever
+// produced it, so "what needs attention" is one ordered query rather than four.
+model ModerationQueueItem {
+  id    String              @id @default(uuid())
+  type  ModerationQueueType @map("type")
+  state ModerationQueueState @default(PENDING) @map("state")
+
+  targetType ReportTargetType @map("target_type")
+  targetId   String           @map("target_id")
+
+  subjectUserId String? @map("subject_user_id")
+  subjectUser   User?   @relation("QueueSubject", fields: [subjectUserId], references: [id], onDelete: SetNull)
+
+  reportId String? @map("report_id")
+
+  // Ranked by urgency and pushed to the top with an alert (Guard).
+  riskLevel    RiskLevel     @default(NONE) @map("risk_level")
+  riskCategory RiskCategory? @map("risk_category")
+  riskScore    Int           @default(0) @map("risk_score")
+  riskSignals  Json?         @map("risk_signals") // matched terms, for the reviewer
+
+  summary String? @map("summary")
+  payload Json?   @map("payload")
+
+  assignedToId String?   @map("assigned_to_id")
+  assignedTo   User?     @relation("QueueAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  decision     ModerationDecision? @map("decision")
+  decisionNote String?             @map("decision_note")
+  decidedById  String?             @map("decided_by_id")
+  decidedAt    DateTime?           @map("decided_at") @db.Timestamptz
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([type, targetType, targetId])
+  @@index([state, riskScore, createdAt])
+  @@index([type, state])
+  @@map("moderation_queue_items")
+}
+
+// An append-only record of what staff did and why. A safeguarding decision with
+// no audit trail cannot be reviewed, and this queue makes decisions about people.
+model ModerationAction {
+  id      String @id @default(uuid())
+  actorId String @map("actor_id")
+  actor   User   @relation("ModerationActor", fields: [actorId], references: [id], onDelete: Cascade)
+
+  targetType ReportTargetType   @map("target_type")
+  targetId   String             @map("target_id")
+  decision   ModerationDecision @map("decision")
+  reason     String?            @map("reason")
+  metadata   Json?              @map("metadata")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([targetType, targetId])
+  @@index([actorId, createdAt])
+  @@map("moderation_actions")
+}
+
+// ─── Circl Guard: the private admin channel ──────────────────────────────────
+
+// "Private to Circl" (1.9). Invisible to the community, direct to the admin team,
+// for sensitive situations members do not want to post publicly.
+//
+// No response-time promise is made by this API (1.9): the thread's opening system
+// message states what the channel is and who can see it, and commits to no
+// timeframe. There is deliberately no `expectedByAt` column here.
+model GuardThread {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subject      String           @map("subject")
+  categoryCode String?          @map("category_code")
+  state        GuardThreadState @default(OPEN) @map("state")
+
+  riskLevel    RiskLevel     @default(NONE) @map("risk_level")
+  riskCategory RiskCategory? @map("risk_category")
+  riskScore    Int           @default(0) @map("risk_score")
+  riskSignals  Json?         @map("risk_signals")
+
+  conversationId String?       @unique @map("conversation_id")
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  assignedToId String? @map("assigned_to_id")
+  assignedTo   User?   @relation("GuardAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([state, riskScore, createdAt])
+  @@index([userId, createdAt])
+  @@map("guard_threads")
+}
+
+// The lexicon the risk scanner runs against. In the database rather than in code
+// so safeguarding staff can add a phrase the moment they see it used, without a
+// deploy — which is the difference between catching a pattern this week and next
+// release.
+model RiskTerm {
+  id        String       @id @default(uuid())
+  category  RiskCategory @map("category")
+  pattern   String       @map("pattern") // lowercase phrase, matched on word boundaries
+  weight    Int          @default(10) @map("weight")
+  isActive  Boolean      @default(true) @map("is_active")
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([category, pattern])
+  @@index([isActive])
+  @@map("risk_terms")
+}

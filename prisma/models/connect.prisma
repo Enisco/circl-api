@@ -1,0 +1,83 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// Section 3 — Connect
+//
+// A Connect profile is a thin opt-in layer over the user, not a second identity
+// (3.0.1). Almost everything a Connect card displays already lives on the user:
+// name, avatar, city, country of origin, date of birth, journey stage, interests,
+// languages, heritage. Four fields are genuinely new, and they are the only four
+// columns of substance below.
+//
+// D15 is why `languages`, `heritageTag`, `interests` and `dateOfBirth` are on
+// UserProfile and not here: Professionals and Commerce both want them, and moving
+// them out after these tables exist is a migration.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model ConnectProfile {
+  id     String @id @default(uuid())
+  userId String @unique @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // The four genuinely new fields.
+  typeCode   String   @map("type_code") // TaxonomyKind.CONNECTION_TYPE
+  lookingFor String   @map("looking_for")
+  dmPolicy   DmPolicy @default(REQUEST_FIRST) @map("dm_policy")
+  isVisible  Boolean  @default(false) @map("is_visible") // opting in is a deliberate act
+
+  // D18: someone moving to London in a month can be found there, shown as intent
+  // rather than a claim about where they are. Never touches profile.cityId, which
+  // the rest of the app trusts.
+  cityIdOverride String? @map("city_id_override")
+  city           City?   @relation(fields: [cityIdOverride], references: [id])
+
+  // DATING carries an extra confirm step reiterating 18+ and the safety block.
+  // Record that the confirmation was given and when (3.3.1).
+  datingConfirmedAt DateTime? @map("dating_confirmed_at") @db.Timestamptz
+
+  reportToken String @unique @default(uuid()) @map("report_token")
+
+  lastActiveAt DateTime  @default(now()) @map("last_active_at") @db.Timestamptz
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz
+
+  sentRequests     ConnectionRequest[] @relation("ConnectionFrom")
+  receivedRequests ConnectionRequest[] @relation("ConnectionTo")
+
+  @@index([isVisible, typeCode])
+  @@index([isVisible, lastActiveAt])
+  @@map("connect_profiles")
+}
+
+model ConnectionRequest {
+  id String @id @default(uuid())
+
+  fromProfileId String         @map("from_profile_id")
+  fromProfile   ConnectProfile @relation("ConnectionFrom", fields: [fromProfileId], references: [id], onDelete: Cascade)
+  toProfileId   String         @map("to_profile_id")
+  toProfile     ConnectProfile @relation("ConnectionTo", fields: [toProfileId], references: [id], onDelete: Cascade)
+
+  // Denormalised so a request survives its profile being deleted long enough for
+  // the cooldown check below to still mean something.
+  fromUserId String @map("from_user_id")
+  toUserId   String @map("to_user_id")
+
+  note  String?                @map("note")
+  state ConnectionRequestState @default(PENDING) @map("state")
+
+  conversationId String?       @map("conversation_id")
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  respondedAt DateTime? @map("responded_at") @db.Timestamptz
+
+  // A declined pair may not be re-requested for 30 days (3.5.3). Repeated
+  // requesting after a decline is harassment with extra steps.
+  cooldownUntil DateTime? @map("cooldown_until") @db.Timestamptz
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([toProfileId, state, createdAt])
+  @@index([fromProfileId, state, createdAt])
+  @@index([fromUserId, toUserId])
+  @@map("connection_requests")
+}

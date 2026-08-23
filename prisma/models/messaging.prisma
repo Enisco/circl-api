@@ -1,0 +1,152 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// Section 5 — Messaging  (the connective layer of Circl Social)
+//
+// One conversation table, five contexts. Not one inbox per section. Three rules
+// make it work (5.0):
+//
+//   1. Context is a pointer, not a copy. contextType + contextId address the live
+//      record; contextSnapshot holds display fields only. Storing the subject
+//      inside the messages leaves the thread lying about what it is for once the
+//      item is renamed or the booking is cancelled.
+//   2. The uniqueness key is (sorted participant pair, contextType, contextId).
+//      This is what stops the same two people ending up with four threads.
+//   3. Every section hands messaging a conversationId, never a guess.
+//
+// D29: participants are many-to-many. Two-person is a constraint on the
+// uniqueness key only — a dispute adds Circl staff to the existing thread.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model Conversation {
+  id   String     @id @default(uuid())
+  kind ThreadKind @map("kind")
+
+  contextType ThreadContextType? @map("context_type")
+  contextId   String?            @map("context_id")
+
+  // Display only. When the strip and the live record disagree, the record wins on
+  // open; this is refreshed whenever the underlying record changes so the inbox
+  // does not drift for months (5.1).
+  contextSnapshot Json? @map("context_snapshot")
+
+  // The sorted participant pair, joined. Materialised because Postgres cannot
+  // enforce uniqueness over a join table, and rule 2 above is the whole design.
+  participantKey String @map("participant_key")
+
+  isPinned      Boolean   @default(false) @map("is_pinned")
+  lastMessageAt DateTime? @map("last_message_at") @db.Timestamptz
+  messageCount  Int       @default(0) @map("message_count")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  participants    ConversationParticipant[]
+  messages        Message[]
+  bookings        Booking[]
+  enquiries       Enquiry[]
+  disputes        Dispute[]
+  guardThread     GuardThread?
+  managedRequests ManagedRequest[]
+  connectionRequests ConnectionRequest[]
+
+  @@unique([participantKey, contextType, contextId])
+  @@index([kind, lastMessageAt])
+  @@index([lastMessageAt])
+  @@map("conversations")
+}
+
+model ConversationParticipant {
+  conversationId String       @map("conversation_id")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String       @map("user_id")
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role ParticipantRole @default(MEMBER) @map("role")
+
+  // Held per participant, not derived at read time. Counting messages after
+  // lastReadAt on every inbox load is the query that gets slow first (5.4).
+  // A muted thread still increments this: mute silences the notification, not the
+  // count.
+  unreadCount       Int     @default(0) @map("unread_count")
+  lastReadMessageId String? @map("last_read_message_id")
+
+  lastReadAt  DateTime? @map("last_read_at") @db.Timestamptz
+  mutedUntil  DateTime? @map("muted_until") @db.Timestamptz
+  isMuted     Boolean   @default(false) @map("is_muted")
+  isArchived  Boolean   @default(false) @map("is_archived")
+  hasSentMessage Boolean @default(false) @map("has_sent_message")
+
+  joinedAt DateTime  @default(now()) @map("joined_at") @db.Timestamptz
+  leftAt   DateTime? @map("left_at") @db.Timestamptz
+
+  @@id([conversationId, userId])
+  @@index([userId, isArchived])
+  @@index([userId, unreadCount])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String       @map("conversation_id")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  senderId String? @map("sender_id") // null for a SYSTEM message
+  sender   User?   @relation(fields: [senderId], references: [id], onDelete: SetNull)
+
+  kind       MessageKind        @default(TEXT) @map("kind")
+  body       String?            @map("body")
+  systemType SystemMessageType? @map("system_type")
+  systemData Json?              @map("system_data")
+
+  // The client-generated id used for optimistic rendering, echoed in the
+  // acknowledgement so the pending bubble is replaced rather than duplicated.
+  // Unique per conversation, which is also the idempotency key for a retry.
+  clientId String @map("client_id")
+
+  status MessageStatus @default(SENT) @map("status")
+
+  // D26: the server stamps sentAt. Never the sending device's clock.
+  sentAt    DateTime  @default(now()) @map("sent_at") @db.Timestamptz
+  // D27: nullable and unused at launch, so adding editing later is not a
+  // migration. A read receipt should mean "read what this says".
+  editedAt  DateTime? @map("edited_at") @db.Timestamptz
+  // A deleted message is a tombstone, not a gap: removing the row renumbers the
+  // thread under a reader who is scrolled into it (5.3.3).
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  attachments MessageAttachment[]
+  receipts    MessageReceipt[]
+
+  @@unique([conversationId, clientId])
+  @@index([conversationId, sentAt])
+  @@index([senderId])
+  @@map("messages")
+}
+
+model MessageAttachment {
+  id        String  @id @default(uuid())
+  messageId String  @map("message_id")
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  mediaId   String  @map("media_id")
+  media     Media   @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  position  Int     @default(0) @map("position")
+
+  @@unique([messageId, mediaId])
+  @@index([messageId])
+  @@map("message_attachments")
+}
+
+// The server is the only writer of message status, which is why two devices on
+// one account cannot disagree about whether something was read (5.2.4).
+model MessageReceipt {
+  messageId String  @map("message_id")
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String  @map("user_id")
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  deliveredAt DateTime? @map("delivered_at") @db.Timestamptz
+  readAt      DateTime? @map("read_at") @db.Timestamptz
+
+  @@id([messageId, userId])
+  @@index([userId])
+  @@map("message_receipts")
+}

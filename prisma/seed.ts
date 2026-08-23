@@ -4,7 +4,9 @@ import 'dotenv/config';
 import { Pool } from 'pg';
 import { seedCities } from './seeders/city.seeder';
 import { seedPermissions } from './seeders/permission.seeder';
+import { seedRiskTerms } from './seeders/risk-term.seeder';
 import { seedRoles } from './seeders/role.seeder';
+import { seedTaxonomy } from './seeders/taxonomy.seeder';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool as unknown as ConstructorParameters<typeof PrismaPg>[0]);
@@ -20,6 +22,8 @@ const main = async () => {
     await seedPermissions(prisma);
     await seedRoles(prisma);
     await seedCities(prisma);
+    await seedTaxonomy(prisma);
+    await seedRiskTerms(prisma);
 
     console.info('Database seeding completed successfully');
   } catch (error) {

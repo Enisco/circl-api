@@ -1,0 +1,294 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// Section 4 — Commerce
+//
+// A store is a business, not a classified ad. Circl takes no payment here either
+// (4.0.1): the cart produces an enquiry, the total is an estimate, and there is
+// no checkout, escrow, payout, fee, refund or settlement anywhere below.
+//
+// Enquiries reuse the booking state machine (JobState) rather than adding a
+// second one (4.1.3), so the shared dispute flow stays genuinely shared.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model Store {
+  id      String @id @default(uuid())
+  ownerId String @unique @map("owner_id") // one store per user
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  name        String  @map("name")
+  typeCode    String  @default("LOCAL") @map("type_code") // TaxonomyKind.STORE_TYPE
+  description String? @map("description")
+
+  area   String @map("area") // "Moss Side" — the area within the city
+  cityId String @map("city_id")
+  city   City   @relation(fields: [cityId], references: [id])
+
+  // A real safety need for home-run businesses, many of them run by women from
+  // their kitchen. When true the serialiser returns only `area` and a coordinate
+  // rounded to roughly 1km — line1, postcode and the precise point are never sent
+  // to anyone, including through the map (4.5.1).
+  hidesExactAddress Boolean @default(false) @map("hides_exact_address")
+  addressLine1      String? @map("address_line1")
+  postcode          String? @map("postcode")
+  latitude          Float?  @map("latitude")
+  longitude         Float?  @map("longitude")
+
+  logoUrl  String? @map("logo_url")
+  coverUrl String? @map("cover_url")
+
+  status          StoreStatus          @default(OPEN) @map("status")
+  complianceState StoreComplianceState @default(ACTIVE) @map("compliance_state") // D23: exists, does not gate publishing
+  delivers        Boolean              @default(false) @map("delivers")
+  timezone        String               @default("Europe/London") @map("timezone")
+
+  viewCount    Int @default(0) @map("view_count")
+  enquiryCount Int @default(0) @map("enquiry_count")
+
+  reportToken String @unique @default(uuid()) @map("report_token")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  items         StoreItem[]
+  openingHours  StoreOpeningHours[]
+  contacts      StoreContact[]
+  heritageTags  StoreHeritageTag[]
+  categories    StoreCategory[]
+  enquiries     Enquiry[]
+
+  @@index([cityId, status])
+  @@index([typeCode])
+  @@map("stores")
+}
+
+model StoreHeritageTag {
+  storeId String @map("store_id")
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  code    String @map("code") // TaxonomyKind.HERITAGE_TAG — shared with Connect (3.1.4)
+
+  @@id([storeId, code])
+  @@index([code])
+  @@map("store_heritage_tags")
+}
+
+// A hint, derivable from the store's items, kept as a column so the browse filter
+// does not need a subquery per store on every page.
+model StoreCategory {
+  storeId String @map("store_id")
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  code    String @map("code") // TaxonomyKind.ITEM_CATEGORY
+
+  @@id([storeId, code])
+  @@index([code])
+  @@map("store_categories")
+}
+
+// Exactly 7 rows per store, Monday first. Minutes from midnight, 0..1439.
+// `closeMinutes <= openMinutes` means it closes the next day: a store open 6pm to
+// 2am is { open: 1080, close: 120 }. Both null means closed all day (4.5.1).
+model StoreOpeningHours {
+  storeId String  @map("store_id")
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  day     Weekday @map("day")
+
+  openMinutes  Int? @map("open_minutes")
+  closeMinutes Int? @map("close_minutes")
+
+  @@id([storeId, day])
+  @@map("store_opening_hours")
+}
+
+model StoreContact {
+  storeId String @map("store_id")
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  channel String @map("channel") // TaxonomyKind.STORE_CONTACT_CHANNEL
+
+  // Stored normalised (no @, no scheme). The display form is derived on read.
+  value String @map("value")
+
+  @@id([storeId, channel])
+  @@map("store_contacts")
+}
+
+model StoreItem {
+  id      String @id @default(uuid())
+  storeId String @map("store_id")
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  name        String  @map("name")
+  description String? @map("description")
+
+  price    Int    @map("price") // pence, > 0
+  currency String @default("GBP") @map("currency")
+
+  // D21: a code list plus a custom label for the genuine exceptions. Free text
+  // cannot be filtered, sorted or translated, and converting it later is manual
+  // work per row.
+  unitCode        String  @default("EACH") @map("unit_code")
+  unitCustomLabel String? @map("unit_custom_label")
+
+  categoryCode String @map("category_code")
+  options      String? @map("options")
+
+  isAvailable Boolean @default(true) @map("is_available")
+  viewCount   Int     @default(0) @map("view_count")
+
+  // Set when the item came from an accepted AI draft, for measurement only (4.9).
+  sourceDraftId String? @map("source_draft_id")
+
+  reportToken String @unique @default(uuid()) @map("report_token")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  enquiryLines EnquiryLine[]
+
+  // Never hard-deleted while an open enquiry references it, or the enquiry loses
+  // its own contents (4.8.3).
+  @@index([storeId, isAvailable])
+  @@index([categoryCode, price])
+  @@map("store_items")
+}
+
+// ─── Enquiries ───────────────────────────────────────────────────────────────
+
+model Enquiry {
+  id        String @id @default(uuid())
+  // The human-readable code the buyer quotes to the seller. `id` stays the opaque
+  // key — a reference this short is guessable (4.7.1).
+  reference String @unique @map("reference")
+
+  buyerId String @map("buyer_id")
+  buyer   User   @relation("EnquiryBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+
+  storeId String @map("store_id")
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  sellerId String @map("seller_id")
+  seller   User   @relation("EnquirySeller", fields: [sellerId], references: [id], onDelete: Cascade)
+
+  state JobState @default(ACCEPTED) @map("state") // "Placed" in buyer-facing copy (4.1.3)
+
+  fulfilment      Fulfilment @map("fulfilment")
+  deliveryAddress String?    @map("delivery_address")
+  note            String?    @map("note")
+
+  // The sum of catalogue prices at the moment of sending. An estimate, not a
+  // bill, and Circl does not reconcile it against anything.
+  estimatedTotal Int    @map("estimated_total")
+  currency       String @default("GBP") @map("currency")
+
+  conversationId String?       @map("conversation_id")
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  readyAt     DateTime? @map("ready_at") @db.Timestamptz
+  receivedAt  DateTime? @map("received_at") @db.Timestamptz
+  completedAt DateTime? @map("completed_at") @db.Timestamptz
+  cancelledAt DateTime? @map("cancelled_at") @db.Timestamptz
+  cancelReason String?  @map("cancel_reason")
+
+  // D24: 30 days without a transition sets EXPIRED and drops it off the active
+  // list. No auto-complete: auto-confirming that someone received groceries they
+  // may never have received is a claim Circl cannot make.
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  lines    EnquiryLine[]
+  events   EnquiryEvent[]
+  disputes Dispute[]
+  reviews  Review[]
+
+  @@index([buyerId, state, createdAt])
+  @@index([sellerId, state, createdAt])
+  @@index([state, expiresAt])
+  @@map("enquiries")
+}
+
+model EnquiryLine {
+  id        String  @id @default(uuid())
+  enquiryId String  @map("enquiry_id")
+  enquiry   Enquiry @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+
+  itemId String?    @map("item_id")
+  item   StoreItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
+
+  // Copied at send time. The server re-prices from the catalogue and never trusts
+  // a price sent by the client (4.6.1); the copy is what the two agreed to.
+  name      String @map("name")
+  quantity  Int    @map("quantity")
+  unitPrice Int    @map("unit_price")
+  unitCode  String @default("EACH") @map("unit_code")
+  currency  String @default("GBP") @map("currency")
+
+  @@index([enquiryId])
+  @@map("enquiry_lines")
+}
+
+model EnquiryEvent {
+  id        String  @id @default(uuid())
+  enquiryId String  @map("enquiry_id")
+  enquiry   Enquiry @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+
+  stage   JobStage @map("stage")
+  actorId String?  @map("actor_id")
+  note    String?  @map("note")
+
+  reachedAt DateTime @default(now()) @map("reached_at") @db.Timestamptz
+
+  @@unique([enquiryId, stage])
+  @@index([enquiryId, reachedAt])
+  @@map("enquiry_events")
+}
+
+// ─── AI storefront builder (4.9) ─────────────────────────────────────────────
+
+// Drafts are NOT items. Nothing appears in the catalogue until the seller accepts
+// it, which is what the Use / Skip pair on the review screen is for.
+model AiItemDraft {
+  id      String @id @default(uuid())
+  jobId   String @map("job_id")
+  userId  String @map("user_id")
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId String? @map("store_id")
+
+  sourceMediaId String? @map("source_media_id")
+  sourceMedia   Media?  @relation(fields: [sourceMediaId], references: [id], onDelete: SetNull)
+
+  name         String? @map("name")
+  description  String? @map("description")
+  categoryCode String? @map("category_code")
+  unitCode     String? @map("unit_code")
+  // A suggestion, always editable. A generated price the seller does not notice
+  // is a real loss of their money (4.9).
+  suggestedPrice Int?  @map("suggested_price")
+  confidence     Float @default(0) @map("confidence")
+
+  acceptedItemId String?   @map("accepted_item_id")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz
+
+  @@index([jobId])
+  @@index([userId, createdAt])
+  @@map("ai_item_drafts")
+}
+
+model AiDraftJob {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  storeId String? @map("store_id")
+  tone    String  @default("WARM") @map("tone")
+  status  QueueJobStatus? @map("status")
+  state   String  @default("PENDING") @map("state") // PENDING | RUNNING | DONE | FAILED
+  error   String? @map("error")
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  completedAt DateTime? @map("completed_at") @db.Timestamptz
+
+  @@index([userId, createdAt])
+  @@map("ai_draft_jobs")
+}

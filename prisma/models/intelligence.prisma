@@ -1,0 +1,143 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// Circl Intelligence
+//
+// "One algorithm, fed by every action taken on the platform — every search, post,
+// click, engagement, and transaction. The same data powers four outputs."
+//
+//   Guided Creation — suggests related items from real, local demand
+//   Auto-Guides     — drafts a guide when three or more members ask the same thing
+//   Smart Match     — scores briefs against professionals (see BriefMatch)
+//   Public Metrics  — the Pulse dashboards in every section
+//
+// All four are computed from the two tables below plus ordinary SQL. There is no
+// model in the loop: the scoring is a weighted sum, similarity is Postgres
+// trigram distance, and demand is a GROUP BY. That is a deliberate choice — these
+// outputs are shown to members as fact ("buyers near you are searching for
+// whiting fish"), and a fabricated signal that leads a seller to stock something
+// nobody wants is worse than no card at all.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// The single behavioural stream. One row per action, narrow and append-only.
+model ActivityEvent {
+  id     String  @id @default(uuid())
+  userId String? @map("user_id") // null for a signed-out read
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  verb    ActivityVerb    @map("verb")
+  subject ActivitySubject @map("subject")
+
+  subjectId String? @map("subject_id")
+  cityId    String? @map("city_id")
+  // The category / topic / profession code of the thing acted on, so demand can
+  // be grouped without joining back to five different tables.
+  code      String? @map("code")
+  term      String? @map("term") // for SEARCH
+  weight    Int     @default(1) @map("weight")
+  metadata  Json?   @map("metadata")
+
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz
+
+  @@index([cityId, subject, occurredAt])
+  @@index([userId, occurredAt])
+  @@index([subject, code, occurredAt])
+  @@index([verb, term, occurredAt])
+  @@map("activity_events")
+}
+
+// "Show me less like this" from a feed card's overflow menu (1.1). Suppresses the
+// item for this user and feeds the ranking signal.
+model FeedFeedback {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  itemType FeedItemType        @map("item_type")
+  itemId   String              @map("item_id")
+  reason   FeedFeedbackReason? @map("reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([userId, itemType, itemId])
+  @@index([userId, createdAt])
+  @@map("feed_feedback")
+}
+
+// A maintained rollup of demand per (city, surface, code) so Guided Creation and
+// the demand-hint card are a single indexed read rather than an aggregate over
+// the whole event stream on every composer open. Rebuilt on a schedule.
+model DemandSignal {
+  id      String            @id @default(uuid())
+  cityId  String?           @map("city_id")
+  surface SuggestionSurface @map("surface")
+
+  code String? @map("code")
+  term String? @map("term")
+
+  label       String @map("label")
+  searchCount Int    @default(0) @map("search_count")
+  actionCount Int    @default(0) @map("action_count")
+  supplyCount Int    @default(0) @map("supply_count")
+  // demand relative to supply — what makes a suggestion worth showing
+  score       Float  @default(0) @map("score")
+
+  windowStart DateTime @map("window_start") @db.Timestamptz
+  windowEnd   DateTime @map("window_end") @db.Timestamptz
+  computedAt  DateTime @default(now()) @map("computed_at") @db.Timestamptz
+
+  @@unique([cityId, surface, code, term])
+  @@index([cityId, surface, score])
+  @@map("demand_signals")
+}
+
+// Auto-Guides: when three or more members ask the same question, the system
+// drafts a Guide and cites the most helpful answers. This table is the cluster it
+// found, held for a human to approve before anything is published — machine
+// drafted content reaches members only through the moderation queue.
+model QuestionCluster {
+  id           String  @id @default(uuid())
+  categoryCode String  @map("category_code")
+  cityId       String? @map("city_id")
+
+  // The normalised phrase the cluster formed around, and its member requests.
+  signature   String @map("signature")
+  label       String @map("label")
+  requestIds  Json   @map("request_ids")
+  askCount    Int    @default(0) @map("ask_count")
+
+  // Set once a guide has been drafted from this cluster, so it is not redrafted
+  // every time the job runs.
+  draftedGuideId String? @map("drafted_guide_id")
+
+  firstAskedAt DateTime @map("first_asked_at") @db.Timestamptz
+  lastAskedAt  DateTime @map("last_asked_at") @db.Timestamptz
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([categoryCode, cityId, signature])
+  @@index([askCount, lastAskedAt])
+  @@map("question_clusters")
+}
+
+// Public Metrics — one engine, four views (Community, Professionals, Connect,
+// Commerce). Precomputed per section per city per period, because a dashboard
+// that aggregates the event stream live is a dashboard that times out.
+//
+// D19 applies to every bucket here: anything under 20 people is suppressed rather
+// than rounded, and no view exposes an individual.
+model MetricSnapshot {
+  id      String  @id @default(uuid())
+  section String  @map("section") // COMMUNITY | PROFESSIONALS | CONNECT | COMMERCE
+  metric  String  @map("metric")
+  cityId  String? @map("city_id")
+  period  String  @map("period") // WEEK | MONTH | ALL_TIME
+
+  items Json @map("items") // [{ code|term, label, value, ... }]
+
+  windowStart DateTime @map("window_start") @db.Timestamptz
+  windowEnd   DateTime @map("window_end") @db.Timestamptz
+  computedAt  DateTime @default(now()) @map("computed_at") @db.Timestamptz
+
+  @@unique([section, metric, cityId, period])
+  @@index([section, cityId])
+  @@map("metric_snapshots")
+}

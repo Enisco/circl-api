@@ -7,15 +7,36 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
-import { Response } from 'express';
-import { ErrorMessage, ErrorResponse } from '@/common';
+import { Request, Response } from 'express';
+import { ErrorMessage } from '@/common/constants/error.message';
+import { ApiErrorCode } from '@/common/constants/api-error-code.constant';
+import { ErrorResponse } from '@/common/types/response.type';
+import { ApiException, ApiErrorDetail } from '@/common/exceptions/api.exception';
 
 interface StructuredExceptionResponse {
   message?: string | string[];
   errorType?: string;
+  code?: string;
+  details?: ApiErrorDetail[];
+  data?: unknown;
   [key: string]: unknown;
 }
 
+interface ExtractedError {
+  status: number;
+  message: string;
+  code: string;
+  details?: ApiErrorDetail[];
+  data?: unknown;
+}
+
+/**
+ * The one error shape (spec 0.4).
+ *
+ * `error.code` is UPPER_SNAKE and is the only thing the client branches on;
+ * `message` is human-readable and never parsed. `errorType` is kept alongside
+ * `code` with the same value, because the shipped build reads it.
+ */
 @Catch()
 export class HttpExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionsFilter.name);
@@ -25,14 +46,13 @@ export class HttpExceptionsFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    // Extract status, single-string message, and a string errorType
-    const { status, message, errorType } = this.extractErrorDetails(exception);
+    const { status, message, code, details, data } = this.extractErrorDetails(exception);
 
     // Log the full details for debugging/monitoring. The details are folded into the message
     // because Nest's Logger treats a trailing string argument as the context and drops it
-    // otherwise — deployed logs would carry no status, errorType or stack.
+    // otherwise — deployed logs would carry no status, code or stack.
     // Client errors log at warn so genuine server faults stay findable amongst the 4xx noise.
-    const summary = `Error on ${request.method} ${request.url} — [${status} ${errorType}] ${message}`;
+    const summary = `Error on ${request.method} ${request.url} — [${status} ${code}] ${message}`;
 
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
       const stack = exception instanceof Error ? exception.stack : undefined;
@@ -42,95 +62,126 @@ export class HttpExceptionsFilter implements ExceptionFilter {
       this.logger.warn(summary);
     }
 
-    // Build the standardized response shape
     const errorResponse: ErrorResponse = {
+      success: false,
       status: 'error',
+      message,
+      // Spec 2.1.6: an "already done" conflict returns the existing record here so
+      // the client can open it rather than dead-ending on the error.
+      data: (data ?? null) as null,
       error: {
+        code,
+        errorType: code,
         message,
-        errorType,
+        ...(details?.length ? { details } : {}),
       },
     };
 
     response.status(status).json(errorResponse);
   }
 
-  private extractErrorDetails(exception: unknown): {
-    status: number;
-    message: string;
-    errorType: string;
-  } {
-    // 1) If it’s an HttpException (including BadRequestException/ValidationPipe errors)
+  private extractErrorDetails(exception: unknown): ExtractedError {
+    // 1) Our own exception, which already carries a stable code.
+    if (exception instanceof ApiException) {
+      const body = exception.getResponse() as StructuredExceptionResponse;
+
+      return {
+        status: exception.getStatus(),
+        message: typeof body.message === 'string' ? body.message : ErrorMessage.GENERAL_ERROR,
+        code: exception.code,
+        details: exception.details,
+        data: exception.data,
+      };
+    }
+
+    // 2) Any other HttpException, including ValidationPipe's BadRequestException.
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
       const rawRes = exception.getResponse();
 
-      // Handle the special case of ValidationError from class-validator
-      // Nest’s ValidationPipe throws a BadRequestException whose getResponse() is often:
+      // class-validator failures arrive as an array of messages. Turn them into
+      // one entry per offending field so the client can attach each message to
+      // the right input (0.4).
       if (
         exception instanceof BadRequestException &&
         typeof rawRes === 'object' &&
         Array.isArray((rawRes as StructuredExceptionResponse).message)
       ) {
         const messages = (rawRes as StructuredExceptionResponse).message as string[];
-        // Pick the first validation error:
-        const firstMessage = messages.length > 0 ? messages[0] : 'Validation failed';
 
         return {
           status,
-          message: firstMessage,
-          errorType: 'ValidationError',
+          message: messages[0] ?? 'Validation failed',
+          code: ApiErrorCode.VALIDATION_FAILED,
+          details: messages.map(msg => ({ field: this.fieldFromMessage(msg), message: msg })),
         };
       }
 
-      // If getResponse() is a string, use that as the message
       if (typeof rawRes === 'string') {
         return {
           status,
           message: rawRes,
-          // Use exception.name (e.g. "NotFoundException", "ConflictException")
-          errorType: exception.name,
+          code: this.codeForStatus(status, exception.name),
         };
       }
 
-      // Otherwise, getResponse() is an object. We read its "message" and "errorType" if present.
       const structured = rawRes as StructuredExceptionResponse;
       let msg: string;
 
-      // If the payload’s "message" is an array (but we didn’t hit BadRequestException above),
-      // we still join it into a string. Otherwise, convert to string if it’s something else.
       if (Array.isArray(structured.message)) {
-        msg = (structured.message as string[]).join(', ');
+        msg = structured.message.join(', ');
       } else if (typeof structured.message === 'string') {
         msg = structured.message;
       } else {
-        // Fallback to a default if no message field
-        msg = 'An unexpected error occurred';
+        msg = ErrorMessage.GENERAL_ERROR;
       }
 
-      // If the payload included an "errorType" field, use it; otherwise, use exception.name
-      const code = typeof structured.errorType === 'string' ? structured.errorType : exception.name;
+      const code =
+        (typeof structured.code === 'string' && structured.code) ||
+        (typeof structured.errorType === 'string' && structured.errorType) ||
+        this.codeForStatus(status, exception.name);
 
       return {
         status,
         message: msg,
-        errorType: code,
+        code,
+        details: structured.details,
+        data: structured.data,
       };
     }
 
-    // 2) If it’s a plain JS Error (not an HttpException), treat as 500
-    if (exception instanceof Error) {
-      return {
-        status: HttpStatus.INTERNAL_SERVER_ERROR,
-        message: ErrorMessage.INTERNAL_SERVER_ERROR,
-        errorType: 'InternalServerError',
-      };
-    }
-
-    // 3) For anything else (unlikely), also return 500
+    // 3) Anything else is a server fault. Never leak the internal message.
     return {
       status: HttpStatus.INTERNAL_SERVER_ERROR,
-      message: ErrorMessage.INTERNAL_SERVER_ERROR,
-      errorType: 'InternalServerError',
+      message: ErrorMessage.GENERAL_ERROR,
+      code: ApiErrorCode.INTERNAL_ERROR,
     };
+  }
+
+  /**
+   * class-validator prefixes its messages with the property name, which is the
+   * only place the field is recoverable once the pipe has flattened them.
+   */
+  private fieldFromMessage(message: string): string {
+    return message.trim().split(/\s+/)[0] ?? 'unknown';
+  }
+
+  private codeForStatus(status: number, fallback: string): string {
+    switch (status) {
+      case HttpStatus.BAD_REQUEST:
+        return ApiErrorCode.VALIDATION_FAILED;
+      case HttpStatus.UNAUTHORIZED:
+        return ApiErrorCode.UNAUTHORIZED;
+      case HttpStatus.FORBIDDEN:
+        return ApiErrorCode.FORBIDDEN;
+      case HttpStatus.NOT_FOUND:
+        return ApiErrorCode.NOT_FOUND;
+      case HttpStatus.CONFLICT:
+        return ApiErrorCode.CONFLICT;
+      case HttpStatus.TOO_MANY_REQUESTS:
+        return ApiErrorCode.RATE_LIMITED;
+      default:
+        return status >= 500 ? ApiErrorCode.INTERNAL_ERROR : fallback;
+    }
   }
 }

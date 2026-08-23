@@ -1,0 +1,457 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// Section 1 — Home / Community
+//
+// Five content types share one feed: Request, Offer, Update, Guide, plus Groups.
+// Each keeps its own table because their lifecycles genuinely differ (a request
+// resolves, an offer is evergreen, an update is a status post). The feed is a
+// projection over them, never a table of its own.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── Requests ────────────────────────────────────────────────────────────────
+
+model CommunityRequest {
+  id       String @id @default(uuid())
+  authorId String @map("author_id")
+  author   User   @relation("RequestAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  categoryCode String @map("category_code") // TaxonomyKind.COMMUNITY_CATEGORY
+  title        String @map("title")
+  description  String? @map("description")
+
+  cityId String @map("city_id")
+  city   City   @relation(fields: [cityId], references: [id])
+
+  neededOn        DateTime?      @map("needed_on") @db.Date
+  thankYouAmount  Int?           @map("thank_you_amount") // pence, display only (D4)
+  currency        String         @default("GBP") @map("currency")
+  visibility      PostVisibility @default(PUBLIC) @map("visibility")
+  status          RequestStatus  @default(OPEN) @map("status")
+  outcome         RequestOutcome? @map("outcome")
+
+  // Lets a viewer report anonymous content without the author id ever being sent
+  // (spec 0.9). Circl's own tooling keeps the real link through `authorId`.
+  reportToken String @unique @default(uuid()) @map("report_token")
+
+  viewCount    Int @default(0) @map("view_count")
+  helperCount  Int @default(0) @map("helper_count")
+  replyCount   Int @default(0) @map("reply_count")
+
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz
+
+  responses RequestResponse[]
+  helpers   RequestHelper[]
+  reviews   Review[]
+
+  @@index([cityId, status, createdAt])
+  @@index([categoryCode, status])
+  @@index([authorId, createdAt])
+  @@index([status, createdAt])
+  @@map("community_requests")
+}
+
+// A response carries two flags that change its meaning: whether it is an offer to
+// help (which is what makes `helperCount` real) and whether it is private to the
+// poster.
+model RequestResponse {
+  id        String           @id @default(uuid())
+  requestId String           @map("request_id")
+  request   CommunityRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  authorId String @map("author_id")
+  author   User   @relation("ResponseAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  content          String    @map("content")
+  isHelpOffer      Boolean   @default(false) @map("is_help_offer")
+  isPrivate        Boolean   @default(false) @map("is_private")
+  availableOn      DateTime? @map("available_on") @db.Date
+  thankYouExpected Int?      @map("thank_you_expected") // pence, display only (D4)
+  currency         String    @default("GBP") @map("currency")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  guideSources GuideSource[]
+
+  // A member may post several plain replies but only ONE help offer, so
+  // `helperCount` equals the number of distinct people — which is what the card
+  // claims (1.3.2). That is a partial unique index (`WHERE is_help_offer`), which
+  // Prisma cannot express, so it is created in the migration and named here so
+  // nobody re-adds a plain @@unique over the same columns and breaks second
+  // replies.
+  @@index([requestId, authorId])
+  @@index([requestId, createdAt])
+  @@index([authorId])
+  @@map("request_responses")
+}
+
+// Who actually helped, credited on resolution. This is what unlocks a COMMUNITY
+// review (2.5.2) and is therefore load-bearing for reputation portability.
+model RequestHelper {
+  requestId String           @map("request_id")
+  request   CommunityRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  userId    String           @map("user_id")
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  @@id([requestId, userId])
+  @@index([userId])
+  @@map("request_helpers")
+}
+
+// ─── Offers (community services) ─────────────────────────────────────────────
+
+model CommunityOffer {
+  id       String @id @default(uuid())
+  authorId String @map("author_id")
+  author   User   @relation("OfferAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  title        String @map("title")
+  description  String @map("description")
+  categoryCode String @map("category_code")
+
+  cityId String @map("city_id")
+  city   City   @relation(fields: [cityId], references: [id])
+
+  deliveryMode DeliveryMode @default(IN_PERSON) @map("delivery_mode")
+  priceFrom    Int?         @map("price_from") // pence; null means free
+  priceBasis   PriceBasis   @default(NEGOTIABLE) @map("price_basis")
+  currency     String       @default("GBP") @map("currency")
+
+  visibility  PostVisibility @default(PUBLIC) @map("visibility")
+  reportToken String         @unique @default(uuid()) @map("report_token")
+  viewCount   Int            @default(0) @map("view_count")
+
+  // The bridge into Professionals (2.1.3). An offer is promoted, never retyped.
+  promotedToListingId String?              @unique @map("promoted_to_listing_id")
+  promotedToListing   ProfessionalListing? @relation("OfferPromotion", fields: [promotedToListingId], references: [id])
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  @@index([cityId, createdAt])
+  @@index([categoryCode])
+  @@index([authorId, createdAt])
+  @@map("community_offers")
+}
+
+// ─── Updates ─────────────────────────────────────────────────────────────────
+
+model CommunityUpdate {
+  id       String @id @default(uuid())
+  authorId String @map("author_id")
+  author   User   @relation("UpdateAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  content String @map("content")
+
+  cityId String? @map("city_id")
+  city   City?   @relation(fields: [cityId], references: [id])
+
+  placeId    String? @map("place_id")
+  placeLabel String? @map("place_label")
+
+  visibility          PostVisibility @default(PUBLIC) @map("visibility")
+  commentsEnabled     Boolean        @default(true) @map("comments_enabled")
+  reactionCountHidden Boolean        @default(false) @map("reaction_count_hidden")
+  reportToken         String         @unique @default(uuid()) @map("report_token")
+
+  reactionCount Int @default(0) @map("reaction_count")
+  replyCount    Int @default(0) @map("reply_count")
+  viewCount     Int @default(0) @map("view_count")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  replies   UpdateReply[]
+  reactions UpdateReaction[]
+  tags      UpdateTag[]
+
+  @@index([cityId, createdAt])
+  @@index([authorId, createdAt])
+  @@map("community_updates")
+}
+
+model UpdateReply {
+  id       String          @id @default(uuid())
+  updateId String          @map("update_id")
+  update   CommunityUpdate @relation(fields: [updateId], references: [id], onDelete: Cascade)
+  authorId String          @map("author_id")
+  author   User            @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  content   String    @map("content")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  @@index([updateId, createdAt])
+  @@map("update_replies")
+}
+
+// One reaction type only — the UI is a single heart (1.5.3).
+model UpdateReaction {
+  updateId  String          @map("update_id")
+  update    CommunityUpdate @relation(fields: [updateId], references: [id], onDelete: Cascade)
+  userId    String          @map("user_id")
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz
+
+  @@id([updateId, userId])
+  @@index([userId])
+  @@map("update_reactions")
+}
+
+model UpdateTag {
+  updateId String          @map("update_id")
+  update   CommunityUpdate @relation(fields: [updateId], references: [id], onDelete: Cascade)
+  userId   String          @map("user_id")
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([updateId, userId])
+  @@index([userId])
+  @@map("update_tags")
+}
+
+// ─── Guides ──────────────────────────────────────────────────────────────────
+
+model Guide {
+  id       String  @id @default(uuid())
+  authorId String? @map("author_id") // null for Circl-drafted guides
+  author   User?   @relation("GuideAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  topicCode String @map("topic_code") // TaxonomyKind.GUIDE_TOPIC
+  title     String @map("title")
+  intro     String @map("intro")
+
+  // D5: stored as an ordered array of blocks from day one, projected to a flat
+  // `steps` array in the response until the client renders blocks (1.6.2).
+  blocks Json @map("blocks") // [{ type: HEADING|PARAGRAPH|STEP, text }]
+
+  resourceUrl String? @map("resource_url")
+
+  cityId String? @map("city_id")
+  city   City?   @relation(fields: [cityId], references: [id])
+
+  // Computed at write time from the body so every client agrees: 200 wpm,
+  // rounded up, minimum 1 (1.6.1).
+  readTimeMinutes Int @default(1) @map("read_time_minutes")
+
+  viewCount Int @default(0) @map("view_count")
+  likeCount Int @default(0) @map("like_count")
+
+  // Machine-drafted content without visible provenance is the fastest way to lose
+  // a community's trust, so an auto-generated guide with no sources is rejected
+  // at write time rather than published bare (1.6.2).
+  isAutoGenerated   Boolean   @default(false) @map("is_auto_generated")
+  provenanceSummary String?   @map("provenance_summary")
+  reviewedAt        DateTime? @map("reviewed_at") @db.Timestamptz
+  reviewedById      String?   @map("reviewed_by_id")
+
+  publishedAt DateTime? @map("published_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
+
+  sources    GuideSource[]
+  reactions  GuideReaction[]
+  bookmarks  GuideBookmark[]
+  feedback   GuideFeedback[]
+  progress   GuideProgress[]
+  deflections GuideDeflection[]
+
+  @@index([topicCode, publishedAt])
+  @@index([cityId, publishedAt])
+  @@index([publishedAt])
+  @@map("guides")
+}
+
+model GuideSource {
+  id      String @id @default(uuid())
+  guideId String @map("guide_id")
+  guide   Guide  @relation(fields: [guideId], references: [id], onDelete: Cascade)
+
+  type  GuideSourceType @map("type")
+  refId String          @map("ref_id")
+  label String          @map("label")
+
+  requestResponseId String?          @map("request_response_id")
+  requestResponse   RequestResponse? @relation(fields: [requestResponseId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([guideId])
+  @@map("guide_sources")
+}
+
+model GuideReaction {
+  guideId   String   @map("guide_id")
+  guide     Guide    @relation(fields: [guideId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@id([guideId, userId])
+  @@index([userId])
+  @@map("guide_reactions")
+}
+
+model GuideBookmark {
+  guideId   String   @map("guide_id")
+  guide     Guide    @relation(fields: [guideId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@id([guideId, userId])
+  @@index([userId, createdAt])
+  @@map("guide_bookmarks")
+}
+
+model GuideFeedback {
+  guideId String @map("guide_id")
+  guide   Guide  @relation(fields: [guideId], references: [id], onDelete: Cascade)
+  userId  String @map("user_id")
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  useful    Boolean  @map("useful")
+  note      String?  @map("note")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@id([guideId, userId])
+  @@index([guideId, useful])
+  @@map("guide_feedback")
+}
+
+// D6: read progress gets its own row. A boolean "started" cannot restore a
+// position, and this powers both the Continue reading strip and the progress bar.
+model GuideProgress {
+  guideId String @map("guide_id")
+  guide   Guide  @relation(fields: [guideId], references: [id], onDelete: Cascade)
+  userId  String @map("user_id")
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  progress  Float    @default(0) @map("progress") // 0..1
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@id([guideId, userId])
+  @@index([userId, updatedAt])
+  @@map("guide_progress")
+}
+
+// Telemetry for the "Before you post" interstitial (1.6.5). If members always
+// post anyway, the screen is costing more than it saves.
+model GuideDeflection {
+  id      String @id @default(uuid())
+  guideId String @map("guide_id")
+  guide   Guide  @relation(fields: [guideId], references: [id], onDelete: Cascade)
+  userId  String @map("user_id")
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  outcome   DeflectionOutcome @map("outcome")
+  createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([guideId, outcome])
+  @@map("guide_deflections")
+}
+
+// ─── Groups ──────────────────────────────────────────────────────────────────
+
+model Group {
+  id          String @id @default(uuid())
+  name        String @map("name")
+  description String @map("description")
+  rules       String? @map("rules")
+
+  cityId String @map("city_id")
+  city   City   @relation(fields: [cityId], references: [id])
+
+  joinPolicy JoinPolicy @default(OPEN) @map("join_policy")
+  avatarUrl  String?    @map("avatar_url")
+
+  createdById String @map("created_by_id")
+  createdBy   User   @relation("GroupCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  memberCount Int      @default(0) @map("member_count")
+  postCount   Int      @default(0) @map("post_count")
+  lastPostAt  DateTime? @map("last_post_at") @db.Timestamptz
+  reportToken String   @unique @default(uuid()) @map("report_token")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  memberships GroupMembership[]
+  posts       GroupPost[]
+
+  // Two "Manchester Nigerians" in Manchester is a support problem, not a feature.
+  @@unique([cityId, name])
+  @@index([cityId, memberCount])
+  @@index([createdAt])
+  @@map("groups")
+}
+
+model GroupMembership {
+  groupId String @map("group_id")
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId  String @map("user_id")
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  state    GroupMembershipState @default(MEMBER) @map("state")
+  isAdmin  Boolean              @default(false) @map("is_admin")
+
+  // Drives the unread dot on the My groups pills without counting rows per load.
+  lastReadAt   DateTime? @map("last_read_at") @db.Timestamptz
+  lastActiveAt DateTime  @default(now()) @map("last_active_at") @db.Timestamptz
+  requestedAt  DateTime  @default(now()) @map("requested_at") @db.Timestamptz
+  joinedAt     DateTime? @map("joined_at") @db.Timestamptz
+  decidedAt    DateTime? @map("decided_at") @db.Timestamptz
+
+  @@id([groupId, userId])
+  @@index([userId, state])
+  @@index([groupId, state])
+  @@map("group_memberships")
+}
+
+model GroupPost {
+  id       String @id @default(uuid())
+  groupId  String @map("group_id")
+  group    Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  authorId String @map("author_id")
+  author   User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  content     String @map("content")
+  replyCount  Int    @default(0) @map("reply_count")
+  reportToken String @unique @default(uuid()) @map("report_token")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  replies GroupPostReply[]
+
+  @@index([groupId, createdAt])
+  @@index([authorId])
+  @@map("group_posts")
+}
+
+model GroupPostReply {
+  id       String    @id @default(uuid())
+  postId   String    @map("post_id")
+  post     GroupPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId String    @map("author_id")
+  author   User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  content   String    @map("content")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  @@index([postId, createdAt])
+  @@map("group_post_replies")
+}

@@ -1,0 +1,70 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// Media (spec 0.11)
+//
+// Two-step upload: reserve a row and a presigned URL, then attach the id to a
+// post. A row that is never attached is an orphan and swept after 24 hours, so a
+// composer the member abandoned does not leave bytes behind.
+//
+// Attachment is polymorphic on (ownerType, ownerId) rather than a foreign key per
+// content type: eleven nullable FK columns on one table is the alternative, and
+// every new content type adds a twelfth.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model Media {
+  id       String      @id @default(uuid())
+  uploadedById String  @map("uploaded_by_id")
+  uploadedBy   User    @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  type        MediaType   @map("type")
+  status      MediaStatus @default(PENDING) @map("status")
+  mimeType    String      @map("mime_type")
+  byteSize    Int         @map("byte_size")
+  storageKey  String      @unique @map("storage_key")
+  url         String?     @map("url")
+  thumbnailUrl String?    @map("thumbnail_url")
+
+  // Reserved so the client can size the frame before the bytes land (spec 0.11).
+  width    Int?    @map("width")
+  height   Int?    @map("height")
+  blurHash String? @map("blur_hash")
+
+  // Audio only. The recording device is the only thing that knows these (5.5).
+  durationMs Int?   @map("duration_ms")
+  waveform   Json?  @map("waveform") // up to 40 floats, 0..1
+
+  // Polymorphic attachment. Null until the media is used by a post.
+  ownerType String? @map("owner_type")
+  ownerId   String? @map("owner_id")
+  position  Int     @default(0) @map("position")
+
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz
+  attachedAt DateTime? @map("attached_at") @db.Timestamptz
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  messageAttachments MessageAttachment[]
+  aiDrafts           AiItemDraft[]
+
+  @@index([uploadedById])
+  @@index([ownerType, ownerId, position])
+  @@index([status, createdAt])
+  @@map("media")
+}
+
+// Spec 0.12: replaying an Idempotency-Key within 24 hours returns the original
+// response rather than creating a duplicate. Mobile networks retry.
+model IdempotencyRecord {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  key          String   @map("key")
+  endpoint     String   @map("endpoint")
+  requestHash  String   @map("request_hash")
+  statusCode   Int      @map("status_code")
+  responseBody Json     @map("response_body")
+  expiresAt    DateTime @map("expires_at") @db.Timestamptz
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([userId, key, endpoint])
+  @@index([expiresAt])
+  @@map("idempotency_records")
+}

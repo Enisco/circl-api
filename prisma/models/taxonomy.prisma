@@ -1,0 +1,73 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// Taxonomy
+//
+// Spec 0.7 is emphatic: every enumerated value crosses the wire as a stable
+// UPPER_SNAKE code, and the display label lives somewhere it can be reworded
+// without a migration. That "somewhere" is this table.
+//
+// One row per (kind, code). `isActive` is what lets the full vocabulary be
+// seeded while the app renders a subset (D1, D22) — seed everything, deactivate
+// what is not ready, and turning one on is an admin action rather than a release.
+//
+// `metadata` carries the per-kind extras the client needs and nothing else does:
+//   PROFESSION           { isRegulated, credentialBodies[] }
+//   COMMUNITY_CATEGORY   { suggestedProfessionCodes[] }
+//   ITEM_PRICE_BAND      { minPence, maxPence }
+//   STORE_TYPE           { blurb }
+//   JOURNEY_STAGE        { isNewToUk }
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model TaxonomyTerm {
+  id          String       @id @default(uuid())
+  kind        TaxonomyKind @map("kind")
+  code        String       @map("code")
+  label       String       @map("label")
+  description String?      @map("description")
+  sort        Int          @default(0) @map("sort")
+  isActive    Boolean      @default(true) @map("is_active")
+  metadata    Json?        @map("metadata")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([kind, code])
+  @@index([kind, isActive, sort])
+  @@map("taxonomy_terms")
+}
+
+// Cities are a table, not an enum: onboarding already sends `cityId` and the set
+// grows (spec 0.7).
+model City {
+  id        String   @id @map("id") // e.g. "LONDON"
+  name      String   @map("name") // e.g. "London"
+  region    String?  @map("region") // e.g. "North West" — rendered beside the name
+  latitude  Float?   @map("latitude")
+  longitude Float?   @map("longitude")
+  timezone  String   @default("Europe/London") @map("timezone")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  profiles             UserProfile[]
+  requests             CommunityRequest[]
+  offers               CommunityOffer[]
+  updates              CommunityUpdate[]
+  guides               Guide[]
+  groups               Group[]
+  professionalListings ProfessionalListing[]
+  briefs               ManagedBrief[]
+  connectProfiles      ConnectProfile[]
+  stores               Store[]
+
+  @@index([name])
+  @@map("cities")
+}
+
+// The single row that stamps `version` on GET /taxonomy, so a client can cache
+// the payload and refetch only when something actually changed.
+model TaxonomyVersion {
+  id        String   @id @default("SINGLETON")
+  version   DateTime @default(now()) @map("version") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("taxonomy_version")
+}

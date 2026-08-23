@@ -1,0 +1,325 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// Section 2 — Professionals
+//
+// Circl does not handle money (2.0.1). There is no payment endpoint, no escrow,
+// no payout, no platform fee and no refund. Amounts exist because two people need
+// to agree a number, and they are display and record only. `JobState` is named
+// for exactly that reason: these are stages of work, never states of money.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model ProfessionalListing {
+  id     String @id @default(uuid())
+  userId String @unique @map("user_id") // one listing per user
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  professionTitle String          @map("profession_title")
+  experienceLevel ExperienceLevel @map("experience_level")
+  yearsExperience Int?            @map("years_experience")
+  about           String          @map("about")
+
+  cityId String @map("city_id")
+  city   City   @relation(fields: [cityId], references: [id])
+
+  deliveryMode DeliveryMode @default(IN_PERSON) @map("delivery_mode")
+  priceFrom    Int?         @map("price_from") // pence
+  priceBasis   PriceBasis   @default(NEGOTIABLE) @map("price_basis")
+  currency     String       @default("GBP") @map("currency")
+
+  isAcceptingWork  Boolean                   @default(true) @map("is_accepting_work")
+  freeConsultation Boolean                   @default(false) @map("free_consultation")
+  verificationStatus ListingVerificationStatus @default(UNVERIFIED) @map("verification_status")
+
+  // D13 mitigation: with no credential checks, store what was agreed and when, so
+  // an unchecked claim is at least an unchecked claim that says so.
+  consentAccepted   Boolean   @default(false) @map("consent_accepted")
+  consentAcceptedAt DateTime? @map("consent_accepted_at") @db.Timestamptz
+  consentVersion    String?   @map("consent_version")
+
+  // The link back to the community offer this was promoted from (2.1.3).
+  sourceOfferId String? @map("source_offer_id")
+
+  profileViews          Int  @default(0) @map("profile_views")
+  jobsCompleted         Int  @default(0) @map("jobs_completed")
+  medianResponseMinutes Int? @map("median_response_minutes")
+
+  submittedAt DateTime? @map("submitted_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
+
+  categories     ProfessionalListingCategory[]
+  services       ProfessionalService[]
+  bookings       Booking[]
+  briefMatches   BriefMatch[]
+  promotedOffer  CommunityOffer? @relation("OfferPromotion")
+
+  @@index([cityId, isAcceptingWork])
+  @@index([verificationStatus])
+  @@map("professional_listings")
+}
+
+// 1 to 3 profession codes per listing (2.6.1). A join table rather than a Json
+// array because Browse filters on it and an array cannot be indexed usefully.
+model ProfessionalListingCategory {
+  listingId String              @map("listing_id")
+  listing   ProfessionalListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  code      String              @map("code") // TaxonomyKind.PROFESSION
+  isPrimary Boolean             @default(false) @map("is_primary")
+
+  @@id([listingId, code])
+  @@index([code])
+  @@map("professional_listing_categories")
+}
+
+model ProfessionalService {
+  id        String              @id @default(uuid())
+  listingId String              @map("listing_id")
+  listing   ProfessionalListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  name        String     @map("name")
+  description String?    @map("description")
+  price       Int?       @map("price") // pence; null means "on request"
+  priceBasis  PriceBasis @default(NEGOTIABLE) @map("price_basis")
+  currency    String     @default("GBP") @map("currency")
+  isActive    Boolean    @default(true) @map("is_active")
+  sort        Int        @default(0) @map("sort")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  bookings Booking[]
+
+  // Never hard-deleted while a booking references it, or the booking loses its
+  // own subject (2.6.3). Deactivate and keep the row.
+  @@index([listingId, isActive])
+  @@map("professional_services")
+}
+
+// ─── Managed briefs and Smart Match (Circl Intelligence) ─────────────────────
+
+model ManagedBrief {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  categoryCode String       @map("category_code")
+  description  String       @map("description")
+  urgency      BriefUrgency @default(FLEXIBLE) @map("urgency")
+  budget       Int?         @map("budget") // pence, display only
+  currency     String       @default("GBP") @map("currency")
+
+  cityId String? @map("city_id")
+  city   City?   @relation(fields: [cityId], references: [id])
+
+  state BriefState @default(OPEN) @map("state")
+
+  chosenListingId String? @map("chosen_listing_id")
+  bookingId       String? @map("booking_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  matches  BriefMatch[]
+  bookings Booking[]
+
+  @@index([userId, state])
+  @@map("managed_briefs")
+}
+
+// Scores are 0..1 with a one-word qualifier computed server-side, so the four
+// mini-bars and their labels agree everywhere (2.8.2). Persisted rather than
+// recomputed so the shortlist a member saw is the shortlist they chose from.
+model BriefMatch {
+  id      String       @id @default(uuid())
+  briefId String       @map("brief_id")
+  brief   ManagedBrief @relation(fields: [briefId], references: [id], onDelete: Cascade)
+
+  listingId String              @map("listing_id")
+  listing   ProfessionalListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  rank            Int    @map("rank")
+  totalScore      Float  @map("total_score")
+  ratingScore     Float  @map("rating_score")
+  distanceScore   Float  @map("distance_score")
+  priceScore      Float  @map("price_score")
+  responseScore   Float  @map("response_score")
+  priceForBrief   Int?   @map("price_for_brief")
+
+  // A plain sentence, or null. If the matcher cannot produce an honest one, send
+  // null rather than a template — a wrong explanation is worse than none (2.8.2).
+  rationale String? @map("rationale")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([briefId, listingId])
+  @@index([briefId, rank])
+  @@map("brief_matches")
+}
+
+// ─── Bookings ────────────────────────────────────────────────────────────────
+
+model Booking {
+  id String @id @default(uuid())
+
+  clientId String @map("client_id")
+  client   User   @relation("BookingClient", fields: [clientId], references: [id], onDelete: Cascade)
+
+  professionalId String @map("professional_id")
+  professional   User   @relation("BookingProfessional", fields: [professionalId], references: [id], onDelete: Cascade)
+
+  listingId String              @map("listing_id")
+  listing   ProfessionalListing @relation(fields: [listingId], references: [id])
+
+  serviceId String?              @map("service_id")
+  service   ProfessionalService? @relation(fields: [serviceId], references: [id])
+
+  briefId String?       @map("brief_id")
+  brief   ManagedBrief? @relation(fields: [briefId], references: [id])
+
+  // Copied from the service or the brief at creation. The client sends the id,
+  // never the values (2.1.5), and a later edit to the listing must not rewrite
+  // what the two people agreed.
+  serviceName        String  @map("service_name")
+  serviceDescription String? @map("service_description")
+  quotedAmount       Int?    @map("quoted_amount")
+  agreedAmount       Int?    @map("agreed_amount") // D12: a record, not financial data
+  currency           String  @default("GBP") @map("currency")
+
+  state JobState @default(PENDING_ACCEPTANCE) @map("state")
+
+  preferredDate     DateTime?   @map("preferred_date") @db.Date
+  preferredTimeSlot String?     @map("preferred_time_slot")
+  isFlexible        Boolean     @default(false) @map("is_flexible")
+  mode              BookingMode @default(ONLINE) @map("mode")
+  address           String?     @map("address")
+  details           String?     @map("details")
+
+  conversationId String?       @map("conversation_id")
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  // 7 days after DELIVERED. On the record from the moment of delivery so the
+  // screen can state it plainly rather than burying it in terms (2.9.5). It
+  // closes a job; it does not release money, because there is none to release.
+  deliveredAt    DateTime? @map("delivered_at") @db.Timestamptz
+  autoCompleteAt DateTime? @map("auto_complete_at") @db.Timestamptz
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz
+  cancelledAt    DateTime? @map("cancelled_at") @db.Timestamptz
+  cancelReason   String?   @map("cancel_reason")
+
+  firstClientMessageAt DateTime? @map("first_client_message_at") @db.Timestamptz
+  firstProReplyAt      DateTime? @map("first_pro_reply_at") @db.Timestamptz
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  events   BookingEvent[]
+  disputes Dispute[]
+  reviews  Review[]
+
+  @@index([clientId, state, createdAt])
+  @@index([professionalId, state, createdAt])
+  @@index([state, autoCompleteAt])
+  @@map("bookings")
+}
+
+// The timeline is data, not a client-side derivation, because each stage is
+// timestamped and the client must not have to invent the order (2.9.1).
+model BookingEvent {
+  id        String   @id @default(uuid())
+  bookingId String   @map("booking_id")
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  stage   JobStage @map("stage")
+  actorId String?  @map("actor_id")
+  note    String?  @map("note")
+  metadata Json?   @map("metadata")
+
+  reachedAt DateTime @default(now()) @map("reached_at") @db.Timestamptz
+
+  @@unique([bookingId, stage])
+  @@index([bookingId, reachedAt])
+  @@map("booking_events")
+}
+
+// ─── Disputes ────────────────────────────────────────────────────────────────
+
+// One dispute resource, polymorphic on subject, shared by bookings and commerce
+// enquiries (4.1.3) so "Report a problem" behaves the same wherever it is raised.
+// There is nothing to freeze, since Circl holds nothing: the job is paused and
+// Circl reviews it.
+model Dispute {
+  id String @id @default(uuid())
+
+  subjectType DisputeSubjectType @map("subject_type")
+  bookingId   String?            @map("booking_id")
+  booking     Booking?           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  enquiryId   String?            @map("enquiry_id")
+  enquiry     Enquiry?           @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+
+  raisedById String @map("raised_by_id")
+  raisedBy   User   @relation(fields: [raisedById], references: [id], onDelete: Cascade)
+
+  reasonCode  DisputeReason @map("reason_code")
+  description String        @map("description")
+  state       DisputeState  @default(OPEN) @map("state")
+
+  conversationId String?       @map("conversation_id")
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  expectedResolutionAt DateTime? @map("expected_resolution_at") @db.Timestamptz
+  resolvedAt           DateTime? @map("resolved_at") @db.Timestamptz
+  resolutionNote       String?   @map("resolution_note")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  evidence DisputeEvidence[]
+
+  @@index([state, createdAt])
+  @@index([bookingId])
+  @@index([enquiryId])
+  @@map("disputes")
+}
+
+// "Both of you can add evidence" is promised on the screen, so it has to be true
+// after submission and not only during (2.10).
+model DisputeEvidence {
+  id        String  @id @default(uuid())
+  disputeId String  @map("dispute_id")
+  dispute   Dispute @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+
+  submittedById String @map("submitted_by_id")
+  submittedBy   User   @relation(fields: [submittedById], references: [id], onDelete: Cascade)
+
+  note      String?  @map("note")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([disputeId])
+  @@map("dispute_evidence")
+}
+
+// ─── Managed requests (shared with Commerce, 4.10) ───────────────────────────
+
+model ManagedRequest {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subjectType ManagedRequestSubject @map("subject_type")
+  state       ManagedRequestState   @default(OPEN) @map("state")
+
+  helpAreas Json?   @map("help_areas")
+  notes     String? @map("notes")
+  storeId   String? @map("store_id")
+  briefId   String? @map("brief_id")
+
+  conversationId String?       @map("conversation_id")
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([state, createdAt])
+  @@index([userId])
+  @@map("managed_requests")
+}

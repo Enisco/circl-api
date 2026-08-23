@@ -1,12 +1,3 @@
-model City {
-  id   String @id @map("id") // e.g. "LONDON"
-  name String @map("name")   // e.g. "London"
-
-  profiles UserProfile[]
-
-  @@map("cities")
-}
-
 model User {
   id              String            @id @default(uuid())
   firstName       String            @map("first_name")
@@ -20,6 +11,16 @@ model User {
   updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt       DateTime?         @map("deleted_at") @db.Timestamptz
 
+  // ── Account deletion (spec 0.15) ──────────────────────────────────────────
+  // Anonymised is not a status flag on a row that still holds the data: the
+  // personal data is destroyed in the same transaction. What survives is this
+  // marker and a one-way hash of the email, so the same address cannot silently
+  // re-register onto the old record and `410` can be returned rather than a
+  // confusing `404`.
+  isAnonymised    Boolean   @default(false) @map("is_anonymised")
+  anonymisedAt    DateTime? @map("anonymised_at") @db.Timestamptz
+  deletedEmailHash String?  @unique @map("deleted_email_hash")
+
   userAuth          UserAuth?
   profile           UserProfile?
   adminProfile      AdminProfile?
@@ -27,6 +28,72 @@ model User {
   userRole          UserRole?
   socialAuths       UserSocialAuth[]
   notificationPrefs UserNotificationPrefs?
+
+  // ── Community ─────────────────────────────────────────────────────────────
+  requests        CommunityRequest[] @relation("RequestAuthor")
+  requestResponses RequestResponse[] @relation("ResponseAuthor")
+  creditedOn      RequestHelper[]
+  offers          CommunityOffer[]   @relation("OfferAuthor")
+  updates         CommunityUpdate[]  @relation("UpdateAuthor")
+  updateReplies   UpdateReply[]
+  updateReactions UpdateReaction[]
+  updateTags      UpdateTag[]
+  guides          Guide[]            @relation("GuideAuthor")
+  guideReactions  GuideReaction[]
+  guideBookmarks  GuideBookmark[]
+  guideFeedback   GuideFeedback[]
+  guideProgress   GuideProgress[]
+  guideDeflections GuideDeflection[]
+  groupsCreated   Group[]            @relation("GroupCreator")
+  groupMemberships GroupMembership[]
+  groupPosts      GroupPost[]
+  groupPostReplies GroupPostReply[]
+
+  // ── Moderation & Guard ────────────────────────────────────────────────────
+  reportsFiled      Report[]              @relation("ReportFiler")
+  reportsAbout      Report[]              @relation("ReportSubject")
+  blocksMade        Block[]               @relation("Blocker")
+  blocksReceived    Block[]               @relation("Blocked")
+  moderationActions ModerationAction[]    @relation("ModerationActor")
+  queueSubjectOf    ModerationQueueItem[] @relation("QueueSubject")
+  queueAssignedTo   ModerationQueueItem[] @relation("QueueAssignee")
+  guardThreads      GuardThread[]
+  guardAssignedTo   GuardThread[]         @relation("GuardAssignee")
+
+  // ── Trust ─────────────────────────────────────────────────────────────────
+  trustChecks       TrustCheck[]
+  reviewsReceived   Review[]           @relation("ReviewSubject")
+  reviewsWritten    Review[]           @relation("ReviewAuthor")
+  reputationSummary ReputationSummary?
+
+  // ── Professionals ─────────────────────────────────────────────────────────
+  professionalListing ProfessionalListing?
+  briefs              ManagedBrief[]
+  bookingsAsClient    Booking[]         @relation("BookingClient")
+  bookingsAsPro       Booking[]         @relation("BookingProfessional")
+  disputesRaised      Dispute[]
+  disputeEvidence     DisputeEvidence[]
+  managedRequests     ManagedRequest[]
+
+  // ── Connect ───────────────────────────────────────────────────────────────
+  connectProfile ConnectProfile?
+
+  // ── Commerce ──────────────────────────────────────────────────────────────
+  store             Store?
+  enquiriesAsBuyer  Enquiry[]     @relation("EnquiryBuyer")
+  enquiriesAsSeller Enquiry[]     @relation("EnquirySeller")
+  aiDrafts          AiItemDraft[]
+  aiDraftJobs       AiDraftJob[]
+
+  // ── Messaging ─────────────────────────────────────────────────────────────
+  conversations   ConversationParticipant[]
+  messages        Message[]
+  messageReceipts MessageReceipt[]
+
+  // ── Media & Intelligence ──────────────────────────────────────────────────
+  media          Media[]
+  activityEvents ActivityEvent[]
+  feedFeedback   FeedFeedback[]
 
   @@index([email])
   @@index([username])
@@ -89,6 +156,25 @@ model UserProfile {
   cityId          String? @map("city_id")
   city            City?   @relation(fields: [cityId], references: [id])
   countryOfOrigin String? @map("country_of_origin")
+
+  // D10 / D15 / D16. These four are the continuity contract made physical: they
+  // live on the user because Connect, Professionals and Commerce all read them,
+  // and a second copy is guaranteed to disagree with the first.
+  //
+  // dateOfBirth is one field, held once. Connect derives an age from it and never
+  // stores a number — a number cannot be re-validated later, and someone who
+  // typed 18 last year is still 18 forever. Null is a valid state: only surfaces
+  // that need an age ask for one (D16). Changing it once set is a support action,
+  // because it is an age gate.
+  dateOfBirth       DateTime? @map("date_of_birth") @db.Date
+  dateOfBirthSetAt  DateTime? @map("date_of_birth_set_at") @db.Timestamptz
+
+  // Collected once in onboarding, prefilled everywhere after. Connect writes
+  // through to these rather than keeping its own copy (3.1.3).
+  interests    Json?   @map("interests") // up to 8 INTEREST codes
+  languages    Json?   @map("languages") // up to 6 LANGUAGE codes
+  heritageTag  String? @map("heritage_tag") // one HERITAGE_TAG code, shared with Commerce (3.1.4)
+  journeyStage String? @map("journey_stage") // one JOURNEY_STAGE code
 
   // ── Contact ───────────────────────────────────────────────────────────────
   phoneNumberDiallingCode String? @map("phone_number_dialling_code")
