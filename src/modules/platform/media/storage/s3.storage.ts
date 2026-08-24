@@ -9,7 +9,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { PresignedUpload, StorageProvider } from './storage.interface';
 
-const UPLOAD_TTL_SECONDS = 900;
+const DEFAULT_UPLOAD_TTL_SECONDS = 900;
 
 /**
  * The production driver. Presigns a PUT so the bytes go straight from the device
@@ -23,21 +23,34 @@ export class S3Storage extends StorageProvider {
   private readonly logger = new Logger(S3Storage.name);
   private readonly client: S3Client;
   private readonly bucket: string;
+  private readonly region: string;
   private readonly cdnUrl: string | null;
+  private readonly uploadTtlSeconds: number;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(config: ConfigService) {
     super();
 
     this.bucket = config.getOrThrow<string>('MEDIA_BUCKET');
+    // Media can sit in a different region from SES, so it has its own setting
+    // and falls back rather than assuming they are the same.
+    this.region = config.get<string>('MEDIA_REGION') || config.get<string>('AWS_REGION') || 'eu-west-2';
     this.cdnUrl = config.get<string>('MEDIA_CDN_URL')?.replace(/\/$/, '') ?? null;
+    this.uploadTtlSeconds =
+      Number(config.get<string>('MEDIA_UPLOAD_URL_TTL_SECONDS')) || DEFAULT_UPLOAD_TTL_SECONDS;
+
+    // Media-specific credentials when given, otherwise the shared AWS pair. A
+    // separate IAM user is worth having: this one needs four actions on one
+    // bucket and nothing else.
+    const accessKeyId =
+      config.get<string>('MEDIA_ACCESS_KEY_ID') || config.get<string>('AWS_ACCESS_KEY_ID');
+    const secretAccessKey =
+      config.get<string>('MEDIA_SECRET_ACCESS_KEY') || config.get<string>('AWS_SECRET_ACCESS_KEY');
+
     this.client = new S3Client({
-      region: config.get<string>('AWS_REGION') ?? 'eu-west-2',
-      credentials: config.get<string>('AWS_ACCESS_KEY_ID')
-        ? {
-            accessKeyId: config.getOrThrow<string>('AWS_ACCESS_KEY_ID'),
-            secretAccessKey: config.getOrThrow<string>('AWS_SECRET_ACCESS_KEY'),
-          }
-        : undefined,
+      region: this.region,
+      // Left undefined on purpose when no keys are set, so the SDK falls back to
+      // the instance role. That is how this should run on real infrastructure.
+      credentials: accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey } : undefined,
     });
   }
 
@@ -57,20 +70,20 @@ export class S3Storage extends StorageProvider {
         ContentType: mimeType,
         ContentLength: byteSize,
       }),
-      { expiresIn: UPLOAD_TTL_SECONDS },
+      { expiresIn: this.uploadTtlSeconds },
     );
 
     return {
       uploadUrl,
       uploadHeaders: { 'Content-Type': mimeType },
-      expiresAt: new Date(Date.now() + UPLOAD_TTL_SECONDS * 1000),
+      expiresAt: new Date(Date.now() + this.uploadTtlSeconds * 1000),
     };
   }
 
   publicUrl(storageKey: string): string {
     return this.cdnUrl
       ? `${this.cdnUrl}/${storageKey}`
-      : `https://${this.bucket}.s3.${this.config.get('AWS_REGION') ?? 'eu-west-2'}.amazonaws.com/${storageKey}`;
+      : `https://${this.bucket}.s3.${this.region}.amazonaws.com/${storageKey}`;
   }
 
   async delete(storageKey: string): Promise<void> {

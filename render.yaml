@@ -100,6 +100,29 @@ services:
       - key: AWS_SECRET_ACCESS_KEY
         sync: false
 
+      # ─── Media storage (S3) ────────────────────────────────────────────────────
+      # MEDIA_BUCKET is the switch: set it and uploads presign straight to S3.
+      # Left unset, the API falls back to a local-disk driver whose files do not
+      # survive a deploy, so this must be set on any deployed environment.
+      - key: MEDIA_BUCKET
+        sync: false
+      - key: MEDIA_REGION
+        sync: false
+      - key: MEDIA_CDN_URL
+        sync: false
+      # Optional: give media its own IAM user rather than reusing the SES keys.
+      # It needs only PutObject, GetObject, HeadObject and DeleteObject on the
+      # one bucket.
+      - key: MEDIA_ACCESS_KEY_ID
+        sync: false
+      - key: MEDIA_SECRET_ACCESS_KEY
+        sync: false
+      - key: MEDIA_UPLOAD_URL_TTL_SECONDS
+        value: 900
+      # Absolute origin this service is reachable at.
+      - key: PUBLIC_BASE_URL
+        sync: false
+
       # ─── Firebase Cloud Messaging ──────────────────────────────────────────────
       - key: FIREBASE_PROJECT_ID
         sync: false

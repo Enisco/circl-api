@@ -27,7 +27,11 @@ export const configValidationSchema = Joi.object({
   // two-step contract so composers work before a bucket exists. Local disk does
   // not survive a redeploy, so staging and production want a bucket.
   MEDIA_BUCKET: Joi.string().optional().allow(''),
+  MEDIA_REGION: Joi.string().optional().allow(''),
   MEDIA_CDN_URL: Joi.string().uri().optional().allow(''),
+  MEDIA_ACCESS_KEY_ID: Joi.string().optional().allow(''),
+  MEDIA_SECRET_ACCESS_KEY: Joi.string().optional().allow(''),
+  MEDIA_UPLOAD_URL_TTL_SECONDS: Joi.number().min(60).max(3600).default(900),
   MEDIA_LOCAL_DIR: Joi.string().default('./storage/media'),
   AWS_REGION: Joi.string().default('eu-west-2'),
   AWS_ACCESS_KEY_ID: Joi.string().optional().allow(''),
