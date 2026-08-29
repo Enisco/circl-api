@@ -32,13 +32,7 @@ import {
 /** 7 days after DELIVERED (2.9.5). */
 const AUTO_COMPLETE_DAYS = 7;
 
-/**
- * The stages the client renders, in order.
- *
- * Sent in full with a `reachedAt` per stage, because the timeline is data and not
- * a client-side derivation. Sending only the current stage forces the client to
- * invent the order (2.9.1).
- */
+/** The stages the client renders, in order. */
 const TIMELINE_STAGES: JobStage[] = [
   JobStage.REQUESTED,
   JobStage.ACCEPTED,
@@ -50,11 +44,7 @@ const TIMELINE_STAGES: JobStage[] = [
 
 export type ViewerRole = 'CLIENT' | 'PROFESSIONAL';
 
-/**
- * When "Report a problem" is offered. Not before the work is agreed — there is
- * nothing to dispute about a request nobody has accepted — and still available
- * after completion, because problems surface late.
- */
+/** When "Report a problem" is offered. */
 const DISPUTABLE_STATES: JobState[] = [
   JobState.ACCEPTED,
   JobState.IN_PROGRESS,
@@ -121,8 +111,7 @@ export class BookingService {
       );
     }
 
-    // The server copies the values; the client sends the id. A later edit to the
-    // listing must not rewrite what the two people agreed (2.1.5).
+    // The server copies the values; the client sends the id.
     let serviceName = '';
     let serviceDescription: string | null = null;
     let quotedAmount: number | null = null;
@@ -174,8 +163,7 @@ export class BookingService {
           isFlexible: dto.isFlexible ?? false,
           mode: dto.mode ?? undefined,
           address: dto.mode === 'IN_PERSON' ? (dto.address ?? null) : null,
-          // With a brief present, `details` is an ADDITION rather than a
-          // replacement: the brief text is never re-posted by the client.
+          // With a brief present, `details` is an ADDITION rather than a replacement: the brief text is never re-posted by the client.
           details: dto.details ?? null,
           state: JobState.PENDING_ACCEPTANCE,
         },
@@ -185,9 +173,7 @@ export class BookingService {
         data: { bookingId: created.id, stage: JobStage.REQUESTED, actorId: clientId },
       });
 
-      // Creates the conversation and returns its id on the booking, so Message
-      // never has to guess a thread. The client currently pushes a hardcoded
-      // thread, which is a bug this field removes (2.9.2).
+      // Creates the conversation and returns its id on the booking, so Message never has to guess a thread.
       const { conversation } = await this.conversations.ensure(
         {
           kind: ThreadKind.PROFESSIONAL,
@@ -236,9 +222,9 @@ export class BookingService {
     const role = query.role ?? 'CLIENT';
 
     if (role === 'PROFESSIONAL') {
-      // What gates the second tab (2.9.3).
-      const listing = await this.database.professionalListing.findUnique({
-        where: { userId },
+      // What gates the second tab (2.9.3): having a published listing, NOT being verified.
+      const listing = await this.database.professionalListing.findFirst({
+        where: { userId, deletedAt: null },
         select: { id: true },
       });
 
@@ -304,8 +290,7 @@ export class BookingService {
       serviceDescription: booking.serviceDescription,
       listing: { id: booking.listingId, professionTitle: booking.listing.professionTitle },
       quotedAmount: money(booking.quotedAmount, booking.currency),
-      // D12: self-declared, unverified, display only. Never aggregated into
-      // revenue reporting and never a figure Circl stands behind.
+      // D12: self-declared, unverified, display only.
       agreedAmount: money(booking.agreedAmount, booking.currency),
       preferredDate: toDateOnly(booking.preferredDate),
       preferredTimeSlot: booking.preferredTimeSlot,
@@ -313,8 +298,7 @@ export class BookingService {
       mode: booking.mode,
       address: booking.address,
       details: booking.details,
-      // The brief already filled in, which is what the booking screen renders
-      // rather than asking the member to retype it (2.1.5).
+      // The brief already filled in, which is what the booking screen renders rather than asking the member to retype it (2.1.5).
       brief: booking.brief
         ? {
             id: booking.brief.id,
@@ -323,7 +307,7 @@ export class BookingService {
             budget: money(booking.brief.budget, booking.brief.currency),
           }
         : null,
-      counterpart: toAuthorView(counterpart),
+      counterpart: toAuthorView(counterpart, { sign: this.media.sign }),
       conversationId: booking.conversationId,
       autoCompleteAt: booking.autoCompleteAt?.toISOString() ?? null,
       timeline: this.timeline(booking.events),
@@ -367,7 +351,7 @@ export class BookingService {
   }
 
   async deliver(userId: string, id: string, dto: DeliverDto) {
-    const media = await this.media.validate(dto.mediaIds, userId);
+    const media = await this.media.validate(dto.mediaKeys, userId);
 
     return this.transition(userId, id, {
       allowedRole: 'PROFESSIONAL',
@@ -375,7 +359,7 @@ export class BookingService {
       to: JobState.DELIVERED,
       stage: JobStage.DELIVERED,
       note: dto.note,
-      mediaIds: media.map(item => item.id),
+      mediaKeys: media.map(item => item.id),
     });
   }
 
@@ -409,10 +393,7 @@ export class BookingService {
     });
   }
 
-  /**
-   * Every transition returns the full updated booking including the new timeline
-   * and viewer, so the screen never needs a follow-up fetch (2.9.5).
-   */
+  /** Every transition returns the full updated booking including the new timeline and viewer, so the screen never needs a follow-up fetch (2.9.5). */
   private async transition(
     userId: string,
     id: string,
@@ -423,7 +404,7 @@ export class BookingService {
       stage: JobStage;
       reason?: string;
       note?: string;
-      mediaIds?: string[];
+      mediaKeys?: string[];
     },
   ) {
     const booking = await this.database.booking.findUnique({ where: { id } });
@@ -440,8 +421,7 @@ export class BookingService {
     }
 
     if (!options.from.includes(booking.state)) {
-      // The current state goes in `data`, so a client working from a stale screen
-      // can resync instead of guessing (2.9.5).
+      // The current state goes in `data`, so a client working from a stale screen can resync instead of guessing (2.9.5).
       throw ApiException.conflict(
         ApiErrorCode.INVALID_TRANSITION,
         'This booking has moved on since your screen loaded.',
@@ -459,9 +439,7 @@ export class BookingService {
           ...(options.to === JobState.DELIVERED
             ? {
                 deliveredAt: now,
-                // On the record from the moment of delivery, so the screen can
-                // state it plainly rather than burying it in terms. It closes a
-                // job; it does not release money, because there is none.
+                // On the record from the moment of delivery, so the screen can state it plainly rather than burying it in terms.
                 autoCompleteAt: addDays(now, AUTO_COMPLETE_DAYS),
               }
             : {}),
@@ -504,10 +482,7 @@ export class BookingService {
     return this.findOne(userId, id);
   }
 
-  /**
-   * Auto-complete (2.9.5). Runs on a schedule; the booking moves to COMPLETED on
-   * its own and both sides are prompted to review.
-   */
+  /** Auto-complete (2.9.5). */
   async runAutoComplete(): Promise<number> {
     const due = await this.database.booking.findMany({
       where: { state: JobState.DELIVERED, autoCompleteAt: { lte: new Date() } },
@@ -567,8 +542,7 @@ export class BookingService {
       reachedAt: reached.get(stage)?.toISOString() ?? null,
     }));
 
-    // A cancelled or disputed job did not pass through DONE, so those stages are
-    // appended rather than pretending the happy path completed.
+    // A cancelled or disputed job did not pass through DONE, so those stages are appended rather than pretending the happy path completed.
     for (const stage of [JobStage.CANCELLED, JobStage.DISPUTED, JobStage.EXPIRED]) {
       if (reached.has(stage)) {
         stages.push({ stage, reachedAt: reached.get(stage)!.toISOString() });
@@ -578,13 +552,7 @@ export class BookingService {
     return stages;
   }
 
-  /**
-   * Every action button is server-authorised (2.9.4).
-   *
-   * The client renders exactly the actions that are true. Deriving them from role
-   * plus state on the client means every policy change needs an app release, and
-   * the two will disagree.
-   */
+  /** Every action button is server-authorised (2.9.4). */
   private viewerActions(
     booking: Booking,
     userId: string,
@@ -624,6 +592,7 @@ export class BookingService {
   ) {
     const counterpart: AuthorView = toAuthorView(
       role === 'CLIENT' ? booking.professional : booking.client,
+      { sign: this.media.sign },
     );
 
     return {
@@ -634,8 +603,7 @@ export class BookingService {
       agreedAmount: money(booking.agreedAmount, booking.currency),
       conversationId: booking.conversationId,
       timeline: this.timeline(booking.events),
-      // The grouping rule lives here rather than in the client, so "Needs you"
-      // and the notification badge cannot disagree (2.9.3).
+      // The grouping rule lives here rather than in the client, so "Needs you" and the notification badge cannot disagree (2.9.3).
       needsYourAction:
         role === 'CLIENT'
           ? booking.state === JobState.DELIVERED

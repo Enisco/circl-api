@@ -15,7 +15,8 @@ import { toJsonOrUndefined } from '@/common';
 export interface ContextSnapshot {
   title: string;
   subtitle?: string | null;
-  thumbnailUrl?: string | null;
+  // / An object key, not a URL.
+  thumbnailKey?: string | null;
   trailing?: string | null;
   route?: string | null;
 }
@@ -30,18 +31,7 @@ export interface EnsureConversationInput {
   staffIds?: string[];
 }
 
-/**
- * Creates and finds conversations for the sections that own a subject.
- *
- * Rule 3 of spec 5.0: every section hands messaging a `conversationId`, never a
- * guess. Accepting a connection request, sending an enquiry, booking a service —
- * each returns the id, and nothing in the app ever constructs a thread id.
- *
- * The uniqueness key is (sorted participant pair, contextType, contextId), which
- * is what stops the same two people ending up with four threads. Postgres cannot
- * enforce uniqueness across a join table, so the sorted pair is materialised into
- * `participantKey` and the constraint lives on that.
- */
+/** Creates and finds conversations for the sections that own a subject. */
 @Injectable()
 export class ConversationFactoryService {
   constructor(private readonly database: PrismaService) {}
@@ -51,11 +41,7 @@ export class ConversationFactoryService {
     return [...new Set(userIds)].sort().join('|');
   }
 
-  /**
-   * Finds the matching thread or creates it. Two people may hold one general DM
-   * plus one thread per booking, which is correct: a dispute about a job should
-   * not bury a friendly conversation.
-   */
+  /** Finds the matching thread or creates it. */
   async ensure(
     input: EnsureConversationInput,
     tx?: Prisma.TransactionClient,
@@ -78,8 +64,7 @@ export class ConversationFactoryService {
         contextId,
         contextSnapshot: toJsonOrUndefined(input.snapshot),
         participantKey,
-        // Pinning is server-side, not a client sort, because the support thread
-        // must be first for everyone (5.3.1).
+        // Pinning is server-side, not a client sort, because the support thread must be first for everyone (5.3.1).
         isPinned: input.isPinned ?? false,
         participants: {
           create: [
@@ -93,14 +78,7 @@ export class ConversationFactoryService {
     return { conversation, created: true };
   }
 
-  /**
-   * Posts a system message into a thread.
-   *
-   * These are how a thread explains itself: what a support channel is and who can
-   * see it, that a booking moved stage, that the other party closed their
-   * account. They have no sender, so they render as the app speaking rather than
-   * as a person.
-   */
+  /** Posts a system message into a thread. */
   async postSystemMessage(
     conversationId: string,
     systemType: SystemMessageType,
@@ -127,17 +105,10 @@ export class ConversationFactoryService {
       data: { lastMessageAt: new Date(), messageCount: { increment: 1 } },
     });
 
-    // A system message is not "unread" in the sense a person's message is — it is
-    // the app narrating something the member just did or was just told about
-    // elsewhere. Badging it would make every state change look like a new
-    // message.
+    // A system message is not "unread" in the sense a person's message is — it is the app narrating something the member just did or was just told about elsewhere.
   }
 
-  /**
-   * Refreshes the display snapshot when the underlying record changes, so the
-   * inbox does not drift for months (5.1). The record always wins on open; this
-   * only keeps the strip honest in the list.
-   */
+  /** Refreshes the display snapshot when the underlying record changes, so the inbox does not drift for months (5.1). */
   async refreshSnapshot(
     contextType: ThreadContextType,
     contextId: string,

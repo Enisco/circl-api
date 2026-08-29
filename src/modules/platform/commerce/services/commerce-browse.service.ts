@@ -27,9 +27,7 @@ export class CommerceBrowseService {
     const where = await this.storeWhere(query, viewerId);
     const origin = this.originOf(query);
 
-    // `openNow` and distance cannot be expressed in SQL — one needs the store's
-    // timezone and the current minute, the other needs a coordinate the query
-    // does not have. Both are applied after a wider window is pulled.
+    // `openNow` and distance cannot be expressed in SQL — one needs the store's timezone and the current minute, the other needs a coordinate the query does not have.
     const needsPostFilter = Boolean(query.openNow || (origin && query.maxDistanceMiles));
 
     const [total, rows] = await this.database.$transaction([
@@ -76,8 +74,7 @@ export class CommerceBrowseService {
     if (query.type) where.typeCode = query.type;
     if (query.delivers) where.delivers = true;
 
-    // The "Open now" filter also excludes a store on holiday even before the
-    // hours are checked, because its manual status overrides them (4.4.2).
+    // The "Open now" filter also excludes a store on holiday even before the hours are checked, because its manual status overrides them (4.4.2).
     if (query.openNow) where.status = StoreStatus.OPEN;
 
     if (query.categories?.length) {
@@ -97,9 +94,7 @@ export class CommerceBrowseService {
       const min = (band?.metadata?.minPence as number | undefined) ?? 0;
       const max = band?.metadata?.maxPence as number | null | undefined;
 
-      // A shop passes if ANYTHING it sells falls in the band. Filtering by an
-      // average empties the tab for a shop selling both a 50p sachet and a £20
-      // bag of rice (4.4.1).
+      // A shop passes if ANYTHING it sells falls in the band.
       and.push({
         items: {
           some: {
@@ -233,10 +228,7 @@ export class CommerceBrowseService {
 
   // ─── 4.3 Home ──────────────────────────────────────────────────────────────
 
-  /**
-   * Location denied is not an error (4.3): the endpoint works with no coordinates
-   * at all, and the "Near me" chip becomes a city picker on the client.
-   */
+  /** Location denied is not an error (4.3): the endpoint works with no coordinates at all, and the "Near me" chip becomes a city picker on the client. */
   async home(viewerId: string, cityId?: string, type?: string) {
     const profile = await this.database.userProfile.findUnique({
       where: { userId: viewerId },
@@ -293,8 +285,7 @@ export class CommerceBrowseService {
     return {
       openNearYou: openSummaries.filter(store => store.isOpenNow).slice(0, 10),
       popular: popularSummaries,
-      // The Intelligence treatment in the UI needs an explanation, so the section
-      // carries one rather than implying the ranking is magic (4.3).
+      // The Intelligence treatment in the UI needs an explanation, so the section carries one rather than implying the ranking is magic (4.3).
       popularReason: cityName
         ? `Most enquiries in ${cityName.name} this week`
         : 'Most enquiries this week',
@@ -304,20 +295,12 @@ export class CommerceBrowseService {
         .sort((a, b) => b.storeCount - a.storeCount),
       // Null for non-sellers, which is what swaps the tab for "Sell on Circl".
       myStore: myStore ? { ...myStore, pendingEnquiryCount } : null,
-      // The cart is client-side (D20), so the count comes from the device. Sent
-      // as null rather than a fabricated zero, so the client knows to use its own.
+      // The cart is client-side (D20), so the count comes from the device.
       cart: null,
     };
   }
 
-  /**
-   * Circl Intelligence: the demand hint on the Add Item composer (4.8.3).
-   *
-   * "Return an empty array rather than inventing one: a fabricated demand signal
-   * that leads a seller to stock something nobody wants is worse than no card at
-   * all." So this reads real searches, requires a real threshold, and returns
-   * nothing when the data does not support a claim.
-   */
+  /** Circl Intelligence: the demand hint on the Add Item composer (4.8.3). */
   async demandHints(userId: string, storeId: string) {
     const store = await this.stores.assertOwned(userId, storeId);
 
@@ -347,8 +330,7 @@ export class CommerceBrowseService {
 
     return (
       searches
-        // Three searches in a month is not demand. Below that the card would be
-        // noise dressed as insight.
+        // Three searches in a month is not demand.
         .filter(row => row._count._all >= 3 && row.term && !stockedTerms.has(row.term))
         .slice(0, 3)
         .map(row => ({

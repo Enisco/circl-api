@@ -30,13 +30,7 @@ interface ExtractedError {
   data?: unknown;
 }
 
-/**
- * The one error shape (spec 0.4).
- *
- * `error.code` is UPPER_SNAKE and is the only thing the client branches on;
- * `message` is human-readable and never parsed. `errorType` is kept alongside
- * `code` with the same value, because the shipped build reads it.
- */
+/** The one error shape (spec 0.4). */
 @Catch()
 export class HttpExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionsFilter.name);
@@ -48,10 +42,7 @@ export class HttpExceptionsFilter implements ExceptionFilter {
 
     const { status, message, code, details, data } = this.extractErrorDetails(exception);
 
-    // Log the full details for debugging/monitoring. The details are folded into the message
-    // because Nest's Logger treats a trailing string argument as the context and drops it
-    // otherwise — deployed logs would carry no status, code or stack.
-    // Client errors log at warn so genuine server faults stay findable amongst the 4xx noise.
+    // Log the full details for debugging/monitoring.
     const summary = `Error on ${request.method} ${request.url} — [${status} ${code}] ${message}`;
 
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
@@ -66,8 +57,7 @@ export class HttpExceptionsFilter implements ExceptionFilter {
       success: false,
       status: 'error',
       message,
-      // Spec 2.1.6: an "already done" conflict returns the existing record here so
-      // the client can open it rather than dead-ending on the error.
+      // Spec 2.1.6: an "already done" conflict returns the existing record here so the client can open it rather than dead-ending on the error.
       data: (data ?? null) as null,
       error: {
         code,
@@ -99,9 +89,7 @@ export class HttpExceptionsFilter implements ExceptionFilter {
       const status = exception.getStatus();
       const rawRes = exception.getResponse();
 
-      // class-validator failures arrive as an array of messages. Turn them into
-      // one entry per offending field so the client can attach each message to
-      // the right input (0.4).
+      // class-validator failures arrive as an array of messages.
       if (
         exception instanceof BadRequestException &&
         typeof rawRes === 'object' &&
@@ -158,20 +146,21 @@ export class HttpExceptionsFilter implements ExceptionFilter {
     };
   }
 
-  /**
-   * Recovers the offending field from a flattened validation message.
-   *
-   * `field` has to match the request body key exactly, because the client
-   * attaches each message to that input (0.4, 1.2.3). class-validator normally
-   * puts the property first — but ValidationPipe's `forbidNonWhitelisted` writes
-   * "property cityId should not exist", where the first word is the literal
-   * "property" and the key is the second. Getting that wrong points every
-   * unknown-field error at an input that does not exist.
-   */
+  /** Recovers the offending field from a flattened validation message. */
+  /** class-validator puts the property first in every message it produces, which is what makes `field` derivable at all. */
   private fieldFromMessage(message: string): string {
     const words = message.trim().split(/\s+/);
+    const first = words[0];
 
-    return (words[0] === 'property' ? words[1] : words[0]) ?? 'unknown';
+    if (!first) return 'unknown';
+
+    if (first === 'property') return words[1] ?? 'unknown';
+
+    const nested = first.match(/^(.*)\.property$/);
+
+    if (nested && words[1]) return `${nested[1]}.${words[1]}`;
+
+    return first;
   }
 
   private codeForStatus(status: number, fallback: string): string {

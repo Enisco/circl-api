@@ -1,27 +1,30 @@
-// ═══════════════════════════════════════════════════════════════════════════════
-// Media (spec 0.11)
+// ═══════════════════════════════════════════════════════════════════════════════ Media (spec 0.11)
 //
-// Two-step upload: reserve a row and a presigned URL, then attach the id to a
-// post. A row that is never attached is an orphan and swept after 24 hours, so a
-// composer the member abandoned does not leave bytes behind.
+// Two-step upload: reserve a row and a presigned URL, then attach the id to a post.
 //
-// Attachment is polymorphic on (ownerType, ownerId) rather than a foreign key per
-// content type: eleven nullable FK columns on one table is the alternative, and
-// every new content type adds a twelfth.
-// ═══════════════════════════════════════════════════════════════════════════════
+// Attachment is polymorphic on (ownerType, ownerId) rather than a foreign key per content type: eleven nullable FK columns on one table is the alternative, and every new content type adds a twelfth.
 
 model Media {
-  id       String      @id @default(uuid())
-  uploadedById String  @map("uploaded_by_id")
-  uploadedBy   User    @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+  id           String @id @default(uuid())
+  uploadedById String @map("uploaded_by_id")
+  uploadedBy   User   @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
 
-  type        MediaType   @map("type")
-  status      MediaStatus @default(PENDING) @map("status")
-  mimeType    String      @map("mime_type")
-  byteSize    Int         @map("byte_size")
-  storageKey  String      @unique @map("storage_key")
-  url         String?     @map("url")
-  thumbnailUrl String?    @map("thumbnail_url")
+  type    MediaType    @map("type")
+  status  MediaStatus  @default(PENDING) @map("status")
+  purpose MediaPurpose @map("purpose")
+
+  mimeType String @map("mime_type")
+  byteSize Int    @map("byte_size")
+
+  /// The object key, and the only durable reference to the bytes (0.11.2).
+  storageKey String @unique @map("storage_key")
+
+  /// Set by the S3 event handler, never by a request (0.11.4).
+  scanStatus MediaScanStatus @default(PENDING) @map("scan_status")
+  scannedAt  DateTime?       @map("scanned_at") @db.Timestamptz
+
+  /// Derived by the same handler.
+  thumbnailKey String? @map("thumbnail_key")
 
   // Reserved so the client can size the frame before the bytes land (spec 0.11).
   width    Int?    @map("width")
@@ -48,11 +51,11 @@ model Media {
   @@index([uploadedById])
   @@index([ownerType, ownerId, position])
   @@index([status, createdAt])
+  @@index([purpose, uploadedById])
   @@map("media")
 }
 
-// Spec 0.12: replaying an Idempotency-Key within 24 hours returns the original
-// response rather than creating a duplicate. Mobile networks retry.
+// Spec 0.12: replaying an Idempotency-Key within 24 hours returns the original response rather than creating a duplicate.
 model IdempotencyRecord {
   id           String   @id @default(uuid())
   userId       String   @map("user_id")

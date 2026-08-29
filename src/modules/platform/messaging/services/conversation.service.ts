@@ -2,7 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { Conversation, MessageKind, Prisma, ThreadContextType, ThreadKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta } from '@/common';
-import { AuthorView, BlockingService, authorSelect, toAuthorView } from '../../shared';
+import {
+  AuthorView,
+  BlockingService,
+  MediaService,
+  authorSelect,
+  toAuthorView,
+} from '../../shared';
 import { ListConversationsDto, StartThreadDto } from '../dtos/message.dto';
 import { ConversationFactoryService } from './conversation-factory.service';
 
@@ -17,10 +23,7 @@ export interface ContextView {
   route: string | null;
 }
 
-/**
- * The chip on an inbox row. Derived from context and role and computed once
- * here, rather than in the client where it would need every rule again (5.3.1).
- */
+/** The chip on an inbox row. */
 export type ThreadLabel =
   | 'OFFERED_HELP'
   | 'ABOUT_REQUEST'
@@ -36,8 +39,7 @@ const conversationInclude = {
       user: {
         select: {
           ...authorSelect,
-          // Presence is not persisted; lastActiveAt on the session is the closest
-          // honest signal, and it is read here rather than invented.
+          // Presence is not persisted; lastActiveAt on the session is the closest honest signal, and it is read here rather than invented.
           sessions: {
             where: { isActive: true },
             orderBy: { lastActiveAt: 'desc' },
@@ -58,6 +60,7 @@ export class ConversationService {
     private readonly database: PrismaService,
     private readonly blocking: BlockingService,
     private readonly factory: ConversationFactoryService,
+    private readonly media: MediaService,
   ) {}
 
   // ─── 5.3.1 The inbox ───────────────────────────────────────────────────────
@@ -82,13 +85,6 @@ export class ConversationService {
 
     if (query.q) {
       // D31: names and CONTEXT TITLES at launch — both short, so both stay fast.
-      // Full-text over message bodies is a separate piece of work behind this
-      // same `q` parameter, which is why adding it later changes no contract, and
-      // why it is deliberately not done here: scanning every body on every inbox
-      // search is the query that would take the inbox down first.
-      //
-      // The title lives inside contextSnapshot, so it is matched with a JSON path
-      // filter rather than a column comparison.
       where.AND = [
         {
           OR: [
@@ -126,8 +122,7 @@ export class ConversationService {
       this.database.conversation.findMany({
         where,
         include: conversationInclude,
-        // Pinned first, then recency. Pinning is server-side, not a client sort,
-        // because the support thread must be first for everyone (5.3.1).
+        // Pinned first, then recency.
         orderBy: [{ isPinned: 'desc' }, { lastMessageAt: { sort: 'desc', nulls: 'last' } }],
         skip: query.skip,
         take: query.take,
@@ -148,8 +143,7 @@ export class ConversationService {
     return {
       data: rows.map(row => this.toRow(row, userId, lastMessages.get(row.id) ?? null)),
       meta: buildPageMeta(query, total, {
-        // The badge is in four section headers, so the totals ship with the list
-        // rather than being recomputed from a page of it (5.2.3).
+        // The badge is in four section headers, so the totals ship with the list rather than being recomputed from a page of it (5.2.3).
         unreadTotal: totals._sum.unreadCount ?? 0,
         unreadThreads,
       }),
@@ -168,10 +162,7 @@ export class ConversationService {
 
   // ─── 5.3.5 Start a plain DM ────────────────────────────────────────────────
 
-  /**
-   * Returns the existing conversation when one already matches the uniqueness
-   * key, so the client opens the same thread either way (5.3.5).
-   */
+  /** Returns the existing conversation when one already matches the uniqueness key, so the client opens the same thread either way (5.3.5). */
   async startDirect(userId: string, dto: StartThreadDto) {
     if (dto.recipientUserId === userId) {
       throw ApiException.unprocessable(
@@ -196,8 +187,7 @@ export class ConversationService {
       );
     }
 
-    // An open inbox is what makes an unsolicited DM acceptable at all (Circl
-    // Social's "Open Inbox"): without it, the two must already be connected.
+    // An open inbox is what makes an unsolicited DM acceptable at all (Circl Social's "Open Inbox"): without it, the two must already be connected.
     const profile = await this.database.userProfile.findUnique({
       where: { userId: dto.recipientUserId },
       select: { openInbox: true },
@@ -243,8 +233,7 @@ export class ConversationService {
 
     await this.database.conversationParticipant.update({
       where: { conversationId_userId: { conversationId, userId } },
-      // Mute silences the notification, not the count: a muted thread still
-      // increments unreadCount (5.4).
+      // Mute silences the notification, not the count: a muted thread still increments unreadCount (5.4).
       data: { isMuted: muted, mutedUntil: muted && until ? new Date(until) : null },
     });
 
@@ -259,8 +248,7 @@ export class ConversationService {
       data: { isArchived: archived },
     });
 
-    // There is deliberately no "delete conversation": archive covers the intent,
-    // and a deleted thread is a deleted record of an agreement (5.3.6).
+    // There is deliberately no "delete conversation": archive covers the intent, and a deleted thread is a deleted record of an agreement (5.3.6).
     return { isArchived: archived };
   }
 
@@ -320,8 +308,7 @@ export class ConversationService {
 
     if (!conversationIds.length) return map;
 
-    // One row per conversation. `distinct` on an ordered query is Prisma's
-    // DISTINCT ON, which is exactly the right shape for "latest per group".
+    // One row per conversation.
     const messages = await this.database.message.findMany({
       where: { conversationId: { in: conversationIds } },
       orderBy: [{ conversationId: 'asc' }, { sentAt: 'desc' }],
@@ -372,10 +359,8 @@ export class ConversationService {
     const participantView: (AuthorView & { isOnline: boolean; lastSeenAt: string | null }) | null =
       other
         ? {
-            ...toAuthorView(other.user),
+            ...toAuthorView(other.user, { sign: this.media.sign }),
             // Nobody is "online" without a live socket; the gateway overlays that.
-            // Here it is derived from the last active session so a cold REST load
-            // still says something true.
             isOnline: false,
             lastSeenAt: other.user.sessions?.[0]?.lastActiveAt.toISOString() ?? null,
           }
@@ -404,8 +389,7 @@ export class ConversationService {
       isTyping: false,
       isMuted: me?.isMuted ?? false,
       isArchived: me?.isArchived ?? false,
-      // 3.6: true until BOTH people have sent at least one message. Computed
-      // server-side so the banner appears consistently across devices.
+      // 3.6: true until BOTH people have sent at least one message.
       safetyNoticeRequired:
         conversation.kind === ThreadKind.CONNECT &&
         conversation.participants.some(participant => !participant.hasSentMessage),
@@ -425,7 +409,9 @@ export class ConversationService {
       id: conversation.contextId,
       title: (snapshot?.title as string) ?? '',
       subtitle: (snapshot?.subtitle as string) ?? null,
-      thumbnailUrl: (snapshot?.thumbnailUrl as string) ?? null,
+      thumbnailUrl: snapshot?.thumbnailKey
+        ? this.media.sign(snapshot.thumbnailKey as string)
+        : null,
       trailing: (snapshot?.trailing as string) ?? null,
       route: (snapshot?.route as string) ?? this.routeFor(conversation),
     };

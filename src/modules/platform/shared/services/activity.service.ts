@@ -15,15 +15,7 @@ export interface ActivityInput {
   metadata?: Record<string, unknown>;
 }
 
-/**
- * The feed into Circl Intelligence.
- *
- * "One algorithm, fed by every action taken on the platform — every search, post,
- * click, engagement, and transaction." This service is that recording, and it is
- * deliberately fire-and-forget: a failure to write a behavioural event must never
- * fail the request that produced it. A member's post succeeding matters more than
- * our analytics being complete.
- */
+/** The feed into Circl Intelligence. */
 @Injectable()
 export class ActivityService {
   constructor(
@@ -50,23 +42,7 @@ export class ActivityService {
       .catch(() => undefined);
   }
 
-  /**
-   * Increments a view counter, deduplicated per user per resource per 24 hours
-   * (spec 0.13).
-   *
-   * There is no "increment view" endpoint: a client-driven counter is trivially
-   * inflatable and adds a round trip to every screen open. So detail reads call
-   * this, and the dedupe key lives in Redis because it is high-churn and
-   * worthless after a day.
-   *
-   * `ownerId` is what stops a post being born with a view on it. Create handlers
-   * return the detail view, so without it every request, offer, update and guide
-   * arrived showing one view before anybody had read it, and an author re-reading
-   * their own post kept inflating it. `counts.views` is a claim about how many
-   * OTHER people looked, so the author never counts toward it.
-   *
-   * Returns true when the view was counted.
-   */
+  /** Increments a view counter, deduplicated per user per resource per 24 hours (spec 0.13). */
   async countView(
     resource: string,
     resourceId: string,

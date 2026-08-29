@@ -2,13 +2,7 @@ import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Min } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
-/**
- * Standard paging (spec 0.5). Every collection endpoint is paginated; there are
- * no unbounded lists.
- *
- * `limit` clamps above 50 rather than erroring, because a client asking for 100
- * wants as many as it can have, not a 400.
- */
+/** Standard paging (spec 0.5). */
 export class PageOptionsDto {
   static readonly DEFAULT_LIMIT = 20;
   static readonly MAX_LIMIT = 50;
@@ -51,10 +45,7 @@ export class PageOptionsDto {
   }
 }
 
-/**
- * The feed's cursor paging (0.5). Opaque to the client, which only ever echoes it
- * back.
- */
+/** The feed's cursor paging (0.5). */
 export class CursorOptionsDto {
   @ApiPropertyOptional({ description: 'Opaque cursor. Omit for the first page.' })
   @IsOptional()

@@ -7,17 +7,7 @@ import { TaxonomyService } from '../../shared';
 export type MetricSection = 'COMMUNITY' | 'PROFESSIONALS' | 'CONNECT' | 'COMMERCE';
 export type MetricPeriod = 'WEEK' | 'MONTH' | 'ALL_TIME';
 
-/**
- * D19, applied to every section rather than only Connect.
- *
- * "Any bucket under 20 people is suppressed rather than rounded, and no view
- * exposes an individual." A city with four Eritrean members and one dashboard
- * saying so has identified those four people to anyone who knows the city.
- *
- * The spec flags this as worth a second look with counsel before Pulse ships,
- * and that note belongs here, next to the number that enforces it: small buckets
- * in a small city are re-identifiable even in aggregate.
- */
+/** D19, applied to every section rather than only Connect. */
 const SUPPRESSION_FLOOR = 20;
 
 /** Buckets that count things rather than people can be smaller and still safe. */
@@ -31,16 +21,7 @@ export interface MetricItem {
   [key: string]: unknown;
 }
 
-/**
- * Circl Intelligence: Public Metrics.
- *
- * "The same behavioural data is surfaced as top items, top professionals, top
- * businesses, average prices, demand trends, and most-searched keywords — one
- * engine, four views."
- *
- * Precomputed on a schedule and read from a snapshot, because a dashboard that
- * aggregates the event stream on every load is a dashboard that times out.
- */
+/** Circl Intelligence: Public Metrics. */
 @Injectable()
 export class MetricsService {
   constructor(
@@ -60,8 +41,7 @@ export class MetricsService {
       period,
       computedAt: snapshots[0]?.computedAt.toISOString() ?? null,
       metrics: Object.fromEntries(snapshots.map(row => [row.metric, row.items])),
-      // Stated rather than hidden, so a reader knows an empty list means "too few
-      // to publish" and not "nothing happened".
+      // Stated rather than hidden, so a reader knows an empty list means "too few to publish" and not "nothing happened".
       suppression: {
         peopleFloor: SUPPRESSION_FLOOR,
         contentFloor: CONTENT_FLOOR,
@@ -80,8 +60,7 @@ export class MetricsService {
 
     let written = 0;
 
-    // The national view first, then per city. A city with too little activity
-    // publishes nothing, which is the correct outcome rather than a failure.
+    // The national view first, then per city.
     for (const cityId of [null, ...cities.map(city => city.id)]) {
       written += await this.rebuildCommunity(cityId, period, since);
       written += await this.rebuildProfessionals(cityId, period, since);
@@ -304,10 +283,7 @@ export class MetricsService {
 
   // ─── Connect ───────────────────────────────────────────────────────────────
 
-  /**
-   * The only section whose every metric counts PEOPLE, so every bucket takes the
-   * full floor. This is the one D19 was written about.
-   */
+  /** The only section whose every metric counts PEOPLE, so every bucket takes the full floor. */
   private async rebuildConnect(cityId: string | null, period: MetricPeriod, since: Date) {
     const scope = cityId
       ? {
@@ -359,6 +335,83 @@ export class MetricsService {
 
   // ─── Internals ─────────────────────────────────────────────────────────────
 
+  /** How many distinct people are behind a section's numbers in a city (6.2.1). */
+  private async contributingMembers(
+    section: MetricSection,
+    cityId: string | null,
+    since: Date,
+  ): Promise<number> {
+    const scope = cityId ? { cityId } : {};
+
+    const distinct = (rows: Array<{ authorId?: string; userId?: string; ownerId?: string }>) =>
+      new Set(rows.map(row => row.authorId ?? row.userId ?? row.ownerId).filter(Boolean)).size;
+
+    switch (section) {
+      case 'COMMUNITY': {
+        const [requests, offers, updates] = await Promise.all([
+          this.database.communityRequest.findMany({
+            where: { deletedAt: null, createdAt: { gte: since }, ...scope },
+            select: { authorId: true },
+            distinct: ['authorId'],
+          }),
+          this.database.communityOffer.findMany({
+            where: { deletedAt: null, createdAt: { gte: since }, ...scope },
+            select: { authorId: true },
+            distinct: ['authorId'],
+          }),
+          this.database.communityUpdate.findMany({
+            where: { deletedAt: null, createdAt: { gte: since }, ...scope },
+            select: { authorId: true },
+            distinct: ['authorId'],
+          }),
+        ]);
+
+        return distinct([...requests, ...offers, ...updates]);
+      }
+
+      case 'PROFESSIONALS': {
+        const listings = await this.database.professionalListing.findMany({
+          where: { deletedAt: null, ...scope },
+          select: { userId: true },
+          distinct: ['userId'],
+        });
+
+        return distinct(listings);
+      }
+
+      case 'COMMERCE': {
+        const stores = await this.database.store.findMany({
+          where: { deletedAt: null, ...scope },
+          select: { ownerId: true },
+          distinct: ['ownerId'],
+        });
+
+        return distinct(stores);
+      }
+
+      case 'CONNECT': {
+        // Connect scopes by `cityIdOverride` falling back to the member's own city, not by a `cityId` of its own: the override is where somebody is looking, which is deliberately not where they are (3.1).
+        const profiles = await this.database.connectProfile.findMany({
+          where: {
+            deletedAt: null,
+            ...(cityId
+              ? {
+                  OR: [
+                    { cityIdOverride: cityId },
+                    { cityIdOverride: null, user: { profile: { cityId } } },
+                  ],
+                }
+              : {}),
+          },
+          select: { userId: true },
+          distinct: ['userId'],
+        });
+
+        return distinct(profiles);
+      }
+    }
+  }
+
   /** Suppressed, never rounded: rounding 4 to "fewer than 10" still says 4 exist. */
   private floorBy(items: MetricItem[], floor: number): MetricItem[] {
     return items.filter(item => item.value >= floor);
@@ -374,7 +427,18 @@ export class MetricsService {
     const windowEnd = new Date();
     let written = 0;
 
-    for (const [metric, items] of Object.entries(metrics)) {
+    // Written alongside the metrics rather than computed on read: Pulse is a dashboard, and a distinct count over three tables on every mount is the kind of query that is fine until it is not.
+    const withGate: Record<string, MetricItem[]> = {
+      ...metrics,
+      contributingMembers: [
+        {
+          label: 'Contributing members',
+          value: await this.contributingMembers(section, cityId, windowStart),
+        },
+      ],
+    };
+
+    for (const [metric, items] of Object.entries(withGate)) {
       await this.database.metricSnapshot.upsert({
         where: {
           section_metric_cityId_period: { section, metric, cityId: cityId ?? '', period },

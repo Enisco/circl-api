@@ -1,11 +1,6 @@
 import { Media, MediaType } from '@prisma/client';
 
-/**
- * A media object on a resource (spec 0.11).
- *
- * `width` and `height` let the client reserve the right space before the image
- * loads, which is the difference between a feed that settles and one that jumps.
- */
+/** A media object on a resource (spec 0.11.3). */
 export interface MediaView {
   id: string;
   type: MediaType;
@@ -19,19 +14,22 @@ export interface MediaView {
   byteSize?: number;
 }
 
-export const toMediaView = (media: Media): MediaView => {
+/** Signs a stored key into a URL. */
+export type UrlSigner = (storageKey: string) => string;
+
+export const toMediaView = (media: Media, sign: UrlSigner): MediaView => {
   const view: MediaView = {
     id: media.id,
     type: media.type,
-    url: media.url,
-    thumbnailUrl: media.thumbnailUrl,
+    url: sign(media.storageKey),
+    // Derived by the S3 event handler (0.11.4), so it is null until that runs.
+    thumbnailUrl: media.thumbnailKey ? sign(media.thumbnailKey) : null,
     width: media.width,
     height: media.height,
     blurHash: media.blurHash,
   };
 
-  // Audio carries what only the recording device knows (5.5). Sent only for the
-  // kind that has it, rather than as nulls on every image in a feed.
+  // Audio carries what only the recording device knows (5.5).
   if (media.type === MediaType.AUDIO) {
     view.durationMs = media.durationMs ?? 0;
     view.waveform = Array.isArray(media.waveform) ? (media.waveform as number[]) : [];
@@ -41,5 +39,5 @@ export const toMediaView = (media: Media): MediaView => {
   return view;
 };
 
-export const toMediaViews = (media: Media[] | undefined): MediaView[] =>
-  (media ?? []).sort((a, b) => a.position - b.position).map(toMediaView);
+export const toMediaViews = (media: Media[] | undefined, sign: UrlSigner): MediaView[] =>
+  (media ?? []).sort((a, b) => a.position - b.position).map(item => toMediaView(item, sign));

@@ -32,9 +32,7 @@ export const getTemplateForEvent = (eventName: string) => {
   }
 };
 
-/**
- * Preview text is the text that is displayed in the email preview.
- */
+/** Preview text is the text that is displayed in the email preview. */
 export const getDefaultTemplateData = (userName: string): EmailTemplateData => ({
   previewText: '',
   greeting: 'Hi', // this is the greeting message in the email, e.g Hi, Hello, Dear, etc.

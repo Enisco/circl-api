@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   JobState,
+  NotificationKind,
   Prisma,
   RequestStatus,
   Review,
@@ -8,8 +9,20 @@ import {
   TaxonomyKind,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException, buildPageMeta, toJsonOrUndefined } from '@/common';
-import { AuthorView, TaxonomyService, authorSelect, toAuthorView } from '../../shared';
+import {
+  ApiErrorCode,
+  ApiException,
+  buildPageMeta,
+  excerpt,
+  toJsonOrUndefined,
+} from '@/common';
+import {
+  AuthorView,
+  MediaService,
+  TaxonomyService,
+  authorSelect,
+  toAuthorView,
+} from '../../shared';
 import {
   CreateReviewDto,
   ListReviewsDto,
@@ -17,6 +30,7 @@ import {
   UpdateReviewDto,
 } from '../dtos/review.dto';
 import { ReputationService } from './reputation.service';
+import { NotificationFeedService } from '../../notifications';
 
 /** Editable for 48 hours, then frozen (2.5.2). */
 const EDIT_WINDOW_MS = 48 * 60 * 60 * 1000;
@@ -27,10 +41,7 @@ export interface ReviewView {
   comment: string;
   context: ReviewContext;
   contextLabel: string;
-  /**
-   * Sent per review rather than inferred from `context`, so the rule can change
-   * server-side without an app release (2.5.1).
-   */
+  /** Sent per review rather than inferred from `context`, so the rule can change server-side without an app release (2.5.1). */
   countsToAverage: boolean;
   tags: string[];
   reviewer: AuthorView;
@@ -52,15 +63,13 @@ export class ReviewService {
     private readonly database: PrismaService,
     private readonly reputation: ReputationService,
     private readonly taxonomy: TaxonomyService,
+    private readonly media: MediaService,
+    private readonly notifications: NotificationFeedService,
   ) {}
 
   // ─── 2.5.1 List ────────────────────────────────────────────────────────────
 
-  /**
-   * The reputation block on a professional profile, the standalone Reviews
-   * screen, and the community profile all read this one endpoint — which is the
-   * "reviews travel with the user" promise made literal.
-   */
+  /** The reputation block on a professional profile, the standalone Reviews screen, and the community profile all read this one endpoint — which is the "reviews travel with the user" promise made literal. */
   async listForUser(viewerId: string | null, subjectUserId: string, query: ListReviewsDto) {
     const where: Prisma.ReviewWhereInput = {
       subjectUserId,
@@ -69,8 +78,7 @@ export class ReviewService {
     };
 
     const orderBy: Prisma.ReviewOrderByWithRelationInput[] = [
-      // Prior-work entries sort last within any page, matching how the block
-      // reads: self-attested reputation is real but it is not the same thing.
+      // Prior-work entries sort last within any page, matching how the block reads: self-attested reputation is real but it is not the same thing.
       { countsToAverage: 'desc' },
       ...(query.sort === 'HIGHEST'
         ? [{ rating: 'desc' as const }]
@@ -89,8 +97,7 @@ export class ReviewService {
         skip: query.skip,
         take: query.take,
       }),
-      // The summary is over ALL reviews regardless of the context filter, so the
-      // chips can show counts while a filter is applied (2.5.1).
+      // The summary is over ALL reviews regardless of the context filter, so the chips can show counts while a filter is applied (2.5.1).
       this.reputation.summaryFor(subjectUserId),
       this.taxonomy.labels(TaxonomyKind.HELP_TAG),
     ]);
@@ -150,8 +157,7 @@ export class ReviewService {
     const existing = await this.findExisting(reviewerId, dto);
 
     if (existing) {
-      // Returns the existing review so the client can offer an edit rather than a
-      // duplicate (2.5.2).
+      // Returns the existing review so the client can offer an edit rather than a duplicate (2.5.2).
       throw ApiException.conflict(
         ApiErrorCode.REVIEW_ALREADY_LEFT,
         'You have already reviewed this.',
@@ -182,13 +188,10 @@ export class ReviewService {
           comment: dto.comment,
           context: dto.context,
           sourceId: dto.sourceId ?? null,
-          // PRIOR_WORK is self-attested reputation portability: it lets an
-          // established professional bring years of built reputation onto Circl,
-          // but it is not evidence Circl has, so it never moves the average.
+          // PRIOR_WORK is self-attested reputation portability: it lets an established professional bring years of built reputation onto Circl, but it is not evidence Circl has, so it never moves the average.
           countsToAverage: dto.context !== ReviewContext.PRIOR_WORK,
           tags: toJsonOrUndefined(dto.tags),
-          // Denormalised at write time so the immigrant-friendly filter is an
-          // index scan rather than a join back through the reviewer's profile.
+          // Denormalised at write time so the immigrant-friendly filter is an index scan rather than a join back through the reviewer's profile.
           reviewerCountryOfOrigin: reviewerProfile?.countryOfOrigin ?? null,
           requestId: source.requestId,
           bookingId: source.bookingId,
@@ -200,6 +203,16 @@ export class ReviewService {
       await this.reputation.recompute(dto.subjectUserId, tx);
 
       return review;
+    });
+
+    this.notifications.raise({
+      userId: dto.subjectUserId,
+      actorId: reviewerId,
+      kind: NotificationKind.REVIEW,
+      categoryCode: 'BOOKINGS',
+      title: 'You have a new review',
+      body: dto.comment ? excerpt(dto.comment, 80) : `${dto.rating} stars`,
+      route: `/reviews/${dto.subjectUserId}`,
     });
 
     return this.toView(
@@ -219,8 +232,7 @@ export class ReviewService {
       throw ApiException.forbidden(ApiErrorCode.FORBIDDEN, 'You can only edit your own review.');
     }
 
-    // Frozen after 48 hours. A review that can be rewritten indefinitely is not a
-    // record of what happened.
+    // Frozen after 48 hours.
     if (!review.editableUntil || review.editableUntil < new Date()) {
       throw ApiException.forbidden(
         ApiErrorCode.REVIEW_FROZEN,
@@ -293,10 +305,7 @@ export class ReviewService {
 
   // ─── Eligibility (2.5.2) ───────────────────────────────────────────────────
 
-  /**
-   * Enforced server-side, because a review is a claim about a real interaction
-   * and the client cannot be the thing that decides one happened.
-   */
+  /** Enforced server-side, because a review is a claim about a real interaction and the client cannot be the thing that decides one happened. */
   private async assertEligible(
     reviewerId: string,
     dto: CreateReviewDto,
@@ -338,9 +347,7 @@ export class ReviewService {
           include: { helpers: { select: { userId: true } } },
         });
 
-        // The caller owned the request, it is RESOLVED, and the subject was
-        // credited as a helper. That last condition is what makes a community
-        // review mean something.
+        // The caller owned the request, it is RESOLVED, and the subject was credited as a helper.
         const credited = request?.helpers.some(helper => helper.userId === dto.subjectUserId);
 
         if (
@@ -370,9 +377,7 @@ export class ReviewService {
 
         const isBuyer = enquiry?.buyerId === reviewerId && enquiry?.sellerId === dto.subjectUserId;
 
-        // D24: an expired enquiry cannot be reviewed, because nothing was ever
-        // confirmed as received and a review of an unconfirmed order is a review
-        // of nothing.
+        // D24: an expired enquiry cannot be reviewed, because nothing was ever confirmed as received and a review of an unconfirmed order is a review of nothing.
         if (!enquiry || !isBuyer || enquiry.state !== JobState.COMPLETED) {
           throw ApiException.unprocessable(
             ApiErrorCode.REVIEW_NOT_ELIGIBLE,
@@ -385,11 +390,7 @@ export class ReviewService {
       }
 
       case ReviewContext.PRIOR_WORK: {
-        // Reputation portability: past clients from outside Circl can vouch for a
-        // professional, so an established one does not arrive at zero. The only
-        // requirement is that the reviewer is a Circl member — and that they have
-        // no booking with the subject, because that would be a BOOKING review
-        // dressed as an unverifiable one.
+        // Reputation portability: past clients from outside Circl can vouch for a professional, so an established one does not arrive at zero.
         const booking = await this.database.booking.findFirst({
           where: {
             OR: [
@@ -469,7 +470,7 @@ export class ReviewService {
       tags: Array.isArray(row.tags)
         ? (row.tags as string[]).map(tag => tagLabels.get(tag) ?? tag)
         : [],
-      reviewer: toAuthorView(row.reviewer),
+      reviewer: toAuthorView(row.reviewer, { sign: this.media.sign }),
       subjectReply: reply ?? null,
       viewer: {
         isOwner,

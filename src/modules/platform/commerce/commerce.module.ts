@@ -13,9 +13,7 @@ import { StoreService } from './services/store.service';
 const CONTROLLERS = [CommerceController, ManagedRequestController];
 
 @Module({
-  // Commerce reuses the booking machine's dispute resource rather than adding a
-  // second one (4.1.3). If the two drifted, "Report a problem" would behave
-  // differently depending on which half of the app you were in.
+  // Commerce reuses the booking machine's dispute resource rather than adding a second one (4.1.3).
   imports: [
     ProfessionalsModule,
     RouterModule.register([{ path: 'api/v1', module: CommerceModule, children: CONTROLLERS }]),

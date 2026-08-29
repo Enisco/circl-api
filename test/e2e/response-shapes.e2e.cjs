@@ -286,13 +286,16 @@ function shape(label, obj, required) {
     name: 'Egusi (ground melon seed)', price: 650, unitCode: 'PER_500G', categoryCode: 'FOOD_GROCERIES',
   });
   r = await api(b.token, 'GET', '/commerce/items');
-  shape('4.4.3 item', r.body?.data?.[0], [
+  // This run's own item, not whatever happens to be first: the browse list is global and the demo dataset is in it too (B.7).
+  const ownItem = r.body?.data?.find(item => item.storeId === storeId);
+
+  shape('4.4.3 item', ownItem, [
     'id', 'storeId', 'storeName', 'name', 'price.amount', 'price.currency',
     'unit.code', 'unit.label', 'category', 'photos', 'coverPhotoUrl',
     'isAvailable', 'distanceMiles', 'storeIsOpenNow',
   ]);
 
-  const itemId = r.body?.data?.[0]?.id;
+  const itemId = ownItem?.id;
   r = await api(b.token, 'POST', '/commerce/enquiries', {
     storeId, lines: [{ itemId, quantity: 2 }], fulfilment: 'COLLECTION',
   });

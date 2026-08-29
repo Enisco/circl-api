@@ -1,19 +1,10 @@
-// ═══════════════════════════════════════════════════════════════════════════════
-// Moderation & Circl Guard (spec 1.8, 1.9, and the Guard layer)
+// ═══════════════════════════════════════════════════════════════════════════════ Moderation & Circl Guard (spec 1.8, 1.9, and the Guard layer)
 //
-// Guard is the safeguarding layer, built because Circl serves a population with
-// real vulnerabilities on arrival. Three things live here:
+// Guard is the safeguarding layer, built because Circl serves a population with real vulnerabilities on arrival.
 //
-//   1. Reports and blocks — one shared vocabulary across every content type.
-//   2. The risk-aware admin queue — an algorithm scans posts and private admin
-//      messages for high-risk language and ranks by urgency, so a member in
-//      danger is not sitting behind a queue of spam reports.
-//   3. The anonymous-post approval queue the admin works through.
+// 1.
 //
-// Risk scoring is a deterministic lexicon, not a model. It has to be auditable,
-// it has to run in-request without a network hop, and a safeguarding decision
-// nobody can explain is worse than a slightly less clever one.
-// ═══════════════════════════════════════════════════════════════════════════════
+// Risk scoring is a deterministic lexicon, not a model.
 
 model Report {
   id         String @id @default(uuid())
@@ -23,8 +14,7 @@ model Report {
   targetType ReportTargetType @map("target_type")
   targetId   String           @map("target_id")
 
-  // Resolved from the target where it is knowable. Null for a report filed via a
-  // reportToken against anonymous content — the link exists, but not here.
+  // Resolved from the target where it is knowable.
   targetUserId String? @map("target_user_id")
   targetUser   User?   @relation("ReportSubject", fields: [targetUserId], references: [id], onDelete: SetNull)
 
@@ -32,8 +22,7 @@ model Report {
   note       String?      @map("note")
   state      ReportState  @default(RECEIVED) @map("state")
 
-  // A report snapshots the thread/content server-side, so deleting messages
-  // afterwards does not erase the evidence (5.7).
+  // A report snapshots the thread/content server-side, so deleting messages afterwards does not erase the evidence (5.7).
   snapshot Json? @map("snapshot")
 
   riskLevel    RiskLevel     @default(NONE) @map("risk_level")
@@ -53,8 +42,7 @@ model Report {
   @@map("reports")
 }
 
-// Blocking is symmetric in effect: neither party sees the other's content in
-// feeds, lists or search, and neither can message the other (1.8.2).
+// Blocking is symmetric in effect: neither party sees the other's content in feeds, lists or search, and neither can message the other (1.8.2).
 model Block {
   blockerId String @map("blocker_id")
   blocker   User   @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
@@ -68,8 +56,7 @@ model Block {
   @@map("blocks")
 }
 
-// The admin work queue. One row per thing a human has to look at, whatever
-// produced it, so "what needs attention" is one ordered query rather than four.
+// The admin work queue.
 model ModerationQueueItem {
   id    String              @id @default(uuid())
   type  ModerationQueueType @map("type")
@@ -109,8 +96,7 @@ model ModerationQueueItem {
   @@map("moderation_queue_items")
 }
 
-// An append-only record of what staff did and why. A safeguarding decision with
-// no audit trail cannot be reviewed, and this queue makes decisions about people.
+// An append-only record of what staff did and why.
 model ModerationAction {
   id      String @id @default(uuid())
   actorId String @map("actor_id")
@@ -131,12 +117,9 @@ model ModerationAction {
 
 // ─── Circl Guard: the private admin channel ──────────────────────────────────
 
-// "Private to Circl" (1.9). Invisible to the community, direct to the admin team,
-// for sensitive situations members do not want to post publicly.
+// "Private to Circl" (1.9).
 //
-// No response-time promise is made by this API (1.9): the thread's opening system
-// message states what the channel is and who can see it, and commits to no
-// timeframe. There is deliberately no `expectedByAt` column here.
+// No response-time promise is made by this API (1.9): the thread's opening system message states what the channel is and who can see it, and commits to no timeframe.
 model GuardThread {
   id     String @id @default(uuid())
   userId String @map("user_id")
@@ -166,10 +149,7 @@ model GuardThread {
   @@map("guard_threads")
 }
 
-// The lexicon the risk scanner runs against. In the database rather than in code
-// so safeguarding staff can add a phrase the moment they see it used, without a
-// deploy — which is the difference between catching a pattern this week and next
-// release.
+// The lexicon the risk scanner runs against.
 model RiskTerm {
   id        String       @id @default(uuid())
   category  RiskCategory @map("category")

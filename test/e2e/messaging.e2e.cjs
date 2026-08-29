@@ -4,14 +4,7 @@ const { io } = require('socket.io-client');
 
 const WS = 'http://localhost:4000/ws/chat';
 
-/**
- * Opens a socket and resolves once it is connected, or rejects on refusal.
- *
- * Handlers for connect-time events are attached BEFORE the connection completes,
- * which is what a real client does — `io()` auto-connects, and handlers are
- * registered synchronously on the next line. Attaching afterwards races the
- * server's own on-connect emits.
- */
+/** Opens a socket and resolves once it is connected, or rejects on refusal. */
 const connect = (token, buffer = ['unread.total']) =>
   new Promise((resolve, reject) => {
     const socket = io(WS, { auth: { token }, transports: ['websocket'], reconnection: false });
@@ -61,8 +54,7 @@ const waitFor = (socket, event, ms = 4000) =>
 
   console.log('\n── 5.0 One thread per (pair, context) ───────────────────────');
 
-  // A booking between the same two people is a SEPARATE thread, which is correct:
-  // a dispute about a job should not bury a friendly conversation.
+  // A booking between the same two people is a SEPARATE thread, which is correct: a dispute about a job should not bury a friendly conversation.
   const listing = await prisma.professionalListing.create({
     data: {
       userId: tunde.id, professionTitle: 'Immigration Lawyer', experienceLevel: 'EXPERT',
@@ -247,6 +239,29 @@ const waitFor = (socket, event, ms = 4000) =>
   });
   r = await api(ada.token, 'GET', `/messages/${conversationId}`);
   check('and false once both have', r.body?.data?.safetyNoticeRequired === false);
+
+  console.log('\n── 5.2.3 conversation.updated ───────────────────────────────');
+  {
+    const socket = await connect(ada.token);
+    const muted = waitFor(socket, 'conversation.updated');
+
+    await api(ada.token, 'POST', `/messages/${conversationId}/mute`, {});
+    const evt = await muted;
+
+    check('muting pushes conversation.updated', evt !== null, evt);
+    check('it carries the whole conversation row',
+      typeof evt?.conversation?.id === 'string' && evt?.conversation?.isMuted === true,
+      evt?.conversation);
+
+    const archived = waitFor(socket, 'conversation.updated');
+
+    await api(ada.token, 'POST', `/messages/${conversationId}/archive`, {});
+    check('archiving pushes it too', (await archived) !== null);
+
+    await api(ada.token, 'DELETE', `/messages/${conversationId}/archive`);
+    await api(ada.token, 'DELETE', `/messages/${conversationId}/mute`);
+    socket.close();
+  }
 
   console.log('\n── Cleanup ──────────────────────────────────────────────────');
   await sweep('cleanup');

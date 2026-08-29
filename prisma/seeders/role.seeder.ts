@@ -27,9 +27,7 @@ const defaultRoles: RoleData[] = [
     permissions: ['moderation:read', 'moderation:decide', 'users:read', 'guides:publish'],
   },
   {
-    // Deliberately separate from Moderator. Reading a domestic-abuse disclosure
-    // is a different job from triaging spam, and not everyone who does the second
-    // should be able to do the first.
+    // Deliberately separate from Moderator.
     name: 'Safeguarding',
     code: 'safeguarding',
     description: 'Works Circl Guard cases: the private admin channel and the risk queue',

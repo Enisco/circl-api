@@ -1,0 +1,92 @@
+// ═══════════════════════════════════════════════════════════════════════════════ Section 6.1 — Notifications
+//
+// The in-app list, which is a different thing from the message push in 5.6: it includes events that never produce a push, and it survives a push being dismissed.
+
+model Notification {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+
+  kind NotificationKind @map("kind")
+
+  /// Already worded by the server.
+  title String  @map("title")
+  body  String? @map("body")
+
+  /// Server-owned, so a new kind is tappable without an app release (5.3.1).
+  route String? @map("route")
+
+  /// The person who caused it. Null for ANNOUNCEMENT and VERIFICATION.
+  actorId String? @map("actor_id")
+  actor   User?   @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  /// Which preference category silences this, so a member's matrix is honoured without the sender having to know the mapping.
+  categoryCode String @map("category_code")
+
+  isRead Boolean   @default(false) @map("is_read")
+  readAt DateTime? @map("read_at") @db.Timestamptz
+
+  metadata Json? @map("metadata")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // The list is always "this member, newest first", and the badge is always "this member, unread".
+  @@index([userId, createdAt])
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+/**
+ * The preference matrix (6.1.3): one row per category, two channels.
+ *
+ * Rows are held per member rather than as booleans on the profile, because a
+ * ninth category must not need a migration, and because `label` and `isLocked`
+ * come from the taxonomy so wording and ordering change without an app release
+ * (D38).
+ */
+model NotificationPreference {
+  userId       String @map("user_id")
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryCode String @map("category_code")
+
+  push  Boolean @default(true) @map("push")
+  email Boolean @default(false) @map("email")
+
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@id([userId, categoryCode])
+  @@index([userId])
+  @@map("notification_preferences")
+}
+
+/**
+ * Crisis and advice lines (6.3.3).
+ *
+ * Served from the API rather than shipped in the binary so a number that changes
+ * is fixed the same day. The client keeps its own hardcoded list as the offline
+ * fallback, because a crisis line that fails to load is the worst possible time
+ * to have nothing.
+ */
+model SupportResource {
+  id          String  @id @default(uuid())
+  countryCode String  @default("GB") @map("country_code")
+  name        String  @map("name")
+  phone       String? @map("phone")
+  url         String? @map("url")
+  hours       String? @map("hours")
+
+  /// Crisis rows are listed first, above an "Other places that can help" heading that holds the rest.
+  isCrisis Boolean @default(false) @map("is_crisis")
+  sort     Int     @default(0) @map("sort")
+  isActive Boolean @default(true) @map("is_active")
+
+  /// The date the list was last verified, rendered under it as "last checked".
+  lastCheckedAt DateTime @default(now()) @map("last_checked_at") @db.Timestamptz
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([countryCode, name])
+  @@index([countryCode, isActive, isCrisis, sort])
+  @@map("support_resources")
+}

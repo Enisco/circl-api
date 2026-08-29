@@ -1,13 +1,7 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import { taxonomySeeds } from './data/taxonomy';
 
-/**
- * Upserts every taxonomy term and bumps the version stamp.
- *
- * `label`, `sort` and `metadata` are overwritten on every run so a reworded label
- * ships with a deploy. `isActive` is written on create only: once an admin has
- * turned a category on or off in the dashboard, a redeploy must not undo it.
- */
+/** Upserts every taxonomy term and bumps the version stamp. */
 export const seedTaxonomy = async (prisma: PrismaClient) => {
   console.info('Seeding taxonomy...');
 

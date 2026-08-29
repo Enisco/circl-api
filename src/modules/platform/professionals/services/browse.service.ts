@@ -11,6 +11,7 @@ import {
 } from '@/common';
 import {
   BlockingService,
+  MediaService,
   TaxonomyService,
   authorSelect,
   toAuthorView,
@@ -29,18 +30,12 @@ export class BrowseService {
     private readonly reputation: ReputationService,
     private readonly blocking: BlockingService,
     private readonly listings: ListingService,
+    private readonly media: MediaService,
   ) {}
 
   // ─── 2.3 Browse ────────────────────────────────────────────────────────────
 
-  /**
-   * D14: `listingType=BOTH` stays a single server-side query.
-   *
-   * Both tables are indexed on city and category, and the result carries a `type`
-   * discriminator. Interleaving two independently paginated client calls produces
-   * duplicate and missing rows at every page boundary, which is a worse bug than
-   * a slightly more expensive query.
-   */
+  /** D14: `listingType=BOTH` stays a single server-side query. */
   async browse(viewerId: string, query: BrowseProfessionalsDto) {
     const listingType = query.listingType ?? 'PROFESSIONAL';
     const blockedIds = await this.blocking.blockedUserIds(viewerId);
@@ -61,8 +56,7 @@ export class BrowseService {
 
     const items = [...listings.rows, ...offers.rows];
 
-    // With both types in play the two result sets are merged and re-paged in
-    // memory over one window, which is what keeps the page boundaries honest.
+    // With both types in play the two result sets are merged and re-paged in memory over one window, which is what keeps the page boundaries honest.
     const sorted = this.applySort(items, query.sort);
     const paged =
       listingType === 'BOTH' ? sorted.slice(query.skip, query.skip + query.take) : sorted;
@@ -70,8 +64,7 @@ export class BrowseService {
     const total = listings.total + offers.total;
     const meta: PageMeta = buildPageMeta(query, total);
 
-    // An empty professional category is a demand signal, and the member still
-    // needs their answer — so the widen action is not guesswork (2.3).
+    // An empty professional category is a demand signal, and the member still needs their answer — so the widen action is not guesswork (2.3).
     if (total === 0) {
       meta.nearbyCityMatches = await this.nearbyCityMatches(query, viewerCityId);
     }
@@ -119,8 +112,7 @@ export class BrowseService {
       where.AND = [...(Array.isArray(where.AND) ? where.AND : []), { OR: search }];
     }
 
-    // Rating and immigrant-friendly filter against the maintained summary rather
-    // than aggregating reviews per listing.
+    // Rating and immigrant-friendly filter against the maintained summary rather than aggregating reviews per listing.
     if (query.minRating !== undefined || query.immigrantFriendly) {
       where.user = {
         ...(where.user as Prisma.UserWhereInput),
@@ -131,14 +123,9 @@ export class BrowseService {
       };
     }
 
-    // `verification` is accepted and deliberately not applied this version (D13):
-    // nothing carries a check other than EMAIL, so applying it would empty the
-    // screen. The client hides the row; honouring the param would be worse than
-    // ignoring it, because it would look like a filter that works and returns
-    // nothing.
+    // `verification` is accepted and deliberately not applied this version (D13): nothing carries a check other than EMAIL, so applying it would empty the screen.
 
-    // With BOTH, a wide window is pulled and re-paged in memory after the merge;
-    // otherwise the database does the paging.
+    // With BOTH, a wide window is pulled and re-paged in memory after the merge; otherwise the database does the paging.
     const window: { skip: number; take: number } =
       query.listingType === 'BOTH'
         ? { skip: 0, take: 200 }
@@ -173,7 +160,7 @@ export class BrowseService {
         return {
           type: 'PROFESSIONAL' as const,
           id: row.id,
-          user: toAuthorView(row.user),
+          user: toAuthorView(row.user, { sign: this.media.sign }),
           professionTitle: row.professionTitle,
           category: categories[0] ?? null,
           categories,
@@ -189,7 +176,7 @@ export class BrowseService {
           priceFrom: money(row.priceFrom, row.currency),
           priceBasis: row.priceBasis,
           isAcceptingWork: row.isAcceptingWork,
-          trustChecks: toAuthorView(row.user).trustChecks,
+          trustChecks: toAuthorView(row.user, { sign: this.media.sign }).trustChecks,
           isImmigrantFriendly: summary.isImmigrantFriendly,
           isRegulated: await this.listings.isRegulated(row.categories.map(c => c.code)),
           verificationStatus: row.verificationStatus,
@@ -197,8 +184,7 @@ export class BrowseService {
       }),
     );
 
-    // Radius is applied after the distance is computed, because the distance
-    // itself needs the city's coordinates. Only ever narrows a nearMe query.
+    // Radius is applied after the distance is computed, because the distance itself needs the city's coordinates.
     const filtered =
       origin && query.radiusMiles
         ? mapped.filter(
@@ -217,8 +203,7 @@ export class BrowseService {
     const where: Prisma.CommunityOfferWhereInput = {
       deletedAt: null,
       ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
-      // Same rule as the community list: an offer promoted into a verified
-      // listing has become that listing.
+      // Same rule as the community list: an offer promoted into a verified listing has become that listing.
       OR: [
         { promotedToListingId: null },
         {
@@ -264,7 +249,7 @@ export class BrowseService {
         return {
           type: 'COMMUNITY_OFFER' as const,
           id: row.id,
-          user: toAuthorView(row.author),
+          user: toAuthorView(row.author, { sign: this.media.sign }),
           professionTitle: row.title,
           category: toTermView(row.categoryCode, categoryLabels),
           categories: [toTermView(row.categoryCode, categoryLabels)].filter(Boolean),
@@ -279,7 +264,7 @@ export class BrowseService {
           priceFrom: money(row.priceFrom, row.currency),
           priceBasis: row.priceBasis,
           isAcceptingWork: true,
-          trustChecks: toAuthorView(row.author).trustChecks,
+          trustChecks: toAuthorView(row.author, { sign: this.media.sign }).trustChecks,
           isImmigrantFriendly: summary.isImmigrantFriendly,
           isRegulated: false,
           verificationStatus: null,
@@ -316,8 +301,7 @@ export class BrowseService {
           byNullsLast(a.medianResponseMinutes, b.medianResponseMinutes),
         );
       default:
-        // RECOMMENDED: rated highly, by enough people to mean it. A 5.0 from one
-        // review is not better than a 4.8 from thirty.
+        // RECOMMENDED: rated highly, by enough people to mean it.
         return [...items].sort(
           (a, b) =>
             b.rating.average * Math.min(1, Math.log1p(b.rating.count) / Math.log(10)) -
@@ -362,14 +346,7 @@ export class BrowseService {
 
   // ─── 2.4 Profile ───────────────────────────────────────────────────────────
 
-  /**
-   * Accepts either a listing id or the professional's USER id (D9).
-   *
-   * Links to professionals are already being written into messages, reviews and
-   * community posts, and they must not break depending on which id the writer
-   * happened to hold. This is the cheapest possible fix for a whole class of dead
-   * links.
-   */
+  /** Accepts either a listing id or the professional's USER id (D9). */
   async profile(viewerId: string, idOrUserId: string) {
     const listing = await this.database.professionalListing.findFirst({
       where: {
@@ -423,7 +400,7 @@ export class BrowseService {
 
     return {
       id: listing.id,
-      user: toAuthorView(listing.user),
+      user: toAuthorView(listing.user, { sign: this.media.sign }),
       professionTitle: listing.professionTitle,
       categories,
       category: categories[0] ?? null,
@@ -436,8 +413,7 @@ export class BrowseService {
       isImmigrantFriendly: summary.isImmigrantFriendly,
       stats: {
         jobsCompleted: listing.jobsCompleted,
-        // One definition, three surfaces: the profile, the dashboard, and the
-        // maxResponseHours filter all read this number (2.11).
+        // One definition, three surfaces: the profile, the dashboard, and the maxResponseHours filter all read this number (2.11).
         medianResponseMinutes: listing.medianResponseMinutes,
         profileViews: listing.profileViews,
       },

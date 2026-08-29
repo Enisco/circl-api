@@ -13,14 +13,7 @@ async function storedCodeHash(userId) {
   return hashed ? JSON.parse(hashed) : null;
 }
 
-/**
- * Plants a known code in place of the emailed one.
- *
- * The alternative is brute-forcing six digits through bcrypt, which proves
- * nothing the server does not already prove and takes minutes. The confirm path
- * still verifies against the stored hash exactly as it would for a real code —
- * this only substitutes which code that is.
- */
+/** Plants a known code in place of the emailed one. */
 async function plantCode(userId, code) {
   const bcrypt = require('bcryptjs');
   const redis = new Redis(process.env.REDIS_URL);
@@ -128,11 +121,10 @@ async function plantCode(userId, code) {
   const metrics = new MetricsService(prisma, new TaxonomyService(prisma));
   await metrics.rebuild('MONTH');
 
-  r = await api(helper.token, 'GET', '/pulse/COMMUNITY?cityId=MANCHESTER');
+  r = await api(helper.token, 'GET', '/pulse/raw/COMMUNITY?cityId=MANCHESTER');
   check('community dashboard → 200', r.status === 200, r.body?.error);
   check('topRequests reflects what was actually asked', r.body?.data?.metrics?.topRequests?.some(m => m.code === 'BANK_ACCOUNT'), r.body?.data?.metrics?.topRequests);
-  // Assert the label is RENDERED rather than which category happens to lead:
-  // the ordering depends on whatever else the run created.
+  // Assert the label is RENDERED rather than which category happens to lead: the ordering depends on whatever else the run created.
   const bankRow = r.body?.data?.metrics?.topRequests?.find(m => m.code === 'BANK_ACCOUNT');
   check('labels are rendered, not raw codes', bankRow?.label === 'Bank Account', bankRow);
 
@@ -145,13 +137,13 @@ async function plantCode(userId, code) {
     dateOfBirth: '1994-03-11', isVisible: true, heritageTag: 'WEST_AFRICAN',
   });
   await metrics.rebuild('MONTH');
-  r = await api(helper.token, 'GET', '/pulse/CONNECT?cityId=MANCHESTER');
+  r = await api(helper.token, 'GET', '/pulse/raw/CONNECT?cityId=MANCHESTER');
   check('D19: a bucket of one person is SUPPRESSED, not rounded', (r.body?.data?.metrics?.trendingTypes?.length ?? 0) === 0, r.body?.data?.metrics?.trendingTypes);
   check('and heritage — the re-identifiable one — is suppressed too', (r.body?.data?.metrics?.demandByBackground?.length ?? 0) === 0, r.body?.data?.metrics?.demandByBackground);
 
-  r = await api(helper.token, 'GET', '/pulse/COMMERCE?cityId=MANCHESTER');
+  r = await api(helper.token, 'GET', '/pulse/raw/COMMERCE?cityId=MANCHESTER');
   check('commerce dashboard → 200', r.status === 200, r.body?.error);
-  r = await api(helper.token, 'GET', '/pulse/PROFESSIONALS?cityId=MANCHESTER');
+  r = await api(helper.token, 'GET', '/pulse/raw/PROFESSIONALS?cityId=MANCHESTER');
   check('professionals dashboard → 200', r.status === 200, r.body?.error);
 
   console.log('\n── 0.15 Account deletion ────────────────────────────────────');

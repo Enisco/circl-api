@@ -57,10 +57,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       },
     });
 
-    // A deleted account is gone, not merely refused. 410 rather than 403 so the
-    // client can say so plainly, and so a member who deleted their account and
-    // still has a token on a second device is not left staring at "access
-    // denied" (0.15.3).
+    // A deleted account is gone, not merely refused.
     if (user?.isAnonymised) {
       throw ApiException.gone(
         ApiErrorCode.ACCOUNT_ALREADY_DELETED,

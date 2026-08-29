@@ -39,21 +39,7 @@ export interface RankedItem {
   reason: string | null;
 }
 
-/**
- * Circl Intelligence: the feed ranker.
- *
- * The four Intelligence outputs are fed by the same behavioural stream, and this
- * is the one the member sees most. It is a weighted sum over signals that already
- * exist on the record, with no model in the loop, for a reason the spec states
- * directly: the client shows `ranking.reason` under "Why this?", and a wrong
- * explanation of why something was surfaced is worse than no explanation (D7).
- * Every term below can be named in one sentence, which is what makes the reason
- * honest rather than a template.
- *
- * D3 is enforced here: an offer is evergreen and a request is urgent, so OFFER
- * items take a hard recency decay under PERSONALISED. An eight-month-old
- * airport-pickup offer must never outrank a request for tomorrow morning.
- */
+/** Circl Intelligence: the feed ranker. */
 @Injectable()
 export class FeedRankerService {
   private static readonly WEIGHTS = {
@@ -92,8 +78,7 @@ export class FeedRankerService {
     const affinity = item.categoryCode ? (viewer.affinity.get(item.categoryCode) ?? 0) : 0;
 
     if (affinity > 0) {
-      // Saturating rather than linear: someone who has opened forty housing posts
-      // should not have a feed that is only housing.
+      // Saturating rather than linear: someone who has opened forty housing posts should not have a feed that is only housing.
       score += weights.categoryAffinity * Math.min(1, Math.log1p(affinity) / Math.log(10));
       signals.push('CATEGORY_AFFINITY');
     }
@@ -112,8 +97,7 @@ export class FeedRankerService {
     if (item.neededOn) {
       const daysUntil = (item.neededOn.getTime() - now.getTime()) / 86_400_000;
 
-      // Only future deadlines count, and only within a fortnight. A date that has
-      // passed is not urgent, it is stale.
+      // Only future deadlines count, and only within a fortnight.
       if (daysUntil >= 0 && daysUntil <= 14) {
         score += weights.urgency * (1 - daysUntil / 14);
         signals.push('URGENT');
@@ -140,14 +124,7 @@ export class FeedRankerService {
     return { item, score, signals, reason: this.reasonFor(signals, viewer) };
   }
 
-  /**
-   * A display sentence for "Why this?", or null.
-   *
-   * Built only from signals that actually fired, so it describes what happened
-   * rather than what usually happens. When nothing meaningful fired it returns
-   * null and the client omits the whole block — which it already renders
-   * correctly (D7).
-   */
+  /** A display sentence for "Why this?", or null. */
   private reasonFor(signals: RankingSignal[], viewer: ViewerSignals): string | null {
     const parts: string[] = [];
 
@@ -170,13 +147,7 @@ export class FeedRankerService {
     return `Because ${parts.join(', ')}${cityClause}.`;
   }
 
-  /**
-   * Which categories matter at which point in someone's arrival.
-   *
-   * Deliberately a small, readable table rather than something learned: it is a
-   * product statement about what a person newly arrived in a country needs, and
-   * it should be arguable in a review rather than buried in weights.
-   */
+  /** Which categories matter at which point in someone's arrival. */
   private stageMatchesCategory(stage: string, categoryCode: string | null): boolean {
     if (!categoryCode) return false;
 

@@ -1,11 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { riskTermSeeds } from './data/risk-terms';
 
-/**
- * Seeds Circl Guard's starting lexicon. `weight` is refreshed on every run so a
- * tuning change ships with a deploy; `isActive` is create-only so a term staff
- * deliberately disabled stays disabled.
- */
+/** Seeds Circl Guard's starting lexicon. */
 export const seedRiskTerms = async (prisma: PrismaClient) => {
   console.info('Seeding Guard risk terms...');
 

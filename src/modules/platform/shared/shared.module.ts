@@ -1,4 +1,7 @@
 import { Global, Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { S3Storage, StorageProvider } from '../media/storage';
+import { CityCompatMiddleware } from './middlewares';
 import {
   ActivityService,
   BlockingService,
@@ -8,30 +11,28 @@ import {
   TaxonomyService,
 } from './services';
 
-/**
- * The services every platform section reads.
- *
- * Global because the alternative is importing the same six providers into ten
- * modules, and because taxonomy and city hold process-level caches that are only
- * worth holding once.
- */
+const SERVICES = [
+  ActivityService,
+  BlockingService,
+  CityService,
+  MediaService,
+  RiskScannerService,
+  TaxonomyService,
+];
+
+/** The services every platform section reads. */
 @Global()
 @Module({
   providers: [
-    ActivityService,
-    BlockingService,
-    CityService,
-    MediaService,
-    RiskScannerService,
-    TaxonomyService,
+    ...SERVICES,
+    CityCompatMiddleware,
+    {
+      // S3 is the only driver.
+      provide: StorageProvider,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService): StorageProvider => new S3Storage(config),
+    },
   ],
-  exports: [
-    ActivityService,
-    BlockingService,
-    CityService,
-    MediaService,
-    RiskScannerService,
-    TaxonomyService,
-  ],
+  exports: [...SERVICES, CityCompatMiddleware, StorageProvider],
 })
 export class PlatformSharedModule {}

@@ -5,10 +5,19 @@ import {
   Group,
   GroupMembershipState,
   JoinPolicy,
+  NotificationKind,
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException, buildPageMeta, daysAgo, excerpt, Paginated } from '@/common';
+import { NotificationFeedService } from '../../notifications';
+import {
+  ApiErrorCode,
+  ApiException,
+  Paginated,
+  buildPageMeta,
+  daysAgo,
+  excerpt,
+} from '@/common';
 import {
   ActivityService,
   AuthorView,
@@ -77,6 +86,7 @@ export class GroupService {
     private readonly media: MediaService,
     private readonly blocking: BlockingService,
     private readonly activity: ActivityService,
+    private readonly notifications: NotificationFeedService,
   ) {}
 
   // ─── 1.7.1 List ────────────────────────────────────────────────────────────
@@ -93,9 +103,7 @@ export class GroupService {
       ];
     }
 
-    // Membership filters are expressed as a relation predicate rather than a
-    // fetch-then-filter, so paging stays correct: filtering after the page is
-    // taken produces short pages and a totalCount nobody can trust.
+    // Membership filters are expressed as a relation predicate rather than a fetch-then-filter, so paging stays correct: filtering after the page is taken produces short pages and a totalCount nobody can trust.
     switch (query.membership) {
       case 'JOINED':
         where.memberships = {
@@ -158,8 +166,7 @@ export class GroupService {
       case 'MOST_ACTIVE':
         return [{ lastPostAt: { sort: 'desc', nulls: 'last' } }, { postCount: 'desc' }];
       default:
-        // RECOMMENDED, until there are enough signals to do better: active and
-        // populated, which is what a member joining their first group wants.
+        // RECOMMENDED, until there are enough signals to do better: active and populated, which is what a member joining their first group wants.
         return [{ lastPostAt: { sort: 'desc', nulls: 'last' } }, { memberCount: 'desc' }];
     }
   }
@@ -203,8 +210,8 @@ export class GroupService {
     const detail: GroupDetailView = {
       ...summary,
       rules: group.rules,
-      memberPreview: preview.map(row => toAuthorView(row.user)),
-      admins: admins.map(row => toAuthorView(row.user)),
+      memberPreview: preview.map(row => toAuthorView(row.user, { sign: this.media.sign })),
+      admins: admins.map(row => toAuthorView(row.user, { sign: this.media.sign })),
       reportToken: group.reportToken,
       viewer: { ...summary.viewer, canPost: isMember, canModerate: isAdmin },
     };
@@ -221,10 +228,10 @@ export class GroupService {
   // ─── 1.7.3 Create ──────────────────────────────────────────────────────────
 
   async create(userId: string, dto: CreateGroupDto): Promise<GroupDetailView> {
-    await this.cities.assertValid(dto.cityId);
+    const city = await this.cities.assertValid(dto.cityId);
 
     const clash = await this.database.group.findFirst({
-      where: { cityId: dto.cityId, name: dto.name, deletedAt: null },
+      where: { cityId: city.id, name: dto.name, deletedAt: null },
       select: { id: true },
     });
 
@@ -236,9 +243,9 @@ export class GroupService {
       );
     }
 
-    const avatar = dto.avatarMediaId
+    const avatar = dto.avatarKey
       ? (
-          await this.media.validate([dto.avatarMediaId], userId, {
+          await this.media.validate([dto.avatarKey], userId, {
             maxImages: 1,
             allowVideo: false,
             allowAudio: false,
@@ -251,13 +258,12 @@ export class GroupService {
         data: {
           name: dto.name,
           description: dto.description,
-          cityId: dto.cityId,
+          cityId: city.id,
           joinPolicy: dto.joinPolicy ?? JoinPolicy.OPEN,
           rules: dto.rules ?? null,
           createdById: userId,
-          avatarUrl: avatar?.url ?? null,
-          // The creator becomes the first member and the first admin, which is
-          // what the live preview card in the composer already shows (1.7.3).
+          avatarKey: avatar?.storageKey ?? null,
+          // The creator becomes the first member and the first admin, which is what the live preview card in the composer already shows (1.7.3).
           memberCount: 1,
         },
       });
@@ -308,8 +314,7 @@ export class GroupService {
   async remove(userId: string, id: string): Promise<void> {
     await this.assertAdmin(userId, id);
 
-    // Soft delete, cascading to posts through the same flag rather than a
-    // physical cascade — a deleted group's content stays available to moderation.
+    // Soft delete, cascading to posts through the same flag rather than a physical cascade — a deleted group's content stays available to moderation.
     await this.database.$transaction(async tx => {
       const now = new Date();
 
@@ -337,8 +342,7 @@ export class GroupService {
       existing.state !== GroupMembershipState.REMOVED &&
       existing.state !== GroupMembershipState.REJECTED
     ) {
-      // Already in, or already waiting. Return the state rather than an error:
-      // arriving at a step you have completed is a success (2.1.6, applied here).
+      // Already in, or already waiting.
       return { membership: this.stateToView(existing), memberCount: group.memberCount };
     }
 
@@ -395,8 +399,7 @@ export class GroupService {
       return { membership: 'NONE', memberCount: group.memberCount };
     }
 
-    // The last admin cannot walk out of a group with other people in it. They
-    // transfer admin or delete the group (1.7.4).
+    // The last admin cannot walk out of a group with other people in it.
     if (membership.isAdmin && group.memberCount > 1) {
       const otherAdmins = await this.database.groupMembership.count({
         where: {
@@ -458,7 +461,7 @@ export class GroupService {
 
     return {
       data: rows.map(row => ({
-        user: toAuthorView(row.user),
+        user: toAuthorView(row.user, { sign: this.media.sign }),
         requestedAt: row.requestedAt.toISOString(),
       })),
       meta: buildPageMeta(query, total),
@@ -570,10 +573,7 @@ export class GroupService {
     const membership = (await this.membershipsFor(viewerId, [id])).get(id);
     const isMember = membership === 'MEMBER' || membership === 'ADMIN';
 
-    // A non-member gets a preview of the last 3 posts rather than an empty wall,
-    // because proof of life beats an empty invitation. The bodies are truncated
-    // HERE rather than sent in full for the client to visually blur: anyone can
-    // read blurred text off the wire (1.7.2).
+    // A non-member gets a preview of the last 3 posts rather than an empty wall, because proof of life beats an empty invitation.
     const take = isMember ? query.take : 3;
     const blockedIds = await this.blocking.blockedUserIds(viewerId);
 
@@ -613,9 +613,9 @@ export class GroupService {
       data: rows.map(row => ({
         id: row.id,
         content: isMember ? row.content : excerpt(row.content, 120),
-        media: isMember ? toMediaViews(media.get(row.id)) : [],
+        media: isMember ? toMediaViews(media.get(row.id), this.media.sign) : [],
         counts: { replies: row.replyCount },
-        author: toAuthorView(row.author),
+        author: toAuthorView(row.author, { sign: this.media.sign }),
         viewer: {
           isOwner: row.authorId === viewerId,
           canDelete: row.authorId === viewerId || membership === 'ADMIN',
@@ -632,7 +632,7 @@ export class GroupService {
   async createPost(userId: string, id: string, dto: CreateGroupPostDto): Promise<GroupPostView> {
     await this.assertMember(userId, id);
 
-    const media = await this.media.validate(dto.mediaIds, userId);
+    const media = await this.media.validate(dto.mediaKeys, userId);
 
     const post = await this.database.$transaction(async tx => {
       const created = await tx.groupPost.create({
@@ -652,9 +652,12 @@ export class GroupService {
     return {
       id: post.id,
       content: post.content,
-      media: toMediaViews(media.map((item, index) => ({ ...item, position: index }))),
+      media: toMediaViews(
+        media.map((item, index) => ({ ...item, position: index })),
+        this.media.sign,
+      ),
       counts: { replies: 0 },
-      author: toAuthorView(post.author),
+      author: toAuthorView(post.author, { sign: this.media.sign }),
       viewer: { isOwner: true, canDelete: true },
       createdAt: post.createdAt.toISOString(),
     };
@@ -679,13 +682,7 @@ export class GroupService {
     });
   }
 
-  /**
-   * Returns the parent post alongside the page of replies.
-   *
-   * The replies screen is currently routed with the whole post object passed in
-   * memory, so a deep link or a cold start cannot open it. Sending the parent
-   * here is what lets the route become addressable (1.7.5).
-   */
+  /** Returns the parent post alongside the page of replies. */
   async listPostReplies(
     viewerId: string,
     groupId: string,
@@ -727,16 +724,16 @@ export class GroupService {
         post: {
           id: post.id,
           content: post.content,
-          media: toMediaViews(media.get(postId)),
+          media: toMediaViews(media.get(postId), this.media.sign),
           counts: { replies: post.replyCount },
-          author: toAuthorView(post.author),
+          author: toAuthorView(post.author, { sign: this.media.sign }),
           viewer: { isOwner: post.authorId === viewerId, canDelete: post.authorId === viewerId },
           createdAt: post.createdAt.toISOString(),
         },
         replies: rows.map(row => ({
           id: row.id,
           content: row.content,
-          author: toAuthorView(row.author),
+          author: toAuthorView(row.author, { sign: this.media.sign }),
           viewer: { isOwner: row.authorId === viewerId, canDelete: row.authorId === viewerId },
           createdAt: row.createdAt.toISOString(),
         })),
@@ -771,10 +768,21 @@ export class GroupService {
       return created;
     });
 
+    // The post's author, not the whole group.
+    this.notifications.raise({
+      userId: post.authorId,
+      actorId: userId,
+      kind: NotificationKind.GROUP,
+      categoryCode: 'GROUPS',
+      title: 'New reply in your group post',
+      body: excerpt(dto.content, 80),
+      route: `/community/group-post/${postId}`,
+    });
+
     return {
       id: reply.id,
       content: reply.content,
-      author: toAuthorView(reply.author),
+      author: toAuthorView(reply.author, { sign: this.media.sign }),
       viewer: { isOwner: true, canDelete: true },
       createdAt: reply.createdAt.toISOString(),
     };
@@ -816,16 +824,13 @@ export class GroupService {
       name: group.name,
       description: group.description,
       city: toCityView(group.city),
-      // An integer, not "1.2k": the client cannot filter or sort a formatted
-      // string (0.6).
+      // An integer, not "1.2k": the client cannot filter or sort a formatted string (0.6).
       memberCount: group.memberCount,
       joinPolicy: group.joinPolicy,
       isNew: group.createdAt >= daysAgo(NEW_GROUP_DAYS),
-      avatarUrl: group.avatarUrl,
+      avatarUrl: group.avatarKey ? this.media.sign(group.avatarKey) : null,
       viewer: {
-        // The single source of truth for whether the button reads Join, Pending
-        // or Leave. The current screens toggle this in local state and lose it on
-        // rebuild (1.7.1).
+        // The single source of truth for whether the button reads Join, Pending or Leave.
         membership: membership ?? 'NONE',
         unreadPostCount,
         isAdmin: membership === 'ADMIN',
@@ -860,11 +865,7 @@ export class GroupService {
     }
   }
 
-  /**
-   * Posts since the member last opened each wall. Counted from `lastReadAt`
-   * rather than stored, because it is per member per group and only ever read
-   * for the handful of groups on screen.
-   */
+  /** Posts since the member last opened each wall. */
   private async unreadCounts(
     userId: string,
     groups: Array<{ id: string; lastPostAt: Date | null }>,

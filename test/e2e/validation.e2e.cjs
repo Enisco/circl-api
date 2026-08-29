@@ -100,8 +100,7 @@ const str = n => 'a'.repeat(n);
   r = await api(u.token, 'POST', `/community/groups/${groupId}/posts/${postId}/replies`, { content: str(1000) });
   check('Group post reply.content: 1000 accepted', r.status === 201, r.body?.error);
 
-  // "All string fields are trimmed before validation, and a whitespace-only
-  //  value counts as empty" (1.11).
+  // "All string fields are trimmed before validation, and a whitespace-only value counts as empty" (1.11).
   console.log('\n── 1.11 trimming rule ───────────────────────────────────────');
   r = await api(u.token, 'POST', '/community/updates', { content: '     ' });
   check('whitespace-only content counts as empty', r.status === 400, { status: r.status });

@@ -10,20 +10,7 @@ import { toJson } from '../utils/json.util';
 
 const TTL_MS = 24 * 60 * 60 * 1000;
 
-/**
- * Honours `Idempotency-Key` on the creates that declare `@Idempotent()` (spec
- * 0.12).
- *
- * Replaying the same key within 24 hours returns the original response rather
- * than creating a duplicate. Mobile networks retry and composers post
- * optimistically; a duplicate post in a community feed is a visible
- * embarrassment.
- *
- * The stored record is keyed by (user, key, endpoint) and also holds a hash of
- * the body: a client that reuses a key for a genuinely different payload is a
- * client bug, and returning the wrong resource would hide it. In that case the
- * request proceeds normally rather than replaying a mismatched response.
- */
+/** Honours `Idempotency-Key` on the creates that declare `@Idempotent()` (spec 0.12). */
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
   constructor(
@@ -80,9 +67,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
                   expiresAt: new Date(Date.now() + TTL_MS),
                 },
               })
-              // A failure to record idempotency must never fail the create that
-              // already succeeded. The cost is a possible duplicate on retry,
-              // which is strictly better than losing the original.
+              // A failure to record idempotency must never fail the create that already succeeded.
               .catch(() => undefined);
           }),
         );

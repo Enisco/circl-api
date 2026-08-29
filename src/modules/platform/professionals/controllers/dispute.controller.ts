@@ -13,14 +13,7 @@ import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/commo
 import { DisputeEvidenceDto, OpenDisputeDto } from '../dtos/booking.dto';
 import { DisputeService } from '../services/dispute.service';
 
-/**
- * The shared dispute resource (2.10, 4.1.3).
- *
- * One endpoint with a polymorphic subject rather than two near-identical ones,
- * so "Report a problem" behaves the same whichever half of the app you raise it
- * from. `POST /bookings/{id}/disputes` stays because 2.10 names it, and both
- * paths run the same service.
- */
+/** The shared dispute resource (2.10, 4.1.3). */
 @Controller('disputes')
 @ApiTags('Disputes')
 @UseGuards(JwtAuthGuard)
@@ -42,7 +35,7 @@ export class DisputeController {
     const payload = {
       reasonCode: dto.reasonCode,
       description: dto.description,
-      mediaIds: dto.mediaIds,
+      mediaKeys: dto.mediaKeys,
     };
 
     const data =

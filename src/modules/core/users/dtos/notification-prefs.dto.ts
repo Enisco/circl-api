@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsString, MaxLength } from 'class-validator';
 
 export class RegisterDeviceTokenDto {
   @ApiProperty({
@@ -10,31 +10,4 @@ export class RegisterDeviceTokenDto {
   @MaxLength(512)
   @IsString()
   token: string;
-}
-
-export class UpdateNotificationPrefsDto {
-  @ApiProperty({ example: true, required: false })
-  @IsBoolean()
-  @IsOptional()
-  newOffersOnMyRequests?: boolean;
-
-  @ApiProperty({ example: true, required: false })
-  @IsBoolean()
-  @IsOptional()
-  newMessages?: boolean;
-
-  @ApiProperty({ example: true, required: false })
-  @IsBoolean()
-  @IsOptional()
-  groupActivity?: boolean;
-
-  @ApiProperty({ example: true, required: false })
-  @IsBoolean()
-  @IsOptional()
-  connectionRequests?: boolean;
-
-  @ApiProperty({ example: true, required: false })
-  @IsBoolean()
-  @IsOptional()
-  platformUpdates?: boolean;
 }

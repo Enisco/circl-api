@@ -27,11 +27,7 @@ const CsvArray = () =>
       : value,
   );
 
-/**
- * Two composers post here: "Post a Request" in "I can help" mode (short form) and
- * "Post a Service" (full form with delivery and price) — they differ only in
- * which optional fields they fill (1.4.3).
- */
+/** Two composers post here: "Post a Request" in "I can help" mode (short form) and "Post a Service" (full form with delivery and price) — they differ only in which optional fields they fill (1.4.3). */
 export class CreateOfferDto {
   @ApiProperty({ minLength: 6, maxLength: 120 })
   @Trim()
@@ -82,7 +78,9 @@ export class CreateOfferDto {
   @IsArray()
   @ArrayMaxSize(5)
   @IsOptional()
-  mediaIds?: string[];
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  mediaKeys?: string[];
 }
 
 export class UpdateOfferDto {
@@ -135,7 +133,9 @@ export class UpdateOfferDto {
   @IsArray()
   @ArrayMaxSize(5)
   @IsOptional()
-  mediaIds?: string[];
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  mediaKeys?: string[];
 }
 
 export class ListOffersDto extends PageOptionsDto {

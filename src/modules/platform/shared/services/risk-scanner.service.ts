@@ -10,28 +10,7 @@ export interface RiskAssessment {
   signals: Array<{ category: RiskCategory; pattern: string; weight: number }>;
 }
 
-/**
- * Circl Guard's risk scanner.
- *
- * "An algorithm scans posts and private admin messages for high-risk language
- * (suicidal ideation, domestic violence, deportation risk, scams, landlord
- * fraud). Sensitive requests are ranked by urgency and pushed to the top of the
- * admin queue with an alert."
- *
- * Three properties this deliberately has, and one it deliberately does not:
- *
- *   Auditable — every escalation names the phrases that caused it, so "why was my
- *   post flagged" has an answer. A model's embedding does not.
- *   Fast — an in-process phrase match over a cached lexicon, no network hop, so
- *   it runs inline on every create without a member waiting.
- *   Editable — the lexicon is a table, so safeguarding staff add a phrase the
- *   moment they see it used rather than waiting for a release.
- *
- * What it does NOT do is block anything. It decides where a post lands in the
- * admin queue and nothing else. A false positive costs a reviewer thirty seconds;
- * a false negative costs considerably more, so the thresholds lean toward
- * escalating.
- */
+/** Circl Guard's risk scanner. */
 @Injectable()
 export class RiskScannerService {
   private lexicon: Array<{
@@ -44,8 +23,7 @@ export class RiskScannerService {
 
   private static readonly TTL_MS = 120_000;
 
-  // Additive score thresholds. One unambiguous phrase ("held against my will",
-  // weight 65) reaches HIGH alone; softer phrases have to co-occur.
+  // Additive score thresholds.
   private static readonly THRESHOLDS: Array<[number, RiskLevel]> = [
     [90, RiskLevel.CRITICAL],
     [55, RiskLevel.HIGH],
@@ -64,8 +42,7 @@ export class RiskScannerService {
       category: term.category,
       pattern: term.pattern,
       weight: term.weight,
-      // Word boundaries, so "scam" does not fire on "scamper" and an apostrophe
-      // inside a phrase still matches.
+      // Word boundaries, so "scam" does not fire on "scamper" and an apostrophe inside a phrase still matches.
       regex: new RegExp(`(?<![\\w])${escapeRegExp(term.pattern)}(?![\\w])`, 'i'),
     }));
     this.loadedAt = Date.now();
@@ -96,8 +73,7 @@ export class RiskScannerService {
       return { level: RiskLevel.NONE, category: null, score: 0, signals: [] };
     }
 
-    // The category is the heaviest one matched, not the first — a post mentioning
-    // both a scam and self-harm is a self-harm case.
+    // The category is the heaviest one matched, not the first — a post mentioning both a scam and self-harm is a self-harm case.
     const category = [...perCategory.entries()].sort((a, b) => b[1] - a[1])[0][0];
     const level =
       RiskScannerService.THRESHOLDS.find(([minimum]) => score >= minimum)?.[1] ?? RiskLevel.NONE;

@@ -1,18 +1,12 @@
 export interface PresignedUpload {
-  /** Where the client PUTs the bytes (spec 0.11, step 2). */
+  /** Where the client PUTs the bytes (spec 0.11.1, step 2). */
   uploadUrl: string;
   /** Headers the client must send with that PUT, if the driver needs any. */
   uploadHeaders?: Record<string, string>;
   expiresAt: Date;
 }
 
-/**
- * Media storage, behind one interface so the driver is an environment decision.
- *
- * The spec's contract is two steps: reserve a URL, then PUT the bytes. Both
- * drivers satisfy it identically from the client's point of view, which is what
- * lets the app be built and tested before a bucket exists.
- */
+/** Media storage, behind one interface so the driver is an environment decision. */
 export abstract class StorageProvider {
   abstract readonly name: string;
 
@@ -22,11 +16,29 @@ export abstract class StorageProvider {
     byteSize: number,
   ): Promise<PresignedUpload>;
 
-  /** The URL the media is served from once uploaded. */
-  abstract publicUrl(storageKey: string): string;
+  /** A ready-to-use https URL for reading one object (0.11.3). */
+  abstract readUrl(storageKey: string): string;
+
+  /** Writes an object directly, bypassing the presigned flow. */
+  abstract put(storageKey: string, body: Buffer, mimeType: string): Promise<void>;
 
   abstract delete(storageKey: string): Promise<void>;
 
   /** Whether the bytes have actually landed, checked before a resource claims them. */
   abstract exists(storageKey: string): Promise<boolean>;
+
+  /** Object size and content type, read after upload by the derived-field job. */
+  abstract head(storageKey: string): Promise<{ byteSize: number; mimeType: string } | null>;
 }
+
+/** The window a read URL is valid for (0.11.3). */
+export const READ_URL_TTL_SECONDS = 48 * 60 * 60;
+
+/** UTC midnight, so a read URL is stable all day and the client's cache key holds. */
+export const signingAnchor = (at: Date = new Date()): Date => {
+  const anchored = new Date(at);
+
+  anchored.setUTCHours(0, 0, 0, 0);
+
+  return anchored;
+};

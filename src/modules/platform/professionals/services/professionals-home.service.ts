@@ -2,21 +2,24 @@ import { Injectable } from '@nestjs/common';
 import { JobState, ListingVerificationStatus, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { daysAgo, money } from '@/common';
-import { TaxonomyService, authorSelect, toAuthorView, toCityView, toTermView } from '../../shared';
+import {
+  MediaService,
+  TaxonomyService,
+  authorSelect,
+  toAuthorView,
+  toCityView,
+  toTermView,
+} from '../../shared';
 import { ReputationService } from '../../trust/services/reputation.service';
 
-/**
- * `GET /professionals/home` (2.2) and `GET /professionals/me/dashboard` (2.11).
- *
- * Home is one call for the whole screen, because it is six small strips and six
- * round trips would show six spinners.
- */
+/** `GET /professionals/home` (2.2) and `GET /professionals/me/dashboard` (2.11). */
 @Injectable()
 export class ProfessionalsHomeService {
   constructor(
     private readonly database: PrismaService,
     private readonly taxonomy: TaxonomyService,
     private readonly reputation: ReputationService,
+    private readonly media: MediaService,
   ) {}
 
   async home(userId: string, cityId?: string) {
@@ -77,8 +80,7 @@ export class ProfessionalsHomeService {
             professional: { select: authorSelect },
           },
           orderBy: { updatedAt: 'desc' },
-          // At most 3: an in-flight job should never require hunting through a
-          // menu to find (2.2).
+          // At most 3: an in-flight job should never require hunting through a menu to find (2.2).
           take: 3,
         }),
         this.trustCounts(),
@@ -87,8 +89,7 @@ export class ProfessionalsHomeService {
     const summaries = await this.reputation.summariesFor(nearYou.map(row => row.userId));
 
     return {
-      // Real counts, so an empty category can be handled honestly rather than
-      // rendering a tile that leads nowhere.
+      // Real counts, so an empty category can be handled honestly rather than rendering a tile that leads nowhere.
       categories: categoryCounts
         .map(row => ({
           ...toTermView(row.code, professionLabels)!,
@@ -101,7 +102,7 @@ export class ProfessionalsHomeService {
         return {
           type: 'PROFESSIONAL' as const,
           id: row.id,
-          user: toAuthorView(row.user),
+          user: toAuthorView(row.user, { sign: this.media.sign }),
           professionTitle: row.professionTitle,
           category: toTermView(row.categories[0]?.code ?? null, professionLabels),
           city: toCityView(row.city),
@@ -116,9 +117,7 @@ export class ProfessionalsHomeService {
           isImmigrantFriendly: summary.isImmigrantFriendly,
         };
       }),
-      // Null when the member has no listing. Its presence is what swaps the two
-      // mode cards for the listing card, which the client currently decides from
-      // a local flag (2.2).
+      // Null when the member has no listing.
       myListing: myListing
         ? {
             id: myListing.id,
@@ -134,6 +133,7 @@ export class ProfessionalsHomeService {
         serviceName: booking.serviceName,
         counterpart: toAuthorView(
           booking.clientId === userId ? booking.professional : booking.client,
+          { sign: this.media.sign },
         ),
         state: booking.state,
       })),
@@ -141,10 +141,7 @@ export class ProfessionalsHomeService {
     };
   }
 
-  /**
-   * The trust strip. D13 makes `verifiedCount` honest rather than aspirational:
-   * with no checks written, it counts the one check that exists.
-   */
+  /** The trust strip. */
   private async trustCounts() {
     const [verifiedCount, ratedCount, vouchedCount] = await Promise.all([
       this.database.trustCheck.count({ where: { status: 'VERIFIED', check: { not: 'EMAIL' } } }),
@@ -157,13 +154,7 @@ export class ProfessionalsHomeService {
 
   // ─── 2.11 Dashboard ────────────────────────────────────────────────────────
 
-  /**
-   * `agreedTotal` is the sum of amounts the two parties agreed, not money Circl
-   * holds, owes, or has paid. The screen labels it "Earned so far" from the
-   * professional's point of view, which is accurate about their work and says
-   * nothing about Circl's involvement. There is no pending balance, no payout and
-   * no Stripe status (2.11).
-   */
+  /** `agreedTotal` is the sum of amounts the two parties agreed, not money Circl holds, owes, or has paid. */
   async dashboard(userId: string) {
     const listing = await this.database.professionalListing.findUnique({ where: { userId } });
 
@@ -206,6 +197,8 @@ export class ProfessionalsHomeService {
     ]);
 
     return {
+      // Here so the availability switch can write straight to PATCH /professionals/listings/{id}/availability rather than fetching GET /professionals/me for an id it would otherwise go and look up (2.11).
+      listingId: listing.id,
       inProgress: {
         count: inProgress._count._all,
         agreedTotal: money(inProgress._sum.agreedAmount ?? 0, listing.currency),
@@ -226,14 +219,7 @@ export class ProfessionalsHomeService {
     };
   }
 
-  /**
-   * Median minutes from the first client message to the professional's first
-   * reply, over the last 30 days (2.11).
-   *
-   * One definition, three surfaces: the profile, the dashboard, and the
-   * `maxResponseHours` filter all read the column this writes. Recomputed on a
-   * schedule rather than per read, because it is a scan over messages.
-   */
+  /** Median minutes from the first client message to the professional's first reply, over the last 30 days (2.11). */
   async recomputeResponseTimes(): Promise<number> {
     const listings = await this.database.professionalListing.findMany({
       where: { deletedAt: null },

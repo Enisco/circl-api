@@ -50,7 +50,7 @@ export class CreateGroupDto {
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()
-  avatarMediaId?: string;
+  avatarKey?: string;
 }
 
 export class UpdateGroupDto {
@@ -85,7 +85,7 @@ export class UpdateGroupDto {
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()
-  avatarMediaId?: string;
+  avatarKey?: string;
 }
 
 export class ListGroupsDto extends PageOptionsDto {
@@ -132,7 +132,9 @@ export class CreateGroupPostDto {
   @IsArray()
   @ArrayMaxSize(5)
   @IsOptional()
-  mediaIds?: string[];
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  mediaKeys?: string[];
 }
 
 export class CreateGroupPostReplyDto {

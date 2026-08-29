@@ -18,14 +18,7 @@ export const DISPUTE_MEDIA_OWNER = 'DISPUTE';
 /** What the screen can state plainly rather than promising nothing at all. */
 const EXPECTED_RESOLUTION_DAYS = 5;
 
-/**
- * One dispute resource, shared by bookings and commerce enquiries (2.10, 4.1.3),
- * so "Report a problem" behaves the same wherever it is raised.
- *
- * There is nothing to freeze, since Circl holds nothing. The honest phrasing is
- * that the job is paused and Circl reviews it — which is what the system message
- * below actually says.
- */
+/** One dispute resource, shared by bookings and commerce enquiries (2.10, 4.1.3), so "Report a problem" behaves the same wherever it is raised. */
 @Injectable()
 export class DisputeService {
   constructor(
@@ -102,8 +95,7 @@ export class DisputeService {
       onOpen: (tx: Parameters<Parameters<PrismaService['$transaction']>[0]>[0]) => Promise<void>;
     },
   ) {
-    // Either party may raise one. A second attempt returns the open dispute
-    // rather than creating a parallel case (2.10).
+    // Either party may raise one.
     const existing = await this.database.dispute.findFirst({
       where: {
         ...(context.bookingId
@@ -130,12 +122,11 @@ export class DisputeService {
       );
     }
 
-    const media = await this.media.validate(dto.mediaIds, userId);
+    const media = await this.media.validate(dto.mediaKeys, userId);
     const staffIds = await this.conversations.staffUserIds();
 
     const dispute = await this.database.$transaction(async tx => {
-      // Circl staff join the EXISTING thread rather than a new one being created
-      // (D29). The two parties keep their history; the team gains the context.
+      // Circl staff join the EXISTING thread rather than a new one being created (D29).
       let conversationId = context.conversationId;
 
       if (conversationId) {
@@ -246,10 +237,7 @@ export class DisputeService {
     return [];
   }
 
-  /**
-   * "Both of you can add evidence" is promised on the screen, so it has to be
-   * true after submission and not only during (2.10).
-   */
+  /** "Both of you can add evidence" is promised on the screen, so it has to be true after submission and not only during (2.10). */
   async addEvidence(userId: string, disputeId: string, dto: DisputeEvidenceDto) {
     const dispute = await this.database.dispute.findUnique({
       where: { id: disputeId },
@@ -268,7 +256,7 @@ export class DisputeService {
       });
     }
 
-    const media = await this.media.validate(dto.mediaIds, userId);
+    const media = await this.media.validate(dto.mediaKeys, userId);
 
     const evidence = await this.database.$transaction(async tx => {
       const created = await tx.disputeEvidence.create({

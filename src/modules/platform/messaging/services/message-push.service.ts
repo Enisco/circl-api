@@ -2,42 +2,20 @@ import { Injectable, Logger } from '@nestjs/common';
 import { MessageKind, ThreadKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { FcmService } from '@/modules/infrastructure/notification/providers/push/fcm.service';
+import { NotificationPreferenceService } from '../../notifications';
 
-/**
- * Push delivery for messages (spec 5.6).
- *
- * | Recipient has a live socket, thread open | Socket only, no push |
- * | Live socket, thread not open             | Socket, plus an in-app notification |
- * | No socket                                | Push via the registered device token |
- *
- * Three rules here are not conveniences:
- *
- * Support threads carry NO message body in the payload. The whole point of that
- * channel is that it is private, and a lock-screen preview of "my landlord is
- * threatening me" defeats it — on the one screen most likely to be read by
- * whoever the member is hiding from.
- *
- * Muted threads produce no push at all. Mute silences the notification; the
- * unread count still moves, which is why the badge below is the account-wide
- * total rather than something derived from what was pushed.
- *
- * The collapse key is per conversation, so twenty messages in one thread replace
- * each other rather than becoming twenty notifications.
- */
+/** Push delivery for messages (spec 5.6). */
 @Injectable()
 export class MessagePushService {
   private readonly logger = new Logger(MessagePushService.name);
 
   constructor(
+    private readonly preferences: NotificationPreferenceService,
     private readonly database: PrismaService,
     private readonly fcm: FcmService,
   ) {}
 
-  /**
-   * Fire-and-forget: a push that fails must never fail the send that produced
-   * it. The message is already stored, and the recipient will see it on next
-   * open regardless.
-   */
+  /** Fire-and-forget: a push that fails must never fail the send that produced it. */
   notify(input: {
     conversationId: string;
     messageId: string;
@@ -76,7 +54,7 @@ export class MessagePushService {
       }),
       this.database.userNotificationPrefs.findMany({
         where: { userId: { in: input.recipientIds } },
-        select: { userId: true, devicePushToken: true, newMessages: true },
+        select: { userId: true, devicePushToken: true },
       }),
     ]);
 
@@ -94,7 +72,10 @@ export class MessagePushService {
 
       const pref = prefsByUser.get(participant.userId);
 
-      if (!pref?.devicePushToken || !pref.newMessages) continue;
+      if (!pref?.devicePushToken) continue;
+
+      // The MESSAGES row of the matrix (6.1.3), not a boolean of its own.
+      if (!(await this.preferences.allows(participant.userId, 'MESSAGES', 'push'))) continue;
 
       const total = await this.database.conversationParticipant.aggregate({
         where: { userId: participant.userId, isArchived: false },

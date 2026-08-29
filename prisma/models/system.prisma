@@ -10,8 +10,7 @@ model SystemConfig {
 }
 
 // ─── Queue Job Log ────────────────────────────────────────────────────────────
-// Audit log for every BullMQ job outcome. Enables admin portal visibility and
-// debugging of background jobs.
+// Audit log for every BullMQ job outcome.
 
 model QueueJobLog {
   id        String         @id @default(uuid())

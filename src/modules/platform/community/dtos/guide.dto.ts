@@ -70,7 +70,9 @@ export class CreateGuideDto {
   @IsArray()
   @ArrayMaxSize(5)
   @IsOptional()
-  mediaIds?: string[];
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  mediaKeys?: string[];
 }
 
 export class ListGuidesDto extends PageOptionsDto {

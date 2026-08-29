@@ -89,13 +89,9 @@ enum UserAccountStatus {
   PENDING
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Platform enums — Community, Professionals, Connect, Commerce, Messaging, Guard
+// ═══════════════════════════════════════════════════════════════════════════════ Platform enums — Community, Professionals, Connect, Commerce, Messaging, Guard
 //
-// Every one of these crosses the wire as an UPPER_SNAKE code (spec 0.7). Display
-// labels never live here; they live in taxonomy_terms so they can be reworded
-// without a migration.
-// ═══════════════════════════════════════════════════════════════════════════════
+// Every one of these crosses the wire as an UPPER_SNAKE code (spec 0.7).
 
 // ─── Taxonomy ────────────────────────────────────────────────────────────────
 // One table, many vocabularies. `kind` selects the list.
@@ -117,6 +113,8 @@ enum TaxonomyKind {
   STORE_CONTACT_CHANNEL
   STORE_HELP_AREA
   HELP_TAG
+  GUARD_CATEGORY
+  NOTIFICATION_CATEGORY
 }
 
 // ─── Shared content enums ────────────────────────────────────────────────────
@@ -151,6 +149,34 @@ enum MediaStatus {
   PENDING
   UPLOADED
   ATTACHED
+  FAILED
+}
+
+/**
+ * The prefix a key is minted under (spec 0.11.1).
+ *
+ * One prefix per purpose so a key is attributable without a database lookup and
+ * a prefix can be lifecycled on its own.
+ */
+enum MediaPurpose {
+  AVATAR
+  COMMUNITY
+  PROFESSIONAL
+  COMMERCE
+  MESSAGE
+  VERIFICATION
+  DISPUTE
+}
+
+/**
+ * Set by the S3 event handler (0.11.4). Bytes never pass through the API, so
+ * there is no moment in a request where the server can inspect them: everything
+ * derived hangs off the object-created notification instead.
+ */
+enum MediaScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
   FAILED
 }
 
@@ -523,6 +549,29 @@ enum SystemMessageType {
   PARTICIPANT_LEFT
   ACCOUNT_DELETED
   BRIEF_ATTACHED
+}
+
+// ─── Notifications (Section 6.1) ─────────────────────────────────────────────
+
+enum NotificationKind {
+  REPLY
+  HELP_OFFER
+  GROUP
+  CONNECTION
+  REVIEW
+  VERIFICATION
+  ANNOUNCEMENT
+}
+
+/**
+ * Computed server-side in the member's timezone (D32). Deriving it on the device
+ * means the grouping shifts as a phone crosses midnight or changes country, and
+ * two devices on one account disagree.
+ */
+enum NotificationBucket {
+  TODAY
+  THIS_WEEK
+  EARLIER
 }
 
 // ─── Circl Intelligence ──────────────────────────────────────────────────────

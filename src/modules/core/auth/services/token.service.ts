@@ -26,12 +26,7 @@ export class TokenService {
     return { accessToken, refreshToken };
   }
 
-  /**
-   * Generates a short-lived access token
-   * @param userId - The user's ID
-   * @param sessionId - Unique identifier for the session
-   * @returns JWT access token
-   */
+  /** Generates a short-lived access token. */
   async generateAccessToken(data: { userId: string; sessionId: string }): Promise<string> {
     const { userId, sessionId } = data;
     const payload: AccessTokenPayload = {
@@ -47,12 +42,7 @@ export class TokenService {
     });
   }
 
-  /**
-   * Generates a long-lived refresh token
-   * @param userId - The user's ID
-   * @param sessionId - Unique identifier for the session
-   * @returns JWT refresh token
-   */
+  /** Generates a long-lived refresh token. */
   async generateRefreshToken(data: { userId: string; sessionId: string }): Promise<string> {
     const { userId, sessionId } = data;
     const payload: RefreshTokenPayload = {

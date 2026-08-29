@@ -11,8 +11,7 @@ import { DisputeService } from './services/dispute.service';
 import { ListingService } from './services/listing.service';
 import { ProfessionalsHomeService } from './services/professionals-home.service';
 
-// BriefController is registered before ProfessionalsController so
-// /professionals/briefs/... is matched before /professionals/:id.
+// BriefController is registered before ProfessionalsController so /professionals/briefs/...
 const CONTROLLERS = [
   BriefController,
   ProfessionalsController,

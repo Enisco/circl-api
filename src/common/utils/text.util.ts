@@ -1,9 +1,4 @@
-/**
- * Text helpers shared by every composer.
- *
- * Spec 0.6: text is user generated, stored as plain text, with HTML stripped or
- * rejected on write. The client renders it as text and will not interpret markup.
- */
+/** Text helpers shared by every composer. */
 
 /** Strips tags and collapses whitespace. Applied to every free-text field on write. */
 export const toPlainText = (input: string): string =>
@@ -12,10 +7,7 @@ export const toPlainText = (input: string): string =>
     .replace(/\s+/g, ' ')
     .trim();
 
-/**
- * A truncated description for feed and list cards, so the payload does not carry
- * full bodies (1.1). Around 200 characters, cut on a word boundary.
- */
+/** A truncated description for feed and list cards, so the payload does not carry full bodies (1.1). */
 export const excerpt = (input: string | null | undefined, max = 200): string => {
   if (!input) return '';
 
@@ -29,23 +21,14 @@ export const excerpt = (input: string | null | undefined, max = 200): string => 
   return `${(lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
 };
 
-/**
- * Read time, computed server-side at write time so every client agrees (1.6.1).
- * 200 words per minute, rounded up, minimum 1. A member deciding whether to open
- * a guide at a bus stop is deciding whether they have time for it.
- */
+/** Read time, computed server-side at write time so every client agrees (1.6.1). */
 export const readTimeMinutes = (text: string): number => {
   const words = text.trim().split(/\s+/).filter(Boolean).length;
 
   return Math.max(1, Math.ceil(words / 200));
 };
 
-/**
- * The normalised form used for question clustering (Auto-Guides) and for the
- * guide match in 1.6.5. Deliberately crude: lowercase, strip punctuation, drop
- * stopwords, sort the remainder. Two people asking the same thing in different
- * word order collapse to the same signature.
- */
+/** The normalised form used for question clustering (Auto-Guides) and for the guide match in 1.6.5. */
 const STOPWORDS = new Set([
   'a',
   'an',
@@ -127,20 +110,11 @@ const STOPWORDS = new Set([
   'uk',
 ]);
 
-/**
- * A crude suffix stripper, so "open" and "opening" are the same word.
- *
- * Deliberately not a full Porter stemmer: the vocabulary here is ordinary
- * questions about visas, banks and housing, and the long tail of Porter's rules
- * mostly produces stems no human would recognise in a debug log. The four
- * suffixes below cover the cases that actually cost matches.
- */
+/** A crude suffix stripper, so "open" and "opening" are the same word. */
 const stem = (word: string): string => {
   if (word.length <= 4) return word;
 
-  // "address" and "business" are not plurals. Stripping the s here would produce
-  // a stem that still matches consistently, but reads as a typo in every debug
-  // log and demand-signal label that surfaces one.
+  // "address" and "business" are not plurals.
   if (word.endsWith('ss')) return word;
 
   for (const suffix of ['ing', 'ies', 'ed', 'es', 's']) {
@@ -175,8 +149,7 @@ export const keywords = (text: string): string[] =>
 
 export const questionSignature = (text: string): string => keywords(text).sort().join(' ');
 
-/** Jaccard overlap of two keyword sets, 0..1. Symmetric: use it to compare two
- *  things of similar length, such as two members' questions. */
+/** Jaccard overlap of two keyword sets, 0..1. Symmetric: use it to compare two things of similar length, such as two members' questions. */
 export const keywordSimilarity = (a: string[], b: string[]): number => {
   if (!a.length || !b.length) return 0;
 
@@ -186,15 +159,7 @@ export const keywordSimilarity = (a: string[], b: string[]): number => {
   return intersection / (a.length + b.length - intersection);
 };
 
-/**
- * How much of `needle` appears in `haystack`, 0..1.
- *
- * Asymmetric on purpose. "Does this guide answer my question" is not a question
- * about how similar two texts are — a thorough guide is longer than the question
- * it answers, and Jaccard punishes it for exactly the thoroughness that makes it
- * a good match. Containment asks the right thing: of the words the member used,
- * how many does this candidate actually cover?
- */
+/** How much of `needle` appears in `haystack`, 0..1. */
 export const keywordCoverage = (needle: string[], haystack: string[]): number => {
   if (!needle.length) return 0;
 

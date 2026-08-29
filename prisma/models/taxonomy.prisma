@@ -1,21 +1,10 @@
-// ═══════════════════════════════════════════════════════════════════════════════
-// Taxonomy
+// ═══════════════════════════════════════════════════════════════════════════════ Taxonomy
 //
-// Spec 0.7 is emphatic: every enumerated value crosses the wire as a stable
-// UPPER_SNAKE code, and the display label lives somewhere it can be reworded
-// without a migration. That "somewhere" is this table.
+// Spec 0.7 is emphatic: every enumerated value crosses the wire as a stable UPPER_SNAKE code, and the display label lives somewhere it can be reworded without a migration.
 //
-// One row per (kind, code). `isActive` is what lets the full vocabulary be
-// seeded while the app renders a subset (D1, D22) — seed everything, deactivate
-// what is not ready, and turning one on is an admin action rather than a release.
+// One row per (kind, code).
 //
-// `metadata` carries the per-kind extras the client needs and nothing else does:
-//   PROFESSION           { isRegulated, credentialBodies[] }
-//   COMMUNITY_CATEGORY   { suggestedProfessionCodes[] }
-//   ITEM_PRICE_BAND      { minPence, maxPence }
-//   STORE_TYPE           { blurb }
-//   JOURNEY_STAGE        { isNewToUk }
-// ═══════════════════════════════════════════════════════════════════════════════
+// `metadata` carries the per-kind extras the client needs and nothing else does: PROFESSION { isRegulated, credentialBodies[] } COMMUNITY_CATEGORY { suggestedProfessionCodes[] } ITEM_PRICE_BAND { minPence, maxPence } STORE_TYPE { blurb } JOURNEY_STAGE { isNewToUk } ═══════════════════════════════════════════════════════════════════════════════
 
 model TaxonomyTerm {
   id          String       @id @default(uuid())
@@ -34,8 +23,7 @@ model TaxonomyTerm {
   @@map("taxonomy_terms")
 }
 
-// Cities are a table, not an enum: onboarding already sends `cityId` and the set
-// grows (spec 0.7).
+// Cities are a table, not an enum: onboarding already sends `cityId` and the set grows (spec 0.7).
 model City {
   id        String   @id @map("id") // e.g. "LONDON"
   name      String   @map("name") // e.g. "London"
@@ -62,8 +50,7 @@ model City {
   @@map("cities")
 }
 
-// The single row that stamps `version` on GET /taxonomy, so a client can cache
-// the payload and refetch only when something actually changed.
+// The single row that stamps `version` on GET /taxonomy, so a client can cache the payload and refetch only when something actually changed.
 model TaxonomyVersion {
   id        String   @id @default("SINGLETON")
   version   DateTime @default(now()) @map("version") @db.Timestamptz

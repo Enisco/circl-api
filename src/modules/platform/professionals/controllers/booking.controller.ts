@@ -77,8 +77,7 @@ export class BookingController {
   }
 
   // ─── Transitions (2.9.5) ───────────────────────────────────────────────────
-  // Every one returns the full updated booking with its new timeline and viewer,
-  // so the screen never needs a follow-up fetch.
+  // Every one returns the full updated booking with its new timeline and viewer, so the screen never needs a follow-up fetch.
 
   @Post(':id/accept')
   @HttpCode(HttpStatus.OK)

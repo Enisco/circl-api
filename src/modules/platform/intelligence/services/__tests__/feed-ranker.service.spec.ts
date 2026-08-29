@@ -40,8 +40,7 @@ describe('FeedRankerService', () => {
     expect(first.signals).toContain('CITY_MATCH');
   });
 
-  // D3: an eight-month-old airport-pickup offer must never outrank a request for
-  // tomorrow morning.
+  // D3: an eight-month-old airport-pickup offer must never outrank a request for tomorrow morning.
   it('decays offers hard enough that an old one loses to a fresh urgent request', () => {
     const ranked = ranker.rank(
       [

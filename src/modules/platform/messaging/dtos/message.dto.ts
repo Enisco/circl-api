@@ -47,10 +47,7 @@ export class ListConversationsDto extends PageOptionsDto {
   includeArchived?: boolean;
 }
 
-/**
- * History is newest-first and cursor-paged. A chat scrolls backwards, so page
- * numbers over a list that grows at the head skip and repeat (5.3.3).
- */
+/** History is newest-first and cursor-paged. */
 export class ListMessagesDto {
   @ApiPropertyOptional({ description: 'Older than this message.' })
   @IsString()
@@ -110,7 +107,9 @@ export class SendMessageDto {
   @IsArray()
   @ArrayMaxSize(5)
   @IsOptional()
-  attachmentIds?: string[];
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  attachmentKeys?: string[];
 }
 
 export class StartThreadDto {

@@ -3,20 +3,7 @@ import { ThrottlerGuard, ThrottlerLimitDetail } from '@nestjs/throttler';
 import { ApiErrorCode } from '../constants/api-error-code.constant';
 import { ApiException } from '../exceptions/api.exception';
 
-/**
- * Rate limiting (spec 0.14).
- *
- * Two things this fixes over the stock guard.
- *
- * The code is UPPER_SNAKE and the wait is returned. `error.code` is the only
- * thing the client branches on (0.4), and a 429 the client cannot back off from
- * correctly is a 429 it will retry into.
- *
- * Limits are per MEMBER, not per IP. The spec's table says "per user", and it
- * has to: a university hall, an office or a shared house is one IP and many
- * people, and bucketing them together locks a building out because one person
- * was busy.
- */
+/** Rate limiting (spec 0.14). */
 @Injectable()
 export class CustomThrottlerGuard extends ThrottlerGuard {
   protected async throwThrottlingException(
@@ -41,15 +28,9 @@ export class CustomThrottlerGuard extends ThrottlerGuard {
   /**
    * The member, falling back to the IP when there is no token.
    *
-   * This guard is registered globally, so it runs BEFORE the route-level
-   * JwtAuthGuard has populated `req.user` — reading that here would always be
-   * undefined and quietly bucket the entire internet by IP. So the subject claim
-   * is read straight off the token.
-   *
-   * It is deliberately not verified: this decides which counter to increment,
-   * not whether the request is allowed. A forged token only ever selects its own
-   * bucket, which an attacker can already do by sending no token at all, and the
-   * request still has to get past real authentication a moment later.
+   * The token is read unverified because this only picks a bucket. The guard runs
+   * before JwtAuthGuard, so `req.user` is not set yet and everyone behind one IP
+   * would otherwise share a limit.
    */
   protected async getTracker(req: Record<string, any>): Promise<string> {
     const authenticated = req.user?.id;

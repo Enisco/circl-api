@@ -6,6 +6,7 @@ import {
   CityView,
   MediaView,
   TermView,
+  UrlSigner,
   toAuthorView,
   toCityView,
   toMediaViews,
@@ -22,10 +23,7 @@ export interface OfferSummaryView {
   deliveryMode: DeliveryMode;
   priceFrom: { amount: number; currency: string } | null;
   priceBasis: PriceBasis;
-  /**
-   * `priceFrom == null`, sent explicitly so the client never has to decide what a
-   * missing price means (1.4.1).
-   */
+  /** `priceFrom == null`, sent explicitly so the client never has to decide what a missing price means (1.4.1). */
   isFree: boolean;
   media: MediaView[];
   provider: AuthorView;
@@ -36,10 +34,7 @@ export interface OfferDetailView extends Omit<OfferSummaryView, 'type' | 'excerp
   description: string;
   reportToken: string;
   viewer: { isOwner: boolean; canEdit: boolean; canDelete: boolean; isBlocked: boolean };
-  /**
-   * If a thread with this provider about this offer already exists, Message opens
-   * it instead of starting a second one (1.4.2, and rule 3 of 5.0).
-   */
+  /** If a thread with this provider about this offer already exists, Message opens it instead of starting a second one (1.4.2, and rule 3 of 5.0). */
   conversationId: string | null;
   promotedToListingId: string | null;
   updatedAt: string;
@@ -54,6 +49,8 @@ export interface OfferViewContext {
   viewerId: string | null;
   categoryLabels: Map<string, string>;
   media?: Map<string, Media[]>;
+  /** Signs stored keys into URLs at serialisation time (0.11.3). */
+  sign: UrlSigner;
   blockedAuthorIds?: Set<string>;
   conversationIds?: Map<string, string>;
 }
@@ -69,8 +66,9 @@ export const toOfferSummary = (offer: OfferRow, context: OfferViewContext): Offe
   priceFrom: money(offer.priceFrom, offer.currency),
   priceBasis: offer.priceBasis,
   isFree: offer.priceFrom === null,
-  media: toMediaViews(context.media?.get(offer.id)),
+  media: toMediaViews(context.media?.get(offer.id), context.sign),
   provider: toAuthorView(offer.author, {
+    sign: context.sign,
     isAnonymous: offer.visibility === PostVisibility.ANONYMOUS,
   }),
   createdAt: offer.createdAt.toISOString(),

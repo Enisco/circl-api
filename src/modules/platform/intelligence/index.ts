@@ -5,3 +5,4 @@ export * from './services/feed-ranker.service';
 export * from './services/guide-matcher.service';
 export * from './services/metrics.service';
 export * from './services/smart-match.service';
+export * from './services/pulse.service';

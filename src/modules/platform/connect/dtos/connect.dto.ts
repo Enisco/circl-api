@@ -30,14 +30,7 @@ const CsvArray = () =>
       : value,
   );
 
-/**
- * One idempotent upsert for both create and edit, because the setup screen is the
- * same screen either way (3.3.1).
- *
- * Deliberately absent: `name`, `age` as a number, `avatar`, `country`,
- * `journeyStage`. They are on the user, or derived from it, and accepting them
- * invites the form to ask.
- */
+/** One idempotent upsert for both create and edit, because the setup screen is the same screen either way (3.3.1). */
 export class UpsertConnectProfileDto {
   @ApiProperty({
     description: 'A connection type code: FRIENDSHIP, NETWORKING, LANGUAGE_EXCHANGE, and so on.',

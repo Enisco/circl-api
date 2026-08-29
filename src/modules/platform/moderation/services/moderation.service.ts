@@ -8,14 +8,16 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta, Paginated, toJson } from '@/common';
-import { AuthorView, RiskScannerService, authorSelect, toAuthorView } from '../../shared';
+import {
+  AuthorView,
+  MediaService,
+  RiskScannerService,
+  authorSelect,
+  toAuthorView,
+} from '../../shared';
 import { CreateBlockDto, CreateReportDto, ListBlocksDto } from '../dtos/moderation.dto';
 
-/**
- * Which table holds each reportable thing, and which of its columns names the
- * author. One map rather than a switch in four places, so adding a content type
- * is one row.
- */
+/** Which table holds each reportable thing, and which of its columns names the author. */
 const TARGETS: Record<
   ReportTargetType,
   { model: keyof PrismaService; authorField: string; hasReportToken: boolean } | null
@@ -47,16 +49,12 @@ export class ModerationService {
   constructor(
     private readonly database: PrismaService,
     private readonly risk: RiskScannerService,
+    private readonly media: MediaService,
   ) {}
 
   // ─── 1.8.1 Reports ─────────────────────────────────────────────────────────
 
-  /**
-   * Returns 202. The response never reveals what happened to the reported
-   * content, because telling a reporter that their report succeeded and the post
-   * survived is an invitation to argue with the outcome, and telling them it was
-   * removed exposes a moderation decision about someone else.
-   */
+  /** Returns 202. */
   async report(reporterId: string, dto: CreateReportDto): Promise<void> {
     const resolved = await this.resolveTarget(dto.targetType, dto.targetId);
 
@@ -64,9 +62,7 @@ export class ModerationService {
       throw ApiException.notFound('That content could not be found.');
     }
 
-    // SAFETY_CONCERN routes into the Guard workflow rather than the standard
-    // moderation queue (1.8.1): a member reporting that someone is in danger is
-    // not the same job as a member reporting spam.
+    // SAFETY_CONCERN routes into the Guard workflow rather than the standard moderation queue (1.8.1): a member reporting that someone is in danger is not the same job as a member reporting spam.
     const assessment = await this.risk.scan(dto.note, resolved.text);
     const isGuard =
       dto.reasonCode === ReportReason.SAFETY_CONCERN || this.risk.isUrgent(assessment);
@@ -80,8 +76,7 @@ export class ModerationService {
           targetUserId: resolved.authorId,
           reasonCode: dto.reasonCode,
           note: dto.note ?? null,
-          // Snapshotted server-side, so deleting the content afterwards does not
-          // erase the evidence (5.7).
+          // Snapshotted server-side, so deleting the content afterwards does not erase the evidence (5.7).
           snapshot: toJson({
             capturedAt: new Date().toISOString(),
             targetType: dto.targetType,
@@ -101,9 +96,7 @@ export class ModerationService {
             targetId: resolved.id,
           },
         },
-        // A second report on the same content raises its score rather than
-        // creating a second row: three people reporting one post is one job for a
-        // reviewer, and a more urgent one.
+        // A second report on the same content raises its score rather than creating a second row: three people reporting one post is one job for a reviewer, and a more urgent one.
         update: {
           riskScore: { increment: Math.max(10, assessment.score) },
           ...(assessment.level !== RiskLevel.NONE
@@ -124,8 +117,7 @@ export class ModerationService {
         },
       });
 
-      // Applied in the same transaction, which is what the report sheet's second
-      // option promises (1.8.1).
+      // Applied in the same transaction, which is what the report sheet's second option promises (1.8.1).
       if (dto.alsoBlock && resolved.authorId && resolved.authorId !== reporterId) {
         await tx.block.upsert({
           where: { blockerId_blockedId: { blockerId: reporterId, blockedId: resolved.authorId } },
@@ -181,7 +173,7 @@ export class ModerationService {
 
     return {
       data: rows.map(row => ({
-        user: toAuthorView(row.blocked),
+        user: toAuthorView(row.blocked, { sign: this.media.sign }),
         blockedAt: row.createdAt.toISOString(),
       })),
       meta: buildPageMeta(query, total),
@@ -190,11 +182,7 @@ export class ModerationService {
 
   // ─── Internals ─────────────────────────────────────────────────────────────
 
-  /**
-   * Resolves a target id, accepting a `reportToken` in place of an id for
-   * anonymous content (D2). The token is what lets someone report or block an
-   * anonymous author without the API ever handing out who they are.
-   */
+  /** Resolves a target id, accepting a `reportToken` in place of an id for anonymous content (D2). */
   private async resolveTarget(
     targetType: ReportTargetType,
     targetId: string,
@@ -235,10 +223,7 @@ export class ModerationService {
     };
   }
 
-  /**
-   * A user id, or the reportToken of any anonymous content, resolved to the
-   * author behind it.
-   */
+  /** A user id, or the reportToken of any anonymous content, resolved to the author behind it. */
   private async resolveUserOrToken(value: string): Promise<string | null> {
     const user = await this.database.user
       .findUnique({

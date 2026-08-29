@@ -50,15 +50,13 @@ export class StoreService {
 
   // ─── 4.1.2 Setup prefill ───────────────────────────────────────────────────
 
-  /**
-   * A seller who has been using Circl for six months should not be typing their
-   * city and phone number into a store form (4.1).
-   */
+  /** A seller who has been using Circl for six months should not be typing their city and phone number into a store form (4.1). */
   async setupPrefill(userId: string) {
     const [user, store] = await Promise.all([
       this.database.user.findUniqueOrThrow({
         where: { id: userId },
         select: {
+          avatarKey: true,
           profileImageUrl: true,
           profile: {
             select: {
@@ -86,12 +84,11 @@ export class StoreService {
         cityId: profile?.cityId ?? null,
         cityName: profile?.city?.name ?? null,
         phoneNumber,
-        // Lets the contact step label the field "from your profile" rather than
-        // presenting a mystery prefilled value (4.1.2).
+        // Lets the contact step label the field "from your profile" rather than presenting a mystery prefilled value (4.1.2).
         phoneSource: phoneNumber ? 'PROFILE' : null,
         suggestedHeritageTags: profile?.heritageTag ? [profile.heritageTag] : [],
         // Offered as the starting logo rather than a blank tile.
-        suggestedLogoUrl: user.profileImageUrl,
+        suggestedLogoUrl: user.avatarKey ? this.media.sign(user.avatarKey) : user.profileImageUrl,
       },
       steps: [
         { key: 'BASICS', status: 'REQUIRED', source: null },
@@ -138,8 +135,8 @@ export class StoreService {
 
     const contacts = this.validateContacts(dto.contact);
     const [logo, cover] = await Promise.all([
-      this.singleImage(dto.logoMediaId, userId),
-      this.singleImage(dto.coverMediaId, userId),
+      this.singleImage(dto.logoKey, userId),
+      this.singleImage(dto.coverKey, userId),
     ]);
     const city = await this.cities.find(cityId);
 
@@ -153,16 +150,15 @@ export class StoreService {
           area: dto.area,
           cityId,
           hidesExactAddress: dto.hidesExactAddress ?? false,
-          // Dropped rather than stored when the seller hides their address, so
-          // there is nothing to leak later through a query nobody thought about.
+          // Dropped rather than stored when the seller hides their address, so there is nothing to leak later through a query nobody thought about.
           addressLine1: dto.hidesExactAddress ? null : (dto.addressLine1 ?? null),
           postcode: dto.hidesExactAddress ? null : (dto.postcode ?? null),
           latitude: dto.latitude ?? city?.latitude ?? null,
           longitude: dto.longitude ?? city?.longitude ?? null,
           delivers: dto.delivers ?? false,
           timezone: city?.timezone ?? 'Europe/London',
-          logoUrl: logo?.url ?? null,
-          coverUrl: cover?.url ?? null,
+          logoKey: logo?.storageKey ?? null,
+          coverKey: cover?.storageKey ?? null,
           heritageTags: { create: (dto.heritageTags ?? []).map(code => ({ code })) },
           categories: { create: (dto.categories ?? []).map(code => ({ code })) },
           contacts: { create: contacts },
@@ -183,14 +179,14 @@ export class StoreService {
   async update(userId: string, id: string, dto: UpdateStoreDto) {
     const store = await this.assertOwned(userId, id);
 
-    if (dto.cityId) await this.cities.assertValid(dto.cityId);
+    const city = dto.cityId ? await this.cities.assertValid(dto.cityId) : null;
 
     await this.validateCodes(dto);
 
     const contacts = dto.contact ? this.validateContacts(dto.contact) : null;
     const [logo, cover] = await Promise.all([
-      this.singleImage(dto.logoMediaId, userId),
-      this.singleImage(dto.coverMediaId, userId),
+      this.singleImage(dto.logoKey, userId),
+      this.singleImage(dto.coverKey, userId),
     ]);
     const hidesExactAddress = dto.hidesExactAddress ?? store.hidesExactAddress;
 
@@ -233,10 +229,9 @@ export class StoreService {
           typeCode: dto.type,
           description: dto.description,
           area: dto.area,
-          cityId: dto.cityId,
+          cityId: city?.id,
           hidesExactAddress: dto.hidesExactAddress,
-          // Turning the flag on erases what was already stored, rather than
-          // leaving it in a column that some future query might select.
+          // Turning the flag on erases what was already stored, rather than leaving it in a column that some future query might select.
           ...(hidesExactAddress
             ? { addressLine1: null, postcode: null }
             : {
@@ -246,8 +241,8 @@ export class StoreService {
           ...(dto.latitude !== undefined ? { latitude: dto.latitude } : {}),
           ...(dto.longitude !== undefined ? { longitude: dto.longitude } : {}),
           delivers: dto.delivers,
-          ...(logo ? { logoUrl: logo.url } : {}),
-          ...(cover ? { coverUrl: cover.url } : {}),
+          ...(logo ? { logoKey: logo.storageKey } : {}),
+          ...(cover ? { coverKey: cover.storageKey } : {}),
         },
         include: storeInclude,
       });
@@ -362,8 +357,9 @@ export class StoreService {
       hidesExactAddress: store.hidesExactAddress,
       heritageTags: store.heritageTags.map(tag => toTermView(tag.code, heritageLabels)),
       categories: store.categories.map(category => toTermView(category.code, categoryLabels)),
-      logoUrl: store.logoUrl,
-      coverUrl: store.coverUrl,
+      // Signed at serialisation time; the field names are unchanged.
+      logoUrl: store.logoKey ? this.media.sign(store.logoKey) : null,
+      coverUrl: store.coverKey ? this.media.sign(store.coverKey) : null,
       rating: { average: summary.average, count: summary.countedTotal },
       isOpenNow: isOpenNow(store.status, store.timezone, openingHours),
       // Sent in full so the client can render "closes 8pm" without a round trip.
@@ -408,7 +404,7 @@ export class StoreService {
       contact: store.contacts.map(toContactView),
       // Redacted here rather than in the client (4.5.1).
       address: toAddressView(store),
-      owner: toAuthorView(store.owner),
+      owner: toAuthorView(store.owner, { sign: this.media.sign }),
       catalogue: {
         categories: catalogue.map(row => ({
           ...toTermView(row.categoryCode, categoryLabels)!,
@@ -460,13 +456,7 @@ export class StoreService {
     }
   }
 
-  /**
-   * Contact validation, matching the client exactly (4.8.1).
-   *
-   * An empty field is not an error — only what was actually typed is validated,
-   * which is what lets a seller publish with only a WhatsApp number. A store with
-   * no contact channel at all is allowed and reachable through Circl chat.
-   */
+  /** Contact validation, matching the client exactly (4.8.1). */
   private validateContacts(contacts: StoreContactDto[] | undefined) {
     if (!contacts?.length) return [];
 

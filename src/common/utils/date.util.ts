@@ -1,9 +1,4 @@
-/**
- * Age derived from a date of birth (3.1.2).
- *
- * Connect derives this and never stores a number: a number cannot be
- * re-validated later, and someone who typed 18 last year is still 18 forever.
- */
+/** Age derived from a date of birth (3.1.2). */
 export const ageFromDateOfBirth = (dateOfBirth: Date | null | undefined): number | null => {
   if (!dateOfBirth) return null;
 

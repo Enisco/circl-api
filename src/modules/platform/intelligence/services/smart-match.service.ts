@@ -45,18 +45,7 @@ export interface ScoredMatch {
   rationale: string | null;
 }
 
-/**
- * Circl Intelligence: Smart Match, which powers "Circl Handle It".
- *
- * "Briefs are scored against professional rating, distance, price fit, and
- * response time to surface the best three matches."
- *
- * Those are exactly the four axes the client renders as mini-bars, so they are
- * computed here as 0..1 with a one-word qualifier — server-side, so the bars and
- * their labels agree everywhere (2.8.2). No model: a member is being told why
- * these three people and not others, and a weighted sum is the only version of
- * that which can be explained truthfully.
- */
+/** Circl Intelligence: Smart Match, which powers "Circl Handle It". */
 @Injectable()
 export class SmartMatchService {
   /** At most 3, ranked. Fewer is allowed and the client says so honestly. */
@@ -116,18 +105,10 @@ export class SmartMatchService {
       .map((match, index) => ({ ...match, rank: index + 1 }));
   }
 
-  /**
-   * Rating, discounted by how few people said it.
-   *
-   * A single 5-star review is not evidence of a 5-star professional, and ranking
-   * it above someone with thirty 4.8s would be the matcher's most visible
-   * mistake — the member picks one of three and finds out later.
-   */
+  /** Rating, discounted by how few people said it. */
   private ratingScore(candidate: MatchCandidateInput): number {
     if (candidate.ratingCount === 0) {
-      // Unrated is not bad, it is unknown. A neutral score lets a new
-      // professional appear when there is nobody better, without displacing a
-      // proven one.
+      // Unrated is not bad, it is unknown.
       return 0.5;
     }
 
@@ -149,20 +130,13 @@ export class SmartMatchService {
       return Math.max(0, 1 - miles / SmartMatchService.MAX_USEFUL_MILES);
     }
 
-    // No coordinates: fall back to the coarse signal we do have, rather than
-    // inventing a distance (D25).
+    // No coordinates: fall back to the coarse signal we do have, rather than inventing a distance (D25).
     if (!brief.cityId) return 0.5;
 
     return candidate.cityId === brief.cityId ? 1 : 0.3;
   }
 
-  /**
-   * How well the price fits the budget.
-   *
-   * Under budget is a full score rather than a bonus — cheapest is not best, and
-   * rewarding it would quietly turn Smart Match into a race to the bottom for
-   * every professional listed.
-   */
+  /** How well the price fits the budget. */
   private priceScore(brief: BriefInput, candidate: MatchCandidateInput): number {
     if (brief.budget === null || candidate.priceFrom === null) return 0.5;
     if (candidate.priceFrom <= brief.budget) return 1;
@@ -186,21 +160,14 @@ export class SmartMatchService {
         // Squared, so the gap between a two-hour and a two-day reply widens.
         return base ** 2 * 0.5 + base * 0.5;
       case BriefUrgency.FLEXIBLE:
-        // Flattened toward neutral: on a flexible brief, response time should not
-        // decide it.
+        // Flattened toward neutral: on a flexible brief, response time should not decide it.
         return 0.5 + base * 0.5;
       default:
         return base;
     }
   }
 
-  /**
-   * A plain sentence, or null.
-   *
-   * "If the matcher cannot produce an honest one, send null rather than a
-   * template. A wrong explanation is worse than none." So each clause below is
-   * only emitted when the fact behind it is actually true of this candidate.
-   */
+  /** A plain sentence, or null. */
   private rationale(
     brief: BriefInput,
     candidate: MatchCandidateInput,
@@ -247,9 +214,6 @@ export class SmartMatchService {
 
 const round = (value: number): number => Number(Math.max(0, Math.min(1, value)).toFixed(2));
 
-/**
- * The one-word label beside each bar. Computed here so the bar and its label can
- * never disagree, which they would if the client thresholded the number itself.
- */
+/** The one-word label beside each bar. */
 const qualify = (value: number): ScoreQualifier =>
   value >= 0.85 ? 'EXCELLENT' : value >= 0.6 ? 'GOOD' : 'FAIR';

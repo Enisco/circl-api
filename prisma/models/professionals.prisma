@@ -1,11 +1,6 @@
-// ═══════════════════════════════════════════════════════════════════════════════
-// Section 2 — Professionals
+// ═══════════════════════════════════════════════════════════════════════════════ Section 2 — Professionals
 //
-// Circl does not handle money (2.0.1). There is no payment endpoint, no escrow,
-// no payout, no platform fee and no refund. Amounts exist because two people need
-// to agree a number, and they are display and record only. `JobState` is named
-// for exactly that reason: these are stages of work, never states of money.
-// ═══════════════════════════════════════════════════════════════════════════════
+// Circl does not handle money (2.0.1).
 
 model ProfessionalListing {
   id     String @id @default(uuid())
@@ -29,8 +24,7 @@ model ProfessionalListing {
   freeConsultation Boolean                   @default(false) @map("free_consultation")
   verificationStatus ListingVerificationStatus @default(UNVERIFIED) @map("verification_status")
 
-  // D13 mitigation: with no credential checks, store what was agreed and when, so
-  // an unchecked claim is at least an unchecked claim that says so.
+  // D13 mitigation: with no credential checks, store what was agreed and when, so an unchecked claim is at least an unchecked claim that says so.
   consentAccepted   Boolean   @default(false) @map("consent_accepted")
   consentAcceptedAt DateTime? @map("consent_accepted_at") @db.Timestamptz
   consentVersion    String?   @map("consent_version")
@@ -58,8 +52,7 @@ model ProfessionalListing {
   @@map("professional_listings")
 }
 
-// 1 to 3 profession codes per listing (2.6.1). A join table rather than a Json
-// array because Browse filters on it and an array cannot be indexed usefully.
+// 1 to 3 profession codes per listing (2.6.1).
 model ProfessionalListingCategory {
   listingId String              @map("listing_id")
   listing   ProfessionalListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
@@ -89,8 +82,7 @@ model ProfessionalService {
 
   bookings Booking[]
 
-  // Never hard-deleted while a booking references it, or the booking loses its
-  // own subject (2.6.3). Deactivate and keep the row.
+  // Never hard-deleted while a booking references it, or the booking loses its own subject (2.6.3).
   @@index([listingId, isActive])
   @@map("professional_services")
 }
@@ -126,9 +118,7 @@ model ManagedBrief {
   @@map("managed_briefs")
 }
 
-// Scores are 0..1 with a one-word qualifier computed server-side, so the four
-// mini-bars and their labels agree everywhere (2.8.2). Persisted rather than
-// recomputed so the shortlist a member saw is the shortlist they chose from.
+// Scores are 0..1 with a one-word qualifier computed server-side, so the four mini-bars and their labels agree everywhere (2.8.2).
 model BriefMatch {
   id      String       @id @default(uuid())
   briefId String       @map("brief_id")
@@ -145,8 +135,7 @@ model BriefMatch {
   responseScore   Float  @map("response_score")
   priceForBrief   Int?   @map("price_for_brief")
 
-  // A plain sentence, or null. If the matcher cannot produce an honest one, send
-  // null rather than a template — a wrong explanation is worse than none (2.8.2).
+  // A plain sentence, or null.
   rationale String? @map("rationale")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
@@ -176,9 +165,7 @@ model Booking {
   briefId String?       @map("brief_id")
   brief   ManagedBrief? @relation(fields: [briefId], references: [id])
 
-  // Copied from the service or the brief at creation. The client sends the id,
-  // never the values (2.1.5), and a later edit to the listing must not rewrite
-  // what the two people agreed.
+  // Copied from the service or the brief at creation.
   serviceName        String  @map("service_name")
   serviceDescription String? @map("service_description")
   quotedAmount       Int?    @map("quoted_amount")
@@ -197,9 +184,7 @@ model Booking {
   conversationId String?       @map("conversation_id")
   conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
-  // 7 days after DELIVERED. On the record from the moment of delivery so the
-  // screen can state it plainly rather than burying it in terms (2.9.5). It
-  // closes a job; it does not release money, because there is none to release.
+  // 7 days after DELIVERED.
   deliveredAt    DateTime? @map("delivered_at") @db.Timestamptz
   autoCompleteAt DateTime? @map("auto_complete_at") @db.Timestamptz
   completedAt    DateTime? @map("completed_at") @db.Timestamptz
@@ -222,8 +207,7 @@ model Booking {
   @@map("bookings")
 }
 
-// The timeline is data, not a client-side derivation, because each stage is
-// timestamped and the client must not have to invent the order (2.9.1).
+// The timeline is data, not a client-side derivation, because each stage is timestamped and the client must not have to invent the order (2.9.1).
 model BookingEvent {
   id        String   @id @default(uuid())
   bookingId String   @map("booking_id")
@@ -243,10 +227,7 @@ model BookingEvent {
 
 // ─── Disputes ────────────────────────────────────────────────────────────────
 
-// One dispute resource, polymorphic on subject, shared by bookings and commerce
-// enquiries (4.1.3) so "Report a problem" behaves the same wherever it is raised.
-// There is nothing to freeze, since Circl holds nothing: the job is paused and
-// Circl reviews it.
+// One dispute resource, polymorphic on subject, shared by bookings and commerce enquiries (4.1.3) so "Report a problem" behaves the same wherever it is raised.
 model Dispute {
   id String @id @default(uuid())
 
@@ -281,8 +262,7 @@ model Dispute {
   @@map("disputes")
 }
 
-// "Both of you can add evidence" is promised on the screen, so it has to be true
-// after submission and not only during (2.10).
+// "Both of you can add evidence" is promised on the screen, so it has to be true after submission and not only during (2.10).
 model DisputeEvidence {
   id        String  @id @default(uuid())
   disputeId String  @map("dispute_id")

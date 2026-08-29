@@ -92,20 +92,30 @@ const dobFor = years => {
   r = await api(ada.token, 'GET', '/connect/profiles');
   check('discovery → 200', r.status === 200, r.body?.error);
   check('the caller is never in their own grid', !r.body?.data?.some(p => p.user?.id === ada.id), r.body?.data?.map(p => p.user?.id));
-  check('finds the other two', r.body?.data?.length === 2, r.body?.data?.length);
+  check('finds the other two',
+    [tunde.id, mei.id].every(id => r.body?.data?.some(p => p.user?.id === id)),
+    r.body?.data?.map(p => p.user?.id));
   check('facets come from the data, not the catalogue', r.body?.meta?.facets?.languages?.includes('MANDARIN') && r.body?.meta?.facets?.languages?.includes('YORUBA'), r.body?.meta?.facets);
 
   r = await api(ada.token, 'GET', '/connect/profiles?languages=MANDARIN');
-  check('language filter matches ANY', r.body?.data?.length === 1 && r.body.data[0].user.id === mei.id, r.body?.data?.map(p => p.user?.username));
+  check('language filter matches ANY',
+    r.body?.data?.some(p => p.user?.id === mei.id) &&
+      !r.body?.data?.some(p => p.user?.id === tunde.id),
+    r.body?.data?.map(p => p.user?.username));
 
   r = await api(ada.token, 'GET', '/connect/profiles?newToUk=true');
-  check('newToUk defined server-side from the taxonomy flag', r.body?.data?.length === 1 && r.body.data[0].user.id === tunde.id, r.body?.data?.map(p => p.user?.id));
+  check('newToUk defined server-side from the taxonomy flag',
+    r.body?.data?.some(p => p.user?.id === tunde.id) &&
+      !r.body?.data?.some(p => p.user?.id === mei.id),
+    r.body?.data?.map(p => p.user?.id));
 
   r = await api(ada.token, 'GET', '/connect/profiles?minAge=1');
   check('minAge clamped to 18 whatever is sent', r.status === 200 && r.body?.data?.every(p => p.age >= 18), r.body?.data?.map(p => p.age));
 
   r = await api(ada.token, 'GET', '/connect/profiles?type=NETWORKING');
-  check('type filter works', r.body?.data?.length === 1 && r.body.data[0].type.code === 'NETWORKING');
+  check('type filter works',
+    r.body?.data?.length > 0 && r.body.data.every(p => p.type.code === 'NETWORKING'),
+    r.body?.data?.map(p => p.type?.code));
 
   console.log('\n── 3.1.6 Shared context, derived not stored ─────────────────');
 

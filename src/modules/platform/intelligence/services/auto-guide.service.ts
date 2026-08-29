@@ -18,37 +18,14 @@ const SIMILARITY = 0.4;
 /** How far back the clustering looks. */
 const WINDOW_DAYS = 120;
 
-/**
- * Circl Intelligence: Auto-Guides.
- *
- * "When three or more members ask the same question, the system drafts a Guide
- * and cites the most helpful comments."
- *
- * Two things this does that matter more than the clustering:
- *
- * It never publishes. A drafted guide goes into the moderation queue for a human
- * to approve, and `publishedAt` stays null until they do. Machine-drafted content
- * reaching members unreviewed is the fastest way to lose a community's trust.
- *
- * It cites its sources, and the guide model REJECTS an auto-generated guide with
- * none (1.6.2). The draft is assembled from real answers real people wrote, with
- * a provenance line naming how many — so a reader can see where it came from
- * rather than being told to trust it.
- *
- * The drafting is extraction, not generation: it takes the most-credited answers
- * verbatim as steps. That is deliberate. A model rewriting immigration advice
- * into cleaner prose is a model introducing errors into immigration advice.
- */
+/** Circl Intelligence: Auto-Guides. */
 @Injectable()
 export class AutoGuideService {
   private readonly logger = new Logger(AutoGuideService.name);
 
   constructor(private readonly database: PrismaService) {}
 
-  /**
-   * Finds clusters of repeated questions and drafts one guide per cluster that
-   * has enough answered material to be worth a human's time.
-   */
+  /** Finds clusters of repeated questions and drafts one guide per cluster that has enough answered material to be worth a human's time. */
   async run(): Promise<{ clusters: number; drafted: number }> {
     const requests = await this.database.communityRequest.findMany({
       where: {
@@ -102,8 +79,7 @@ export class AutoGuideService {
         },
       });
 
-      // Already drafted once. Redrafting on every run would put the same guide in
-      // front of a reviewer every night.
+      // Already drafted once.
       if (row.draftedGuideId) continue;
 
       const guideId = await this.draft(row.id, cluster);
@@ -114,11 +90,7 @@ export class AutoGuideService {
     return { clusters: clusters.length, drafted };
   }
 
-  /**
-   * Groups requests by (category, city) and then by keyword similarity within the
-   * group. Single-link agglomeration over a small set — readable, and the whole
-   * job is one background pass rather than a per-request cost.
-   */
+  /** Groups requests by (category, city) and then by keyword similarity within the group. */
   private cluster(
     requests: Array<{
       id: string;
@@ -164,8 +136,7 @@ export class AutoGuideService {
 
         if (bucket) {
           bucket.members.push(request);
-          // The bucket's signature is the words its members share, which keeps it
-          // from drifting as loosely-related questions join.
+          // The bucket's signature is the words its members share, which keeps it from drifting as loosely-related questions join.
           bucket.words = bucket.words.filter(word => words.includes(word));
         } else {
           buckets.push({ words, members: [request] });
@@ -181,8 +152,7 @@ export class AutoGuideService {
           categoryCode,
           cityId: cityId || null,
           signature: [...bucket.words].sort().join(' '),
-          // The longest title in the cluster reads best as a heading: it is the
-          // one that spelled the question out.
+          // The longest title in the cluster reads best as a heading: it is the one that spelled the question out.
           label: bucket.members.reduce((a, b) => (a.title.length >= b.title.length ? a : b)).title,
           requestIds: bucket.members.map(member => member.id),
           askers: new Set(bucket.members.map(member => member.authorId)),
@@ -195,10 +165,7 @@ export class AutoGuideService {
     return clusters;
   }
 
-  /**
-   * Drafts one guide from a cluster's best answers, unpublished, and queues it
-   * for a human.
-   */
+  /** Drafts one guide from a cluster's best answers, unpublished, and queues it for a human. */
   private async draft(
     clusterId: string,
     cluster: {
@@ -209,8 +176,7 @@ export class AutoGuideService {
       askers: Set<string>;
     },
   ): Promise<string | null> {
-    // Only credited or well-received answers. An unanswered thread has nothing to
-    // extract, and an uncredited reply is not evidence of anything.
+    // Only credited or well-received answers.
     const responses = await this.database.requestResponse.findMany({
       where: {
         requestId: { in: cluster.requestIds },
@@ -234,8 +200,7 @@ export class AutoGuideService {
     const useful = responses
       .map(response => ({
         response,
-        // A credited helper's answer is the strongest evidence available that it
-        // actually helped somebody.
+        // A credited helper's answer is the strongest evidence available that it actually helped somebody.
         credited: response.request.helpers.some(helper => helper.userId === response.authorId),
       }))
       .filter(
@@ -248,8 +213,7 @@ export class AutoGuideService {
       .slice(0, 8);
 
     if (useful.length < 2) {
-      // Not enough answered material. A guide drafted from one reply is not a
-      // guide; it is a reply with a title on it.
+      // Not enough answered material.
       return null;
     }
 
@@ -269,11 +233,9 @@ export class AutoGuideService {
           cityId: cluster.cityId || null,
           readTimeMinutes: readTimeMinutes([intro, ...steps].join(' ')),
           isAutoGenerated: true,
-          // Required when isAutoGenerated (1.6.2). Machine-drafted content with no
-          // visible provenance is the fastest way to lose a community's trust.
+          // Required when isAutoGenerated (1.6.2).
           provenanceSummary: `Drafted by Circl from ${useful.length} community answers`,
-          // Stays null until a human approves it. Nothing here reaches a member
-          // unreviewed.
+          // Stays null until a human approves it.
           publishedAt: null,
           sources: {
             create: useful.map(entry => ({
@@ -330,8 +292,7 @@ export class AutoGuideService {
 
     if (!guide) return;
 
-    // The same rule the create endpoint enforces: an auto-generated guide with no
-    // sources is never published, whoever asks.
+    // The same rule the create endpoint enforces: an auto-generated guide with no sources is never published, whoever asks.
     if (guide.isAutoGenerated && guide.sources.length === 0) return;
 
     await this.database.guide.update({

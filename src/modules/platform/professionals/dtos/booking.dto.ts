@@ -64,7 +64,9 @@ export class CreateBriefDto {
   @IsArray()
   @ArrayMaxSize(5)
   @IsOptional()
-  mediaIds?: string[];
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  mediaKeys?: string[];
 }
 
 export class ChooseMatchDto {
@@ -74,11 +76,7 @@ export class ChooseMatchDto {
   listingId: string;
 }
 
-/**
- * A booking is an agreement about work, not a transaction (2.0.1). There is no
- * payment field here and there will not be one: `agreedAmount` is a record of
- * what two people agreed, which Circl never holds, moves or reconciles.
- */
+/** A booking is an agreement about work, not a transaction (2.0.1). */
 export class CreateBookingDto {
   @ApiProperty()
   @Trim()
@@ -202,7 +200,9 @@ export class DeliverDto {
   @IsArray()
   @ArrayMaxSize(5)
   @IsOptional()
-  mediaIds?: string[];
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  mediaKeys?: string[];
 }
 
 export class CancelDto {
@@ -214,14 +214,7 @@ export class CancelDto {
   reason?: string;
 }
 
-/**
- * The canonical, polymorphic dispute payload (4.1.3).
- *
- * "Disputes use POST /disputes with a polymorphic subject (BOOKING or ORDER)
- * rather than two near-identical endpoints, so 'Report a problem' behaves the
- * same wherever it is raised. Section 2.10 defines the payload; only the subject
- * changes."
- */
+/** The canonical, polymorphic dispute payload (4.1.3). */
 export class OpenDisputeDto {
   @ApiProperty({ enum: ['BOOKING', 'ORDER'] })
   @IsIn(['BOOKING', 'ORDER'])
@@ -247,7 +240,7 @@ export class OpenDisputeDto {
   @IsArray()
   @ArrayMaxSize(5)
   @IsOptional()
-  mediaIds?: string[];
+  mediaKeys?: string[];
 }
 
 export class CreateDisputeDto {
@@ -266,7 +259,7 @@ export class CreateDisputeDto {
   @IsArray()
   @ArrayMaxSize(5)
   @IsOptional()
-  mediaIds?: string[];
+  mediaKeys?: string[];
 }
 
 export class DisputeEvidenceDto {
@@ -281,7 +274,9 @@ export class DisputeEvidenceDto {
   @IsArray()
   @ArrayMaxSize(5)
   @IsOptional()
-  mediaIds?: string[];
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  mediaKeys?: string[];
 }
 
 export class ManagedRequestDto {

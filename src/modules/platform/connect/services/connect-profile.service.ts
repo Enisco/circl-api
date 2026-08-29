@@ -11,9 +11,11 @@ import {
 import {
   AuthorView,
   CityService,
+  MediaService,
   TaxonomyService,
   TermView,
   authorSelect,
+  displayNameOf,
   toAuthorView,
   toCityView,
   toTermView,
@@ -31,6 +33,8 @@ export interface ConnectProfileView {
   interests: TermView[];
   heritageTag: TermView | null;
   journeyStage: TermView | null;
+  /** On the USER record, not on the Connect profile (D15). */
+  countryOfOrigin: TermView | null;
   city: ReturnType<typeof toCityView>;
   dmPolicy: DmPolicy;
   isVerified: boolean;
@@ -65,17 +69,12 @@ export class ConnectProfileService {
     private readonly database: PrismaService,
     private readonly taxonomy: TaxonomyService,
     private readonly cities: CityService,
+    private readonly media: MediaService,
   ) {}
 
   // ─── 3.2.2 Setup prefill ───────────────────────────────────────────────────
 
-  /**
-   * Everything the setup form should already know (3.1).
-   *
-   * Four fields are genuinely new — type, what you are looking for, DM policy and
-   * visibility. Everything else on that screen already exists on the user, and
-   * the form currently re-asks three of them.
-   */
+  /** Everything the setup form should already know (3.1). */
   async setupPrefill(userId: string) {
     const [user, profile] = await Promise.all([
       this.database.user.findUniqueOrThrow({
@@ -83,6 +82,7 @@ export class ConnectProfileService {
         select: {
           firstName: true,
           lastName: true,
+          avatarKey: true,
           profileImageUrl: true,
           profile: {
             select: {
@@ -103,9 +103,7 @@ export class ConnectProfileService {
 
     const dateOfBirth = user.profile?.dateOfBirth ?? null;
 
-    // The fields the form must collect. DATE_OF_BIRTH is added only when the user
-    // has none; otherwise it is absent and the form shows NO age input at all
-    // (3.2.2). That absence is the whole point of the endpoint.
+    // The fields the form must collect.
     const asks = ['TYPE', 'LOOKING_FOR', 'DM_POLICY', 'VISIBILITY'];
 
     if (!dateOfBirth) asks.push('DATE_OF_BIRTH');
@@ -113,8 +111,8 @@ export class ConnectProfileService {
     return {
       profile: profile ? await this.toView(profile) : null,
       prefill: {
-        displayName: `${user.firstName} ${user.lastName}`.trim(),
-        avatarUrl: user.profileImageUrl,
+        displayName: displayNameOf(user.firstName, user.lastName),
+        avatarUrl: user.avatarKey ? this.media.sign(user.avatarKey) : user.profileImageUrl,
         cityId: user.profile?.cityId ?? null,
         cityName: user.profile?.city?.name ?? null,
         dateOfBirth: toDateOnly(dateOfBirth),
@@ -134,10 +132,7 @@ export class ConnectProfileService {
 
   // ─── 3.2.1 My profile ──────────────────────────────────────────────────────
 
-  /**
-   * `hasProfile: false` with `profile: null` is a normal response, not a 404. It
-   * is what the reciprocity gate renders against.
-   */
+  /** `hasProfile: false` with `profile: null` is a normal response, not a 404. */
   async me(userId: string) {
     const profile = await this.database.connectProfile.findUnique({
       where: { userId },
@@ -154,8 +149,7 @@ export class ConnectProfileService {
       hasProfile: profile !== null && profile.deletedAt === null,
       isVisible: profile?.isVisible ?? false,
       profile: profile && !profile.deletedAt ? await this.toView(profile) : null,
-      // The banner count and the requests screen read the same number, so the two
-      // can never disagree (3.5.2).
+      // The banner count and the requests screen read the same number, so the two can never disagree (3.5.2).
       pendingRequestCount,
     };
   }
@@ -177,7 +171,9 @@ export class ConnectProfileService {
       await this.taxonomy.assertValid(TaxonomyKind.HERITAGE_TAG, dto.heritageTag, 'heritageTag');
     }
 
-    if (dto.cityIdOverride) await this.cities.assertValid(dto.cityIdOverride, 'cityIdOverride');
+    const override = dto.cityIdOverride
+      ? await this.cities.assertValid(dto.cityIdOverride, 'cityIdOverride')
+      : null;
 
     const existingProfile = await this.database.userProfile.findUnique({
       where: { userId },
@@ -212,8 +208,7 @@ export class ConnectProfileService {
 
     const age = ageFromDateOfBirth(dateOfBirth);
 
-    // Enforced here, not only in the client: client-side enforcement is a
-    // courtesy, not a control (3.1.2).
+    // Enforced here, not only in the client: client-side enforcement is a courtesy, not a control (3.1.2).
     if (age === null || age < CONNECT_MINIMUM_AGE) {
       throw ApiException.unprocessable(
         ApiErrorCode.UNDER_MINIMUM_AGE,
@@ -222,8 +217,7 @@ export class ConnectProfileService {
       );
     }
 
-    // Dating carries an extra confirm step. The server records that it was given
-    // and when, rather than trusting that the client showed the screen.
+    // Dating carries an extra confirm step.
     if (dto.typeCode === 'DATING' && !dto.datingConfirmed) {
       throw ApiException.unprocessable(
         ApiErrorCode.DATING_CONFIRMATION_REQUIRED,
@@ -233,9 +227,7 @@ export class ConnectProfileService {
     }
 
     const profile = await this.database.$transaction(async tx => {
-      // Writes through to the USER record, not to a Connect-only copy, which is
-      // what stops the app holding two disagreeing lists of a member's interests
-      // (3.1.3, D15).
+      // Writes through to the USER record, not to a Connect-only copy, which is what stops the app holding two disagreeing lists of a member's interests (3.1.3, D15).
       await tx.userProfile.upsert({
         where: { userId },
         update: {
@@ -261,7 +253,7 @@ export class ConnectProfileService {
           lookingFor: dto.lookingFor,
           dmPolicy: dto.dmPolicy ?? undefined,
           ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
-          cityIdOverride: dto.cityIdOverride ?? null,
+          cityIdOverride: override?.id ?? null,
           ...(dto.typeCode === 'DATING' ? { datingConfirmedAt: new Date() } : {}),
           deletedAt: null,
           lastActiveAt: new Date(),
@@ -272,7 +264,7 @@ export class ConnectProfileService {
           lookingFor: dto.lookingFor,
           dmPolicy: dto.dmPolicy ?? DmPolicy.REQUEST_FIRST,
           isVisible: dto.isVisible ?? false,
-          cityIdOverride: dto.cityIdOverride ?? null,
+          cityIdOverride: override?.id ?? null,
           datingConfirmedAt: dto.typeCode === 'DATING' ? new Date() : null,
         },
         include: profileInclude,
@@ -284,12 +276,7 @@ export class ConnectProfileService {
 
   // ─── 3.3.2 Leave Connect ───────────────────────────────────────────────────
 
-  /**
-   * Removes the profile and all pending requests in both directions. Existing
-   * conversations survive, because a conversation belongs to two people, not to a
-   * section — and it does not touch interests, languages, heritage or date of
-   * birth, since those were never Connect's to own.
-   */
+  /** Removes the profile and all pending requests in both directions. */
   async remove(userId: string): Promise<void> {
     const profile = await this.database.connectProfile.findUnique({ where: { userId } });
 
@@ -310,13 +297,14 @@ export class ConnectProfileService {
   // ─── Serialisation ─────────────────────────────────────────────────────────
 
   async toView(profile: ConnectProfileRow): Promise<ConnectProfileView> {
-    const [typeLabels, languageLabels, interestLabels, heritageLabels, stageLabels] =
+    const [typeLabels, languageLabels, interestLabels, heritageLabels, stageLabels, countryLabels] =
       await Promise.all([
         this.taxonomy.labels(TaxonomyKind.CONNECTION_TYPE),
         this.taxonomy.labels(TaxonomyKind.LANGUAGE),
         this.taxonomy.labels(TaxonomyKind.INTEREST),
         this.taxonomy.labels(TaxonomyKind.HERITAGE_TAG),
         this.taxonomy.labels(TaxonomyKind.JOURNEY_STAGE),
+        this.taxonomy.labels(TaxonomyKind.COUNTRY_OF_ORIGIN),
       ]);
 
     const userProfile = profile.user.profile;
@@ -329,7 +317,7 @@ export class ConnectProfileService {
 
     return {
       id: profile.id,
-      user: toAuthorView(profile.user),
+      user: toAuthorView(profile.user, { sign: this.media.sign }),
       // Derived from the single date of birth, never stored as a number (3.1.2).
       age: ageFromDateOfBirth(userProfile?.dateOfBirth ?? null),
       type: toTermView(profile.typeCode, typeLabels),
@@ -338,12 +326,11 @@ export class ConnectProfileService {
       interests: interests.filter(Boolean) as TermView[],
       heritageTag: toTermView(userProfile?.heritageTag ?? null, heritageLabels),
       journeyStage: toTermView(userProfile?.journeyStage ?? null, stageLabels),
-      // The override reads as intent ("looking to connect in London") rather than
-      // a claim about where they are (D18).
+      countryOfOrigin: toTermView(userProfile?.countryOfOrigin ?? null, countryLabels),
+      // The override reads as intent ("looking to connect in London") rather than a claim about where they are (D18).
       city: toCityView(profile.city ?? userProfile?.city ?? null),
       dmPolicy: profile.dmPolicy,
-      // D13: nothing holds an identity check this version, so no card shows a
-      // badge. The field ships anyway so the next release does not need one.
+      // D13: nothing holds an identity check this version, so no card shows a badge.
       isVerified: (profile.user.trustChecks ?? []).some(
         check => check.check === TrustCheckType.IDENTITY,
       ),
@@ -363,9 +350,7 @@ export class ConnectProfileService {
     const profile = await this.database.connectProfile.findUnique({ where: { userId } });
 
     if (!profile || profile.deletedAt) {
-      // The reciprocity gate. Enforced server-side, because reciprocity is the
-      // norm that keeps this section healthy and a browse-only population is how
-      // it degrades (3.4).
+      // The reciprocity gate.
       throw ApiException.forbidden(
         ApiErrorCode.CONNECT_PROFILE_REQUIRED,
         'Set up your Connect profile to browse other members.',

@@ -6,6 +6,7 @@ import { seedCities } from './seeders/city.seeder';
 import { seedPermissions } from './seeders/permission.seeder';
 import { seedRiskTerms } from './seeders/risk-term.seeder';
 import { seedRoles } from './seeders/role.seeder';
+import { seedSupportResources } from './seeders/support-resource.seeder';
 import { seedTaxonomy } from './seeders/taxonomy.seeder';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -24,6 +25,7 @@ const main = async () => {
     await seedCities(prisma);
     await seedTaxonomy(prisma);
     await seedRiskTerms(prisma);
+    await seedSupportResources(prisma);
 
     console.info('Database seeding completed successfully');
   } catch (error) {

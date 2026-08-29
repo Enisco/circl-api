@@ -30,18 +30,12 @@ import {
   UpsertRiskTermDto,
   UpsertTaxonomyTermDto,
 } from '../dtos/admin.dto';
+import { PlatformJobsService } from '../../jobs/platform-jobs.service';
 import { AdminGuardService } from '../services/admin-guard.service';
 import { AdminModerationService } from '../services/admin-moderation.service';
 import { AdminTaxonomyService } from '../services/admin-taxonomy.service';
 
-/**
- * Staff endpoints.
- *
- * Guarded by permission rather than by an "is admin" flag, because these jobs are
- * genuinely different: whoever triages spam does not automatically need to read a
- * member's domestic-abuse disclosure. The seeded roles reflect that split —
- * Moderator, Safeguarding and Support each hold only what their work needs.
- */
+/** Staff endpoints. */
 @Controller('admin')
 @ApiTags('Admin')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -50,6 +44,7 @@ export class AdminController {
     private readonly moderation: AdminModerationService,
     private readonly guard: AdminGuardService,
     private readonly taxonomy: AdminTaxonomyService,
+    private readonly jobs: PlatformJobsService,
   ) {}
 
   // ─── Moderation queue ──────────────────────────────────────────────────────
@@ -270,4 +265,22 @@ export class AdminController {
 
     return { data, message: SuccessMessage.RESOURCE_UPDATED('Member') };
   }
+  // ─── Scheduled jobs ────────────────────────────────────────────────────────
+
+  @Post('jobs/:name/run')
+  @HttpCode(HttpStatus.OK)
+  @Permissions('jobs:run')
+  @ApiOperation({
+    summary: 'Run a scheduled job now',
+    description:
+      'The cron decorators are the schedule; this is the switch. Without it a stale dashboard ' +
+      'cannot be fixed until the job\'s hour comes round, and the whole set is untestable end ' +
+      'to end. Runs synchronously and returns when the job has finished.',
+  })
+  async runJob(@Param('name') name: string) {
+    const ran = await this.jobs.runNow(name);
+
+    return { data: { job: ran }, message: `Ran ${ran}` };
+  }
+
 }

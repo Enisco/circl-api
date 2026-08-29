@@ -1,20 +1,10 @@
-// ═══════════════════════════════════════════════════════════════════════════════
-// Section 5 — Messaging  (the connective layer of Circl Social)
+// ═══════════════════════════════════════════════════════════════════════════════ Section 5 — Messaging (the connective layer of Circl Social)
 //
-// One conversation table, five contexts. Not one inbox per section. Three rules
-// make it work (5.0):
+// One conversation table, five contexts.
 //
-//   1. Context is a pointer, not a copy. contextType + contextId address the live
-//      record; contextSnapshot holds display fields only. Storing the subject
-//      inside the messages leaves the thread lying about what it is for once the
-//      item is renamed or the booking is cancelled.
-//   2. The uniqueness key is (sorted participant pair, contextType, contextId).
-//      This is what stops the same two people ending up with four threads.
-//   3. Every section hands messaging a conversationId, never a guess.
+// 1.
 //
-// D29: participants are many-to-many. Two-person is a constraint on the
-// uniqueness key only — a dispute adds Circl staff to the existing thread.
-// ═══════════════════════════════════════════════════════════════════════════════
+// D29: participants are many-to-many.
 
 model Conversation {
   id   String     @id @default(uuid())
@@ -23,13 +13,10 @@ model Conversation {
   contextType ThreadContextType? @map("context_type")
   contextId   String?            @map("context_id")
 
-  // Display only. When the strip and the live record disagree, the record wins on
-  // open; this is refreshed whenever the underlying record changes so the inbox
-  // does not drift for months (5.1).
+  // Display only.
   contextSnapshot Json? @map("context_snapshot")
 
-  // The sorted participant pair, joined. Materialised because Postgres cannot
-  // enforce uniqueness over a join table, and rule 2 above is the whole design.
+  // The sorted participant pair, joined.
   participantKey String @map("participant_key")
 
   isPinned      Boolean   @default(false) @map("is_pinned")
@@ -62,10 +49,7 @@ model ConversationParticipant {
 
   role ParticipantRole @default(MEMBER) @map("role")
 
-  // Held per participant, not derived at read time. Counting messages after
-  // lastReadAt on every inbox load is the query that gets slow first (5.4).
-  // A muted thread still increments this: mute silences the notification, not the
-  // count.
+  // Held per participant, not derived at read time.
   unreadCount       Int     @default(0) @map("unread_count")
   lastReadMessageId String? @map("last_read_message_id")
 
@@ -97,20 +81,16 @@ model Message {
   systemType SystemMessageType? @map("system_type")
   systemData Json?              @map("system_data")
 
-  // The client-generated id used for optimistic rendering, echoed in the
-  // acknowledgement so the pending bubble is replaced rather than duplicated.
-  // Unique per conversation, which is also the idempotency key for a retry.
+  // The client-generated id used for optimistic rendering, echoed in the acknowledgement so the pending bubble is replaced rather than duplicated.
   clientId String @map("client_id")
 
   status MessageStatus @default(SENT) @map("status")
 
   // D26: the server stamps sentAt. Never the sending device's clock.
   sentAt    DateTime  @default(now()) @map("sent_at") @db.Timestamptz
-  // D27: nullable and unused at launch, so adding editing later is not a
-  // migration. A read receipt should mean "read what this says".
+  // D27: nullable and unused at launch, so adding editing later is not a migration.
   editedAt  DateTime? @map("edited_at") @db.Timestamptz
-  // A deleted message is a tombstone, not a gap: removing the row renumbers the
-  // thread under a reader who is scrolled into it (5.3.3).
+  // A deleted message is a tombstone, not a gap: removing the row renumbers the thread under a reader who is scrolled into it (5.3.3).
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz
 
   attachments MessageAttachment[]
@@ -135,8 +115,7 @@ model MessageAttachment {
   @@map("message_attachments")
 }
 
-// The server is the only writer of message status, which is why two devices on
-// one account cannot disagree about whether something was read (5.2.4).
+// The server is the only writer of message status, which is why two devices on one account cannot disagree about whether something was read (5.2.4).
 model MessageReceipt {
   messageId String  @map("message_id")
   message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)

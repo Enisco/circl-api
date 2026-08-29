@@ -1,13 +1,8 @@
-// ═══════════════════════════════════════════════════════════════════════════════
-// Section 4 — Commerce
+// ═══════════════════════════════════════════════════════════════════════════════ Section 4 — Commerce
 //
-// A store is a business, not a classified ad. Circl takes no payment here either
-// (4.0.1): the cart produces an enquiry, the total is an estimate, and there is
-// no checkout, escrow, payout, fee, refund or settlement anywhere below.
+// A store is a business, not a classified ad.
 //
-// Enquiries reuse the booking state machine (JobState) rather than adding a
-// second one (4.1.3), so the shared dispute flow stays genuinely shared.
-// ═══════════════════════════════════════════════════════════════════════════════
+// Enquiries reuse the booking state machine (JobState) rather than adding a second one (4.1.3), so the shared dispute flow stays genuinely shared.
 
 model Store {
   id      String @id @default(uuid())
@@ -22,18 +17,16 @@ model Store {
   cityId String @map("city_id")
   city   City   @relation(fields: [cityId], references: [id])
 
-  // A real safety need for home-run businesses, many of them run by women from
-  // their kitchen. When true the serialiser returns only `area` and a coordinate
-  // rounded to roughly 1km — line1, postcode and the precise point are never sent
-  // to anyone, including through the map (4.5.1).
+  // A real safety need for home-run businesses, many of them run by women from their kitchen.
   hidesExactAddress Boolean @default(false) @map("hides_exact_address")
   addressLine1      String? @map("address_line1")
   postcode          String? @map("postcode")
   latitude          Float?  @map("latitude")
   longitude         Float?  @map("longitude")
 
-  logoUrl  String? @map("logo_url")
-  coverUrl String? @map("cover_url")
+  /// Object keys, signed on read (0.11.3).
+  logoKey  String? @map("logo_key")
+  coverKey String? @map("cover_key")
 
   status          StoreStatus          @default(OPEN) @map("status")
   complianceState StoreComplianceState @default(ACTIVE) @map("compliance_state") // D23: exists, does not gate publishing
@@ -71,8 +64,7 @@ model StoreHeritageTag {
   @@map("store_heritage_tags")
 }
 
-// A hint, derivable from the store's items, kept as a column so the browse filter
-// does not need a subquery per store on every page.
+// A hint, derivable from the store's items, kept as a column so the browse filter does not need a subquery per store on every page.
 model StoreCategory {
   storeId String @map("store_id")
   store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
@@ -83,9 +75,7 @@ model StoreCategory {
   @@map("store_categories")
 }
 
-// Exactly 7 rows per store, Monday first. Minutes from midnight, 0..1439.
-// `closeMinutes <= openMinutes` means it closes the next day: a store open 6pm to
-// 2am is { open: 1080, close: 120 }. Both null means closed all day (4.5.1).
+// Exactly 7 rows per store, Monday first.
 model StoreOpeningHours {
   storeId String  @map("store_id")
   store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
@@ -121,9 +111,7 @@ model StoreItem {
   price    Int    @map("price") // pence, > 0
   currency String @default("GBP") @map("currency")
 
-  // D21: a code list plus a custom label for the genuine exceptions. Free text
-  // cannot be filtered, sorted or translated, and converting it later is manual
-  // work per row.
+  // D21: a code list plus a custom label for the genuine exceptions.
   unitCode        String  @default("EACH") @map("unit_code")
   unitCustomLabel String? @map("unit_custom_label")
 
@@ -144,8 +132,7 @@ model StoreItem {
 
   enquiryLines EnquiryLine[]
 
-  // Never hard-deleted while an open enquiry references it, or the enquiry loses
-  // its own contents (4.8.3).
+  // Never hard-deleted while an open enquiry references it, or the enquiry loses its own contents (4.8.3).
   @@index([storeId, isAvailable])
   @@index([categoryCode, price])
   @@map("store_items")
@@ -155,8 +142,7 @@ model StoreItem {
 
 model Enquiry {
   id        String @id @default(uuid())
-  // The human-readable code the buyer quotes to the seller. `id` stays the opaque
-  // key — a reference this short is guessable (4.7.1).
+  // The human-readable code the buyer quotes to the seller.
   reference String @unique @map("reference")
 
   buyerId String @map("buyer_id")
@@ -174,8 +160,7 @@ model Enquiry {
   deliveryAddress String?    @map("delivery_address")
   note            String?    @map("note")
 
-  // The sum of catalogue prices at the moment of sending. An estimate, not a
-  // bill, and Circl does not reconcile it against anything.
+  // The sum of catalogue prices at the moment of sending.
   estimatedTotal Int    @map("estimated_total")
   currency       String @default("GBP") @map("currency")
 
@@ -188,9 +173,7 @@ model Enquiry {
   cancelledAt DateTime? @map("cancelled_at") @db.Timestamptz
   cancelReason String?  @map("cancel_reason")
 
-  // D24: 30 days without a transition sets EXPIRED and drops it off the active
-  // list. No auto-complete: auto-confirming that someone received groceries they
-  // may never have received is a claim Circl cannot make.
+  // D24: 30 days without a transition sets EXPIRED and drops it off the active list.
   expiresAt DateTime? @map("expires_at") @db.Timestamptz
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
@@ -215,8 +198,7 @@ model EnquiryLine {
   itemId String?    @map("item_id")
   item   StoreItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
 
-  // Copied at send time. The server re-prices from the catalogue and never trusts
-  // a price sent by the client (4.6.1); the copy is what the two agreed to.
+  // Copied at send time.
   name      String @map("name")
   quantity  Int    @map("quantity")
   unitPrice Int    @map("unit_price")
@@ -245,8 +227,7 @@ model EnquiryEvent {
 
 // ─── AI storefront builder (4.9) ─────────────────────────────────────────────
 
-// Drafts are NOT items. Nothing appears in the catalogue until the seller accepts
-// it, which is what the Use / Skip pair on the review screen is for.
+// Drafts are NOT items.
 model AiItemDraft {
   id      String @id @default(uuid())
   jobId   String @map("job_id")
@@ -261,8 +242,7 @@ model AiItemDraft {
   description  String? @map("description")
   categoryCode String? @map("category_code")
   unitCode     String? @map("unit_code")
-  // A suggestion, always editable. A generated price the seller does not notice
-  // is a real loss of their money (4.9).
+  // A suggestion, always editable.
   suggestedPrice Int?  @map("suggested_price")
   confidence     Float @default(0) @map("confidence")
 

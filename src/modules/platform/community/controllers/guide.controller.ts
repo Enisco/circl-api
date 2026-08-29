@@ -48,9 +48,7 @@ export class GuideController {
     return { data, meta, message: SuccessMessage.RESOURCE_FETCHED('Guides') };
   }
 
-  /**
-   * Declared before `:id` so "match" is never captured as a guide id.
-   */
+  /** Declared before `:id` so "match" is never captured as a guide id. */
   @Post('match')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

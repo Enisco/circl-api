@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { Media, MediaStatus, MediaType, Prisma } from '@prisma/client';
+import { Media, MediaScanStatus, MediaStatus, MediaType, Prisma } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException } from '@/common';
+import { StorageProvider } from '../../media/storage/storage.interface';
+import { UrlSigner } from '../serializers/media.serializer';
 
 export interface MediaRules {
   maxImages: number;
@@ -12,6 +15,16 @@ export interface MediaRules {
 /** The default post rules from 0.11: 5 images or 1 video, never both. */
 export const POST_MEDIA_RULES: MediaRules = { maxImages: 5, allowVideo: true, allowAudio: false };
 
+/** One still image. Avatars, store logos, group photos (0.16.2, 4.1.2, 1.7.3). */
+export const SINGLE_IMAGE_RULES: MediaRules = {
+  maxImages: 1,
+  allowVideo: false,
+  allowAudio: false,
+};
+
+/** `Media.ownerType` for an avatar, so replacing one releases the last. */
+export const AVATAR_MEDIA_OWNER = 'USER_AVATAR';
+
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
 export const VIDEO_TYPES = ['video/mp4', 'video/quicktime'];
 export const AUDIO_TYPES = ['audio/m4a', 'audio/mp4', 'audio/aac', 'audio/x-m4a'];
@@ -20,17 +33,22 @@ export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 export const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
 export const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 
-/**
- * Claims uploaded media for a resource.
- *
- * Media is reserved first and attached second (0.11), so a large upload never
- * blocks the composer and a failed post does not lose its photos. This service is
- * the second half: it verifies the caller owns the rows, enforces the per-post
- * rules, and stamps the polymorphic owner.
- */
+/** Claims uploaded media for a resource. */
 @Injectable()
 export class MediaService {
-  constructor(private readonly database: PrismaService) {}
+  /** Whether an attach waits for the S3 event handler to mark a key clean (0.11.4). */
+  private readonly scanRequired: boolean;
+
+  constructor(
+    private readonly database: PrismaService,
+    private readonly storage: StorageProvider,
+    config: ConfigService,
+  ) {
+    this.scanRequired = config.get<string>('MEDIA_SCAN_REQUIRED') === 'true';
+  }
+
+  /** Signs a stored key into a URL for a response (0.11.3). */
+  readonly sign: UrlSigner = (storageKey: string) => this.storage.readUrl(storageKey);
 
   static typeFor(mimeType: string): MediaType | null {
     if (IMAGE_TYPES.includes(mimeType)) return MediaType.IMAGE;
@@ -51,23 +69,21 @@ export class MediaService {
     }
   }
 
-  /**
-   * Validates a set of media ids against the rules and returns them in the order
-   * the client sent, which is the order they render in.
-   */
+  /** Validates a set of media ids against the rules and returns them in the order the client sent, which is the order they render in. */
   async validate(
-    mediaIds: string[] | undefined,
+    mediaKeys: string[] | undefined,
     ownerId: string,
     rules: MediaRules = POST_MEDIA_RULES,
-    field = 'mediaIds',
+    field = 'mediaKeys',
   ): Promise<Media[]> {
-    if (!mediaIds?.length) return [];
+    if (!mediaKeys?.length) return [];
 
+    // Keyed by storageKey, because the client now sends keys rather than ids (0.11.2).
     const rows = await this.database.media.findMany({
-      where: { id: { in: mediaIds }, uploadedById: ownerId },
+      where: { storageKey: { in: mediaKeys }, uploadedById: ownerId },
     });
 
-    if (rows.length !== mediaIds.length) {
+    if (rows.length !== mediaKeys.length) {
       throw ApiException.unprocessable(
         ApiErrorCode.MEDIA_NOT_FOUND,
         'One or more of the attached files could not be found. Please re-upload them.',
@@ -78,11 +94,35 @@ export class MediaService {
     const alreadyUsed = rows.find(row => row.ownerId !== null);
 
     if (alreadyUsed) {
+      // Uploads start when a photo is picked rather than on submit, so a member can attach a key, abandon the composer, and reach the same key again later.
       throw ApiException.unprocessable(
         ApiErrorCode.MEDIA_ALREADY_ATTACHED,
         'One of these files is already attached to another post.',
         { details: [{ field, message: 'This file is already attached to another post.' }] },
       );
+    }
+
+    // A key that has not finished scanning is not attachable (0.11.4).
+    if (this.scanRequired) {
+      const unscanned = rows.filter(row => row.scanStatus !== MediaScanStatus.CLEAN);
+
+      if (unscanned.length) {
+        const infected = unscanned.find(row => row.scanStatus === MediaScanStatus.INFECTED);
+
+        if (infected) {
+          throw ApiException.unprocessable(
+            ApiErrorCode.MEDIA_TYPE_NOT_ALLOWED,
+            'That file could not be accepted.',
+            { details: [{ field, message: 'This file could not be accepted.' }] },
+          );
+        }
+
+        throw ApiException.unprocessable(
+          ApiErrorCode.MEDIA_NOT_READY,
+          'Your upload is still being processed. Try again in a moment.',
+          { details: [{ field, message: 'Still processing.' }] },
+        );
+      }
     }
 
     const images = rows.filter(row => row.type === MediaType.IMAGE);
@@ -122,9 +162,9 @@ export class MediaService {
       );
     }
 
-    const order = new Map(mediaIds.map((id, index) => [id, index]));
+    const order = new Map(mediaKeys.map((key, index) => [key, index]));
 
-    return rows.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+    return rows.sort((a, b) => (order.get(a.storageKey) ?? 0) - (order.get(b.storageKey) ?? 0));
   }
 
   /** Stamps the owner so the orphan sweeper leaves these alone. */

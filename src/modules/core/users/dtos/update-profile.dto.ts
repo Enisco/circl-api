@@ -10,46 +10,59 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  IsUrl,
   Matches,
   Max,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 export class UpdateProfileDto {
   @ApiProperty({
-    example: 'https://r2.circl.app/avatars/user-uuid.jpg',
+    example: 'circl/avatars/9f2c.../1788000000-ab12cd34.jpg',
     description:
-      "URL of the user's profile image. Upload the image first and pass the returned URL here.",
+      'An object key under `circl/avatars/{userId}/`, obtained from POST /media/uploads with ' +
+      'purpose AVATAR (0.11). An explicit `null` clears the photo back to initials; omitting ' +
+      'the field leaves the current one alone.',
+    nullable: true,
     required: false,
   })
-  @IsUrl({}, { message: 'profileImageUrl must be a valid URL' })
+  @MaxLength(512, { message: 'avatarKey must be 512 characters or fewer' })
+  @IsString()
+  @ValidateIf((_, value) => value !== null)
   @IsOptional()
-  profileImageUrl?: string;
+  avatarKey?: string | null;
 
-  @ApiProperty({ example: 'John', minLength: 1, maxLength: 50, required: false })
+  @ApiProperty({ example: 'John', minLength: 1, maxLength: 60, required: false })
   @Sanitize()
   @Matches(/^[a-zA-ZÀ-ÿ'\-\s]+$/, {
     message: 'firstName may only contain letters, spaces, hyphens, and apostrophes',
   })
-  @MaxLength(50, { message: 'firstName must be 50 characters or fewer' })
+  @MaxLength(60, { message: 'firstName must be 60 characters or fewer' })
   @MinLength(1, { message: 'firstName must be at least 1 character' })
   @IsString()
   @IsOptional()
   firstName?: string;
 
-  @ApiProperty({ example: 'Doe', minLength: 1, maxLength: 50, required: false })
+  @ApiProperty({
+    example: 'Doe',
+    maxLength: 60,
+    nullable: true,
+    required: false,
+    description:
+      'Nullable. The app has one name input and splits it on the first space, so a member ' +
+      'with a single-word name sends nothing here (0.16.2).',
+  })
   @Sanitize()
-  @Matches(/^[a-zA-ZÀ-ÿ'\-\s]+$/, {
+  @Matches(/^[a-zA-ZÀ-ÿ'\-\s]*$/, {
     message: 'lastName may only contain letters, spaces, hyphens, and apostrophes',
   })
-  @MaxLength(50, { message: 'lastName must be 50 characters or fewer' })
-  @MinLength(1, { message: 'lastName must be at least 1 character' })
+  @MaxLength(60, { message: 'lastName must be 60 characters or fewer' })
   @IsString()
+  @ValidateIf((_, value) => value !== null)
   @IsOptional()
-  lastName?: string;
+  lastName?: string | null;
 
   @ApiProperty({
     example: 'john_doe',
@@ -71,7 +84,7 @@ export class UpdateProfileDto {
     description: 'City ID from the cities list (e.g. "LONDON", "MANCHESTER")',
     required: false,
   })
-  @Matches(/^[A-Z_]+$/, { message: 'cityId must be an uppercase city identifier (e.g. LONDON)' })
+  @MaxLength(120, { message: 'cityId must be 120 characters or fewer' })
   @IsString()
   @IsOptional()
   cityId?: string;
@@ -100,13 +113,13 @@ export class UpdateProfileDto {
   phoneNumberDiallingCode?: string;
 
   @ApiProperty({
-    description: 'Subscriber number, digits only, 5–15 characters (no spaces or dashes)',
+    description: 'Subscriber number, digits only, 7–15 characters (no spaces or dashes)',
     example: '7911123456',
-    pattern: '^[0-9]{5,15}$',
+    pattern: '^[0-9]{7,15}$',
     required: false,
   })
-  @Matches(/^[0-9]{5,15}$/, {
-    message: 'phoneNumber must contain 5 to 15 digits with no spaces or dashes',
+  @Matches(/^[0-9]{7,15}$/, {
+    message: 'phoneNumber must contain 7 to 15 digits with no spaces or dashes',
   })
   @IsString()
   @IsOptional()
@@ -130,11 +143,11 @@ export class UpdateProfileDto {
 
   @ApiProperty({
     example: 'Visa applications, bank account setup, NHS registration',
-    description: 'Topics the user can help others with — shown on their community profile.',
-    maxLength: 500,
+    description: 'Topics the user can help others with, shown on their community profile.',
+    maxLength: 300,
     required: false,
   })
-  @MaxLength(500, { message: 'canHelpWith must be 500 characters or fewer' })
+  @MaxLength(300, { message: 'canHelpWith must be 300 characters or fewer' })
   @IsString()
   @IsOptional()
   canHelpWith?: string;
@@ -148,10 +161,7 @@ export class UpdateProfileDto {
   @IsOptional()
   openInbox?: boolean;
 
-  // ── The four shared fields (D15) ───────────────────────────────────────────
-  // These live on the user rather than on a Connect profile or a professional
-  // listing, because Connect, Professionals and Commerce all read them and a
-  // second copy is guaranteed to disagree with the first.
+  // ── The four shared fields (D15) ─────────────────────────────────────────── These live on the user rather than on a Connect profile or a professional listing, because Connect, Professionals and Commerce all read them and a second copy is guaranteed to disagree with the first.
 
   @ApiProperty({
     example: '1994-03-11',

@@ -19,15 +19,7 @@ import {
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 const Bool = () => Transform(({ value }) => value === true || value === 'true');
 
-/**
- * Step 1 of registration (2.6.1).
- *
- * Deliberately absent: `name`, `phone`, `email`, `gender`, `avatar`,
- * `countryOfOrigin`. They are on the user record, and accepting them here is
- * what invites a client to ask for them again. Call
- * `GET /professionals/registration/prefill` first and do not ask for anything it
- * returned.
- */
+/** Step 1 of registration (2.6.1). */
 export class CreateListingDto {
   @ApiProperty({ type: [String], description: '1 to 3 profession codes.' })
   @IsArray()

@@ -1,17 +1,21 @@
 import { Injectable } from '@nestjs/common';
 import {
   ExperienceLevel,
+  JobState,
   ListingVerificationStatus,
   Prisma,
   ProfessionalListing,
   TaxonomyKind,
+  ThreadContextType,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, money } from '@/common';
 import {
   CityService,
+  MediaService,
   TaxonomyService,
   authorSelect,
+  displayNameOf,
   toAuthorView,
   toCityView,
   toTermView,
@@ -39,6 +43,9 @@ export interface RegistrationStep {
   verifiedAt?: string;
 }
 
+/** Below this, `responseRate` is null (2.4). */
+const MIN_ENQUIRIES_FOR_RATE = 3;
+
 @Injectable()
 export class ListingService {
   constructor(
@@ -47,19 +54,12 @@ export class ListingService {
     private readonly cities: CityService,
     private readonly reputation: ReputationService,
     private readonly verification: VerificationService,
+    private readonly media: MediaService,
   ) {}
 
   // ─── 2.1.2 Registration prefill ────────────────────────────────────────────
 
-  /**
-   * One call, made when the member opens "Become a Professional", telling the
-   * client every value it already has and every step it can skip.
-   *
-   * Without this the client cannot know what to hide, and the flow reverts to
-   * asking everything — which is the whole failure this endpoint exists to
-   * prevent. A member who typed their city during onboarding and is asked for it
-   * again while registering learns that the app is several apps in a trench coat.
-   */
+  /** One call, made when the member opens "Become a Professional", telling the client every value it already has and every step it can skip. */
   async registrationPrefill(userId: string, categoryCode?: string) {
     const [user, listing, offers] = await Promise.all([
       this.database.user.findUniqueOrThrow({
@@ -67,6 +67,7 @@ export class ListingService {
         select: {
           firstName: true,
           lastName: true,
+          avatarKey: true,
           profileImageUrl: true,
           profile: {
             select: {
@@ -97,8 +98,7 @@ export class ListingService {
     ]);
 
     const profile = user.profile;
-    // Labelled, so the client can say "from your profile" rather than passing
-    // prefilled text off as something the member wrote here (2.1.2).
+    // Labelled, so the client can say "from your profile" rather than passing prefilled text off as something the member wrote here (2.1.2).
     const aboutSource = profile?.bio
       ? 'PROFILE_BIO'
       : profile?.canHelpWith
@@ -121,8 +121,7 @@ export class ListingService {
           priceFrom: offer.priceFrom,
           priceBasis: offer.priceBasis,
           deliveryMode: offer.deliveryMode,
-          // D8's bridge: the community category suggests a profession, so the
-          // member confirms rather than choosing from scratch.
+          // D8's bridge: the community category suggests a profession, so the member confirms rather than choosing from scratch.
           suggestedProfessionCodes: suggested,
         };
       }),
@@ -131,14 +130,14 @@ export class ListingService {
     return {
       listing: listing ? await this.toOwnerView(listing) : null,
       prefill: {
-        fullName: `${user.firstName} ${user.lastName}`.trim(),
+        fullName: displayNameOf(user.firstName, user.lastName),
         cityId: profile?.cityId ?? null,
         cityName: profile?.city?.name ?? null,
         phoneNumber:
           profile?.phoneNumber && profile.phoneNumberDiallingCode
             ? `${profile.phoneNumberDiallingCode}${profile.phoneNumber}`
             : (profile?.phoneNumber ?? null),
-        avatarUrl: user.profileImageUrl,
+        avatarUrl: user.avatarKey ? this.media.sign(user.avatarKey) : user.profileImageUrl,
         about: profile?.bio ?? profile?.canHelpWith ?? null,
         aboutSource,
       },
@@ -147,13 +146,7 @@ export class ListingService {
     };
   }
 
-  /**
-   * The stepper renders from this array rather than a hardcoded count, which is
-   * what lets verification appear later as a server change rather than an app
-   * release (2.1.2, D13).
-   *
-   * In this version it is `[{ key: 'LISTING', status: 'REQUIRED' }]` alone.
-   */
+  /** The stepper renders from this array rather than a hardcoded count, which is what lets verification appear later as a server change rather than an app release (2.1.2, D13). */
   private async registrationSteps(
     userId: string,
     categoryCode?: string,
@@ -171,12 +164,7 @@ export class ListingService {
       },
     ];
 
-    // D13: verification does not ship this release, so no IDENTITY,
-    // RIGHT_TO_WORK or CREDENTIAL step is emitted. When it does ship, this is
-    // where those steps are appended — read from VerificationService, marked
-    // SATISFIED with the date they were verified, and the stepper picks them up
-    // without an app release. `categoryCode` is accepted now so the client's
-    // `?categoryCode=LEGAL` re-request already has somewhere to land.
+    // D13: verification does not ship this release, so no IDENTITY, RIGHT_TO_WORK or CREDENTIAL step is emitted.
     void categoryCode;
 
     return steps;
@@ -191,8 +179,7 @@ export class ListingService {
     });
 
     if (existing) {
-      // The existing listing goes in `data` so the client opens it rather than
-      // dead-ending on the error (2.1.6).
+      // The existing listing goes in `data` so the client opens it rather than dead-ending on the error (2.1.6).
       throw ApiException.conflict(
         ApiErrorCode.LISTING_ALREADY_EXISTS,
         'You already have a professional listing.',
@@ -230,9 +217,7 @@ export class ListingService {
           consentAcceptedAt: new Date(),
           consentVersion: CONSENT_VERSION,
           sourceOfferId: dto.sourceOfferId ?? null,
-          // D13: listings go live UNVERIFIED and are browsable, bookable and
-          // messageable immediately. Never VERIFIED, because nothing has been
-          // checked.
+          // D13: listings go live UNVERIFIED and are browsable, bookable and messageable immediately.
           verificationStatus: ListingVerificationStatus.UNVERIFIED,
           categories: {
             create: dto.categoryCodes.map((code, index) => ({ code, isPrimary: index === 0 })),
@@ -259,10 +244,7 @@ export class ListingService {
 
   // ─── 2.1.3 Promote a community offer ───────────────────────────────────────
 
-  /**
-   * A member who already posted "I can help with UK visa paperwork" has written
-   * the listing. Make it a promotion, not a retype.
-   */
+  /** A member who already posted "I can help with UK visa paperwork" has written the listing. */
   async promoteOffer(userId: string, offerId: string, dto: PromoteOfferDto) {
     const offer = await this.database.communityOffer.findUnique({ where: { id: offerId } });
 
@@ -296,8 +278,7 @@ export class ListingService {
       );
     }
 
-    // The profession is usually the only field the member has to supply, and even
-    // that is suggested by the community category (D8).
+    // The profession is usually the only field the member has to supply, and even that is suggested by the community category (D8).
     const professionCode = dto.professionCode ?? (await this.suggestProfession(offer.categoryCode));
 
     if (!professionCode) {
@@ -324,8 +305,7 @@ export class ListingService {
           experienceLevel: dto.experienceLevel ?? ExperienceLevel.MID_LEVEL,
           about,
           cityId,
-          // Copied across: delivery mode, price and basis all carry over, because
-          // the member already decided them once.
+          // Copied across: delivery mode, price and basis all carry over, because the member already decided them once.
           deliveryMode: offer.deliveryMode,
           priceFrom: offer.priceFrom,
           priceBasis: offer.priceBasis,
@@ -340,9 +320,7 @@ export class ListingService {
         include: { city: true, categories: true, services: true },
       });
 
-      // The offer stays live until the listing is verified (2.1.3). Until then,
-      // both are visible — which is what lets a member keep helping for free
-      // while their listing waits.
+      // The offer stays live until the listing is verified (2.1.3).
       await tx.communityOffer.update({
         where: { id: offer.id },
         data: { promotedToListingId: created.id },
@@ -370,7 +348,7 @@ export class ListingService {
       );
     }
 
-    if (dto.cityId) await this.cities.assertValid(dto.cityId);
+    const city = dto.cityId ? await this.cities.assertValid(dto.cityId) : null;
 
     const updated = await this.database.$transaction(async tx => {
       if (dto.categoryCodes?.length) {
@@ -391,7 +369,7 @@ export class ListingService {
           experienceLevel: dto.experienceLevel,
           yearsExperience: dto.yearsExperience,
           about: dto.about,
-          cityId: dto.cityId,
+          cityId: city?.id,
           deliveryMode: dto.deliveryMode,
           priceFrom: dto.priceFrom,
           priceBasis: dto.priceBasis,
@@ -451,11 +429,7 @@ export class ListingService {
     return toServiceView(updated);
   }
 
-  /**
-   * A service is never hard-deleted while a booking references it: the booking
-   * would lose its own subject (2.6.3). It is deactivated instead, and the client
-   * is told which happened.
-   */
+  /** A service is never hard-deleted while a booking references it: the booking would lose its own subject (2.6.3). */
   async removeService(userId: string, listingId: string, serviceId: string) {
     const listing = await this.assertOwned(userId, listingId);
     const service = await this.database.professionalService.findUnique({
@@ -572,11 +546,12 @@ export class ListingService {
       services?: Array<Parameters<typeof toServiceView>[0]>;
     },
   ) {
-    const [professionLabels, summary, user, regulated] = await Promise.all([
+    const [professionLabels, summary, user, regulated, ownerStats] = await Promise.all([
       this.taxonomy.labels(TaxonomyKind.PROFESSION),
       this.reputation.summaryFor(listing.userId),
       this.database.user.findUnique({ where: { id: listing.userId }, select: authorSelect }),
       this.isRegulated(listing.categories?.map(category => category.code) ?? []),
+      this.ownerStats(listing.id, listing.userId),
     ]);
 
     const categories = (listing.categories ?? []).map(category =>
@@ -585,7 +560,7 @@ export class ListingService {
 
     return {
       id: listing.id,
-      user: toAuthorView(user),
+      user: toAuthorView(user, { sign: this.media.sign }),
       professionTitle: listing.professionTitle,
       category: categories[0] ?? null,
       categories,
@@ -607,18 +582,62 @@ export class ListingService {
         jobsCompleted: listing.jobsCompleted,
         medianResponseMinutes: listing.medianResponseMinutes,
         profileViews: listing.profileViews,
+        // Owner's copy only (2.4).
+        ...ownerStats,
       },
       createdAt: listing.createdAt.toISOString(),
     };
   }
 
-  /**
-   * D13: without credential checks, someone can list as an immigration adviser
-   * and nobody has verified it. Giving immigration advice in the UK without IAA
-   * registration is a criminal offence, and the exposure sits with the platform
-   * that listed them. Surfacing `isRegulated` is not verification — it is the
-   * difference between an unchecked claim and an unchecked claim that says so.
-   */
+  /** The two numbers the manage panel's summary row reads (2.4). */
+  private async ownerStats(
+    listingId: string,
+    professionalId: string,
+  ): Promise<{ enquiries: number; responseRate: number | null }> {
+    const [threads, bookings] = await Promise.all([
+      this.database.conversation.findMany({
+        where: { contextType: ThreadContextType.PROFESSIONAL, contextId: listingId },
+        select: {
+          participants: { select: { userId: true } },
+          messages: { where: { senderId: professionalId }, select: { id: true }, take: 1 },
+        },
+      }),
+      this.database.booking.findMany({
+        where: { professionalId },
+        select: { clientId: true, state: true },
+      }),
+    ]);
+
+    // Answered wins over unanswered when the same person did both, because the question is whether the professional ever replied to that person at all.
+    const answeredBy = new Map<string, boolean>();
+
+    const note = (userId: string, answered: boolean) => {
+      answeredBy.set(userId, (answeredBy.get(userId) ?? false) || answered);
+    };
+
+    for (const thread of threads) {
+      const replied = thread.messages.length > 0;
+
+      for (const participant of thread.participants) {
+        if (participant.userId !== professionalId) note(participant.userId, replied);
+      }
+    }
+
+    for (const booking of bookings) {
+      // A booking left sitting in its opening state was never answered.
+      note(booking.clientId, booking.state !== JobState.PENDING_ACCEPTANCE);
+    }
+
+    const enquiries = answeredBy.size;
+
+    if (enquiries < MIN_ENQUIRIES_FOR_RATE) return { enquiries, responseRate: null };
+
+    const answered = [...answeredBy.values()].filter(Boolean).length;
+
+    return { enquiries, responseRate: Number((answered / enquiries).toFixed(2)) };
+  }
+
+  /** D13: without credential checks, someone can list as an immigration adviser and nobody has verified it. */
   async isRegulated(codes: string[]): Promise<boolean> {
     for (const code of codes) {
       const term = await this.taxonomy.get(TaxonomyKind.PROFESSION, code);

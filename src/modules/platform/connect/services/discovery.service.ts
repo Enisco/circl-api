@@ -25,8 +25,7 @@ export class DiscoveryService {
   // ─── 3.4 Discovery ─────────────────────────────────────────────────────────
 
   async discover(viewerId: string, query: DiscoveryDto) {
-    // Reciprocity gate first: a member with no visible profile gets 403 and the
-    // client renders the set-up-first card.
+    // Reciprocity gate first: a member with no visible profile gets 403 and the client renders the set-up-first card.
     const own = await this.profiles.requireOwn(viewerId);
     const blockedIds = await this.blocking.blockedUserIds(viewerId);
     const viewerProfile = await this.database.userProfile.findUnique({
@@ -47,6 +46,7 @@ export class DiscoveryService {
               firstName: true,
               lastName: true,
               username: true,
+              avatarKey: true,
               profileImageUrl: true,
               isAnonymised: true,
               profile: {
@@ -72,9 +72,7 @@ export class DiscoveryService {
       }),
     ]);
 
-    // Age is derived, so it cannot be filtered in SQL without duplicating the
-    // date of birth as a number — which is exactly what 3.1.2 forbids. It is
-    // applied here instead, and the page is padded from a wider window.
+    // Age is derived, so it cannot be filtered in SQL without duplicating the date of birth as a number — which is exactly what 3.1.2 forbids.
     const minAge = Math.max(query.minAge ?? CONNECT_MINIMUM_AGE, CONNECT_MINIMUM_AGE);
     const withinAge = rows.filter(row => {
       const age = ageFromDateOfBirth(row.user.profile?.dateOfBirth ?? null);
@@ -127,8 +125,7 @@ export class DiscoveryService {
   ): Promise<Prisma.ConnectProfileWhereInput> {
     const where: Prisma.ConnectProfileWhereInput = {
       deletedAt: null,
-      // Never returned in discovery: anyone hidden, anyone blocked in either
-      // direction, and the caller themselves (3.4).
+      // Never returned in discovery: anyone hidden, anyone blocked in either direction, and the caller themselves (3.4).
       isVisible: true,
       userId: { not: viewerId, ...(blockedIds.length ? { notIn: blockedIds } : {}) },
       user: { isAnonymised: false },
@@ -152,8 +149,7 @@ export class DiscoveryService {
     if (query.languages?.length) {
       const known = await this.taxonomy.knownCodes(TaxonomyKind.LANGUAGE, query.languages);
 
-      // Matches if the profile speaks ANY of them. `languages` is a JSON array, so
-      // this is an array-contains rather than an IN.
+      // Matches if the profile speaks ANY of them.
       if (known.length) {
         where.AND = [
           ...(Array.isArray(where.AND) ? where.AND : []),
@@ -173,8 +169,7 @@ export class DiscoveryService {
     }
 
     if (query.newToUk) {
-      // Defined once here from the taxonomy's own flag, so the chip and the query
-      // cannot drift (3.4).
+      // Defined once here from the taxonomy's own flag, so the chip and the query cannot drift (3.4).
       const stages = await this.taxonomy.list(TaxonomyKind.JOURNEY_STAGE, false);
       const newStages = stages
         .filter(stage => stage.metadata?.isNewToUk === true)
@@ -203,20 +198,14 @@ export class DiscoveryService {
       case 'RECENT':
         return [{ createdAt: 'desc' }];
       case 'NEAREST':
-        // Without coordinates on a Connect profile, "nearest" is the city match
-        // the where clause already applied, then recency. Better than pretending
-        // to a precision we do not have (D25).
+        // Without coordinates on a Connect profile, "nearest" is the city match the where clause already applied, then recency.
         return [{ lastActiveAt: 'desc' }];
       default:
         return [{ lastActiveAt: 'desc' }, { createdAt: 'desc' }];
     }
   }
 
-  /**
-   * The language filter must come from the data, not the catalogue: the client
-   * builds it from the languages people in the grid actually speak, so a filter
-   * can never guarantee an empty result (3.4).
-   */
+  /** The language filter must come from the data, not the catalogue: the client builds it from the languages people in the grid actually speak, so a filter can never guarantee an empty result (3.4). */
   private async facets(where: Prisma.ConnectProfileWhereInput) {
     const rows = await this.database.connectProfile.findMany({
       where,
@@ -247,9 +236,7 @@ export class DiscoveryService {
 
     const profile = await this.profiles.findByIdOrUserId(idOrUserId);
 
-    // 404 when the profile is hidden, deleted, or the viewer is blocked by them —
-    // and the three cases are deliberately indistinguishable. Telling someone
-    // they have been blocked is itself a safety problem (3.2.3).
+    // 404 when the profile is hidden, deleted, or the viewer is blocked by them — and the three cases are deliberately indistinguishable.
     if (!profile || !profile.isVisible) {
       throw ApiException.notFound('That profile could not be found.');
     }
@@ -285,14 +272,7 @@ export class DiscoveryService {
     };
   }
 
-  /**
-   * The strip that reads "Both from Nigeria · Both settling in · 2 mutual
-   * groups". Computed per viewer at read time and never stored, because every
-   * part of it already exists elsewhere (3.1.6).
-   *
-   * A key with no match is omitted rather than sent as null, so the client joins
-   * whatever is present with a separator.
-   */
+  /** The strip that reads "Both from Nigeria · Both settling in · 2 mutual groups". */
   private async sharedContexts(
     viewerId: string,
     userIds: string[],

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   ConnectionRequestState,
   DmPolicy,
+  NotificationKind,
   Prisma,
   SystemMessageType,
   ThreadContextType,
@@ -17,6 +18,7 @@ import {
   ListConnectionRequestsDto,
 } from '../dtos/connect.dto';
 import { ConnectProfileService } from './connect-profile.service';
+import { NotificationFeedService } from '../../notifications';
 
 /** A declined pair may not be re-requested for 30 days (3.5.3). */
 const DECLINE_COOLDOWN_DAYS = 30;
@@ -31,6 +33,7 @@ export class ConnectionRequestService {
     private readonly profiles: ConnectProfileService,
     private readonly blocking: BlockingService,
     private readonly conversations: ConversationFactoryService,
+    private readonly notifications: NotificationFeedService,
   ) {}
 
   // ─── 3.5.1 Create ──────────────────────────────────────────────────────────
@@ -50,14 +53,12 @@ export class ConnectionRequestService {
       );
     }
 
-    // Phrased identically to a plain "not available", so a block is never
-    // distinguishable from an absent profile (3.5.1).
+    // Phrased identically to a plain "not available", so a block is never distinguishable from an absent profile (3.5.1).
     if (await this.blocking.isBlockedEitherWay(userId, target.userId)) {
       throw ApiException.notFound('That profile could not be found.');
     }
 
-    // Sending a request to an open inbox is a wasted step, so the response hands
-    // the client the thread instead of an error it has to interpret.
+    // Sending a request to an open inbox is a wasted step, so the response hands the client the thread instead of an error it has to interpret.
     if (target.dmPolicy === DmPolicy.OPEN) {
       const { conversation } = await this.conversations.ensure({
         kind: ThreadKind.CONNECT,
@@ -147,8 +148,17 @@ export class ConnectionRequestService {
       },
     });
 
-    // Creates a notification for the recipient. Does NOT create a conversation
-    // yet — that happens on accept (3.5.1).
+    // Notifies the recipient.
+    this.notifications.raise({
+      userId: target.userId,
+      actorId: userId,
+      kind: NotificationKind.CONNECTION,
+      categoryCode: 'CONNECTIONS',
+      title: 'Someone wants to connect',
+      body: null,
+      route: '/connect/requests',
+    });
+
     return {
       id: request.id,
       state: request.state,
@@ -209,8 +219,7 @@ export class ConnectionRequestService {
 
   // ─── 3.5.3 Acting on a request ─────────────────────────────────────────────
 
-  /** Accept creates the conversation and returns its id, so the client opens the
-   *  chat straight away instead of guessing a thread (3.5.3). */
+  /** Accept creates the conversation and returns its id, so the client opens the chat straight away instead of guessing a thread (3.5.3). */
   async accept(userId: string, id: string) {
     const { request, own } = await this.loadForRecipient(userId, id);
     const target = await this.profiles.findByIdOrUserId(request.fromProfileId);
@@ -253,10 +262,7 @@ export class ConnectionRequestService {
     return { id, state: ConnectionRequestState.ACCEPTED, conversationId };
   }
 
-  /**
-   * Decline is silent: the sender is not notified, and their view shows the
-   * request as no longer pending without saying why (3.5.3).
-   */
+  /** Decline is silent: the sender is not notified, and their view shows the request as no longer pending without saying why (3.5.3). */
   async decline(userId: string, id: string, dto: DeclineRequestDto) {
     const { request } = await this.loadForRecipient(userId, id);
 

@@ -36,27 +36,14 @@ export interface TaxonomyCatalogue {
   connect: { minimumAge: number };
 }
 
-/**
- * The rule text behind the immigrant-friendly filter (D11).
- *
- * It ships here rather than living in client copy so that the sentence a member
- * reads and the query that produced the result cannot drift apart. Change the
- * rule in ReputationService and change this line with it, in one commit.
- */
+/** The rule text behind the immigrant-friendly filter (D11). */
 export const IMMIGRANT_FRIENDLY_RULE =
   'Has done work for members from other countries and is rated 4 stars or above by them.';
 
 /** Enforced server-side (3.1.2). Sent, not hardcoded, so the gate can change. */
 export const CONNECT_MINIMUM_AGE = 18;
 
-/**
- * `GET /api/v1/taxonomy` (spec 0.8).
- *
- * One call returns every enumerated list the app renders, so labels can be
- * reworded without an app release. `version` lets the client cache the payload
- * and refetch only when it changes; it is served with an ETag and If-None-Match
- * is honoured by the controller.
- */
+/** `GET /api/v1/taxonomy` (spec 0.8). */
 @Injectable()
 export class TaxonomyCatalogueService {
   constructor(
@@ -87,9 +74,7 @@ export class TaxonomyCatalogueService {
     ] = await Promise.all([
       this.taxonomy.version(),
       this.cities.list(),
-      // Deactivated terms are returned too, marked `isActive: false`. That is what
-      // lets the full vocabulary be seeded while the app shows a subset (D1, D22):
-      // seeding everything and hiding it client-side would defeat the point.
+      // Deactivated terms are returned too, marked `isActive: false`.
       this.taxonomy.list(TaxonomyKind.COMMUNITY_CATEGORY, false),
       this.taxonomy.list(TaxonomyKind.PROFESSION, false),
       this.taxonomy.list(TaxonomyKind.GUIDE_TOPIC, false),
@@ -128,9 +113,7 @@ export class TaxonomyCatalogueService {
       storeHelpAreas: storeHelpAreas.map(flatten),
       helpTags: helpTags.map(flatten),
       filters: {
-        // D13: nothing carries a check other than EMAIL this version, so the
-        // client hides the filter row. A filter that can only ever return nothing
-        // is worse than no filter.
+        // D13: nothing carries a check other than EMAIL this version, so the client hides the filter row.
         verification: { isActive: false },
         immigrantFriendlyRule: IMMIGRANT_FRIENDLY_RULE,
       },
@@ -139,11 +122,7 @@ export class TaxonomyCatalogueService {
   }
 }
 
-/**
- * Lifts each kind's `metadata` to the top level, because that is the shape the
- * spec's example payload uses: `isRegulated` and `credentialBodies` sit beside
- * `code` on a profession, not nested under a `metadata` key.
- */
+/** Lifts each kind's `metadata` to the top level, because that is the shape the spec's example payload uses: `isRegulated` and `credentialBodies` sit beside `code` on a profession, not nested under a `metadata` key. */
 const flatten = (term: TermRecord): CatalogueTerm => ({
   code: term.code,
   label: term.label,

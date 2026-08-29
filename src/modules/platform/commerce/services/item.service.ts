@@ -32,7 +32,7 @@ export class ItemService {
       await this.taxonomy.assertValid(TaxonomyKind.ITEM_UNIT, dto.unitCode, 'unitCode');
     }
 
-    const photos = await this.media.validate(dto.photoMediaIds, userId, {
+    const photos = await this.media.validate(dto.photoKeys, userId, {
       maxImages: 5,
       allowVideo: false,
       allowAudio: false,
@@ -80,8 +80,8 @@ export class ItemService {
       await this.taxonomy.assertValid(TaxonomyKind.ITEM_UNIT, dto.unitCode, 'unitCode');
     }
 
-    const photos = dto.photoMediaIds
-      ? await this.media.validate(dto.photoMediaIds, userId, {
+    const photos = dto.photoKeys
+      ? await this.media.validate(dto.photoKeys, userId, {
           maxImages: 5,
           allowVideo: false,
           allowAudio: false,
@@ -112,10 +112,7 @@ export class ItemService {
     return this.toView(updated, photos ?? (await this.media.forOwner(ITEM_MEDIA_OWNER, itemId)));
   }
 
-  /**
-   * An item is never hard-deleted while an open enquiry references it, or the
-   * enquiry loses its own contents (4.8.3).
-   */
+  /** An item is never hard-deleted while an open enquiry references it, or the enquiry loses its own contents (4.8.3). */
   async remove(userId: string, itemId: string) {
     const item = await this.loadOwned(userId, itemId);
     const referenced = await this.database.enquiryLine.count({ where: { itemId: item.id } });
@@ -251,7 +248,7 @@ export class ItemService {
       }),
     ]);
 
-    const photos = toMediaViews(media);
+    const photos = toMediaViews(media, this.media.sign);
 
     return {
       id: item.id,
@@ -262,15 +259,13 @@ export class ItemService {
       price: money(item.price, item.currency),
       unit: {
         code: item.unitCode,
-        // The custom label is the escape hatch for the genuine exceptions the
-        // code list does not cover; the code stays filterable either way (D21).
+        // The custom label is the escape hatch for the genuine exceptions the code list does not cover; the code stays filterable either way (D21).
         label: item.unitCustomLabel ?? unitLabels.get(item.unitCode) ?? item.unitCode,
       },
       category: toTermView(item.categoryCode, categoryLabels),
       options: item.options,
       photos,
-      // photos[0] promoted to the top level, because every list surface wants
-      // exactly one image and should not index into an array to find it (4.4.3).
+      // photos[0] promoted to the top level, because every list surface wants exactly one image and should not index into an array to find it (4.4.3).
       coverPhotoUrl: photos[0]?.url ?? null,
       isAvailable: item.isAvailable,
     };

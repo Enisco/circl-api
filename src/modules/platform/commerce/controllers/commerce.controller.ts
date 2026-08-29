@@ -244,10 +244,7 @@ export class CommerceController {
     };
   }
 
-  // "Report a problem" on an order goes to POST /disputes with
-  // subjectType: ORDER (4.1.3). Deliberately not duplicated here: the spec calls
-  // out two near-identical endpoints as the thing to avoid, and a second path
-  // into the same service is how the two eventually drift.
+  // "Report a problem" on an order goes to POST /disputes with subjectType: ORDER (4.1.3).
 
   // ─── 4.8 Selling ───────────────────────────────────────────────────────────
 

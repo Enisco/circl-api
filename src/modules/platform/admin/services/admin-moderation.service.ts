@@ -9,7 +9,11 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta } from '@/common';
-import { authorSelect, toAuthorView } from '../../shared';
+import {
+  MediaService,
+  authorSelect,
+  toAuthorView,
+} from '../../shared';
 import { DecideQueueItemDto, ListQueueDto, SuspendUserDto } from '../dtos/admin.dto';
 
 /** Ordering weight per band, so CRITICAL always outranks a heavily-reported spam post. */
@@ -21,21 +25,13 @@ const RISK_WEIGHT: Record<RiskLevel, number> = {
   NONE: 0,
 };
 
-/**
- * The admin queue.
- *
- * "Sensitive requests are ranked by urgency and pushed to the top of the admin
- * queue with an alert." That ranking is the whole reason this is one queue rather
- * than four: a member disclosing domestic abuse must not be sitting behind a
- * backlog of spam reports, and they only cannot be if both are in the same
- * ordered list.
- *
- * Every decision writes an append-only ModerationAction. A safeguarding decision
- * nobody can review afterwards is not a decision anyone should be making.
- */
+/** The admin queue. */
 @Injectable()
 export class AdminModerationService {
-  constructor(private readonly database: PrismaService) {}
+  constructor(
+    private readonly database: PrismaService,
+    private readonly media: MediaService,
+  ) {}
 
   async listQueue(query: ListQueueDto, adminId: string) {
     const where: Prisma.ModerationQueueItemWhereInput = {
@@ -61,8 +57,7 @@ export class AdminModerationService {
           subjectUser: { select: authorSelect },
           assignedTo: { select: authorSelect },
         },
-        // Urgency first, then how many people reported it, then age. An old item
-        // never outranks a critical new one.
+        // Urgency first, then how many people reported it, then age.
         orderBy: [{ riskLevel: 'desc' }, { riskScore: 'desc' }, { createdAt: 'asc' }],
         skip: query.skip,
         take: query.take,
@@ -78,14 +73,13 @@ export class AdminModerationService {
         state: row.state,
         targetType: row.targetType,
         targetId: row.targetId,
-        subject: row.subjectUser ? toAuthorView(row.subjectUser) : null,
-        assignedTo: row.assignedTo ? toAuthorView(row.assignedTo) : null,
+        subject: row.subjectUser ? toAuthorView(row.subjectUser, { sign: this.media.sign }) : null,
+        assignedTo: row.assignedTo ? toAuthorView(row.assignedTo, { sign: this.media.sign }) : null,
         risk: {
           level: row.riskLevel,
           category: row.riskCategory,
           score: row.riskScore,
-          // The matched phrases, so "why was this escalated" has an answer a
-          // reviewer can read rather than a number they have to trust.
+          // The matched phrases, so "why was this escalated" has an answer a reviewer can read rather than a number they have to trust.
           signals: row.riskSignals ?? [],
         },
         summary: row.summary,
@@ -105,14 +99,7 @@ export class AdminModerationService {
     };
   }
 
-  /**
-   * Approve or reject one item.
-   *
-   * The anonymous-post queue and the reported-content queue share this, because
-   * the decision is the same shape: leave it, remove it, or act on the author.
-   * "Anonymous Post — toggle to hide identity. Still moderated" is what makes
-   * every anonymous post arrive here whether or not anyone reported it.
-   */
+  /** Approve or reject one item. */
   async decide(adminId: string, id: string, dto: DecideQueueItemDto) {
     const item = await this.database.moderationQueueItem.findUnique({ where: { id } });
 
@@ -186,8 +173,7 @@ export class AdminModerationService {
     if (!item) throw ApiException.notFound('That queue item could not be found.');
 
     if (item.assignedToId && item.assignedToId !== adminId) {
-      // Two people working the same disclosure is worse than one, so a claim by
-      // someone else is a conflict rather than a silent overwrite.
+      // Two people working the same disclosure is worse than one, so a claim by someone else is a conflict rather than a silent overwrite.
       throw ApiException.conflict(
         ApiErrorCode.CONFLICT,
         'Someone else is already working on this.',
@@ -215,8 +201,7 @@ export class AdminModerationService {
       });
 
       if (dto.status === 'SUSPENDED') {
-        // Revoked immediately: a suspension that leaves a live session running is
-        // not a suspension.
+        // Revoked immediately: a suspension that leaves a live session running is not a suspension.
         await tx.userSession.updateMany({
           where: { userId },
           data: { isActive: false, revokedAt: new Date() },
@@ -250,7 +235,7 @@ export class AdminModerationService {
 
     return actions.map(action => ({
       id: action.id,
-      actor: toAuthorView(action.actor),
+      actor: toAuthorView(action.actor, { sign: this.media.sign }),
       decision: action.decision,
       reason: action.reason,
       createdAt: action.createdAt.toISOString(),
@@ -259,12 +244,7 @@ export class AdminModerationService {
 
   // ─── Internals ─────────────────────────────────────────────────────────────
 
-  /**
-   * The actual text a reviewer needs to see, fetched per target type.
-   *
-   * A queue row with only an id in it forces a reviewer to open another screen to
-   * decide anything, which is how a backlog forms.
-   */
+  /** The actual text a reviewer needs to see, fetched per target type. */
   private async resolveContent(items: Array<{ targetType: ReportTargetType; targetId: string }>) {
     const byType = new Map<ReportTargetType, string[]>();
 

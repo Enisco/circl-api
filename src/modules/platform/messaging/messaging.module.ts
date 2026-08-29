@@ -9,14 +9,7 @@ import { NotificationModule } from '@/modules/infrastructure/notification/notifi
 import { MessagePushService } from './services/message-push.service';
 import { MessageService } from './services/message.service';
 
-/**
- * Section 5, plus the conversation core every other section depends on.
- *
- * Global because rule 3 of spec 5.0 is that every section hands messaging a
- * conversationId rather than guessing one: bookings, enquiries, connection
- * requests, disputes and Guard threads all create their threads through the
- * factory here.
- */
+/** Section 5, plus the conversation core every other section depends on. */
 @Global()
 @Module({
   imports: [

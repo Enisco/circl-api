@@ -10,10 +10,7 @@ import { TaxonomyCatalogueService } from '../services/taxonomy-catalogue.service
 export class TaxonomyController {
   constructor(private readonly catalogue: TaxonomyCatalogueService) {}
 
-  /**
-   * Public and cacheable (0.8). Every enumerated list the app renders, in one
-   * call, so wording lives in one place and a rewording needs no app release.
-   */
+  /** Public and cacheable (0.8). */
   @Get()
   @Public()
   @HttpCode(HttpStatus.OK)
@@ -28,8 +25,7 @@ export class TaxonomyController {
   async get(@Req() request: Request, @Res({ passthrough: true }) response: Response) {
     const data = await this.catalogue.build();
 
-    // The version stamp is what changes when anything in here changes, so it is
-    // the natural ETag. Hashed so it is opaque and quote-safe.
+    // The version stamp is what changes when anything in here changes, so it is the natural ETag.
     const etag = `"${createHash('sha1').update(data.version).digest('hex')}"`;
 
     response.setHeader('ETag', etag);

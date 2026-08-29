@@ -7,32 +7,7 @@ import { addDays, ApiErrorCode, ApiException, money } from '@/common';
 import { MediaService, TaxonomyService } from '../../shared';
 import { AiDraftItemsDto } from '../dtos/store.dto';
 
-/**
- * The AI storefront builder (4.9).
- *
- * This is the ONLY place in the platform that calls a model, and it is deliberate
- * on both counts. Everything Circl Intelligence does elsewhere — ranking, guide
- * matching, smart match, demand signals — is a deterministic computation the product can
- * explain to a member. Reading a photograph of a bag of egusi is not; there is no
- * rule that turns pixels into "ground melon seed", so a vision model is the right
- * tool and the only one used.
- *
- * Three constraints from the spec shape everything below:
- *
- *   Drafts are NOT items. Nothing appears in the catalogue until the seller
- *   accepts it, which is what the Use / Skip pair exists for.
- *
- *   `suggestedPrice` must be editable, and a generated price the seller does not
- *   notice is a real loss of their money. So it is only offered when the model is
- *   confident AND the store has comparable items to anchor against.
- *
- *   Under a confidence threshold, return the draft with `name` present and
- *   `description` null rather than inventing prose about a product the model
- *   could not identify.
- *
- * If the model is unavailable the job fails cleanly and the seller adds items by
- * hand. Nothing else in Commerce depends on this working.
- */
+/** The AI storefront builder (4.9). */
 @Injectable()
 export class AiDraftService {
   private readonly logger = new Logger(AiDraftService.name);
@@ -65,7 +40,7 @@ export class AiDraftService {
       );
     }
 
-    const photos = await this.media.validate(dto.mediaIds, userId, {
+    const photos = await this.media.validate(dto.mediaKeys, userId, {
       maxImages: 10,
       allowVideo: false,
       allowAudio: false,
@@ -84,7 +59,7 @@ export class AiDraftService {
     try {
       const drafts = await Promise.all(
         photos.map(photo =>
-          this.draftOne(photo.url, dto.tone ?? 'WARM', categories, units, anchors),
+          this.draftOne(this.media.sign(photo.storageKey), dto.tone ?? 'WARM', categories, units, anchors),
         ),
       );
 
@@ -188,7 +163,7 @@ export class AiDraftService {
     ].join('\n');
 
     const response = await this.client!.chat.completions.create({
-      model: this.config.get<string>('OPENAI_MODEL') ?? 'gpt-4o',
+      model: this.config.get<string>('OPENAI_MODEL') || 'gpt-4o',
       temperature: 0.2,
       max_tokens: 400,
       response_format: { type: 'json_object' },
@@ -265,8 +240,7 @@ export class AiDraftService {
       description: row.description,
       categoryCode: row.categoryCode,
       unitCode: row.unitCode,
-      // Always editable. A generated price the seller does not notice is a real
-      // loss of their money (4.9).
+      // Always editable.
       suggestedPrice: money(row.suggestedPrice),
       confidence: Number(row.confidence.toFixed(2)),
     };

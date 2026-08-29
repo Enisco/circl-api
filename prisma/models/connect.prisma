@@ -1,16 +1,8 @@
-// ═══════════════════════════════════════════════════════════════════════════════
-// Section 3 — Connect
+// ═══════════════════════════════════════════════════════════════════════════════ Section 3 — Connect
 //
-// A Connect profile is a thin opt-in layer over the user, not a second identity
-// (3.0.1). Almost everything a Connect card displays already lives on the user:
-// name, avatar, city, country of origin, date of birth, journey stage, interests,
-// languages, heritage. Four fields are genuinely new, and they are the only four
-// columns of substance below.
+// A Connect profile is a thin opt-in layer over the user, not a second identity (3.0.1).
 //
-// D15 is why `languages`, `heritageTag`, `interests` and `dateOfBirth` are on
-// UserProfile and not here: Professionals and Commerce both want them, and moving
-// them out after these tables exist is a migration.
-// ═══════════════════════════════════════════════════════════════════════════════
+// D15 is why `languages`, `heritageTag`, `interests` and `dateOfBirth` are on UserProfile and not here: Professionals and Commerce both want them, and moving them out after these tables exist is a migration.
 
 model ConnectProfile {
   id     String @id @default(uuid())
@@ -23,14 +15,11 @@ model ConnectProfile {
   dmPolicy   DmPolicy @default(REQUEST_FIRST) @map("dm_policy")
   isVisible  Boolean  @default(false) @map("is_visible") // opting in is a deliberate act
 
-  // D18: someone moving to London in a month can be found there, shown as intent
-  // rather than a claim about where they are. Never touches profile.cityId, which
-  // the rest of the app trusts.
+  // D18: someone moving to London in a month can be found there, shown as intent rather than a claim about where they are.
   cityIdOverride String? @map("city_id_override")
   city           City?   @relation(fields: [cityIdOverride], references: [id])
 
   // DATING carries an extra confirm step reiterating 18+ and the safety block.
-  // Record that the confirmation was given and when (3.3.1).
   datingConfirmedAt DateTime? @map("dating_confirmed_at") @db.Timestamptz
 
   reportToken String @unique @default(uuid()) @map("report_token")
@@ -56,8 +45,7 @@ model ConnectionRequest {
   toProfileId   String         @map("to_profile_id")
   toProfile     ConnectProfile @relation("ConnectionTo", fields: [toProfileId], references: [id], onDelete: Cascade)
 
-  // Denormalised so a request survives its profile being deleted long enough for
-  // the cooldown check below to still mean something.
+  // Denormalised so a request survives its profile being deleted long enough for the cooldown check below to still mean something.
   fromUserId String @map("from_user_id")
   toUserId   String @map("to_user_id")
 
@@ -69,8 +57,7 @@ model ConnectionRequest {
 
   respondedAt DateTime? @map("responded_at") @db.Timestamptz
 
-  // A declined pair may not be re-requested for 30 days (3.5.3). Repeated
-  // requesting after a decline is harassment with extra steps.
+  // A declined pair may not be re-requested for 30 days (3.5.3).
   cooldownUntil DateTime? @map("cooldown_until") @db.Timestamptz
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz

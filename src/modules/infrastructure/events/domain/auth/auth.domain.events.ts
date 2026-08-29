@@ -7,9 +7,7 @@ import {
 } from '@/common';
 import { Event } from '../../interfaces';
 
-/**
- * The aggregateId is the userId
- */
+/** The aggregateId is the userId */
 
 export class AccountCreatedEvent implements Event {
   readonly eventName = ACCOUNT_CREATED;

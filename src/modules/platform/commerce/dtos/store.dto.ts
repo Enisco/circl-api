@@ -200,12 +200,12 @@ export class CreateStoreDto {
   @ApiPropertyOptional({ description: 'Suggested from the avatar.' })
   @IsString()
   @IsOptional()
-  logoMediaId?: string;
+  logoKey?: string;
 
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()
-  coverMediaId?: string;
+  coverKey?: string;
 }
 
 export class UpdateStoreDto extends CreateStoreDto {
@@ -287,7 +287,9 @@ export class ItemDto {
   @IsArray()
   @ArrayMaxSize(5)
   @IsOptional()
-  photoMediaIds?: string[];
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  photoKeys?: string[];
 
   @ApiPropertyOptional({ description: 'Size or weight variants, free text for now.' })
   @Trim()
@@ -507,7 +509,7 @@ export class AiDraftItemsDto {
   @ArrayMinSize(1)
   @ArrayMaxSize(10)
   @IsString({ each: true })
-  mediaIds: string[];
+  mediaKeys: string[];
 
   @ApiPropertyOptional({
     enum: ['WARM', 'SHORT', 'FORMAL'],

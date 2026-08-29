@@ -1,9 +1,4 @@
-/**
- * Pagination metadata (spec 0.5).
- *
- * Present even when `data` is an empty array: an empty list with no `meta` is
- * indistinguishable from a bug.
- */
+/** Pagination metadata (spec 0.5). */
 export interface PageMeta {
   currentPage: number;
   perPage: number;
@@ -16,12 +11,7 @@ export interface PageMeta {
   [key: string]: unknown;
 }
 
-/**
- * The feed is the one exception to page-based paging (0.5): an infinite scroll
- * over data that shifts while the user reads, where page numbers duplicate and
- * drop items. `totalCount` is null because a total over a ranked, personalised
- * feed is both expensive and meaningless.
- */
+/** The feed is the one exception to page-based paging (0.5): an infinite scroll over data that shifts while the user reads, where page numbers duplicate and drop items. */
 export interface CursorMeta {
   nextCursor: string | null;
   hasNextPage: boolean;
@@ -31,13 +21,7 @@ export interface CursorMeta {
 
 export type ResponseMeta = PageMeta | CursorMeta | Record<string, unknown>;
 
-/**
- * One envelope for every response (spec 0.3).
- *
- * `success` is the spec's field. `status` is retained alongside it because the
- * shipped Flutter build reads it on the auth endpoints; the two never disagree,
- * and `status` can be dropped once that build is retired.
- */
+/** One envelope for every response (spec 0.3). */
 export interface SuccessResponse<T> {
   success: true;
   status: 'success';

@@ -1,11 +1,6 @@
 import { PageMeta } from '../types/response.type';
 
-/**
- * Builds the `meta` block from spec 0.5.
- *
- * `totalPages` is 0 when there are no results — not 1 — because "page 1 of 1"
- * over an empty list reads as a bug to anyone debugging it.
- */
+/** Builds the `meta` block from spec 0.5. */
 export const buildPageMeta = (
   options: { currentPage: number; perPage: number },
   totalCount: number,
@@ -25,11 +20,7 @@ export const buildPageMeta = (
   };
 };
 
-/**
- * The feed cursor (0.5) is opaque, but it still has to be well-formed enough that
- * a mangled one is rejected rather than crashing a query. Base64url of a small
- * JSON object is enough: nothing secret goes in it.
- */
+/** The feed cursor (0.5) is opaque, but it still has to be well-formed enough that a mangled one is rejected rather than crashing a query. */
 export const encodeCursor = (payload: Record<string, unknown>): string =>
   Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
 

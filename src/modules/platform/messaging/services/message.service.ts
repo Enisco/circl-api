@@ -48,8 +48,7 @@ export class MessageService {
     const rows = await this.database.message.findMany({
       where,
       include: messageInclude,
-      // Newest first, because a chat scrolls backwards. `after` still reads
-      // forwards, which is what `sync` needs after a reconnect.
+      // Newest first, because a chat scrolls backwards.
       orderBy: { sentAt: query.after ? 'asc' : 'desc' },
       take: limit,
     });
@@ -66,14 +65,7 @@ export class MessageService {
 
   // ─── 5.3.4 Send ────────────────────────────────────────────────────────────
 
-  /**
-   * The REST fallback for sending. The socket path calls straight into this, so
-   * the two cannot diverge: one writer, one set of rules.
-   *
-   * Replaying a `clientId` inside a conversation returns the original message
-   * rather than a duplicate — the unique index on (conversationId, clientId) is
-   * what makes that true even under a race.
-   */
+  /** The REST fallback for sending. */
   async send(userId: string, conversationId: string, dto: SendMessageDto) {
     const conversation = await this.conversations.requireParticipant(userId, conversationId);
 
@@ -126,7 +118,7 @@ export class MessageService {
       );
     }
 
-    const attachments = await this.validateAttachments(userId, kind, dto.attachmentIds);
+    const attachments = await this.validateAttachments(userId, kind, dto.attachmentKeys);
 
     const message = await this.database.$transaction(async tx => {
       const created = await tx.message.create({
@@ -140,8 +132,7 @@ export class MessageService {
           attachments: {
             create: attachments.map((media, position) => ({ mediaId: media.id, position })),
           },
-          // Per-participant receipts, so the server stays the only writer of
-          // message status (5.2.4).
+          // Per-participant receipts, so the server stays the only writer of message status (5.2.4).
           receipts: {
             create: conversation.participants.map(participant => ({
               userId: participant.userId,
@@ -159,9 +150,7 @@ export class MessageService {
         data: { lastMessageAt: created.sentAt, messageCount: { increment: 1 } },
       });
 
-      // unreadCount is held per participant rather than derived at read time:
-      // counting messages after lastReadAt on every inbox load is the query that
-      // gets slow first (5.4).
+      // unreadCount is held per participant rather than derived at read time: counting messages after lastReadAt on every inbox load is the query that gets slow first (5.4).
       await tx.conversationParticipant.updateMany({
         where: { conversationId, userId: { in: others } },
         data: { unreadCount: { increment: 1 } },
@@ -190,11 +179,7 @@ export class MessageService {
 
   // ─── 5.4 Read receipts ─────────────────────────────────────────────────────
 
-  /**
-   * One event clears a backlog rather than one per message (5.4). Opening a
-   * thread reads it: a badge that survives opening the screen is the one people
-   * complain about.
-   */
+  /** One event clears a backlog rather than one per message (5.4). */
   async markRead(userId: string, conversationId: string, lastReadMessageId: string) {
     await this.conversations.requireParticipant(userId, conversationId);
 
@@ -224,9 +209,7 @@ export class MessageService {
         data: { unreadCount: 0, lastReadAt: now, lastReadMessageId: anchor.id },
       });
 
-      // A message is READ once every recipient has read it. Read receipts are not
-      // shown on a Circl team thread — "seen" from an organisation is a promise
-      // nobody made (5.4) — so those are never promoted.
+      // A message is READ once every recipient has read it.
       const conversation = await tx.conversation.findUniqueOrThrow({
         where: { id: conversationId },
         select: { kind: true, participants: { select: { userId: true } } },
@@ -288,11 +271,7 @@ export class MessageService {
 
   // ─── 5.3.6 Delete ──────────────────────────────────────────────────────────
 
-  /**
-   * A deleted message is a tombstone, not a gap: `deletedAt` is set and the body
-   * and attachments are emptied, but the row stays. Removing it renumbers the
-   * thread under a reader who is scrolled into it (5.3.3).
-   */
+  /** A deleted message is a tombstone, not a gap: `deletedAt` is set and the body and attachments are emptied, but the row stays. */
   async remove(userId: string, conversationId: string, messageId: string) {
     await this.conversations.requireParticipant(userId, conversationId);
 
@@ -339,19 +318,19 @@ export class MessageService {
   private async validateAttachments(
     userId: string,
     kind: MessageKind,
-    attachmentIds: string[] | undefined,
+    attachmentKeys: string[] | undefined,
   ) {
     if (kind === MessageKind.TEXT) return [];
 
-    if (!attachmentIds?.length) {
+    if (!attachmentKeys?.length) {
       throw ApiException.unprocessable(
         ApiErrorCode.VALIDATION_FAILED,
         'Attach a file to send this kind of message.',
-        { details: [{ field: 'attachmentIds', message: 'This is required.' }] },
+        { details: [{ field: 'attachmentKeys', message: 'This is required.' }] },
       );
     }
 
-    const media = await this.media.validate(attachmentIds, userId, {
+    const media = await this.media.validate(attachmentKeys, userId, {
       maxImages: 5,
       allowVideo: true,
       allowAudio: true,
@@ -368,7 +347,7 @@ export class MessageService {
       throw ApiException.unprocessable(
         ApiErrorCode.MEDIA_TYPE_NOT_ALLOWED,
         'Those attachments do not match the message type.',
-        { details: [{ field: 'attachmentIds', message: 'Wrong file type for this message.' }] },
+        { details: [{ field: 'attachmentKeys', message: 'Wrong file type for this message.' }] },
       );
     }
 
@@ -393,19 +372,20 @@ export class MessageService {
       clientId: message.clientId,
       kind: message.kind,
       body: isDeleted ? '' : (message.body ?? ''),
-      sender: message.sender ? toAuthorView(message.sender) : null,
+      sender: message.sender ? toAuthorView(message.sender, { sign: this.media.sign }) : null,
       isMine: message.senderId === viewerId,
       attachments: isDeleted
         ? []
-        : toMediaViews(message.attachments.map(attachment => attachment.media)),
+        : toMediaViews(
+            message.attachments.map(attachment => attachment.media),
+            this.media.sign,
+          ),
       status: message.status,
       systemType: message.systemType,
       systemData: message.systemData,
-      // D26: the server stamps this. Clients sort by (sentAt, id), never by the
-      // sending device's clock.
+      // D26: the server stamps this.
       sentAt: message.sentAt.toISOString(),
-      // D27: nullable and unused at launch, so adding editing later is not a
-      // migration.
+      // D27: nullable and unused at launch, so adding editing later is not a migration.
       editedAt: message.editedAt?.toISOString() ?? null,
       deletedAt: message.deletedAt?.toISOString() ?? null,
     };

@@ -10,17 +10,10 @@ export interface TaxonomySeed {
   metadata?: Record<string, unknown>;
 }
 
-/**
- * D1 and D22: seed the full vocabulary, activate the subset the app ships.
- *
- * The whole reason the taxonomy endpoint exists is that adding or retiring a
- * category then needs no app release — it is an admin toggle on `isActive`.
- * Everything below marked `isActive: false` is seeded and waiting, not missing.
- */
+/** D1 and D22: seed the full vocabulary, activate the subset the app ships. */
 
 // ─── Community categories (spec 0.7, D1) ──────────────────────────────────────
-// The 15 the app ships, then the 8 the v2 product spec names and the app does not
-// yet render.
+// The 15 the app ships, then the 8 the v2 product spec names and the app does not yet render.
 const communityCategories: Array<[string, string, boolean, string[]]> = [
   ['UNIVERSITY_STUDY', 'University / Study', true, ['EDUCATION_TUTORING']],
   ['AIRPORT_PICKUP', 'Airport Pickup', true, ['LOGISTICS']],
@@ -48,10 +41,7 @@ const communityCategories: Array<[string, string, boolean, string[]]> = [
 ];
 
 // ─── Professions (D8) ─────────────────────────────────────────────────────────
-// `isRegulated` and `credentialBodies` drive the credential step's field labels
-// without a hardcoded map in the client (2.7.4), and — more importantly this
-// release — let a regulated profile print the visible line saying Circl has not
-// verified it (D13).
+// `isRegulated` and `credentialBodies` drive the credential step's field labels without a hardcoded map in the client (2.7.4), and — more importantly this release — let a regulated profile print the visible line saying Circl has not verified it (D13).
 const professions: Array<[string, string, boolean, string[]]> = [
   ['LEGAL', 'Legal', true, ['SRA', 'BSB', 'CILEx']],
   ['IMMIGRATION', 'Immigration Advice', true, ['IAA']],
@@ -90,9 +80,7 @@ const guideTopics: Array<[string, string]> = [
 ];
 
 // ─── Heritage (3.1.4) ─────────────────────────────────────────────────────────
-// One list used by three things: a member's heritage in Connect, a store's
-// community tags in Commerce, and discovery filters in both. There is deliberately
-// no storeHeritageTags / memberHeritageTags split.
+// One list used by three things: a member's heritage in Connect, a store's community tags in Commerce, and discovery filters in both.
 const heritageTags: Array<[string, string]> = [
   ['WEST_AFRICAN', 'West African'],
   ['EAST_AFRICAN', 'East African'],
@@ -112,8 +100,7 @@ const heritageTags: Array<[string, string]> = [
 ];
 
 // ─── Journey stage ────────────────────────────────────────────────────────────
-// `isNewToUk` is what the Connect `newToUk` filter reads, defined once here so
-// the chip and the query cannot drift (3.4).
+// `isNewToUk` is what the Connect `newToUk` filter reads, defined once here so the chip and the query cannot drift (3.4).
 const journeyStages: Array<[string, string, boolean]> = [
   ['PLANNING', 'Planning to move', true],
   ['JUST_ARRIVED', 'Just arrived (0-3 months)', true],
@@ -179,8 +166,7 @@ const languages: Array<[string, string]> = [
 ];
 
 // ─── Countries of origin ──────────────────────────────────────────────────────
-// ISO 3166-1 alpha-2. D11 reads this: a reviewer counts toward the
-// immigrant-friendly rule when their country is set and is not `GB`.
+// ISO 3166-1 alpha-2.
 const countries: Array<[string, string]> = [
   ['NG', 'Nigeria'], ['GH', 'Ghana'], ['KE', 'Kenya'], ['ZA', 'South Africa'],
   ['ZW', 'Zimbabwe'], ['UG', 'Uganda'], ['TZ', 'Tanzania'], ['CM', 'Cameroon'],
@@ -237,9 +223,7 @@ const itemUnits: Array<[string, string]> = [
   ['PER_HOUR', 'per hour'],
 ];
 
-// Bands carry their pence bounds rather than being parsed from a label. The
-// client currently derives the range from the string '£5–£10', which works only
-// in one currency and one language (4.2).
+// Bands carry their pence bounds rather than being parsed from a label.
 const priceBands: Array<[string, string, number, number | null]> = [
   ['UNDER_5', 'Under £5', 0, 499],
   ['FROM_5_TO_10', '£5 – £10', 500, 1000],
@@ -296,6 +280,32 @@ const helpTags: Array<[string, string]> = [
   ['GOOD_QUALITY', 'Good quality'],
 ];
 
+// ─── Notification categories (spec 6.1.3, D38) ────────────────────────────────
+// The eight rows of the preference matrix.
+const notificationCategories: Array<[string, string, boolean, boolean, boolean]> = [
+  // code, label, default push, default email, locked
+  ['REPLIES', 'Replies to my posts', true, false, false],
+  ['OFFERS', 'Offers of help', true, true, false],
+  ['MESSAGES', 'Messages', true, false, false],
+  ['GROUPS', 'Group activity', false, false, false],
+  ['CONNECTIONS', 'Connection requests', true, false, false],
+  ['BOOKINGS', 'Bookings & orders', true, true, false],
+  ['COMPLIANCE', 'Verification & payments', true, true, true],
+  ['ANNOUNCEMENTS', 'News from Circl', true, false, false],
+];
+
+// ─── Guard categories (spec 6.3.1) ────────────────────────────────────────────
+// What a private request to Circl is about.
+const guardCategories: Array<[string, string]> = [
+  ['HOUSING', 'Housing'],
+  ['IMMIGRATION', 'Immigration'],
+  ['SAFETY', 'Safety'],
+  ['MONEY', 'Money'],
+  ['HEALTH', 'Health'],
+  ['WORK', 'Work'],
+  ['OTHER', 'Something else'],
+];
+
 const pair = (
   kind: TaxonomyKind,
   rows: Array<[string, string]>,
@@ -308,8 +318,7 @@ export const taxonomySeeds: TaxonomySeed[] = [
     label,
     sort: index + 1,
     isActive,
-    // The bridge that lets offer promotion prefill a profession (D8), so the
-    // member confirms rather than choosing from scratch.
+    // The bridge that lets offer promotion prefill a profession (D8), so the member confirms rather than choosing from scratch.
     metadata: { suggestedProfessionCodes: suggested },
   })),
   ...professions.map(([code, label, isRegulated, credentialBodies], index) => ({
@@ -363,4 +372,12 @@ export const taxonomySeeds: TaxonomySeed[] = [
   ...pair(TaxonomyKind.STORE_CONTACT_CHANNEL, contactChannels),
   ...pair(TaxonomyKind.STORE_HELP_AREA, storeHelpAreas),
   ...pair(TaxonomyKind.HELP_TAG, helpTags),
+  ...notificationCategories.map(([code, label, push, email, isLocked], index) => ({
+    kind: TaxonomyKind.NOTIFICATION_CATEGORY,
+    code,
+    label,
+    sort: index + 1,
+    metadata: { defaultPush: push, defaultEmail: email, isLocked },
+  })),
+  ...pair(TaxonomyKind.GUARD_CATEGORY, guardCategories),
 ];

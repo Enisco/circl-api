@@ -20,22 +20,7 @@ const MIN_DEMAND = 3;
 /** How far back demand is measured. */
 const WINDOW_DAYS = 30;
 
-/**
- * Circl Intelligence: Guided Creation and the demand rollup.
- *
- * "When a user creates a post, service, product, or business, the algorithm
- * suggests related items based on real, local demand."
- *
- *   Community:     offering airport pickup → "carpooling has been in demand near you"
- *   Professionals: listing UI/UX design    → "logo design is frequently requested locally"
- *   Commerce:      listing tilapia         → "buyers in your area are searching for whiting fish"
- *
- * Everything below is a GROUP BY over the behavioural stream. The suggestion a
- * member sees is a real count from their own city, and when the count is not
- * there the endpoint returns nothing. A fabricated demand signal that leads
- * someone to stock something nobody wants is worse than an empty card — the spec
- * says so about Commerce specifically, and it is true of all three surfaces.
- */
+/** Circl Intelligence: Guided Creation and the demand rollup. */
 @Injectable()
 export class DemandService {
   constructor(
@@ -43,10 +28,7 @@ export class DemandService {
     private readonly taxonomy: TaxonomyService,
   ) {}
 
-  /**
-   * What is in demand near this member, on this surface, that they are not
-   * already offering.
-   */
+  /** What is in demand near this member, on this surface, that they are not already offering. */
   async suggestionsFor(options: {
     surface: SuggestionSurface;
     cityId: string | null;
@@ -86,12 +68,7 @@ export class DemandService {
       }));
   }
 
-  /**
-   * A sentence a member can check, not a tone.
-   *
-   * It names the number and the place, because "carpooling is in demand" is a
-   * claim and "9 people near you asked about carpooling this month" is a fact.
-   */
+  /** A sentence a member can check, not a tone. */
   private reasonFor(surface: SuggestionSurface, count: number, cityName: string | null): string {
     const where = cityName ? ` in ${cityName}` : ' near you';
 
@@ -105,11 +82,7 @@ export class DemandService {
     }
   }
 
-  /**
-   * Rebuilds the rollup from the event stream. Runs on a schedule rather than per
-   * request, because a composer must not wait on an aggregate over every action
-   * the platform has ever recorded.
-   */
+  /** Rebuilds the rollup from the event stream. */
   async rebuild(): Promise<number> {
     const windowStart = daysAgo(WINDOW_DAYS);
     const windowEnd = new Date();
@@ -157,9 +130,7 @@ export class DemandService {
           label: labels.get(row.code!) ?? row.code!,
           actionCount: row._count._all,
           supplyCount,
-          // Demand relative to supply. Twenty people asking where a category
-          // already has forty providers is not a gap; twenty asking where there
-          // are none is.
+          // Demand relative to supply.
           score: this.score(row._sum.weight ?? 0, supplyCount),
           windowStart,
           windowEnd,

@@ -5,35 +5,16 @@ import { PrismaService } from '@/infrastructure';
 /** The United Kingdom's code in the countriesOfOrigin taxonomy. */
 const UK_CODE = 'GB';
 
-/**
- * D11: a professional qualifies as immigrant-friendly at 3 or more reviews from
- * members whose country of origin is set and is not the UK, averaging 4 stars or
- * above.
- *
- * The rule is here, and its user-facing sentence ships through GET /taxonomy as
- * `immigrantFriendlyRule` so the wording a member reads and the query that
- * produced the result cannot drift apart. Change one, change the other.
- */
+/** D11: a professional qualifies as immigrant-friendly at 3 or more reviews from members whose country of origin is set and is not the UK, averaging 4 stars or above. */
 const IMMIGRANT_FRIENDLY_MIN_REVIEWS = 3;
 const IMMIGRANT_FRIENDLY_MIN_AVERAGE = 4;
 
-/**
- * Circl Trust: one reputation per user, visible everywhere.
- *
- * The summary is maintained rather than derived, for two reasons. A profile card
- * must not sum a page of reviews — the client only ever has one page, so it would
- * be summing the wrong thing (2.1.4). And Browse sorts and filters on rating
- * across thousands of listings, which is an index scan against this table or an
- * aggregate per row against the other one.
- */
+/** Circl Trust: one reputation per user, visible everywhere. */
 @Injectable()
 export class ReputationService {
   constructor(private readonly database: PrismaService) {}
 
-  /**
-   * Recomputes a member's summary from their reviews. Called after every write
-   * that could change it, inside the same transaction.
-   */
+  /** Recomputes a member's summary from their reviews. */
   async recompute(userId: string, tx?: Prisma.TransactionClient): Promise<void> {
     const client = tx ?? this.database;
 
@@ -58,11 +39,7 @@ export class ReputationService {
       ? counted.reduce((total, review) => total + review.rating, 0) / counted.length
       : 0;
 
-    // D11's one known consequence, worth restating where it bites: countryOfOrigin
-    // is optional at onboarding, so a reviewer who skipped it does not count, and
-    // neither does a second-generation member born here. The filter therefore
-    // under-counts rather than over-counts, which is the safer direction for a
-    // badge but means the real number is larger than this one.
+    // D11's one known consequence, worth restating where it bites: countryOfOrigin is optional at onboarding, so a reviewer who skipped it does not count, and neither does a second-generation member born here.
     const immigrantReviews = counted.filter(
       review => review.reviewerCountryOfOrigin && review.reviewerCountryOfOrigin !== UK_CODE,
     );
@@ -138,8 +115,7 @@ export class ReputationService {
     return {
       average: summary.average,
       count: summary.countedTotal,
-      // The number of prior-work entries not counted, so a profile can print the
-      // honest note about them without a second call (2.3).
+      // The number of prior-work entries not counted, so a profile can print the honest note about them without a second call (2.3).
       excludedCount: summary.excludedTotal,
       distribution: {
         5: summary.star5,

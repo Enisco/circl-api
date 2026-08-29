@@ -7,15 +7,17 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { PresignedUpload, StorageProvider } from './storage.interface';
+import {
+  PresignedUpload,
+  READ_URL_TTL_SECONDS,
+  StorageProvider,
+  signingAnchor,
+} from './storage.interface';
+import { presignGetV4 } from './sigv4';
 
 const DEFAULT_UPLOAD_TTL_SECONDS = 900;
 
-/**
- * The production driver. Presigns a PUT so the bytes go straight from the device
- * to the bucket and never through this API — a 100MB video routed through a
- * Node process is a 100MB video occupying a Node process.
- */
+/** The production driver. */
 @Injectable()
 export class S3Storage extends StorageProvider {
   readonly name = 's3';
@@ -24,45 +26,39 @@ export class S3Storage extends StorageProvider {
   private readonly client: S3Client;
   private readonly bucket: string;
   private readonly region: string;
-  private readonly cdnUrl: string | null;
   private readonly uploadTtlSeconds: number;
+  private readonly accessKeyId: string;
+  private readonly secretAccessKey: string;
+
+  /** Read URLs for the current day. */
+  private urlCache = new Map<string, string>();
+  private urlCacheAnchor = 0;
 
   constructor(config: ConfigService) {
     super();
 
+    // One set of AWS credentials.
     this.bucket = config.getOrThrow<string>('MEDIA_BUCKET');
-    // Media can sit in a different region from SES, so it has its own setting
-    // and falls back rather than assuming they are the same.
-    this.region = config.get<string>('MEDIA_REGION') || config.get<string>('AWS_REGION') || 'eu-west-2';
-    this.cdnUrl = config.get<string>('MEDIA_CDN_URL')?.replace(/\/$/, '') ?? null;
+    this.region = config.getOrThrow<string>('AWS_REGION');
+    this.accessKeyId = config.getOrThrow<string>('AWS_ACCESS_KEY_ID');
+    this.secretAccessKey = config.getOrThrow<string>('AWS_SECRET_ACCESS_KEY');
     this.uploadTtlSeconds =
       Number(config.get<string>('MEDIA_UPLOAD_URL_TTL_SECONDS')) || DEFAULT_UPLOAD_TTL_SECONDS;
 
-    // Media-specific credentials when given, otherwise the shared AWS pair. A
-    // separate IAM user is worth having: this one needs four actions on one
-    // bucket and nothing else.
-    const accessKeyId =
-      config.get<string>('MEDIA_ACCESS_KEY_ID') || config.get<string>('AWS_ACCESS_KEY_ID');
-    const secretAccessKey =
-      config.get<string>('MEDIA_SECRET_ACCESS_KEY') || config.get<string>('AWS_SECRET_ACCESS_KEY');
-
     this.client = new S3Client({
       region: this.region,
-      // Left undefined on purpose when no keys are set, so the SDK falls back to
-      // the instance role. That is how this should run on real infrastructure.
-      credentials: accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey } : undefined,
+      credentials: { accessKeyId: this.accessKeyId, secretAccessKey: this.secretAccessKey },
     });
   }
 
+  /** A presigned PUT with the content type and length signed into it (0.11.1). */
   async presignUpload(
     storageKey: string,
     mimeType: string,
     byteSize: number,
   ): Promise<PresignedUpload> {
-    // The presigner is published as its own package and pins its own copy of the
-    // AWS client types, so structurally identical S3Clients do not unify. The
-    // cast is the documented workaround, not a papered-over bug.
     const uploadUrl = await getSignedUrl(
+      // The presigner ships its own copy of the client types, so structurally identical S3Clients do not unify.
       this.client as unknown as Parameters<typeof getSignedUrl>[0],
       new PutObjectCommand({
         Bucket: this.bucket,
@@ -70,20 +66,59 @@ export class S3Storage extends StorageProvider {
         ContentType: mimeType,
         ContentLength: byteSize,
       }),
-      { expiresIn: this.uploadTtlSeconds },
+      {
+        expiresIn: this.uploadTtlSeconds,
+        // Without this the presigner signs `host` only, so the two headers would be
+        // returned to the client and enforced by nobody.
+        signableHeaders: new Set(['content-type', 'content-length']),
+      },
     );
 
     return {
       uploadUrl,
-      uploadHeaders: { 'Content-Type': mimeType },
+      // Exactly two headers, both signed.
+      uploadHeaders: { 'Content-Type': mimeType, 'Content-Length': String(byteSize) },
       expiresAt: new Date(Date.now() + this.uploadTtlSeconds * 1000),
     };
   }
 
-  publicUrl(storageKey: string): string {
-    return this.cdnUrl
-      ? `${this.cdnUrl}/${storageKey}`
-      : `https://${this.bucket}.s3.${this.region}.amazonaws.com/${storageKey}`;
+  /** A presigned GET anchored to UTC midnight (0.11.3). */
+  readUrl(storageKey: string): string {
+    const anchor = signingAnchor();
+
+    if (this.urlCacheAnchor !== anchor.getTime()) {
+      this.urlCache.clear();
+      this.urlCacheAnchor = anchor.getTime();
+    }
+
+    const cached = this.urlCache.get(storageKey);
+
+    if (cached) return cached;
+
+    const url = presignGetV4({
+      bucket: this.bucket,
+      region: this.region,
+      key: storageKey,
+      accessKeyId: this.accessKeyId,
+      secretAccessKey: this.secretAccessKey,
+      expiresIn: READ_URL_TTL_SECONDS,
+      signingDate: anchor,
+    });
+
+    this.urlCache.set(storageKey, url);
+
+    return url;
+  }
+
+  async put(storageKey: string, body: Buffer, mimeType: string): Promise<void> {
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: storageKey,
+        Body: body,
+        ContentType: mimeType,
+      }),
+    );
   }
 
   async delete(storageKey: string): Promise<void> {
@@ -93,12 +128,21 @@ export class S3Storage extends StorageProvider {
   }
 
   async exists(storageKey: string): Promise<boolean> {
-    try {
-      await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: storageKey }));
+    return (await this.head(storageKey)) !== null;
+  }
 
-      return true;
+  async head(storageKey: string): Promise<{ byteSize: number; mimeType: string } | null> {
+    try {
+      const result = await this.client.send(
+        new HeadObjectCommand({ Bucket: this.bucket, Key: storageKey }),
+      );
+
+      return {
+        byteSize: result.ContentLength ?? 0,
+        mimeType: result.ContentType ?? 'application/octet-stream',
+      };
     } catch {
-      return false;
+      return null;
     }
   }
 }

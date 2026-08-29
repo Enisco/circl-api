@@ -49,7 +49,7 @@ export class BriefService {
 
     if (cityId) await this.cities.assertValid(cityId);
 
-    const media = await this.media.validate(dto.mediaIds, userId);
+    const media = await this.media.validate(dto.mediaKeys, userId);
 
     const brief = await this.database.$transaction(async tx => {
       const created = await tx.managedBrief.create({
@@ -78,14 +78,7 @@ export class BriefService {
 
   // ─── 2.8.2 Matches ─────────────────────────────────────────────────────────
 
-  /**
-   * The three-match screen.
-   *
-   * Zero matches is not an empty screen: it returns `matches: []` with
-   * `fallback: MANUAL_PLACEMENT`, and the client converts to the human route
-   * (2.8.2). A managed promise that silently produces nothing is worse than one
-   * that hands the member to a person.
-   */
+  /** The three-match screen. */
   async matches(userId: string, id: string) {
     const brief = await this.load(userId, id);
     const city = brief.cityId ? await this.cities.find(brief.cityId) : null;
@@ -145,8 +138,7 @@ export class BriefService {
       }),
     );
 
-    // Persisted, so the shortlist a member saw is the shortlist they chose from
-    // rather than one recomputed under them on the next screen.
+    // Persisted, so the shortlist a member saw is the shortlist they chose from rather than one recomputed under them on the next screen.
     await this.database.$transaction(async tx => {
       await tx.briefMatch.deleteMany({ where: { briefId: brief.id } });
       await tx.briefMatch.createMany({
@@ -183,7 +175,7 @@ export class BriefService {
           professional: {
             type: 'PROFESSIONAL' as const,
             id: listing.id,
-            user: toAuthorView(listing.user),
+            user: toAuthorView(listing.user, { sign: this.media.sign }),
             professionTitle: listing.professionTitle,
             category: toTermView(listing.categories[0]?.code ?? null, professionLabels),
             city: toCityView(listing.city),
@@ -196,7 +188,7 @@ export class BriefService {
             priceFrom: money(listing.priceFrom, listing.currency),
             priceBasis: listing.priceBasis,
             isAcceptingWork: listing.isAcceptingWork,
-            trustChecks: toAuthorView(listing.user).trustChecks,
+            trustChecks: toAuthorView(listing.user, { sign: this.media.sign }).trustChecks,
             isImmigrantFriendly: summary.isImmigrantFriendly,
           },
           priceForBrief: money(match.priceForBrief, listing.currency),
@@ -211,11 +203,7 @@ export class BriefService {
 
   // ─── 2.8.3 Choose ──────────────────────────────────────────────────────────
 
-  /**
-   * Creates the booking FROM the brief and returns it. The client does not then
-   * call POST /bookings as well (2.8.3) — which is what stops the brief text
-   * being posted twice.
-   */
+  /** Creates the booking FROM the brief and returns it. */
   async choose(userId: string, id: string, dto: ChooseMatchDto) {
     const brief = await this.load(userId, id);
 
@@ -238,9 +226,7 @@ export class BriefService {
       );
     }
 
-    // The booking is created here, from the brief, and returned. The server
-    // copies the description, urgency and budget across, so the client never
-    // re-posts the brief text on a booking call (2.1.5).
+    // The booking is created here, from the brief, and returned.
     return this.bookings.create(userId, { listingId: listing.id, briefId: brief.id });
   }
 

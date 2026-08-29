@@ -6,12 +6,22 @@ import { ApiErrorCode, ApiException } from '@/common';
 /** The literal that means "every city" on any endpoint taking a `cityId` (1.1). */
 export const ANYWHERE = 'ANYWHERE';
 
+/** Folds the several spellings of one city onto a single key: "Milton Keynes", "milton-keynes" and "MILTON_KEYNES" all become MILTON_KEYNES. */
+const normalise = (value: string): string =>
+  value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
 @Injectable()
 export class CityService {
   private readonly logger = new Logger(CityService.name);
 
   private cache: Map<string, City> | null = null;
   private byName: Map<string, City> | null = null;
+  /** Keyed on the normalised form of both the id and the name (1.0.3). */
+  private byLoose: Map<string, City> | null = null;
   private loadedAt = 0;
 
   private static readonly TTL_MS = 300_000;
@@ -25,6 +35,12 @@ export class CityService {
 
     this.cache = new Map(cities.map(city => [city.id, city]));
     this.byName = new Map(cities.map(city => [city.name.toLowerCase(), city]));
+
+    // Both spellings go into the same map, id last so a genuine id always wins a collision.
+    this.byLoose = new Map();
+    for (const city of cities) this.byLoose.set(normalise(city.name), city);
+    for (const city of cities) this.byLoose.set(normalise(city.id), city);
+
     this.loadedAt = Date.now();
   }
 
@@ -36,6 +52,7 @@ export class CityService {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  /** Exact id only. Callers that must tolerate a name want `resolve`. */
   async find(cityId: string): Promise<City | null> {
     await this.ensureLoaded();
 
@@ -43,7 +60,7 @@ export class CityService {
   }
 
   async assertValid(cityId: string, field = 'cityId'): Promise<City> {
-    const city = await this.find(cityId);
+    const city = await this.resolve(cityId);
 
     if (!city) {
       throw ApiException.unprocessable(
@@ -58,32 +75,38 @@ export class CityService {
     return city;
   }
 
-  /**
-   * The interim compatibility rule from 1.0.3.
-   *
-   * The contract is `cityId`, but the shipped community screens filter by city
-   * NAME (`?city=Manchester`) because the sample data is a list of strings. To let
-   * the client migrate screen by screen without a flag day, every endpoint that
-   * takes `cityId` also accepts `city` for one release, resolves it, and returns
-   * the resolved city object so the client learns the id.
-   *
-   * `city` is deprecated on arrival. Its use is logged, and it goes once the
-   * client stops sending it. If both are sent, `cityId` wins.
-   */
+  /** The interim compatibility rule from 1.0.3. */
   async resolve(cityId?: string | null, cityName?: string | null): Promise<City | null> {
-    if (cityId && cityId !== ANYWHERE) {
-      return this.find(cityId);
+    await this.ensureLoaded();
+
+    const value = cityId?.trim() || null;
+
+    if (value && value !== ANYWHERE) {
+      const byId = this.cache!.get(value);
+
+      if (byId) return byId;
+
+      // Not an id, so it is a picked name or a device-manufactured code.
+      const loose = this.byName!.get(value.toLowerCase()) ?? this.byLoose!.get(normalise(value));
+
+      if (loose) {
+        this.logger.log(`Deprecated city name in \`cityId\`: "${value}" resolved to ${loose.id}`);
+
+        return loose;
+      }
+
+      return null;
     }
 
     if (cityName) {
-      await this.ensureLoaded();
-
-      // Logged so there is evidence for when the deprecated parameter can be
-      // removed. "The client has stopped sending it" is a claim somebody has to
-      // be able to check, and silence in the logs is that check.
+      // Logged so there is evidence for when the deprecated parameter can be removed.
       this.logger.log(`Deprecated \`city\` name parameter used: "${cityName}"`);
 
-      return this.byName!.get(cityName.trim().toLowerCase()) ?? null;
+      return (
+        this.byName!.get(cityName.trim().toLowerCase()) ??
+        this.byLoose!.get(normalise(cityName)) ??
+        null
+      );
     }
 
     return null;

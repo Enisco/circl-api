@@ -15,22 +15,7 @@ export interface TrustCheckView {
   rejectionReason?: string;
 }
 
-/**
- * `GET /api/v1/verification/status` (2.7.1).
- *
- * Verification does not ship in this release (D13, and confirmed by the product
- * owner). This endpoint ships anyway, returning every check as NOT_STARTED apart
- * from EMAIL, which is granted at signup — so the next release adds a flow rather
- * than a data model, and every surface that reads trust today reads the same
- * record it will read then.
- *
- * The three submit endpoints (identity, right to work, credential) are
- * deliberately not built. Their contract is in 2.7 of the spec.
- *
- * Paths are under /verification, not under Professionals, because trust checks
- * belong to the person (2.1.4). A member who verified their identity to use
- * Connect has verified their identity, full stop.
- */
+/** `GET /api/v1/verification/status` (2.7.1). */
 @Injectable()
 export class VerificationService {
   /** Every check the app can display, so the stepper renders from data. */
@@ -83,14 +68,7 @@ export class VerificationService {
     return rows.map(row => row.check);
   }
 
-  /**
-   * The trust block on a professional profile (2.4).
-   *
-   * Each check carries its own provenance: who checked it and when. A trust chip
-   * with no provenance is decoration. In this release that means exactly one
-   * chip, EMAIL — the client renders one chip rather than an empty row pretending
-   * to be a full one (D13).
-   */
+  /** The trust block on a professional profile (2.4). */
   async trustBlock(userId: string) {
     const rows = await this.database.trustCheck.findMany({
       where: { userId, status: TrustCheckStatus.VERIFIED },
@@ -108,15 +86,9 @@ export class VerificationService {
     };
   }
 
-  /**
-   * Granted at signup and never re-verified (2.1.1). Called from the auth flow
-   * when an email is confirmed.
-   */
+  /** Granted at signup and never re-verified (2.1.1). */
   async grantEmailCheck(userId: string): Promise<void> {
-    // findFirst-then-write rather than upsert: the table's unique key includes
-    // the nullable `categoryCode` (credentials are scoped per profession), and
-    // Postgres treats those NULLs as distinct, so an upsert on it would never
-    // match an existing unscoped row.
+    // findFirst-then-write rather than upsert: the table's unique key includes the nullable `categoryCode` (credentials are scoped per profession), and Postgres treats those NULLs as distinct, so an upsert on it would never match an existing unscoped row.
     const existing = await this.database.trustCheck.findFirst({
       where: { userId, check: TrustCheckType.EMAIL, categoryCode: null },
       select: { id: true },
@@ -141,8 +113,7 @@ export class VerificationService {
           checkedBy: 'Circl',
         },
       })
-      // A concurrent signup path may have written it between the read and the
-      // write. Losing that race is fine; the row exists either way.
+      // A concurrent signup path may have written it between the read and the write.
       .catch(() => undefined);
   }
 }

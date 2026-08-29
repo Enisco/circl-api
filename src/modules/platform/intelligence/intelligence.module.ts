@@ -6,6 +6,7 @@ import { DemandService } from './services/demand.service';
 import { FeedRankerService } from './services/feed-ranker.service';
 import { GuideMatcherService } from './services/guide-matcher.service';
 import { MetricsService } from './services/metrics.service';
+import { PulseService } from './services/pulse.service';
 import { SmartMatchService } from './services/smart-match.service';
 
 const SERVICES = [
@@ -15,19 +16,10 @@ const SERVICES = [
   DemandService,
   AutoGuideService,
   MetricsService,
+  PulseService,
 ];
 
-/**
- * Circl Intelligence — one algorithm, four outputs.
- *
- * Guided Creation (DemandService), Auto-Guides (AutoGuideService), Smart Match
- * (SmartMatchService) and Public Metrics (MetricsService) are all fed by the same
- * behavioural stream, and all four are deterministic: weighted sums, keyword
- * coverage and GROUP BYs. Nothing here calls a model, because every one of these
- * outputs is shown to a member as a fact they can act on.
- *
- * Global because every section reads from it.
- */
+/** Circl Intelligence — one algorithm, four outputs. */
 @Global()
 @Module({
   imports: [

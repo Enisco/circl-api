@@ -134,8 +134,8 @@ const dobFor = y => { const d = new Date(); d.setUTCFullYear(d.getUTCFullYear() 
   check('Item.price: 0 rejected', r.status === 400, r.status);
   r = await api(seller.token, 'POST', `/commerce/stores/${storeId}/items`, item({ description: str(1001) }));
   check('Item.description: 1001 rejected', r.status === 400, r.status);
-  r = await api(seller.token, 'POST', `/commerce/stores/${storeId}/items`, item({ photoMediaIds: ['a','b','c','d','e','f'] }));
-  check('Item.photoMediaIds: 6 rejected', r.status === 400, r.status);
+  r = await api(seller.token, 'POST', `/commerce/stores/${storeId}/items`, item({ photoKeys: ['a','b','c','d','e','f'] }));
+  check('Item.photoKeys: 6 rejected', r.status === 400, r.status);
   r = await api(seller.token, 'POST', `/commerce/stores/${storeId}/items`, item({ name: str(2), price: 1, description: str(1000) }));
   check('Item: boundaries 2/1p/1000 accepted', r.status === 201, r.body?.error?.message);
   const itemId = r.body?.data?.id;
@@ -174,34 +174,34 @@ const dobFor = y => { const d = new Date(); d.setUTCFullYear(d.getUTCFullYear() 
   check('clientId: 65 chars rejected', r.status === 400, r.status);
   r = await api(client.token, 'POST', `/messages/${convId}/messages`, { clientId: str(64), body: 'x' });
   check('clientId: 64 chars accepted', r.status === 201, r.body?.error?.message);
-  r = await api(client.token, 'POST', `/messages/${convId}/messages`, { clientId: 'c5', kind: 'IMAGE', attachmentIds: ['a','b','c','d','e','f'] });
-  check('attachmentIds: 6 rejected', r.status === 400, r.status);
+  r = await api(client.token, 'POST', `/messages/${convId}/messages`, { clientId: 'c5', kind: 'IMAGE', attachmentKeys: ['a','b','c','d','e','f'] });
+  check('attachmentKeys: 6 rejected', r.status === 400, r.status);
 
   console.log('\n── 0.11 media rules ─────────────────────────────────────────');
-  r = await api(client.token, 'POST', '/media/uploads', { files: [{ mimeType: 'application/pdf', byteSize: 100 }] });
+  r = await api(client.token, 'POST', '/media/uploads', { purpose: 'COMMUNITY', files: [{ mimeType: 'application/pdf', byteSize: 100 }] });
   check('unsupported mime → 422 MEDIA_TYPE_NOT_ALLOWED', r.status === 422 && r.body?.error?.code === 'MEDIA_TYPE_NOT_ALLOWED', r.body?.error);
-  r = await api(client.token, 'POST', '/media/uploads', { files: [{ mimeType: 'image/jpeg', byteSize: 11 * 1024 * 1024 }] });
+  r = await api(client.token, 'POST', '/media/uploads', { purpose: 'COMMUNITY', files: [{ mimeType: 'image/jpeg', byteSize: 11 * 1024 * 1024 }] });
   check('image over 10MB → 422 MEDIA_TOO_LARGE', r.status === 422 && r.body?.error?.code === 'MEDIA_TOO_LARGE', r.body?.error);
-  r = await api(client.token, 'POST', '/media/uploads', { files: [{ mimeType: 'video/mp4', byteSize: 101 * 1024 * 1024 }] });
+  r = await api(client.token, 'POST', '/media/uploads', { purpose: 'COMMUNITY', files: [{ mimeType: 'video/mp4', byteSize: 101 * 1024 * 1024 }] });
   check('video over 100MB → 422', r.status === 422, r.body?.error);
-  r = await api(client.token, 'POST', '/media/uploads', { files: [{ mimeType: 'audio/m4a', byteSize: 1000, durationMs: 300001 }] });
+  r = await api(client.token, 'POST', '/media/uploads', { purpose: 'COMMUNITY', files: [{ mimeType: 'audio/m4a', byteSize: 1000, durationMs: 300001 }] });
   check('voice note over 5 min → 400', r.status === 400, r.status);
-  r = await api(client.token, 'POST', '/media/uploads', { files: [{ mimeType: 'audio/m4a', byteSize: 1000, durationMs: 700 }] });
+  r = await api(client.token, 'POST', '/media/uploads', { purpose: 'COMMUNITY', files: [{ mimeType: 'audio/m4a', byteSize: 1000, durationMs: 700 }] });
   check('voice note under 0.8s → 400', r.status === 400, r.status);
   r = await api(client.token, 'POST', '/media/uploads',
-    { files: [{ mimeType: 'audio/m4a', byteSize: 1000, durationMs: 14000, waveform: Array(41).fill(0.5) }] });
+    { purpose: 'COMMUNITY', files: [{ mimeType: 'audio/m4a', byteSize: 1000, durationMs: 14000, waveform: Array(41).fill(0.5) }] });
   check('waveform over 40 floats → 400', r.status === 400, r.status);
 
   const img = await api(client.token, 'POST', '/media/uploads',
-    { files: Array(6).fill({ mimeType: 'image/jpeg', byteSize: 1000 }) });
-  const sixIds = img.body?.data?.map(d => d.mediaId) ?? [];
-  r = await api(client.token, 'POST', '/community/updates', { content: 'six photos', mediaIds: sixIds });
+    { purpose: 'COMMUNITY', files: Array(6).fill({ mimeType: 'image/jpeg', byteSize: 1000 }) });
+  const sixIds = img.body?.data?.map(d => d.key) ?? [];
+  r = await api(client.token, 'POST', '/community/updates', { content: 'six photos', mediaKeys: sixIds });
   check('6 images on one post rejected', r.status === 400 || r.status === 422, r.status);
 
   const mix = await api(client.token, 'POST', '/media/uploads',
-    { files: [{ mimeType: 'image/jpeg', byteSize: 1000 }, { mimeType: 'video/mp4', byteSize: 1000 }] });
-  const mixIds = mix.body?.data?.map(d => d.mediaId) ?? [];
-  r = await api(client.token, 'POST', '/community/updates', { content: 'mixed', mediaIds: mixIds });
+    { purpose: 'COMMUNITY', files: [{ mimeType: 'image/jpeg', byteSize: 1000 }, { mimeType: 'video/mp4', byteSize: 1000 }] });
+  const mixIds = mix.body?.data?.map(d => d.key) ?? [];
+  r = await api(client.token, 'POST', '/community/updates', { content: 'mixed', mediaKeys: mixIds });
   check('images + video together → 422 MEDIA_MIXED_TYPES', r.status === 422 && r.body?.error?.code === 'MEDIA_MIXED_TYPES', r.body?.error);
 
   console.log('\n── Cleanup ──────────────────────────────────────────────────');

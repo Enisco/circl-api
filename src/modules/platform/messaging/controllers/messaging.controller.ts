@@ -131,10 +131,7 @@ export class MessagingController {
   ) {
     const data = await this.messages.send(userId, id, dto);
 
-    // The REST path is the fallback, so the sender has no socket — but the
-    // RECIPIENT may well have one, and pushing to someone already looking at the
-    // thread is the notification people complain about. Only the offline ones
-    // get a push (5.6).
+    // The REST path is the fallback, so the sender has no socket — but the RECIPIENT may well have one, and pushing to someone already looking at the thread is the notification people complain about.
     const recipientIds = await this.messages.recipientIdsOf(id, userId);
     const offline = recipientIds.filter(recipientId => !this.gateway.isConnected(recipientId));
 
@@ -193,6 +190,8 @@ export class MessagingController {
   ) {
     const data = await this.conversations.setMuted(userId, id, true, dto.until);
 
+    void this.gateway.pushConversationUpdated(userId, id);
+
     return { data, message: 'Thread muted' };
   }
 
@@ -201,6 +200,8 @@ export class MessagingController {
   @ApiOperation({ summary: 'Unmute a thread' })
   async unmute(@CurrentUserId() userId: string, @Param('conversationId') id: string) {
     const data = await this.conversations.setMuted(userId, id, false);
+
+    void this.gateway.pushConversationUpdated(userId, id);
 
     return { data, message: 'Thread unmuted' };
   }
@@ -216,6 +217,8 @@ export class MessagingController {
   async archive(@CurrentUserId() userId: string, @Param('conversationId') id: string) {
     const data = await this.conversations.setArchived(userId, id, true);
 
+    void this.gateway.pushConversationUpdated(userId, id);
+
     return { data, message: 'Thread archived' };
   }
 
@@ -224,6 +227,8 @@ export class MessagingController {
   @ApiOperation({ summary: 'Unarchive a thread' })
   async unarchive(@CurrentUserId() userId: string, @Param('conversationId') id: string) {
     const data = await this.conversations.setArchived(userId, id, false);
+
+    void this.gateway.pushConversationUpdated(userId, id);
 
     return { data, message: 'Thread restored' };
   }

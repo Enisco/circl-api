@@ -24,9 +24,7 @@ export class DeviceService {
     return this.hash(fingerprintString);
   }
 
-  /**
-   * SHA-256 hash wrapper
-   */
+  /** SHA-256 hash wrapper */
   private hash(value: string): string {
     return crypto.createHash('sha256').update(value).digest('hex');
   }
@@ -37,9 +35,7 @@ export class DeviceService {
     return ip.replace(/^::ffff:/i, '');
   }
 
-  /**
-   * Extract device info from request headers
-   */
+  /** Extract device info from request headers */
   private parseUserAgent(deviceHeaders: DeviceHeaders): ParsedDeviceInfo {
     const fallbackDeviceName = this.generateFallbackDeviceName(deviceHeaders.userAgent);
     const { userAgent, ipAddress, timezone, deviceId, deviceName, appVersion } = deviceHeaders;

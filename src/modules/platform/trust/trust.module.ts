@@ -8,13 +8,7 @@ import { VerificationService } from './services/verification.service';
 
 const CONTROLLERS = [ReviewController, VerificationController];
 
-/**
- * Circl Trust.
- *
- * Global because reputation and trust checks hang off the USER and are read by
- * Professionals, Connect and Commerce alike — scoping them under one section is
- * how a trusted member arrives in the next section looking like a stranger.
- */
+/** Circl Trust. */
 @Global()
 @Module({
   imports: [

@@ -19,6 +19,7 @@ import {
   TaxonomyService,
   authorSelect,
   toAuthorView,
+  toMediaViews,
 } from '../../shared';
 import {
   FeedRankerService,
@@ -41,14 +42,7 @@ interface FeedCursor extends Record<string, unknown> {
   ranking: 'PERSONALISED' | 'LATEST';
 }
 
-/**
- * How many candidates are pulled per type before ranking.
- *
- * A ranked feed cannot be paged in the database, because the ordering does not
- * exist there. So a window is pulled, ranked in memory, and paged over — which is
- * correct as long as the window is comfortably larger than any page a client
- * will ask for.
- */
+/** How many candidates are pulled per type before ranking. */
 const CANDIDATE_WINDOW = 120;
 
 /** How far back PERSONALISED looks. Beyond this a post is history, not a feed. */
@@ -65,30 +59,20 @@ export class FeedService {
     private readonly ranker: FeedRankerService,
   ) {}
 
-  /**
-   * `GET /community/feed` (1.1).
-   *
-   * One merged, ranked, cursor-paged stream of Requests, Offers, Updates and
-   * occasionally a Guide. Cursor rather than page numbers because the underlying
-   * data shifts while the member reads, and page-based paging duplicates and
-   * drops items when it does (0.5).
-   */
+  /** `GET /community/feed` (1.1). */
   async feed(viewerId: string, query: FeedQueryDto) {
     const limit = Math.min(query.limit ?? 20, 50);
     const cursor = decodeCursor<FeedCursor>(query.cursor);
     const profile = await this.profileOf(viewerId);
 
-    // PERSONALISED once the member has completed interests onboarding, else
-    // LATEST — but an explicit choice always wins, because ranking that cannot be
-    // switched off is ranking that stops being trusted (1.1).
+    // PERSONALISED once the member has completed interests onboarding, else LATEST — but an explicit choice always wins, because ranking that cannot be switched off is ranking that stops being trusted (1.1).
     const ranking =
       query.ranking ?? cursor?.ranking ?? (profile.hasInterests ? 'PERSONALISED' : 'LATEST');
 
     const blockedIds = await this.blocking.blockedUserIds(viewerId);
     const cityId = this.resolveCity(query.cityId, profile.cityId);
 
-    // Selecting any category excludes UPDATE items, which have no category. A
-    // client-side product rule the server honours so paging stays consistent.
+    // Selecting any category excludes UPDATE items, which have no category.
     const requestedTypes = new Set(query.types?.length ? query.types : Object.values(FeedItemType));
 
     if (query.categories?.length) requestedTypes.delete(FeedItemType.UPDATE);
@@ -172,8 +156,7 @@ export class FeedService {
         ? encodeCursor({ offset: offset + limit, ranking } satisfies FeedCursor)
         : null,
       hasNextPage,
-      // Null for cursor responses: a total over a ranked, personalised feed is
-      // both expensive and meaningless (0.5).
+      // Null for cursor responses: a total over a ranked, personalised feed is both expensive and meaningless (0.5).
       totalCount: null,
       ranking,
     };
@@ -181,10 +164,7 @@ export class FeedService {
     return { data, meta, message: 'Feed loaded' };
   }
 
-  /**
-   * "Show me less like this" (1.1). Suppresses the card for this member and feeds
-   * the ranking signal. Returns 204; the client removes the card optimistically.
-   */
+  /** "Show me less like this" (1.1). */
   async lessLikeThis(userId: string, itemId: string, dto: LessLikeThisDto): Promise<void> {
     await this.database.feedFeedback.upsert({
       where: { userId_itemType_itemId: { userId, itemType: dto.type, itemId } },
@@ -244,8 +224,7 @@ export class FeedService {
         ...(cityId ? { cityId } : {}),
         ...(query.categories?.length ? { categoryCode: { in: query.categories } } : {}),
         ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
-        // Offers are evergreen, so LATEST would otherwise bury requests under
-        // months of them. The window stays wide and D3's decay does the work.
+        // Offers are evergreen, so LATEST would otherwise bury requests under months of them.
         ...(ranking === 'PERSONALISED' ? { createdAt: { gte: daysAgo(CANDIDATE_DAYS * 4) } } : {}),
       },
       include: {
@@ -279,11 +258,7 @@ export class FeedService {
     });
   }
 
-  /**
-   * "and (occasionally) a Guide" (1.1). A handful of the best, not a stream:
-   * guides are long-form and evergreen, and a feed that fills with them stops
-   * being a feed of what is happening.
-   */
+  /** "and (occasionally) a Guide" (1.1). */
   private candidateGuides(cityId: string | null, ranking: 'PERSONALISED' | 'LATEST') {
     return this.database.guide.findMany({
       where: {
@@ -342,8 +317,7 @@ export class FeedService {
 
     return page
       .map(entry => {
-        // `ranking` is present only when PERSONALISED, and omitted entirely
-        // rather than carrying a placeholder reason (D7).
+        // `ranking` is present only when PERSONALISED, and omitted entirely rather than carrying a placeholder reason (D7).
         const rankingBlock =
           ranking === 'PERSONALISED' && entry.reason
             ? { ranking: { reason: entry.reason, signals: entry.signals } }
@@ -361,6 +335,7 @@ export class FeedService {
                 viewerCityId,
                 categoryLabels,
                 media: requestMedia,
+                sign: this.media.sign,
                 hasOffered: viewerState.offered,
                 blockedAuthorIds: blockedSet,
               }),
@@ -378,6 +353,7 @@ export class FeedService {
                 viewerId,
                 categoryLabels,
                 media: offerMedia,
+                sign: this.media.sign,
                 blockedAuthorIds: blockedSet,
               }),
               ...rankingBlock,
@@ -451,21 +427,11 @@ export class FeedService {
   }
 
   private mediaViews(media: Media[] | undefined) {
-    return (media ?? [])
-      .sort((a, b) => a.position - b.position)
-      .map(item => ({
-        id: item.id,
-        type: item.type,
-        url: item.url,
-        thumbnailUrl: item.thumbnailUrl,
-        width: item.width,
-        height: item.height,
-        blurHash: item.blurHash,
-      }));
+    return toMediaViews(media ?? [], this.media.sign);
   }
 
   private authorOf(row: { author: AuthorSource | null; visibility?: PostVisibility }) {
-    return toAuthorView(row.author, { isAnonymous: row.visibility === PostVisibility.ANONYMOUS });
+    return toAuthorView(row.author, { sign: this.media.sign, isAnonymous: row.visibility === PostVisibility.ANONYMOUS });
   }
 
   private async viewerState(viewerId: string, idsByType: Map<FeedItemType, string[]>) {
@@ -531,10 +497,7 @@ export class FeedService {
     };
   }
 
-  /**
-   * The behavioural half of the ranking input: which categories this member has
-   * actually engaged with, and what they asked to stop seeing.
-   */
+  /** The behavioural half of the ranking input: which categories this member has actually engaged with, and what they asked to stop seeing. */
   private async viewerSignals(
     viewerId: string,
     profile: { cityId: string | null; journeyStage: string | null; interests: string[] },

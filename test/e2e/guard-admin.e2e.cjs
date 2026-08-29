@@ -99,7 +99,9 @@ async function makeStaff(tag, roleCode) {
 
   r = await api(safeguarding.token, 'GET', '/admin/guard/cases');
   check('safeguarding staff can → 200', r.status === 200, r.body?.error);
-  check('both cases listed', r.body?.data?.length === 2, r.body?.data?.length);
+  check('both of this run\'s cases are listed',
+    [guardThreadId, quietThreadId].every(id => r.body?.data?.some(c => c.id === id)),
+    r.body?.data?.length);
   check('the urgent one is FIRST, ahead of the older quiet one',
     r.body?.data?.[0]?.id === guardThreadId, r.body?.data?.map(c => `${c.risk?.level}:${c.subject}`));
   check('meta.urgentCount surfaces the number that should never sit', r.body?.meta?.urgentCount >= 1, r.body?.meta);
@@ -237,8 +239,7 @@ async function makeStaff(tag, roleCode) {
   check('safeguarding staff can add a phrase → 200', r.status === 200, r.body?.error);
   const newTermId = r.body?.data?.id;
 
-  // The scanner caches for two minutes, so this proves the row is right rather
-  // than waiting out the TTL in a test.
+  // The scanner caches for two minutes, so this proves the row is right rather than waiting out the TTL in a test.
   const stored = await prisma.riskTerm.findUnique({ where: { id: newTermId } });
   check('stored lowercase and active', stored?.pattern === 'e2e-brand-new-scam-phrase' && stored?.isActive === true, stored);
 

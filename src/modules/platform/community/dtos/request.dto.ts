@@ -18,12 +18,7 @@ import {
 } from 'class-validator';
 import { PageOptionsDto } from '@/common';
 
-/**
- * All string fields are trimmed before validation, and a whitespace-only value
- * counts as empty (1.11). Doing it in a transform rather than in each service
- * means the length rules below are measured against what will actually be
- * stored.
- */
+/** All string fields are trimmed before validation, and a whitespace-only value counts as empty (1.11). */
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 
 const CsvArray = () =>
@@ -94,7 +89,9 @@ export class CreateRequestDto {
   @IsArray()
   @ArrayMaxSize(5)
   @IsOptional()
-  mediaIds?: string[];
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  mediaKeys?: string[];
 }
 
 export class UpdateRequestDto {
@@ -142,7 +139,9 @@ export class UpdateRequestDto {
   @IsArray()
   @ArrayMaxSize(5)
   @IsOptional()
-  mediaIds?: string[];
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  mediaKeys?: string[];
 }
 
 export class ListRequestsDto extends PageOptionsDto {

@@ -1,21 +1,12 @@
-// ═══════════════════════════════════════════════════════════════════════════════
-// Circl Trust — verification and unified reputation
+// ═══════════════════════════════════════════════════════════════════════════════ Circl Trust — verification and unified reputation
 //
-// Two rules from 2.1.4 shape everything here, and they are the reason the tables
-// hang off the USER and not off a listing:
+// Two rules from 2.1.4 shape everything here, and they are the reason the tables hang off the USER and not off a listing:
 //
-//   Trust checks belong to the person. A member who verified their identity to
-//   use Connect has verified their identity, full stop. Professionals reads the
-//   same record, Commerce reads the same record.
+// Trust checks belong to the person.
 //
-//   Reviews are keyed by the subject user. One reputation, visible everywhere —
-//   a community-service review shows on a professional profile, and a
-//   professional review shows anywhere that person appears.
+// Reviews are keyed by the subject user.
 //
-// Verification is NOT built this release (D13, and confirmed by the product
-// owner). The table exists so the next release adds a flow rather than a data
-// model, and every check reads NOT_STARTED except EMAIL, granted at signup.
-// ═══════════════════════════════════════════════════════════════════════════════
+// Verification is NOT built this release (D13, and confirmed by the product owner).
 
 model TrustCheck {
   id     String @id @default(uuid())
@@ -25,8 +16,7 @@ model TrustCheck {
   check  TrustCheckType   @map("check")
   status TrustCheckStatus @default(NOT_STARTED) @map("status")
 
-  // CREDENTIAL is scoped to a profession code; verifying one never satisfies
-  // another (2.7.4). Null for the unscoped checks.
+  // CREDENTIAL is scoped to a profession code; verifying one never satisfies another (2.7.4).
   categoryCode String? @map("category_code")
 
   documentType    String?   @map("document_type")
@@ -49,10 +39,7 @@ model TrustCheck {
 
 // ─── Reputation ──────────────────────────────────────────────────────────────
 
-// One review table, keyed by subject user, with a context (2.1.4). Do not add a
-// store_reviews table: a seller who is also a professional and also helps in
-// Community has one reputation, and splitting it by section is how a trusted
-// member arrives in Commerce looking like a stranger.
+// One review table, keyed by subject user, with a context (2.1.4).
 model Review {
   id String @id @default(uuid())
 
@@ -68,15 +55,12 @@ model Review {
   context  ReviewContext @map("context")
   sourceId String?       @map("source_id")
 
-  // PRIOR_WORK is self-attested reputation portability: excluded from the average
-  // and sorted last (2.1.4). Sent per review rather than inferred from `context`,
-  // so the rule can change server-side without an app release.
+  // PRIOR_WORK is self-attested reputation portability: excluded from the average and sorted last (2.1.4).
   countsToAverage Boolean @default(true) @map("counts_to_average")
 
   tags Json? @map("tags")
 
-  // Denormalised at write time so the immigrant-friendly filter (D11) is an index
-  // scan rather than a join back through the reviewer's profile on every query.
+  // Denormalised at write time so the immigrant-friendly filter (D11) is an index scan rather than a join back through the reviewer's profile on every query.
   reviewerCountryOfOrigin String? @map("reviewer_country_of_origin")
 
   requestId String?           @map("request_id")
@@ -95,9 +79,7 @@ model Review {
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz
 
-  // One review per reviewer per source. PRIOR_WORK carries no source, and
-  // Postgres treats NULLs as distinct, so "one per pair, ever" (2.5.2) is a
-  // second partial unique index created in the migration.
+  // One review per reviewer per source.
   @@unique([reviewerId, context, sourceId])
   @@index([subjectUserId, countsToAverage, createdAt])
   @@index([subjectUserId, context])
@@ -105,8 +87,7 @@ model Review {
   @@map("reviews")
 }
 
-// A maintained rollup, so a profile card never sums a page of reviews and a
-// browse query never aggregates per row. Recomputed on every review write.
+// A maintained rollup, so a profile card never sums a page of reviews and a browse query never aggregates per row.
 model ReputationSummary {
   userId String @id @map("user_id")
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -127,7 +108,6 @@ model ReputationSummary {
   priorWorkCount Int @default(0) @map("prior_work_count")
 
   // D11: reviewers whose countryOfOrigin is set and is not the United Kingdom.
-  // Qualifies at 3 or more such reviews averaging 4 stars or above.
   immigrantReviewCount   Int     @default(0) @map("immigrant_review_count")
   immigrantReviewAverage Float   @default(0) @map("immigrant_review_average")
   isImmigrantFriendly    Boolean @default(false) @map("is_immigrant_friendly")

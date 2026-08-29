@@ -5,17 +5,7 @@ import { ApiErrorCode, ApiException, buildPageMeta, toJsonOrUndefined } from '@/
 import { TaxonomyService } from '../../shared';
 import { ListRiskTermsDto, UpsertRiskTermDto, UpsertTaxonomyTermDto } from '../dtos/admin.dto';
 
-/**
- * Taxonomy and lexicon administration.
- *
- * This is what makes two of the spec's promises real rather than aspirational:
- * "reword a label without an app release" (0.8), and Guard's lexicon being
- * editable the moment safeguarding staff see a phrase used rather than at the
- * next deploy.
- *
- * Every write bumps the taxonomy version, which is what invalidates the caches in
- * every running process and the ETag the client is holding.
- */
+/** Taxonomy and lexicon administration. */
 @Injectable()
 export class AdminTaxonomyService {
   constructor(
@@ -71,20 +61,13 @@ export class AdminTaxonomyService {
       },
     });
 
-    // Bumps the version stamp, which invalidates every process's cache and the
-    // client's ETag in one write.
+    // Bumps the version stamp, which invalidates every process's cache and the client's ETag in one write.
     const version = await this.taxonomy.bumpVersion();
 
     return { term, version: version.toISOString() };
   }
 
-  /**
-   * Deactivates rather than deletes.
-   *
-   * Content already carries this code. Deleting the term would leave rows
-   * pointing at a label that no longer exists, and the client would render a raw
-   * code to a member.
-   */
+  /** Deactivates rather than deletes. */
   async deactivate(kind: TaxonomyKind, code: string) {
     const term = await this.database.taxonomyTerm.findUnique({
       where: { kind_code: { kind, code } },
@@ -152,8 +135,7 @@ export class AdminTaxonomyService {
       },
     });
 
-    // The scanner reloads within its own short TTL, so a phrase added now is
-    // matching within a couple of minutes — not at the next deploy.
+    // The scanner reloads within its own short TTL, so a phrase added now is matching within a couple of minutes — not at the next deploy.
     return {
       id: term.id,
       category: term.category,
@@ -168,8 +150,7 @@ export class AdminTaxonomyService {
 
     if (!term) throw ApiException.notFound('That term could not be found.');
 
-    // Deactivated rather than deleted, so a phrase staff turned off stays off
-    // through the next seed run.
+    // Deactivated rather than deleted, so a phrase staff turned off stays off through the next seed run.
     await this.database.riskTerm.update({ where: { id }, data: { isActive: false } });
 
     return { id, isActive: false };

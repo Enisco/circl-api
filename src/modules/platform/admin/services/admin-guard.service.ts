@@ -2,7 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { GuardThreadState, Prisma, RiskLevel, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiException, buildPageMeta } from '@/common';
-import { TaxonomyService, authorSelect, toAuthorView } from '../../shared';
+import {
+  MediaService,
+  TaxonomyService,
+  authorSelect,
+  toAuthorView,
+} from '../../shared';
 import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
 import { ListGuardCasesDto, UpdateGuardCaseDto } from '../dtos/admin.dto';
 
@@ -14,20 +19,14 @@ const RISK_ORDER: RiskLevel[] = [
   RiskLevel.NONE,
 ];
 
-/**
- * The Guard case queue, kept separate from ordinary moderation.
- *
- * These are members who chose a private channel over a public post, often about
- * something they are frightened of. Working that is a different job from
- * triaging spam, and the `guard:read` / `guard:manage` permissions exist so it
- * can be a different set of people.
- */
+/** The Guard case queue, kept separate from ordinary moderation. */
 @Injectable()
 export class AdminGuardService {
   constructor(
     private readonly database: PrismaService,
     private readonly taxonomy: TaxonomyService,
     private readonly conversations: ConversationFactoryService,
+    private readonly media: MediaService,
   ) {}
 
   async list(query: ListGuardCasesDto) {
@@ -74,8 +73,8 @@ export class AdminGuardService {
             }
           : null,
         state: row.state,
-        member: toAuthorView(row.user),
-        assignedTo: row.assignedTo ? toAuthorView(row.assignedTo) : null,
+        member: toAuthorView(row.user, { sign: this.media.sign }),
+        assignedTo: row.assignedTo ? toAuthorView(row.assignedTo, { sign: this.media.sign }) : null,
         risk: {
           level: row.riskLevel,
           category: row.riskCategory,
@@ -86,8 +85,7 @@ export class AdminGuardService {
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt.toISOString(),
       })),
-      // The number that should never sit. A dashboard that does not surface it
-      // separately buries the whole point of ranking by urgency.
+      // The number that should never sit.
       meta: buildPageMeta(query, total, { urgentCount }),
     };
   }
@@ -104,8 +102,8 @@ export class AdminGuardService {
       id: thread.id,
       subject: thread.subject,
       state: thread.state,
-      member: toAuthorView(thread.user),
-      assignedTo: thread.assignedTo ? toAuthorView(thread.assignedTo) : null,
+      member: toAuthorView(thread.user, { sign: this.media.sign }),
+      assignedTo: thread.assignedTo ? toAuthorView(thread.assignedTo, { sign: this.media.sign }) : null,
       risk: {
         level: thread.riskLevel,
         category: thread.riskCategory,
@@ -117,10 +115,7 @@ export class AdminGuardService {
     };
   }
 
-  /**
-   * Assign or move a case. Assigning also joins the staff member to the thread,
-   * because a case you cannot read is a case you cannot work.
-   */
+  /** Assign or move a case. */
   async update(adminId: string, id: string, dto: UpdateGuardCaseDto) {
     const thread = await this.database.guardThread.findUnique({ where: { id } });
 

@@ -10,22 +10,17 @@ const permissions: Permission[] = [
   // Special. `manage:all` short-circuits every check in PermissionGuard.
   { name: 'Manage all', code: 'manage:all', group: 'special' },
 
-  // ── Moderation ────────────────────────────────────────────────────────────
-  // The queue a human works through: reported content, and every anonymous post,
-  // which is moderated whether or not it was reported.
+  // ── Moderation ──────────────────────────────────────────────────────────── The queue a human works through: reported content, and every anonymous post, which is moderated whether or not it was reported.
   { name: 'Read moderation queue', code: 'moderation:read', group: 'moderation' },
   { name: 'Decide moderation items', code: 'moderation:decide', group: 'moderation' },
 
-  // ── Circl Guard ───────────────────────────────────────────────────────────
-  // Separate from ordinary moderation on purpose: a member in danger is a
-  // different job from a spam report, and not everyone who triages spam should
-  // be reading a domestic-abuse disclosure.
+  // ── Circl Guard ─────────────────────────────────────────────────────────── Separate from ordinary moderation on purpose: a member in danger is a different job from a spam report, and not everyone who triages spam should be reading a domestic-abuse disclosure.
   { name: 'Read the Guard queue', code: 'guard:read', group: 'guard' },
   { name: 'Work Guard cases', code: 'guard:manage', group: 'guard' },
 
-  // ── Taxonomy ──────────────────────────────────────────────────────────────
-  // What makes "reword a label without an app release" real.
+  // ── Taxonomy ────────────────────────────────────────────────────────────── What makes "reword a label without an app release" real.
   { name: 'Manage taxonomy', code: 'taxonomy:manage', group: 'taxonomy' },
+  { name: 'Run a scheduled job on demand', code: 'jobs:run', group: 'platform' },
 
   // ── Members ───────────────────────────────────────────────────────────────
   { name: 'Read members', code: 'users:read', group: 'users' },

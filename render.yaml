@@ -92,36 +92,25 @@ services:
       - key: RESEND_API_KEY
         sync: false
 
-      # ─── AWS (SES email provider) ──────────────────────────────────────────────
+      # ─── AWS (S3) ──────────────────────────────────────────────────────────────
+      # Must be the bucket's own region: a signature minted for another one is
+      # rejected as invalid rather than as misconfigured.
       - key: AWS_REGION
-        value: eu-west-2
+        value: eu-north-1
       - key: AWS_ACCESS_KEY_ID
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
         sync: false
 
       # ─── Media storage (S3) ────────────────────────────────────────────────────
-      # MEDIA_BUCKET is the switch: set it and uploads presign straight to S3.
-      # Left unset, the API falls back to a local-disk driver whose files do not
-      # survive a deploy, so this must be set on any deployed environment.
+      # S3 is the only driver, and AWS_* above are its credentials. Both are
+      # required and the service will not start without them, which is
+      # deliberate: the alternative is an instance that boots, accepts uploads
+      # and stores none of them.
       - key: MEDIA_BUCKET
-        sync: false
-      - key: MEDIA_REGION
-        sync: false
-      - key: MEDIA_CDN_URL
-        sync: false
-      # Optional: give media its own IAM user rather than reusing the SES keys.
-      # It needs only PutObject, GetObject, HeadObject and DeleteObject on the
-      # one bucket.
-      - key: MEDIA_ACCESS_KEY_ID
-        sync: false
-      - key: MEDIA_SECRET_ACCESS_KEY
         sync: false
       - key: MEDIA_UPLOAD_URL_TTL_SECONDS
         value: 900
-      # Absolute origin this service is reachable at.
-      - key: PUBLIC_BASE_URL
-        sync: false
 
       # ─── Firebase Cloud Messaging ──────────────────────────────────────────────
       - key: FIREBASE_PROJECT_ID

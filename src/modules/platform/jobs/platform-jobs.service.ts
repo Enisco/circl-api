@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '@/infrastructure';
+import { ApiException } from '@/common';
 import { MediaUploadService } from '../media/services/media-upload.service';
 import { BookingService } from '../professionals/services/booking.service';
 import { ProfessionalsHomeService } from '../professionals/services/professionals-home.service';
@@ -10,18 +11,7 @@ import { AutoGuideService } from '../intelligence/services/auto-guide.service';
 import { DemandService } from '../intelligence/services/demand.service';
 import { MetricsService } from '../intelligence/services/metrics.service';
 
-/**
- * The scheduled work that keeps the platform's promises true between requests.
- *
- * Every job here exists because something in the spec is stated as a fact the
- * member can rely on — a booking closing after 7 days, an enquiry going stale
- * after 30, an orphaned upload not lingering, a dashboard being current. A fact
- * nothing enforces is a lie with a delay on it.
- *
- * Each runs independently and logs its own failure: one job erroring must not
- * stop the others, and a silent failure here is invisible until someone notices
- * a number is wrong.
- */
+/** The scheduled work that keeps the platform's promises true between requests. */
 @Injectable()
 export class PlatformJobsService {
   private readonly logger = new Logger(PlatformJobsService.name);
@@ -38,10 +28,7 @@ export class PlatformJobsService {
     private readonly metrics: MetricsService,
   ) {}
 
-  /**
-   * A booking auto-completes 7 days after delivery (2.9.5). The date is already
-   * on the record and shown to both parties, so this is what makes it true.
-   */
+  /** A booking auto-completes 7 days after delivery (2.9.5). */
   @Cron(CronExpression.EVERY_HOUR, { name: 'bookings.auto-complete' })
   async autoCompleteBookings() {
     await this.run('bookings.auto-complete', async () => {
@@ -51,11 +38,7 @@ export class PlatformJobsService {
     });
   }
 
-  /**
-   * D24: an enquiry nobody confirms goes stale after 30 days. It is never
-   * auto-completed — confirming that someone received groceries they may never
-   * have received is a claim Circl cannot make.
-   */
+  /** D24: an enquiry nobody confirms goes stale after 30 days. */
   @Cron(CronExpression.EVERY_HOUR, { name: 'enquiries.expire' })
   async expireEnquiries() {
     await this.run('enquiries.expire', async () => {
@@ -65,11 +48,7 @@ export class PlatformJobsService {
     });
   }
 
-  /**
-   * Requests with a `neededOn` that has passed are no longer open questions.
-   * Leaving them OPEN inflates every "questions we cannot answer" metric with
-   * questions that stopped mattering.
-   */
+  /** Requests with a `neededOn` that has passed are no longer open questions. */
   @Cron(CronExpression.EVERY_DAY_AT_3AM, { name: 'requests.expire' })
   async expireRequests() {
     await this.run('requests.expire', async () => {
@@ -86,11 +65,7 @@ export class PlatformJobsService {
     });
   }
 
-  /**
-   * Orphan media is deleted after 24 hours if never attached to a post (0.11).
-   * The bytes go too, not just the row — an abandoned composer should not leave
-   * a member's photographs sitting in a bucket.
-   */
+  /** Orphan media is deleted after 24 hours if never attached to a post (0.11). */
   @Cron(CronExpression.EVERY_HOUR, { name: 'media.sweep-orphans' })
   async sweepOrphanMedia() {
     await this.run('media.sweep-orphans', async () => {
@@ -112,11 +87,7 @@ export class PlatformJobsService {
     });
   }
 
-  /**
-   * `medianResponseMinutes` is one definition read by three surfaces: the
-   * profile, the dashboard and the maxResponseHours filter (2.11). It is a scan
-   * over messages, so it is computed here rather than per read.
-   */
+  /** `medianResponseMinutes` is one definition read by three surfaces: the profile, the dashboard and the maxResponseHours filter (2.11). */
   @Cron(CronExpression.EVERY_DAY_AT_4AM, { name: 'professionals.response-times' })
   async recomputeResponseTimes() {
     await this.run('professionals.response-times', async () => {
@@ -126,11 +97,7 @@ export class PlatformJobsService {
     });
   }
 
-  /**
-   * Circl Intelligence: the demand rollup behind Guided Creation. Rebuilt on a
-   * schedule so a composer never waits on an aggregate over the whole event
-   * stream.
-   */
+  /** Circl Intelligence: the demand rollup behind Guided Creation. */
   @Cron(CronExpression.EVERY_2_HOURS, { name: 'intelligence.demand' })
   async rebuildDemand() {
     await this.run('intelligence.demand', async () => {
@@ -140,11 +107,7 @@ export class PlatformJobsService {
     });
   }
 
-  /**
-   * Circl Intelligence: Auto-Guides. Drafts a guide when three or more members
-   * have asked the same question, and queues it for a human — nothing published
-   * here reaches a member unreviewed.
-   */
+  /** Circl Intelligence: Auto-Guides. */
   @Cron(CronExpression.EVERY_DAY_AT_2AM, { name: 'intelligence.auto-guides' })
   async draftAutoGuides() {
     await this.run('intelligence.auto-guides', async () => {
@@ -165,17 +128,45 @@ export class PlatformJobsService {
     });
   }
 
-  /**
-   * One wrapper so every job logs the same way and none can take the others
-   * down with it. Silence means nothing needed doing, which is worth keeping
-   * quiet: a job that logs every hour whether or not it did anything trains
-   * people to ignore its output.
-   */
+  /** Runs one job now, by name. */
+  private onDemand = false;
+
+  async runNow(name: string): Promise<string> {
+    const jobs: Record<string, () => Promise<void>> = {
+      'bookings.auto-complete': () => this.autoCompleteBookings(),
+      'enquiries.expire': () => this.expireEnquiries(),
+      'requests.expire': () => this.expireRequests(),
+      'media.sweep-orphans': () => this.sweepOrphanMedia(),
+      'idempotency.sweep': () => this.sweepIdempotency(),
+      'professionals.response-times': () => this.recomputeResponseTimes(),
+      'intelligence.demand': () => this.rebuildDemand(),
+      'intelligence.auto-guides': () => this.draftAutoGuides(),
+      'intelligence.metrics': () => this.rebuildMetrics(),
+    };
+
+    const job = jobs[name];
+
+    if (!job) {
+      throw ApiException.notFound(
+        `"${name}" is not a job. One of: ${Object.keys(jobs).sort().join(', ')}.`,
+      );
+    }
+
+    this.onDemand = true;
+
+    try {
+      await job();
+    } finally {
+      this.onDemand = false;
+    }
+
+    return name;
+  }
+
+  /** One wrapper so every job logs the same way and none can take the others down with it. */
   private async run(name: string, work: () => Promise<string | null>): Promise<void> {
-    // Cron jobs run per instance. On a platform that scales horizontally this
-    // wants a lock; with a single web service it is correct as it stands, and
-    // every job here is idempotent so a double-run is harmless rather than wrong.
-    if (this.config.get<string>('DISABLE_SCHEDULED_JOBS') === 'true') return;
+    // Cron jobs run per instance.
+    if (!this.onDemand && this.config.get<string>('DISABLE_SCHEDULED_JOBS') === 'true') return;
 
     const started = Date.now();
 
@@ -187,6 +178,9 @@ export class PlatformJobsService {
       }
     } catch (error) {
       this.logger.error(`${name} failed: ${(error as Error).message}`, (error as Error).stack);
+
+      // On the schedule a failure is logged and the next job still runs: one bad job must not take the others down.
+      if (this.onDemand) throw error;
     }
   }
 }

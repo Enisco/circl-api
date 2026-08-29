@@ -11,7 +11,12 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
-import { CreateGuardThreadDto, ListGuardThreadsDto } from '../dtos/guard.dto';
+import {
+  CreateGuardRequestDto,
+  CreateGuardThreadDto,
+  ListGuardThreadsDto,
+  ListSupportResourcesDto,
+} from '../dtos/guard.dto';
 import { GuardService } from '../services/guard.service';
 
 @Controller('guard')
@@ -35,6 +40,36 @@ export class GuardController {
     const data = await this.guard.createThread(userId, dto);
 
     return { data, message: 'Sent to the Circl team' };
+  }
+
+  @Post('requests')
+  @Idempotent()
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'A private request to Circl',
+    description:
+      'What the private help composer posts, and where the PRIVATE_TO_CIRCL route out of 1.2.3 ' +
+      'lands. Creates or reuses the member\'s SUPPORT conversation and posts the body as a ' +
+      'message: one support thread per member, forever, so the team sees one history rather ' +
+      'than fragments (D36). No response time is promised (D35).',
+  })
+  async createRequest(@CurrentUserId() userId: string, @Body() dto: CreateGuardRequestDto) {
+    const { data } = await this.guard.createRequest(userId, dto);
+
+    return { data, message: 'Sent to the Circl team' };
+  }
+
+  @Get('resources')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Crisis and advice lines',
+    description:
+      'Served from the API rather than shipped in the binary so a number that changes is fixed ' +
+      'the same day. The client keeps its own list as the offline fallback and treats an empty ' +
+      'array as a failure, so this never errors on an unknown country (D39). Crisis rows first.',
+  })
+  async resources(@Query() query: ListSupportResourcesDto) {
+    return this.guard.resources(query.countryCode ?? 'GB');
   }
 
   @Get('threads')

@@ -17,11 +17,7 @@ export interface OpeningHoursView {
   closeMinutes: number | null;
 }
 
-/**
- * Exactly 7 entries, Monday first, whatever is stored (4.5.1). The client already
- * renders "Open until 8pm" and "Opens Monday 9am" from this shape, so a short
- * array would break it.
- */
+/** Exactly 7 entries, Monday first, whatever is stored (4.5.1). */
 export const toOpeningHours = (
   rows: Array<{ day: Weekday; openMinutes: number | null; closeMinutes: number | null }>,
 ): OpeningHoursView[] => {
@@ -34,13 +30,7 @@ export const toOpeningHours = (
   }));
 };
 
-/**
- * Computed server-side, so the "Open now" filter and the badge always agree
- * (4.4.2).
- *
- * The seller's manual status overrides the hours: a store on holiday is not open
- * even at 10am on a Tuesday.
- */
+/** Computed server-side, so the "Open now" filter and the badge always agree (4.4.2). */
 export const isOpenNow = (
   status: StoreStatus,
   timezone: string,
@@ -74,15 +64,7 @@ export const isOpenNow = (
   return withinToday || spilledFromYesterday;
 };
 
-/**
- * The address, redacted in the serialiser rather than in the client (4.5.1).
- *
- * When `hidesExactAddress` is set, the precise point never leaves the server:
- * the coordinate is rounded to roughly a kilometre and line1 and postcode are
- * dropped entirely. Many of these shops are run by women from their kitchen, and
- * enforcing this client-side would mean the real address travelled over the wire
- * anyway.
- */
+/** The address, redacted in the serialiser rather than in the client (4.5.1). */
 export const toAddressView = (store: Store) => {
   if (store.hidesExactAddress) {
     return {

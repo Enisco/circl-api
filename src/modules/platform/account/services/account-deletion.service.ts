@@ -17,20 +17,7 @@ const attemptsKey = (userId: string) => `deletion:attempts:${userId}`;
 const TOMBSTONE_NAME = 'Deleted';
 const TOMBSTONE_SURNAME = 'account';
 
-/**
- * Account deletion and anonymisation (spec 0.15).
- *
- * Confirmed by an email one-time code, then anonymised IMMEDIATELY. No grace
- * period, no soft-delete window, no reversal.
- *
- * "Anonymised" here is not a flag on a row that still holds the data — the
- * personal data is destroyed in the same transaction. What survives is the
- * content: a request thread, a booking, an enquiry and a review are shared
- * records, and erasing one side's half leaves the other person with a
- * conversation full of holes and an agreement they can no longer evidence.
- * Anonymising removes the person from the record without removing the record,
- * which is what the other party is entitled to keep (0.15.3).
- */
+/** Account deletion and anonymisation (spec 0.15). */
 @Injectable()
 export class AccountDeletionService {
   private readonly logger = new Logger(AccountDeletionService.name);
@@ -72,11 +59,7 @@ export class AccountDeletionService {
     await this.cache.set(codeKey(userId), await Util.generateHash(code), CODE_TTL_SECONDS);
     await this.cache.set(attemptsKey(userId), attempts + 1, 3600);
 
-    // The same OTP mechanics, but a SEPARATE cache key from the login code on
-    // purpose: a code a member requested to sign in must not also be able to
-    // delete their account. It goes to the address on the account, never to one
-    // supplied in the request — that is what proves the person deleting it can
-    // read that inbox, and what makes a deletion from an unlocked phone fail.
+    // The same OTP mechanics, but a SEPARATE cache key from the login code on purpose: a code a member requested to sign in must not also be able to delete their account.
     this.eventBus.publish(
       new UserLoginOtpEvent(user.email, user.email, user.firstName ?? 'there', code),
     );
@@ -124,17 +107,10 @@ export class AccountDeletionService {
     await this.cache.delete(codeKey(userId), attemptsKey(userId));
   }
 
-  /**
-   * The anonymisation itself, field by field (0.15.2).
-   *
-   * Everything a viewer sees afterwards resolves through the same `author`
-   * object, so no screen needs special handling: a deleted member renders as a
-   * grey avatar with the name "Deleted account".
-   */
+  /** The anonymisation itself, field by field (0.15.2). */
   private async anonymise(userId: string, email: string): Promise<void> {
     const now = new Date();
-    // One-way, so the same address cannot silently re-register onto the old
-    // record and a 410 can be returned rather than a confusing 404.
+    // One-way, so the same address cannot silently re-register onto the old record and a 410 can be returned rather than a confusing 404.
     const emailHash = createHash('sha256').update(email.toLowerCase()).digest('hex');
 
     await this.database.$transaction(async tx => {
@@ -157,8 +133,7 @@ export class AccountDeletionService {
         },
       });
 
-      // Date of birth, gender, country of origin, city, heritage, languages,
-      // interests and journey stage all go.
+      // Date of birth, gender, country of origin, city, heritage, languages, interests and journey stage all go.
       await tx.userProfile.updateMany({
         where: { userId },
         data: {
@@ -179,8 +154,7 @@ export class AccountDeletionService {
         },
       });
 
-      // ── Credentials and devices: revoked immediately ───────────────────────
-      // A logged-in second device stops working on its next request.
+      // ── Credentials and devices: revoked immediately ─────────────────────── A logged-in second device stops working on its next request.
       await tx.userAuth.updateMany({
         where: { userId },
         data: { password: null, isBlocked: true },
@@ -195,12 +169,7 @@ export class AccountDeletionService {
         data: { devicePushToken: null },
       });
 
-      // ── Uploads: deleted from storage, not just dereferenced ───────────────
-      // Their avatar, any identity document, and anything reserved but never
-      // attached. Media already attached to a post stays, because the post stays.
-      //
-      // Split rather than an `in` containing null: Postgres (and Prisma) treat
-      // NULL as unmatched by IN, so the unattached rows would survive silently.
+      // ── Uploads: deleted from storage, not just dereferenced ─────────────── Their avatar, any identity document, and anything reserved but never attached.
       await tx.media.deleteMany({
         where: {
           uploadedById: userId,
@@ -228,20 +197,13 @@ export class AccountDeletionService {
         data: { isAcceptingWork: false, deletedAt: now },
       });
 
-      // ── Everything else stays, re-attributed ───────────────────────────────
-      // Posts, guides, comments, replies, reviews they wrote; messages they sent;
-      // reviews about them; moderation reports either way. All kept (0.15.2).
+      // ── Everything else stays, re-attributed ─────────────────────────────── Posts, guides, comments, replies, reviews they wrote; messages they sent; reviews about them; moderation reports either way.
     });
 
     this.logger.log(`Anonymised account ${userId}`);
   }
 
-  /**
-   * Open work at the moment of deletion (0.15.4).
-   *
-   * Deletion is never blocked, and the counterpart is told. Somebody who wants
-   * to leave should not be held there by a booking someone else has not closed.
-   */
+  /** Open work at the moment of deletion (0.15.4). */
   private async closeOpenWork(tx: Prisma.TransactionClient, userId: string, now: Date) {
     const openStates = [
       JobState.PENDING_ACCEPTANCE,
@@ -316,22 +278,16 @@ export class AccountDeletionService {
       }
     }
 
-    // An unresolved community request they posted is closed, and helpers who
-    // responded are notified once.
+    // An unresolved community request they posted is closed, and helpers who responded are notified once.
     await tx.communityRequest.updateMany({
       where: { authorId: userId, status: 'OPEN', deletedAt: null },
       data: { status: 'CANCELLED' },
     });
 
-    // An open dispute continues against the anonymised party: Circl keeps the
-    // evidence already submitted, and no new evidence can come from this side
-    // (0.15.4). Nothing is closed here on purpose.
+    // An open dispute continues against the anonymised party: Circl keeps the evidence already submitted, and no new evidence can come from this side (0.15.4).
   }
 
-  /**
-   * Whether an address belonged to a deleted account, so registration can say so
-   * rather than failing confusingly.
-   */
+  /** Whether an address belonged to a deleted account, so registration can say so rather than failing confusingly. */
   async isDeletedEmail(email: string): Promise<boolean> {
     const hash = createHash('sha256').update(email.toLowerCase()).digest('hex');
     const existing = await this.database.user.findUnique({

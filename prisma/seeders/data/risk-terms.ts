@@ -1,19 +1,6 @@
 import { RiskCategory } from '@prisma/client';
 
-/**
- * Circl Guard's risk lexicon.
- *
- * The scanner is a deterministic phrase match, not a model. Three reasons:
- * it has to be auditable when someone asks why a post was escalated, it has to
- * run in-request without a network hop, and safeguarding staff have to be able to
- * add a phrase the moment they see it used — which is a database row, not a
- * deploy.
- *
- * Weights are additive and tuned so a single unambiguous phrase reaches HIGH on
- * its own, while softer phrases need to co-occur. The scanner never blocks a
- * post; it only decides where the post lands in the admin queue. False positives
- * cost a reviewer thirty seconds. False negatives cost more than that.
- */
+/** Circl Guard's risk lexicon. */
 export const riskTermSeeds: Array<[RiskCategory, string, number]> = [
   // ── Self-harm and suicidal ideation ───────────────────────────────────────
   [RiskCategory.SELF_HARM, 'kill myself', 60],

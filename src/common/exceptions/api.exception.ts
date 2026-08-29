@@ -7,20 +7,13 @@ export interface ApiErrorDetail {
 }
 
 export interface ApiExceptionOptions {
-  /** Extra payload returned in `data`. Spec 2.1.6: "already done" hands back the
-   *  existing record so the client can open it rather than showing an error. */
+  /** Extra payload returned in `data`. Spec 2.1.6: "already done" hands back the existing record so the client can open it rather than showing an error. */
   data?: unknown;
-  /** One entry per offending field, so the client attaches the message to the
-   *  right input (0.4). */
+  /** One entry per offending field, so the client attaches the message to the right input (0.4). */
   details?: ApiErrorDetail[];
 }
 
-/**
- * The one exception every service throws.
- *
- * `code` is what the client branches on and `message` is what it shows; the two
- * are deliberately separate so wording can change without breaking a branch.
- */
+/** The one exception every service throws. */
 export class ApiException extends HttpException {
   readonly code: ApiErrorCode;
   readonly details?: ApiErrorDetail[];
@@ -46,11 +39,7 @@ export class ApiException extends HttpException {
     return new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, code, message, options);
   }
 
-  /**
-   * 401 must mean "the access token is invalid or expired", nothing else — the
-   * client logs the user out on it (0.2). Use `forbidden` for a permissions
-   * problem.
-   */
+  /** 401 must mean "the access token is invalid or expired", nothing else — the client logs the user out on it (0.2). */
   static unauthorized(message: string, code: ApiErrorCode = ApiErrorCode.UNAUTHORIZED) {
     return new ApiException(HttpStatus.UNAUTHORIZED, code, message);
   }

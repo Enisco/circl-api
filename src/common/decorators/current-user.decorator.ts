@@ -1,11 +1,6 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
 
-/**
- * The authenticated user, as returned by JwtStrategy.validate.
- *
- * Only the identity and the role tree are on it — anything else a handler needs
- * is read fresh, because a token can outlive a profile edit.
- */
+/** The authenticated user, as returned by JwtStrategy.validate. */
 export interface AuthenticatedUser {
   id: string;
   email: string;
@@ -32,11 +27,7 @@ export const CurrentUserId = createParamDecorator(
     (context.switchToHttp().getRequest().user as AuthenticatedUser)?.id,
 );
 
-/**
- * The user id when a token was supplied, `null` when the route is public and the
- * caller is anonymous. Used by the endpoints that are readable signed-out but
- * personalise when signed in.
- */
+/** The user id when a token was supplied, `null` when the route is public and the caller is anonymous. */
 export const OptionalUserId = createParamDecorator(
   (_data: unknown, context: ExecutionContext): string | null =>
     (context.switchToHttp().getRequest().user as AuthenticatedUser)?.id ?? null,

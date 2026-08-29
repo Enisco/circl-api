@@ -1,18 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/infrastructure';
 
-/**
- * Blocking is one list across the whole app (1.0.4, 1.8.2).
- *
- * It is symmetric in effect: neither party sees the other's content in feeds,
- * lists or search, and neither can message the other. It is deliberately NOT
- * symmetric in storage — who blocked whom matters for the unblock action and for
- * moderation.
- *
- * Content already on screen is returned with `viewer.isBlocked = true` rather
- * than removed, so the unblock action stays reachable (1.2.2). Hiding it
- * server-side makes offering that action impossible.
- */
+/** Blocking is one list across the whole app (1.0.4, 1.8.2). */
 @Injectable()
 export class BlockingService {
   constructor(private readonly database: PrismaService) {}
@@ -52,12 +41,7 @@ export class BlockingService {
     return block !== null;
   }
 
-  /**
-   * A Prisma `where` fragment excluding blocked authors from a list.
-   *
-   * Returns undefined when there is nothing to exclude, so callers can spread it
-   * without adding an empty `notIn` to every query.
-   */
+  /** A Prisma `where` fragment excluding blocked authors from a list. */
   buildExclusion(blockedIds: string[], authorField = 'authorId') {
     if (!blockedIds.length) return undefined;
 

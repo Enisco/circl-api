@@ -106,9 +106,9 @@ export class OfferService {
       dto.categoryCode,
       'categoryCode',
     );
-    await this.cities.assertValid(dto.cityId);
+    const city = await this.cities.assertValid(dto.cityId);
 
-    const media = await this.media.validate(dto.mediaIds, userId);
+    const media = await this.media.validate(dto.mediaKeys, userId);
 
     const offer = await this.database.$transaction(async tx => {
       const created = await tx.communityOffer.create({
@@ -117,7 +117,7 @@ export class OfferService {
           title: dto.title,
           description: dto.description,
           categoryCode: dto.categoryCode,
-          cityId: dto.cityId,
+          cityId: city.id,
           deliveryMode: dto.deliveryMode ?? undefined,
           priceFrom: dto.priceFrom ?? null,
           priceBasis: dto.priceBasis ?? undefined,
@@ -156,9 +156,9 @@ export class OfferService {
       );
     }
 
-    if (dto.cityId) await this.cities.assertValid(dto.cityId);
+    const city = dto.cityId ? await this.cities.assertValid(dto.cityId) : null;
 
-    const media = dto.mediaIds ? await this.media.validate(dto.mediaIds, userId) : null;
+    const media = dto.mediaKeys ? await this.media.validate(dto.mediaKeys, userId) : null;
 
     await this.database.$transaction(async tx => {
       await tx.communityOffer.update({
@@ -167,7 +167,7 @@ export class OfferService {
           title: dto.title,
           description: dto.description,
           categoryCode: dto.categoryCode,
-          cityId: dto.cityId,
+          cityId: city?.id,
           deliveryMode: dto.deliveryMode,
           priceFrom: dto.priceFrom,
           priceBasis: dto.priceBasis,
@@ -215,9 +215,7 @@ export class OfferService {
     if (query.deliveryMode) where.deliveryMode = query.deliveryMode;
     if (query.authorId) where.authorId = query.authorId;
 
-    // freeOnly and maxPrice are different questions: "costs nothing" and "costs at
-    // most this". A free offer satisfies maxPrice too, which is why the null is
-    // included rather than filtered out by a bare numeric comparison.
+    // freeOnly and maxPrice are different questions: "costs nothing" and "costs at most this".
     if (query.freeOnly) {
       where.priceFrom = null;
     } else if (query.maxPrice !== undefined) {
@@ -233,10 +231,7 @@ export class OfferService {
       where.AND = [...(Array.isArray(where.AND) ? where.AND : []), { OR: search }];
     }
 
-    // An offer promoted into a VERIFIED professional listing leaves the community
-    // list, so the same person is not listed twice for the same service (2.1.3).
-    // Until the listing is verified, both stay live, which is what lets a member
-    // keep helping while their listing is in review.
+    // An offer promoted into a VERIFIED professional listing leaves the community list, so the same person is not listed twice for the same service (2.1.3).
     where.AND = [
       ...(Array.isArray(where.AND) ? where.AND : []),
       {
@@ -271,6 +266,7 @@ export class OfferService {
       viewerId,
       categoryLabels,
       media,
+      sign: this.media.sign,
       blockedAuthorIds: new Set(blockedIds),
     };
 

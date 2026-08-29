@@ -12,17 +12,7 @@ import { TaxonomyService } from '../../shared';
 import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
 import { ManagedRequestDto } from '../../professionals/dtos/booking.dto';
 
-/**
- * `POST /managed-requests` (4.10).
- *
- * The "Want Circl to run your store?" upsell and the Professionals manual-
- * placement fallback are the same thing from the member's side: a request for
- * Circl's team to take something on. One resource, one team inbox.
- *
- * The seller's store, contact details and item count are attached server-side
- * from records already held, so the form asks for the areas they want help with
- * and nothing they have already told us.
- */
+/** `POST /managed-requests` (4.10). */
 @Injectable()
 export class ManagedRequestService {
   constructor(
@@ -92,8 +82,7 @@ export class ManagedRequestService {
           "Circl's team has your request. Only Circl staff can see this thread.",
           {
             managedRequestId: request.id,
-            // Attached from records already held, so the member is not asked to
-            // repeat what the store already says.
+            // Attached from records already held, so the member is not asked to repeat what the store already says.
             ...(store
               ? {
                   storeId: store.id,

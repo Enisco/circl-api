@@ -26,10 +26,7 @@ export interface ProfessionalSummaryView {
   isAcceptingWork: boolean;
   trustChecks: string[];
   isImmigrantFriendly: boolean;
-  /**
-   * D13: with nothing verified, a regulated profile must say so. This is what
-   * lets the client print the visible line rather than implying a check happened.
-   */
+  /** D13: with nothing verified, a regulated profile must say so. */
   isRegulated: boolean;
   verificationStatus: ListingVerificationStatus;
 }
@@ -80,8 +77,7 @@ export const toServiceView = (service: {
   currency: string;
   isActive: boolean;
 }): ProfessionalServiceView => ({
-  // Required: each service row is individually bookable and the booking call
-  // sends this id, not the name and price (2.4).
+  // Required: each service row is individually bookable and the booking call sends this id, not the name and price (2.4).
   id: service.id,
   name: service.name,
   description: service.description,

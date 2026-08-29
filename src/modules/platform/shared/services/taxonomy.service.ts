@@ -12,18 +12,7 @@ export interface TermRecord {
   metadata: Record<string, unknown> | null;
 }
 
-/**
- * Reads the taxonomy and validates codes against it.
- *
- * Every enumerated value in this API is a code, and the label lives here so it
- * can be reworded without a migration (0.7). That makes this service a
- * dependency of nearly every composer and every filter, so it holds an in-process
- * cache: the table is small, changes rarely, and a lookup per validated field
- * would otherwise be a query per field.
- *
- * The cache is invalidated by an admin write bumping the version stamp, which
- * every read checks cheaply.
- */
+/** Reads the taxonomy and validates codes against it. */
 @Injectable()
 export class TaxonomyService {
   private cache = new Map<TaxonomyKind, Map<string, TermRecord>>();
@@ -124,12 +113,7 @@ export class TaxonomyService {
     return map;
   }
 
-  /**
-   * Rejects an unknown or deactivated code on write.
-   *
-   * `field` is the request body key so the client can attach the message to the
-   * right input (0.4).
-   */
+  /** Rejects an unknown or deactivated code on write. */
   async assertValid(kind: TaxonomyKind, code: string, field: string): Promise<TermRecord> {
     const term = await this.get(kind, code);
 

@@ -1,8 +1,29 @@
 import { Injectable } from '@nestjs/common';
-import { ActivitySubject, ActivityVerb, Prisma, RequestStatus } from '@prisma/client';
+import {
+  ActivitySubject,
+  ActivityVerb,
+  NotificationKind,
+  Prisma,
+  RequestStatus,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException, buildPageMeta, money, Paginated, toDateOnly } from '@/common';
-import { ActivityService, AuthorView, authorSelect, toAuthorView } from '../../shared';
+import {
+  ApiErrorCode,
+  ApiException,
+  buildPageMeta,
+  excerpt,
+  money,
+  Paginated,
+  toDateOnly,
+} from '@/common';
+import {
+  ActivityService,
+  AuthorView,
+  MediaService,
+  authorSelect,
+  toAuthorView,
+} from '../../shared';
+import { NotificationFeedService } from '../../notifications';
 import { CreateResponseDto, ListResponsesDto } from '../dtos/response.dto';
 
 export interface ResponseView {
@@ -28,6 +49,8 @@ export class RequestResponseService {
   constructor(
     private readonly database: PrismaService,
     private readonly activity: ActivityService,
+    private readonly media: MediaService,
+    private readonly notifications: NotificationFeedService,
   ) {}
 
   // ─── 1.3.1 List ────────────────────────────────────────────────────────────
@@ -40,9 +63,7 @@ export class RequestResponseService {
     const request = await this.loadRequest(requestId);
     const isRequestOwner = request.authorId === viewerId;
 
-    // Private responses are returned only to the request's owner and their
-    // author. For everyone else they are absent from the list AND excluded from
-    // totalCount, so the count matches what is on screen (1.3.1).
+    // Private responses are returned only to the request's owner and their author.
     const where: Prisma.RequestResponseWhereInput = {
       requestId,
       deletedAt: null,
@@ -100,9 +121,7 @@ export class RequestResponseService {
     }
 
     if (isHelpOffer) {
-      // A user may post multiple replies, but only one may be a help offer. This
-      // is what keeps counts.helpers equal to the number of distinct people,
-      // which is what the card claims (1.3.2).
+      // A user may post multiple replies, but only one may be a help offer.
       const existing = await this.database.requestResponse.findFirst({
         where: { requestId, authorId: userId, isHelpOffer: true, deletedAt: null },
         select: { id: true },
@@ -125,8 +144,7 @@ export class RequestResponseService {
           content: dto.content,
           isHelpOffer,
           isPrivate: dto.isPrivate ?? false,
-          // Only meaningful on a help offer, so they are dropped otherwise rather
-          // than stored as noise a later reader has to interpret.
+          // Only meaningful on a help offer, so they are dropped otherwise rather than stored as noise a later reader has to interpret.
           availableOn: isHelpOffer && dto.availableOn ? new Date(dto.availableOn) : null,
           thankYouExpected: isHelpOffer ? (dto.thankYouExpected ?? null) : null,
         },
@@ -154,10 +172,20 @@ export class RequestResponseService {
       weight: isHelpOffer ? 3 : 1,
     });
 
+    // An offer of help and a reply are different notifications with different preference rows, because a member who silences chatter on their posts may still want to know somebody offered to drive them to the airport.
+    this.notifications.raise({
+      userId: request.authorId,
+      actorId: userId,
+      kind: isHelpOffer ? NotificationKind.HELP_OFFER : NotificationKind.REPLY,
+      categoryCode: isHelpOffer ? 'OFFERS' : 'REPLIES',
+      title: isHelpOffer ? 'Someone offered to help' : 'New reply to your request',
+      body: excerpt(request.title, 80),
+      route: `/community/request/${requestId}`,
+    });
+
     const counts = await this.counts(requestId);
 
-    // Returned so the client does not need a refetch to update the parent card
-    // (1.3.2).
+    // Returned so the client does not need a refetch to update the parent card (1.3.2).
     return {
       response: this.toView(created, userId, request.authorId === userId),
       requestCounts: counts,
@@ -222,6 +250,7 @@ export class RequestResponseService {
       select: {
         id: true,
         authorId: true,
+        title: true,
         status: true,
         cityId: true,
         categoryCode: true,
@@ -249,7 +278,7 @@ export class RequestResponseService {
       isPrivate: row.isPrivate,
       availableOn: toDateOnly(row.availableOn),
       thankYouExpected: money(row.thankYouExpected, row.currency),
-      author: toAuthorView(row.author),
+      author: toAuthorView(row.author, { sign: this.media.sign }),
       viewer: { isOwner, canDelete: isOwner || isRequestOwner },
       createdAt: row.createdAt.toISOString(),
     };

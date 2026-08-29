@@ -22,8 +22,7 @@ describe('text utilities', () => {
   });
 
   describe('keywordCoverage', () => {
-    // The bug this replaced: Jaccard scored a thorough guide DOWN for being
-    // thorough, so the "Before you post" interstitial never fired.
+    // The bug this replaced: Jaccard scored a thorough guide DOWN for being thorough, so the "Before you post" interstitial never fired.
     it('does not punish a candidate for being longer than the question', () => {
       const question = keywords('open a bank account without proof of address');
       const guide = keywords(

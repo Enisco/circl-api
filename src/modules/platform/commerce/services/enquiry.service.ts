@@ -13,21 +13,14 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { addDays, ApiErrorCode, ApiException, buildPageMeta, money } from '@/common';
-import { ActivityService, authorSelect, toAuthorView } from '../../shared';
+import { ActivityService, authorSelect, MediaService, toAuthorView } from '../../shared';
 import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
 import { CreateEnquiryDto, ListEnquiriesDto, ValidateCartDto } from '../dtos/store.dto';
 
-/**
- * D24: 30 days without a transition sets EXPIRED and drops it off the active
- * list. There is deliberately no auto-complete: auto-confirming that someone
- * received groceries they may never have received is a claim Circl cannot make.
- */
+/** D24: 30 days without a transition sets EXPIRED and drops it off the active list. */
 const EXPIRY_DAYS = 30;
 
-/**
- * The stages the buyer sees, mapped onto the shared JobState machine (4.1.3), so
- * bookings and orders use one set of transition rules and one dispute resource.
- */
+/** The stages the buyer sees, mapped onto the shared JobState machine (4.1.3), so bookings and orders use one set of transition rules and one dispute resource. */
 const TIMELINE_STAGES: JobStage[] = [
   JobStage.REQUESTED,
   JobStage.ACCEPTED,
@@ -51,15 +44,12 @@ export class EnquiryService {
     private readonly database: PrismaService,
     private readonly conversations: ConversationFactoryService,
     private readonly activity: ActivityService,
+    private readonly media: MediaService,
   ) {}
 
   // ─── 4.6.1 Cart validation ─────────────────────────────────────────────────
 
-  /**
-   * The cart is client-side and in memory (D20), so an item that changes price or
-   * sells out while it sits there is caught here rather than at enquiry time.
-   * That has to be handled wherever the cart lives, so it is built now.
-   */
+  /** The cart is client-side and in memory (D20), so an item that changes price or sells out while it sits there is caught here rather than at enquiry time. */
   async validateCart(dto: ValidateCartDto) {
     const items = await this.database.storeItem.findMany({
       where: { id: { in: dto.lines.map(line => line.itemId) } },
@@ -130,8 +120,7 @@ export class EnquiryService {
       );
     }
 
-    // A store that is merely shut for the evening still takes enquiries: that is
-    // the point of an enquiry. Only HOLIDAY refuses (4.7.1).
+    // A store that is merely shut for the evening still takes enquiries: that is the point of an enquiry.
     if (store.status === StoreStatus.HOLIDAY) {
       throw ApiException.unprocessable(
         ApiErrorCode.STORE_CLOSED,
@@ -155,8 +144,7 @@ export class EnquiryService {
       );
     }
 
-    // The server re-prices every line from the catalogue and never trusts a price
-    // sent by the client (4.6.1).
+    // The server re-prices every line from the catalogue and never trusts a price sent by the client (4.6.1).
     const items = await this.database.storeItem.findMany({
       where: { id: { in: dto.lines.map(line => line.itemId) }, storeId: store.id },
     });
@@ -171,8 +159,7 @@ export class EnquiryService {
       .map(line => line.itemId);
 
     if (unavailable.length) {
-      // The offending ids go in details so the cart can mark them rather than
-      // failing opaquely (4.7.1).
+      // The offending ids go in details so the cart can mark them rather than failing opaquely (4.7.1).
       throw ApiException.unprocessable(
         ApiErrorCode.ITEMS_UNAVAILABLE,
         'Some items are no longer available.',
@@ -225,8 +212,7 @@ export class EnquiryService {
         data: { enquiryId: created.id, stage: JobStage.REQUESTED, actorId: buyerId },
       });
 
-      // The enquiry IS a message in practice, and the thread is where the two
-      // agree the details and the money (4.7.1).
+      // The enquiry IS a message in practice, and the thread is where the two agree the details and the money (4.7.1).
       const { conversation } = await this.conversations.ensure(
         {
           kind: ThreadKind.COMMERCE,
@@ -302,7 +288,7 @@ export class EnquiryService {
       this.database.enquiry.findMany({
         where,
         include: {
-          store: { select: { id: true, name: true, area: true, logoUrl: true } },
+          store: { select: { id: true, name: true, area: true, logoKey: true } },
           buyer: { select: authorSelect },
           seller: { select: authorSelect },
           lines: true,
@@ -320,14 +306,13 @@ export class EnquiryService {
         reference: row.reference,
         state: row.state,
         stage: this.stageFor(row.state),
-        store: row.store,
-        counterpart: toAuthorView(role === 'BUYER' ? row.seller : row.buyer),
+        store: this.storeCard(row.store),
+        counterpart: toAuthorView(role === 'BUYER' ? row.seller : row.buyer, { sign: this.media.sign }),
         estimatedTotal: money(row.estimatedTotal, row.currency),
         fulfilment: row.fulfilment,
         itemCount: row.lines.length,
         conversationId: row.conversationId,
-        // Same principle as bookings: the rule lives in one place so the count on
-        // My Store matches the list (4.7.2).
+        // Same principle as bookings: the rule lives in one place so the count on My Store matches the list (4.7.2).
         needsYourAction:
           role === 'SELLER' ? row.state === JobState.ACCEPTED : row.state === JobState.DELIVERED,
         createdAt: row.createdAt.toISOString(),
@@ -342,7 +327,7 @@ export class EnquiryService {
     const enquiry = await this.database.enquiry.findUnique({
       where: { id },
       include: {
-        store: { select: { id: true, name: true, area: true, logoUrl: true, cityId: true } },
+        store: { select: { id: true, name: true, area: true, logoKey: true, cityId: true } },
         buyer: { select: authorSelect },
         seller: { select: authorSelect },
         lines: true,
@@ -358,11 +343,10 @@ export class EnquiryService {
 
     return {
       id: enquiry.id,
-      // The human-readable code the buyer quotes to the seller. `id` stays the
-      // opaque key, because a reference this short is guessable (4.7.1).
+      // The human-readable code the buyer quotes to the seller.
       reference: enquiry.reference,
-      store: enquiry.store,
-      counterpart: toAuthorView(role === 'BUYER' ? enquiry.seller : enquiry.buyer),
+      store: this.storeCard(enquiry.store),
+      counterpart: toAuthorView(role === 'BUYER' ? enquiry.seller : enquiry.buyer, { sign: this.media.sign }),
       state: enquiry.state,
       stage: this.stageFor(enquiry.state),
       lines: enquiry.lines.map(line => ({
@@ -372,8 +356,7 @@ export class EnquiryService {
         unitPrice: money(line.unitPrice, line.currency),
         lineTotal: money(line.unitPrice * line.quantity, line.currency),
       })),
-      // The sum of catalogue prices at the moment of sending. Not a bill, not a
-      // commitment, and Circl does not reconcile it against anything (4.7.1).
+      // The sum of catalogue prices at the moment of sending.
       estimatedTotal: money(enquiry.estimatedTotal, enquiry.currency),
       fulfilment: enquiry.fulfilment,
       deliveryAddress: enquiry.deliveryAddress,
@@ -482,8 +465,7 @@ export class EnquiryService {
         where: { id },
         data: {
           state: options.to,
-          // Every transition pushes the expiry out: 30 days of silence is what
-          // expires an enquiry, not 30 days since it was sent (D24).
+          // Every transition pushes the expiry out: 30 days of silence is what expires an enquiry, not 30 days since it was sent (D24).
           expiresAt:
             options.to === JobState.COMPLETED || options.to === JobState.CANCELLED
               ? null
@@ -521,11 +503,7 @@ export class EnquiryService {
     return this.findOne(userId, id);
   }
 
-  /**
-   * D24: thirty days without a transition drops it off the active list as
-   * EXPIRED, and it cannot then be reviewed — nothing was ever confirmed as
-   * received, and a review of an unconfirmed order is a review of nothing.
-   */
+  /** D24: thirty days without a transition drops it off the active list as EXPIRED, and it cannot then be reviewed — nothing was ever confirmed as received, and a review of an unconfirmed order is a review of nothing. */
   async runExpiry(): Promise<number> {
     const result = await this.database.enquiry.updateMany({
       where: {
@@ -539,6 +517,13 @@ export class EnquiryService {
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────────
+
+  /** Stores travel as a small card; the logo key is signed here (0.11.3). */
+  private storeCard<T extends { logoKey: string | null }>(store: T) {
+    const { logoKey, ...rest } = store;
+
+    return { ...rest, logoUrl: logoKey ? this.media.sign(logoKey) : null };
+  }
 
   private roleOf(enquiry: { buyerId: string; sellerId: string }, userId: string): EnquiryRole {
     if (enquiry.buyerId === userId) return 'BUYER';
@@ -557,8 +542,7 @@ export class EnquiryService {
       case JobState.DELIVERED:
         return 'ON_THE_WAY';
       case JobState.COMPLETED:
-        // Deliberately not "Paid out": no money moves here, and the honest final
-        // stage is that the order was received and closed (4.0.1).
+        // Deliberately not "Paid out": no money moves here, and the honest final stage is that the order was received and closed (4.0.1).
         return 'CLOSED';
       case JobState.CANCELLED:
         return 'CANCELLED';
@@ -608,10 +592,7 @@ export class EnquiryService {
     };
   }
 
-  /**
-   * `C-2841`. Sequential enough to be quotable over the phone, and paired with an
-   * opaque id so it is never the thing an URL is built from.
-   */
+  /** `C-2841`. */
   private async nextReference(tx: Prisma.TransactionClient): Promise<string> {
     const count = await tx.enquiry.count();
 

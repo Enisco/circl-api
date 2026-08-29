@@ -9,21 +9,16 @@ import { IntelligenceModule } from './intelligence/intelligence.module';
 import { MediaModule } from './media/media.module';
 import { MessagingCoreModule } from './messaging/messaging.module';
 import { ModerationModule } from './moderation/moderation.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { ProfessionalsModule } from './professionals/professionals.module';
 import { PlatformSharedModule } from './shared/shared.module';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
 import { TrustModule } from './trust/trust.module';
 
-/**
- * The product sections, in dependency order.
- *
- * The first five are global and come first because every section below reads
- * from them. Taxonomy and Media are next for the reason spec 1.0.2 gives: every
- * composer and every filter needs category codes, city ids and an upload URL
- * before it can exist.
- */
+/** The product sections, in dependency order. */
 export const PLATFORM_MODULES = [
   PlatformSharedModule,
+  NotificationsModule,
   IntelligenceModule,
   MessagingCoreModule,
   TrustModule,
@@ -40,4 +35,5 @@ export const PLATFORM_MODULES = [
   PlatformJobsModule,
 ];
 
+export * from './notifications';
 export * from './shared';

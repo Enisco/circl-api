@@ -5,12 +5,20 @@ import {
   CommunityUpdate,
   Media,
   ModerationQueueType,
+  NotificationKind,
   PostVisibility,
   Prisma,
   ReportTargetType,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException, buildPageMeta, Paginated, toJson } from '@/common';
+import {
+  ApiErrorCode,
+  ApiException,
+  Paginated,
+  buildPageMeta,
+  excerpt,
+  toJson,
+} from '@/common';
 import {
   ActivityService,
   AuthorView,
@@ -26,6 +34,7 @@ import {
   toMediaViews,
 } from '../../shared';
 import { CreateUpdateDto, CreateUpdateReplyDto, ListUpdatesDto } from '../dtos/update.dto';
+import { NotificationFeedService } from '../../notifications';
 
 export const UPDATE_MEDIA_OWNER = 'COMMUNITY_UPDATE';
 
@@ -72,6 +81,7 @@ export class UpdateService {
     private readonly blocking: BlockingService,
     private readonly activity: ActivityService,
     private readonly risk: RiskScannerService,
+    private readonly notifications: NotificationFeedService,
   ) {}
 
   async list(viewerId: string, query: ListUpdatesDto): Promise<Paginated<UpdateView>> {
@@ -141,7 +151,7 @@ export class UpdateService {
 
     if (cityId) await this.cities.assertValid(cityId);
 
-    const media = await this.media.validate(dto.mediaIds, userId);
+    const media = await this.media.validate(dto.mediaKeys, userId);
     const taggedUserIds = await this.validTaggedUsers(dto.taggedUserIds);
 
     const created = await this.database.$transaction(async tx => {
@@ -186,14 +196,7 @@ export class UpdateService {
 
   // ─── 1.5.3 Reactions ───────────────────────────────────────────────────────
 
-  /**
-   * One reaction type only — the UI is a single heart — so no body is needed.
-   *
-   * Both directions are idempotent: liking twice is a no-op returning the current
-   * state, not a 409. The client toggles optimistically and reconciles from the
-   * authoritative count here, because two devices on one account (or a reaction
-   * landing while the screen is open) both make a client-side increment wrong.
-   */
+  /** One reaction type only — the UI is a single heart — so no body is needed. */
   async react(
     userId: string,
     id: string,
@@ -286,7 +289,7 @@ export class UpdateService {
       data: rows.map(row => ({
         id: row.id,
         content: row.content,
-        author: toAuthorView(row.author),
+        author: toAuthorView(row.author, { sign: this.media.sign }),
         viewer: { isOwner: row.authorId === viewerId, canDelete: row.authorId === viewerId },
         createdAt: row.createdAt.toISOString(),
       })),
@@ -301,8 +304,7 @@ export class UpdateService {
   ): Promise<UpdateReplyView> {
     const update = await this.load(id);
 
-    // The client hides the reply bar when comments are off, but the check has to
-    // exist here too (1.5.4).
+    // The client hides the reply bar when comments are off, but the check has to exist here too (1.5.4).
     if (!update.commentsEnabled) {
       throw ApiException.forbidden(
         ApiErrorCode.COMMENTS_DISABLED,
@@ -321,10 +323,20 @@ export class UpdateService {
       return created;
     });
 
+    this.notifications.raise({
+      userId: update.authorId,
+      actorId: userId,
+      kind: NotificationKind.REPLY,
+      categoryCode: 'REPLIES',
+      title: 'New reply to your update',
+      body: excerpt(dto.content, 80),
+      route: `/community/update/${id}`,
+    });
+
     return {
       id: reply.id,
       content: reply.content,
-      author: toAuthorView(reply.author),
+      author: toAuthorView(reply.author, { sign: this.media.sign }),
       viewer: { isOwner: true, canDelete: true },
       createdAt: reply.createdAt.toISOString(),
     };
@@ -371,7 +383,7 @@ export class UpdateService {
       type: 'UPDATE',
       id: row.id,
       content: row.content,
-      media: toMediaViews(media.get(row.id)),
+      media: toMediaViews(media.get(row.id), this.media.sign),
       city: toCityView(row.city),
       placeLabel: row.placeLabel,
       counts: {
@@ -380,10 +392,10 @@ export class UpdateService {
       },
       commentsEnabled: row.commentsEnabled,
       reactionCountHidden: row.reactionCountHidden,
-      author: toAuthorView(row.author, { isAnonymous }),
+      author: toAuthorView(row.author, { sign: this.media.sign, isAnonymous }),
       visibility: row.visibility,
       reportToken: row.reportToken,
-      taggedUsers: row.tags.map(tag => toAuthorView(tag.user)),
+      taggedUsers: row.tags.map(tag => toAuthorView(tag.user, { sign: this.media.sign })),
       viewer: {
         isOwner,
         hasLiked: liked.has(row.id),
@@ -414,11 +426,7 @@ export class UpdateService {
     return profile?.cityId ?? null;
   }
 
-  /**
-   * Tagging someone who has blocked you, or who does not exist, silently drops
-   * them rather than failing the post: the member's update is the thing that
-   * matters, and a 422 naming who blocked them would leak the block.
-   */
+  /** Tagging someone who has blocked you, or who does not exist, silently drops them rather than failing the post: the member's update is the thing that matters, and a 422 naming who blocked them would leak the block. */
   private async validTaggedUsers(taggedUserIds: string[] | undefined): Promise<string[]> {
     if (!taggedUserIds?.length) return [];
 

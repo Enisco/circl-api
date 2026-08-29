@@ -94,8 +94,7 @@ export class RequestService {
       visibility: { not: PostVisibility.PRIVATE_TO_CIRCL },
     };
 
-    // Status. The filter row is All / Open / Closed, where "Closed" means every
-    // terminal state rather than only the one literally named CLOSED (1.2.1).
+    // Status.
     if (query.status && query.status !== 'ALL') {
       where.status =
         query.status === RequestStatus.CLOSED
@@ -105,9 +104,7 @@ export class RequestService {
       where.status = RequestStatus.OPEN;
     }
 
-    // City. `nearYou` restricts to the viewer's city; otherwise an explicit
-    // cityId wins, the deprecated `city` name resolves, and no filter at all
-    // defaults to the viewer's city (1.2.1).
+    // City.
     if (query.nearYou) {
       if (viewerCityId) where.cityId = viewerCityId;
     } else {
@@ -126,8 +123,7 @@ export class RequestService {
         query.categories,
       );
 
-      // An unknown code must narrow to nothing rather than being ignored: quietly
-      // returning everything would look like the filter did not apply.
+      // An unknown code must narrow to nothing rather than being ignored: quietly returning everything would look like the filter did not apply.
       where.categoryCode = { in: known.length ? known : ['__NONE__'] };
     }
 
@@ -142,10 +138,7 @@ export class RequestService {
       ];
     }
 
-    // Blocking is symmetric in effect (1.8.2), and it wins over an explicit
-    // authorId filter: asking for a blocked member's requests by id must not be
-    // a way around the block. AND-ing rather than overwriting `authorId` is what
-    // makes both true at once.
+    // Blocking is symmetric in effect (1.8.2), and it wins over an explicit authorId filter: asking for a blocked member's requests by id must not be a way around the block.
     if (blockedIds.length) {
       where.AND = [{ authorId: { notIn: blockedIds } }];
     }
@@ -160,8 +153,7 @@ export class RequestService {
       case 'MOST_HELPERS':
         return [{ helperCount: 'desc' }, { createdAt: 'desc' }];
       case 'NEEDED_SOONEST':
-        // Nulls last: a request with no date is not more urgent than one due
-        // tomorrow, which is what a naive ascending sort would claim.
+        // Nulls last: a request with no date is not more urgent than one due tomorrow, which is what a naive ascending sort would claim.
         return [{ neededOn: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }];
       default:
         return [{ createdAt: 'desc' }];
@@ -179,14 +171,12 @@ export class RequestService {
     if (!request) throw ApiException.notFound('This request could not be found.');
     if (request.deletedAt) throw ApiException.deleted('This request');
 
-    // A private-to-Circl thread is not a post and is not readable here even by
-    // its author — it lives in Guard.
+    // A private-to-Circl thread is not a post and is not readable here even by its author — it lives in Guard.
     if (request.visibility === PostVisibility.PRIVATE_TO_CIRCL && request.authorId !== viewerId) {
       throw ApiException.notFound('This request could not be found.');
     }
 
     // Counted on GET, deduplicated per user per resource per 24 hours (0.13).
-    // There is deliberately no "increment view" endpoint.
     if (await this.activity.countView('request', id, viewerId, request.authorId)) {
       await this.database.communityRequest.update({
         where: { id },
@@ -227,8 +217,7 @@ export class RequestService {
   // ─── 1.2.3 Create ──────────────────────────────────────────────────────────
 
   async create(userId: string, dto: CreateRequestDto): Promise<RequestDetailView> {
-    // Routing, not validation: the member chose a private channel and must not
-    // find their question in the feed (1.9).
+    // Routing, not validation: the member chose a private channel and must not find their question in the feed (1.9).
     if (dto.visibility === PostVisibility.PRIVATE_TO_CIRCL) {
       throw ApiException.unprocessable(
         ApiErrorCode.USE_PRIVATE_ENDPOINT,
@@ -242,10 +231,11 @@ export class RequestService {
       dto.categoryCode,
       'categoryCode',
     );
-    await this.cities.assertValid(dto.cityId);
+    // The resolved id, not the value that arrived: 1.0.3 lets a picked name in, and writing "Manchester" into the foreign key would fail on insert.
+    const city = await this.cities.assertValid(dto.cityId);
 
     const neededOn = this.parseNeededOn(dto.neededOn);
-    const media = await this.media.validate(dto.mediaIds, userId);
+    const media = await this.media.validate(dto.mediaKeys, userId);
 
     const created = await this.database.$transaction(async tx => {
       const request = await tx.communityRequest.create({
@@ -254,7 +244,7 @@ export class RequestService {
           categoryCode: dto.categoryCode,
           title: dto.title,
           description: dto.description ?? null,
-          cityId: dto.cityId,
+          cityId: city.id,
           neededOn,
           thankYouAmount: dto.thankYouAmount ?? null,
           visibility: dto.visibility ?? PostVisibility.PUBLIC,
@@ -279,8 +269,7 @@ export class RequestService {
 
     this.assertOwner(request, userId);
 
-    // Only while OPEN. A public post cannot retroactively change once it has been
-    // acted on, which is also why `visibility` is not editable at all (1.2.4).
+    // Only while OPEN.
     if (request.status !== RequestStatus.OPEN) {
       throw ApiException.forbidden(
         ApiErrorCode.REQUEST_NOT_EDITABLE,
@@ -296,9 +285,9 @@ export class RequestService {
       );
     }
 
-    if (dto.cityId) await this.cities.assertValid(dto.cityId);
+    const patchCity = dto.cityId ? await this.cities.assertValid(dto.cityId) : null;
 
-    const media = dto.mediaIds ? await this.media.validate(dto.mediaIds, userId) : null;
+    const media = dto.mediaKeys ? await this.media.validate(dto.mediaKeys, userId) : null;
 
     await this.database.$transaction(async tx => {
       await tx.communityRequest.update({
@@ -307,7 +296,7 @@ export class RequestService {
           categoryCode: dto.categoryCode,
           title: dto.title,
           description: dto.description,
-          cityId: dto.cityId,
+          cityId: patchCity?.id,
           neededOn: dto.neededOn === undefined ? undefined : this.parseNeededOn(dto.neededOn),
           thankYouAmount: dto.thankYouAmount,
         },
@@ -324,13 +313,7 @@ export class RequestService {
 
   // ─── 1.2.5 Resolve ─────────────────────────────────────────────────────────
 
-  /**
-   * The owner marks a request resolved and credits the people who helped.
-   *
-   * This is the only place a COMMUNITY review becomes possible (2.5.2), so it is
-   * load-bearing for the "reviews travel with the user" promise: the reputation a
-   * member earns here is what they carry into Professionals, Connect and Commerce.
-   */
+  /** The owner marks a request resolved and credits the people who helped. */
   async resolve(userId: string, id: string, dto: ResolveRequestDto): Promise<RequestDetailView> {
     const request = await this.load(id);
 
@@ -406,10 +389,7 @@ export class RequestService {
 
   // ─── Internals ─────────────────────────────────────────────────────────────
 
-  /**
-   * Everything a page of rows needs that cannot come from the row itself, in a
-   * fixed number of queries regardless of page size.
-   */
+  /** Everything a page of rows needs that cannot come from the row itself, in a fixed number of queries regardless of page size. */
   private async buildContext(
     rows: RequestRow[],
     viewerId: string | null,
@@ -427,13 +407,12 @@ export class RequestService {
       viewerCityId,
       categoryLabels,
       media,
+      sign: this.media.sign,
       blockedAuthorIds: new Set(blockedIds),
     };
 
     if (viewerId && ids.length) {
-      // viewer.hasOffered drives whether the sticky bar reads "I can help" or
-      // "Just replying". The client currently holds this in local state and loses
-      // it on every reopen, which is the bug this field removes (1.2.2).
+      // viewer.hasOffered drives whether the sticky bar reads "I can help" or "Just replying".
       const responses = await this.database.requestResponse.findMany({
         where: { requestId: { in: ids }, authorId: viewerId, deletedAt: null },
         select: { requestId: true, isHelpOffer: true },
@@ -484,8 +463,7 @@ export class RequestService {
 
   private assertOwner(request: CommunityRequest, userId: string): void {
     if (request.authorId !== userId) {
-      // 403, never 401: a 401 on a permissions problem silently logs the user
-      // out (0.2).
+      // 403, never 401: a 401 on a permissions problem silently logs the user out (0.2).
       throw ApiException.forbidden(
         ApiErrorCode.FORBIDDEN,
         'Only the person who posted this request can change it.',
@@ -520,13 +498,7 @@ export class RequestService {
     return date;
   }
 
-  /**
-   * Runs Guard's scanner and records the Intelligence signal after a create.
-   *
-   * The scan never blocks the post: it decides whether a human sees it sooner
-   * (Guard). An anonymous post is queued for approval regardless of risk, which
-   * is what "still moderated" means in the product description.
-   */
+  /** Runs Guard's scanner and records the Intelligence signal after a create. */
   private async afterWrite(request: RequestRow, media: Media[]): Promise<void> {
     void media;
 

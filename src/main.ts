@@ -84,8 +84,7 @@ async function bootstrap() {
 
   useContainer(app.select(AppModule), { fallbackOnErrors: true });
 
-  // The chat gateway (spec 5.2). One connection per device, not one per
-  // conversation, so the client subscribes to everything it participates in.
+  // The chat gateway (spec 5.2).
   app.useWebSocketAdapter(new IoAdapter(app));
 
   app.enableShutdownHooks();
@@ -115,8 +114,7 @@ async function bootstrap() {
     logger.info(`Circl API is running on port ${port}`);
   });
 }
-// Nest's buffered logs are discarded when bootstrap throws, so these write straight to the
-// platform log stream. Both exit non-zero to keep Node's default crash semantics.
+// Nest's buffered logs are discarded when bootstrap throws, so these write straight to the platform log stream.
 process.on('unhandledRejection', reason => {
   console.error('[fatal] Unhandled promise rejection:', reason);
   process.exit(1);

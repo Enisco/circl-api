@@ -129,8 +129,9 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
   check('heritage filter uses the SHARED taxonomy', r.body?.data?.some(s => s.id === storeId));
 
   r = await api(buyer.token, 'GET', '/commerce/items?categories=FRESH_FROZEN');
-  check('browse items by category', r.body?.data?.length === 1 && r.body.data[0].id === whitingId, r.body?.data?.map(i => i.name));
-  check('item carries storeIsOpenNow read through its store', r.body?.data?.[0]?.storeIsOpenNow === true);
+  const whiting = r.body?.data?.find(i => i.id === whitingId);
+  check('browse items by category', !!whiting, r.body?.data?.map(i => i.name));
+  check('item carries storeIsOpenNow read through its store', whiting?.storeIsOpenNow === true, whiting);
 
   r = await api(buyer.token, 'GET', '/commerce/items?sort=PRICE_LOW');
   check('price sort works', r.body?.data?.[0]?.price?.amount <= r.body?.data?.[1]?.price?.amount, r.body?.data?.map(i => i.price?.amount));

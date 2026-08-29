@@ -8,5 +8,6 @@ import { PlatformJobsService } from './platform-jobs.service';
 @Module({
   imports: [ScheduleModule.forRoot(), MediaModule, ProfessionalsModule, CommerceModule],
   providers: [PlatformJobsService],
+  exports: [PlatformJobsService],
 })
 export class PlatformJobsModule {}

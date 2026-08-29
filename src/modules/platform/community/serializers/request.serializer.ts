@@ -6,6 +6,7 @@ import {
   CityView,
   MediaView,
   TermView,
+  UrlSigner,
   toAuthorView,
   toCityView,
   toMediaViews,
@@ -68,6 +69,8 @@ export interface RequestViewContext {
   viewerCityId?: string | null;
   categoryLabels: Map<string, string>;
   media?: Map<string, Media[]>;
+  /** Signs stored keys into URLs at serialisation time (0.11.3). */
+  sign: UrlSigner;
   hasOffered?: Set<string>;
   hasReplied?: Set<string>;
   blockedAuthorIds?: Set<string>;
@@ -88,21 +91,19 @@ export const toRequestSummary = (
     category: toTermView(request.categoryCode, context.categoryLabels),
     status: request.status,
     title: request.title,
-    // A truncated description, server-side, so the feed payload does not carry
-    // full bodies (1.1). The full text comes from the detail endpoint.
+    // A truncated description, server-side, so the feed payload does not carry full bodies (1.1).
     excerpt: excerptOf(request.description),
     city: toCityView(request.city),
     neededOn: toDateOnly(request.neededOn),
     thankYou: money(request.thankYouAmount, request.currency),
-    media: toMediaViews(context.media?.get(request.id)),
+    media: toMediaViews(context.media?.get(request.id), context.sign),
     counts: {
       views: request.viewCount,
-      // Responses where isHelpOffer is true — what the card renders as
-      // "3 offered to help".
+      // Responses where isHelpOffer is true — what the card renders as "3 offered to help".
       helpers: request.helperCount,
       replies: request.replyCount,
     },
-    author: toAuthorView(request.author, { isAnonymous: isAnonymous(request) }),
+    author: toAuthorView(request.author, { sign: context.sign, isAnonymous: isAnonymous(request) }),
     visibility: request.visibility,
     isNearYou: Boolean(context.viewerCityId && request.cityId === context.viewerCityId),
     viewer: {
@@ -148,12 +149,9 @@ export const toRequestDetail = (
       isOwner,
       hasOffered: summary.viewer.hasOffered,
       hasReplied: context.hasReplied?.has(request.id) ?? false,
-      // A blocked author's content is returned with this set rather than hidden,
-      // so the client can offer "unblock to view". Hiding it server-side makes
-      // the unblock action impossible to offer (1.2.2).
+      // A blocked author's content is returned with this set rather than hidden, so the client can offer "unblock to view".
       isBlocked: context.blockedAuthorIds?.has(request.authorId) ?? false,
-      // canEdit and canDelete are computed here, not inferred by the client from
-      // isOwner, because they also depend on state (0.10).
+      // canEdit and canDelete are computed here, not inferred by the client from isOwner, because they also depend on state (0.10).
       canEdit: isOwner && isOpen,
       canDelete: isOwner,
       canResolve: isOwner && isOpen,
@@ -161,7 +159,7 @@ export const toRequestDetail = (
     resolution: resolution
       ? {
           resolvedAt: resolution.resolvedAt.toISOString(),
-          helpers: resolution.helpers.map(helper => toAuthorView(helper)),
+          helpers: resolution.helpers.map(helper => toAuthorView(helper, { sign: context.sign })),
         }
       : null,
     createdAt: summary.createdAt,

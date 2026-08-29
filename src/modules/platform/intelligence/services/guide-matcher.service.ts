@@ -21,24 +21,7 @@ export interface MatchResult {
   similarAskCount: number;
 }
 
-/**
- * Circl Intelligence: Auto-Guides and the "Before you post" interstitial.
- *
- * Two jobs, one measure of similarity:
- *
- *   1. `POST /community/guides/match` (1.6.5) — before a member posts, does an
- *      existing guide or resolved request already answer this?
- *   2. Question clustering — when three or more members ask the same thing, that
- *      is a guide waiting to be written.
- *
- * The similarity is keyword overlap (Jaccard) narrowed by a Postgres trigram
- * prefilter. Not embeddings, and the constraint is stated plainly in the spec:
- * this call sits between a member tapping Post and their post existing, and must
- * answer in under 400ms. A network round trip to an embedding API cannot promise
- * that, and if it is slow or errors the client posts anyway — so a slow clever
- * matcher degrades to no matcher at all, which is strictly worse than a fast
- * plain one.
- */
+/** Circl Intelligence: Auto-Guides and the "Before you post" interstitial. */
 @Injectable()
 export class GuideMatcherService {
   /** Below this, return nothing and let the member post straight through (1.6.5). */
@@ -62,9 +45,7 @@ export class GuideMatcherService {
     const draftKeywords = keywords(draftText);
 
     if (draftKeywords.length < 2) {
-      // Two words of signal is not enough to claim a match, and a wrong match
-      // here costs the member a wasted screen at the exact moment they are trying
-      // to ask for help.
+      // Two words of signal is not enough to claim a match, and a wrong match here costs the member a wasted screen at the exact moment they are trying to ask for help.
       return { matches: [], similarAskCount: 0 };
     }
 
@@ -81,8 +62,7 @@ export class GuideMatcherService {
 
     return {
       matches,
-      // Omitted below the threshold, so the client's "Circl noticed, 12 people
-      // asked something similar" line only appears when it is true.
+      // Omitted below the threshold, so the client's "Circl noticed, 12 people asked something similar" line only appears when it is true.
       similarAskCount:
         similarAskCount >= GuideMatcherService.MIN_SIMILAR_ASKS ? similarAskCount : 0,
     };
@@ -92,8 +72,7 @@ export class GuideMatcherService {
     _input: { title: string; cityId?: string },
     draftKeywords: string[],
   ): Promise<MatchCandidate[]> {
-    // The trigram index narrows this to a handful before the exact scoring runs,
-    // which is what keeps the whole call inside its latency budget.
+    // The trigram index narrows this to a handful before the exact scoring runs, which is what keeps the whole call inside its latency budget.
     const guides = await this.database.guide.findMany({
       where: {
         deletedAt: null,
@@ -113,8 +92,7 @@ export class GuideMatcherService {
       type: 'GUIDE' as const,
       id: guide.id,
       confidence: this.confidence(draftKeywords, guide.title, guide.intro, {
-        // A guide is written to answer a question, so it is a better answer than a
-        // thread even at equal word overlap.
+        // A guide is written to answer a question, so it is a better answer than a thread even at equal word overlap.
         boost: 0.1,
       }),
     }));
@@ -152,10 +130,7 @@ export class GuideMatcherService {
     }));
   }
 
-  /**
-   * How many people asked something similar recently. This is also the signal
-   * that produces an Auto-Guide cluster once it crosses the threshold.
-   */
+  /** How many people asked something similar recently. */
   private async countSimilarAsks(
     categoryCode: string,
     cityId: string | undefined,
@@ -175,8 +150,7 @@ export class GuideMatcherService {
       take: 200,
     });
 
-    // Distinct people, not distinct posts: one member asking five times is one
-    // person who could not find the answer, not five.
+    // Distinct people, not distinct posts: one member asking five times is one person who could not find the answer, not five.
     const askers = new Set<string>();
 
     for (const request of requests) {
@@ -188,19 +162,7 @@ export class GuideMatcherService {
     return askers.size;
   }
 
-  /**
-   * How confident we are that this candidate answers the draft question.
-   *
-   * The measure is COVERAGE, not similarity: of the words the member used, how
-   * many does the candidate cover? A thorough guide is longer than the question
-   * it answers, and a symmetric measure punishes it for exactly the thoroughness
-   * that makes it the right answer. That mistake is what made this matcher return
-   * nothing for "how do I open a bank account without proof of address" against a
-   * guide literally titled "Opening a UK bank account with no proof of address".
-   *
-   * The title is weighted above the body because a title is the question the
-   * guide claims to answer, whereas a body mentions many things in passing.
-   */
+  /** How confident we are that this candidate answers the draft question. */
   private confidence(
     draftKeywords: string[],
     titleText: string,
@@ -213,8 +175,7 @@ export class GuideMatcherService {
 
     const shared = keywordOverlapCount(draftKeywords, allKeywords);
 
-    // A floor against generic overlaps: one shared word is a coincidence, however
-    // short the question was.
+    // A floor against generic overlaps: one shared word is a coincidence, however short the question was.
     if (shared < 2) return 0;
 
     const titleCoverage = keywordCoverage(draftKeywords, titleKeywords);

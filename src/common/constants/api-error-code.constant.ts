@@ -1,9 +1,4 @@
-/**
- * The UPPER_SNAKE codes in `error.code` (spec 0.4).
- *
- * This is the only thing the client branches on, so every value here is stable
- * forever once shipped. Reword the message freely; never rename a code.
- */
+/** The UPPER_SNAKE codes in `error.code` (spec 0.4). */
 export const ApiErrorCode = {
   // ─── Generic ───────────────────────────────────────────────────────────────
   VALIDATION_FAILED: 'VALIDATION_FAILED',
@@ -14,10 +9,7 @@ export const ApiErrorCode = {
   RATE_LIMITED: 'RATE_LIMITED',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
 
-  /**
-   * A deleted post returns 404 with this rather than disappearing from a list
-   * silently, so the client can render a tombstone where the user tapped (0.4).
-   */
+  /** A deleted post returns 404 with this rather than disappearing from a list silently, so the client can render a tombstone where the user tapped (0.4). */
   RESOURCE_DELETED: 'RESOURCE_DELETED',
 
   // ─── Account deletion (0.15) ───────────────────────────────────────────────
@@ -31,6 +23,9 @@ export const ApiErrorCode = {
   MEDIA_TOO_LARGE: 'MEDIA_TOO_LARGE',
   MEDIA_MIXED_TYPES: 'MEDIA_MIXED_TYPES',
   MEDIA_LIMIT_EXCEEDED: 'MEDIA_LIMIT_EXCEEDED',
+  MEDIA_NOT_READY: 'MEDIA_NOT_READY',
+  PREFERENCE_LOCKED: 'PREFERENCE_LOCKED',
+  USERNAME_TAKEN: 'USERNAME_TAKEN',
 
   // ─── Taxonomy ──────────────────────────────────────────────────────────────
   UNKNOWN_TAXONOMY_CODE: 'UNKNOWN_TAXONOMY_CODE',
