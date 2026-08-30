@@ -1,6 +1,6 @@
-import { JobState } from '@prisma/client';
+import { JobStage, JobState } from '@prisma/client';
 import { DemoSeedContext, HOME_CITY, userId } from './seed-demo';
-import { daysAgo, hoursAgo, seedId } from './ids';
+import { daysAgo, daysAhead, hoursAgo, seedId } from './ids';
 
 /** Sections 2.1 to 2.9 (B.4). */
 const LISTINGS = [
@@ -87,15 +87,19 @@ const BOOKINGS: Array<{
   state: JobState;
   amount: number;
   hoursAgo: number;
+  /** Positive is a slot still to come, negative is one already past (B.2.1). */
+  preferredInDays?: number;
+  timeSlot?: string;
+  flexible?: boolean;
 }> = [
   // Member 1 is the demo account, so it holds the one that needs their action.
-  { label: 'b1', listing: 'blessing', client: 1, service: 'consult', state: JobState.PENDING_ACCEPTANCE, amount: 6500, hoursAgo: 6 },
-  { label: 'b2', listing: 'blessing', client: 2, service: 'student', state: JobState.ACCEPTED, amount: 18000, hoursAgo: 40 },
-  { label: 'b3', listing: 'blessing', client: 6, service: 'consult', state: JobState.IN_PROGRESS, amount: 6500, hoursAgo: 90 },
-  { label: 'b4', listing: 'blessing', client: 10, service: 'dependant', state: JobState.DELIVERED, amount: 32000, hoursAgo: 150 },
-  { label: 'b5', listing: 'farida', client: 1, service: 'letter', state: JobState.CHANGES_REQUESTED, amount: 4000, hoursAgo: 200 },
+  { label: 'b1', listing: 'blessing', client: 1, service: 'consult', state: JobState.PENDING_ACCEPTANCE, amount: 6500, hoursAgo: 6, preferredInDays: 3, timeSlot: 'Weekday mornings' },
+  { label: 'b2', listing: 'blessing', client: 2, service: 'student', state: JobState.ACCEPTED, amount: 18000, hoursAgo: 40, preferredInDays: 6, timeSlot: 'Afternoons' },
+  { label: 'b3', listing: 'blessing', client: 6, service: 'consult', state: JobState.IN_PROGRESS, amount: 6500, hoursAgo: 90, preferredInDays: 1, timeSlot: 'Evening, after six' },
+  { label: 'b4', listing: 'blessing', client: 10, service: 'dependant', state: JobState.DELIVERED, amount: 32000, hoursAgo: 150, flexible: true },
+  { label: 'b5', listing: 'farida', client: 1, service: 'letter', state: JobState.CHANGES_REQUESTED, amount: 4000, hoursAgo: 200, preferredInDays: -6, timeSlot: 'Any time' },
   // The one waiting on the demo account: delivered, and the client confirms (B.5).
-  { label: 'b10', listing: 'farida', client: 1, service: 'appointment', state: JobState.DELIVERED, amount: 5500, hoursAgo: 30 },
+  { label: 'b10', listing: 'farida', client: 1, service: 'appointment', state: JobState.DELIVERED, amount: 5500, hoursAgo: 30, preferredInDays: 2, timeSlot: 'Thursday morning' },
   { label: 'b6', listing: 'blessing', client: 8, service: 'consult', state: JobState.COMPLETED, amount: 6500, hoursAgo: 400 },
   { label: 'b7', listing: 'farida', client: 6, service: 'appointment', state: JobState.COMPLETED, amount: 5500, hoursAgo: 600 },
   { label: 'b8', listing: 'blessing', client: 9, service: 'consult', state: JobState.CANCELLED, amount: 6500, hoursAgo: 300 },
@@ -130,6 +134,34 @@ const DELIVERED_STATES: JobState[] = [
   JobState.COMPLETED,
   JobState.CHANGES_REQUESTED,
 ];
+
+/**
+ * The stages a booking in this state has actually passed through. The timeline is read from
+ * BookingEvent rows (2.9.5), so a booking without them renders every stage as unreached.
+ */
+const STAGES_REACHED: Partial<Record<JobState, JobStage[]>> = {
+  [JobState.PENDING_ACCEPTANCE]: [JobStage.REQUESTED],
+  [JobState.ACCEPTED]: [JobStage.REQUESTED, JobStage.ACCEPTED],
+  [JobState.IN_PROGRESS]: [JobStage.REQUESTED, JobStage.ACCEPTED, JobStage.IN_PROGRESS],
+  [JobState.DELIVERED]: [JobStage.REQUESTED, JobStage.ACCEPTED, JobStage.IN_PROGRESS, JobStage.DELIVERED],
+  [JobState.CHANGES_REQUESTED]: [JobStage.REQUESTED, JobStage.ACCEPTED, JobStage.IN_PROGRESS, JobStage.DELIVERED, JobStage.CHANGES_REQUESTED],
+  [JobState.COMPLETED]: [JobStage.REQUESTED, JobStage.ACCEPTED, JobStage.IN_PROGRESS, JobStage.DELIVERED, JobStage.DONE],
+  // A cancelled or disputed job never reached DONE, and the timeline appends those rather than pretending it did.
+  [JobState.CANCELLED]: [JobStage.REQUESTED, JobStage.ACCEPTED, JobStage.CANCELLED],
+  [JobState.DISPUTED]: [JobStage.REQUESTED, JobStage.ACCEPTED, JobStage.IN_PROGRESS, JobStage.DELIVERED, JobStage.DISPUTED],
+};
+
+/** Stages spread across the elapsed window, so the timeline reads as progress rather than one instant. */
+const stampsFor = (elapsedHours: number, stages: JobStage[]) => {
+  const span = elapsedHours * 0.8;
+
+  return new Map(
+    stages.map((stage, index) => [
+      stage,
+      hoursAgo(elapsedHours - (stages.length === 1 ? 0 : (index / (stages.length - 1)) * span)),
+    ]),
+  );
+};
 
 export const seedProfessionals = async (ctx: DemoSeedContext) => {
   const { prisma } = ctx;
@@ -202,6 +234,12 @@ export const seedProfessionals = async (ctx: DemoSeedContext) => {
     const service = listing.services.find(row => row[0] === booking.service)!;
     const createdAt = hoursAgo(booking.hoursAgo);
     const terminal = TERMINAL_STATES.includes(booking.state);
+    const stages = STAGES_REACHED[booking.state] ?? [JobStage.REQUESTED];
+    const stamps = stampsFor(booking.hoursAgo, stages);
+    // A review is a stage, and the two reviews that name their booking are the two that reached it.
+    const reviewed = REVIEWS.find(row => row.booking === booking.label);
+
+    if (reviewed) stamps.set(JobStage.REVIEWED, daysAgo(reviewed.daysAgo));
 
     const data = {
       clientId: userId(booking.client),
@@ -214,12 +252,20 @@ export const seedProfessionals = async (ctx: DemoSeedContext) => {
       agreedAmount: booking.amount,
       state: booking.state,
       mode: 'ONLINE' as never,
-      // Only the stamps this state has actually reached.
+      // A flexible booking has no date to keep, which is how the client reads it back (2.9).
+      preferredDate:
+        booking.flexible || booking.preferredInDays === undefined
+          ? null
+          : daysAhead(booking.preferredInDays),
+      preferredTimeSlot: booking.flexible ? null : (booking.timeSlot ?? null),
+      isFlexible: booking.flexible ?? false,
+      // Taken from the same stamps the timeline is built from, so the two never disagree.
       deliveredAt: DELIVERED_STATES.includes(booking.state)
-        ? hoursAgo(booking.hoursAgo - 20)
+        ? (stamps.get(JobStage.DELIVERED) ?? null)
         : null,
-      completedAt: booking.state === JobState.COMPLETED ? hoursAgo(booking.hoursAgo - 30) : null,
-      cancelledAt: booking.state === JobState.CANCELLED ? hoursAgo(booking.hoursAgo - 10) : null,
+      completedAt: booking.state === JobState.COMPLETED ? (stamps.get(JobStage.DONE) ?? null) : null,
+      cancelledAt:
+        booking.state === JobState.CANCELLED ? (stamps.get(JobStage.CANCELLED) ?? null) : null,
       cancelReason:
         booking.state === JobState.CANCELLED ? 'Sorted it another way, sorry for the trouble.' : null,
       firstClientMessageAt: createdAt,
@@ -230,7 +276,37 @@ export const seedProfessionals = async (ctx: DemoSeedContext) => {
     };
 
     await prisma.booking.upsert({ where: { id }, update: data, create: { id, ...data } });
+
+    for (const [stage, reachedAt] of stamps) {
+      await prisma.bookingEvent.upsert({
+        where: { bookingId_stage: { bookingId: id, stage } },
+        update: { reachedAt },
+        create: { bookingId: id, stage, reachedAt },
+      });
+    }
   }
+
+  // The disputed booking needs the dispute behind it, or the state renders with nothing to open (2.10).
+  const disputed = BOOKINGS.find(row => row.state === JobState.DISPUTED)!;
+  const disputeCreatedAt = hoursAgo(disputed.hoursAgo * 0.2);
+  const disputeData = {
+    subjectType: 'BOOKING' as never,
+    bookingId: seedId(`booking:${disputed.label}`),
+    raisedById: userId(disputed.client),
+    reasonCode: 'NOT_AS_DESCRIBED' as never,
+    description:
+      'I asked for a certified translation for the council and what came back was not certified. ' +
+      'I have had to pay someone else to do it again.',
+    state: 'OPEN' as never,
+    expectedResolutionAt: daysAhead(4),
+    createdAt: disputeCreatedAt,
+  };
+
+  await prisma.dispute.upsert({
+    where: { id: seedId(`dispute:${disputed.label}`) },
+    update: disputeData,
+    create: { id: seedId(`dispute:${disputed.label}`), ...disputeData },
+  });
 
   for (const review of REVIEWS) {
     const id = seedId(`review:${review.label}`);

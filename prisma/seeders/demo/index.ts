@@ -146,7 +146,7 @@ export const seedDemo = async (prisma: PrismaClient) => {
 
   const community = await seedCommunity(ctx);
   console.info(
-    `  ✅ ${community.requests} requests, ${community.offers} offers, ${community.guides} guides`,
+    `  ✅ ${community.requests} requests, ${community.offers} offers, ${community.guides} guides, ${community.groups} groups`,
   );
 
   const professionals = await seedProfessionals(ctx);

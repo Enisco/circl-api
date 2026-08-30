@@ -195,6 +195,72 @@ async function objectExists(url) {
   check('the one-word name renders without a trailing null',
     r.body?.data?.user?.displayName === 'Aiyana', r.body?.data?.user?.displayName);
 
+  console.log('\n── B.4 the rows that render as blank sections ───────────────');
+  r = await api(token, 'GET', '/community/groups?cityId=Manchester');
+  const groups = r.body?.data ?? [];
+  check('the groups tab has groups', groups.length >= 2, groups.map(g => g.name));
+  check('with member counts, not zeroes', groups.every(g => g.memberCount > 0),
+    groups.map(g => g.memberCount));
+  check('member 1 is in one of them', groups.some(g => g.viewer?.membership === 'MEMBER'
+    || g.viewer?.membership === 'ADMIN' || g.viewer?.state === 'MEMBER' || g.viewer?.state === 'ADMIN'),
+    groups.map(g => g.viewer));
+
+  const joined = groups.find(g => ['MEMBER', 'ADMIN'].includes(g.viewer?.membership));
+  r = await api(token, 'GET', `/community/groups/${joined?.id}/posts`);
+  const posts = r.body?.data ?? [];
+  check('a group member 1 belongs to has posts to open', posts.length > 0, r.body?.meta);
+  check('and a post carries its replies', posts.some(post => post.counts?.replies > 0),
+    posts.map(post => post.counts));
+
+  const storeList = await api(token, 'GET', '/commerce/stores?cityId=London');
+  r = await api(token, 'GET', `/commerce/stores/${storeList.body?.data?.[0]?.id}`);
+  const storefront = r.body?.data ?? {};
+  check('a store carries its opening hours',
+    (storefront.openingHours ?? []).some(h => h.openMinutes !== null), storefront.openingHours);
+  check('so "Open now" is computed rather than always false',
+    typeof storefront.isOpenNow === 'boolean', storefront.isOpenNow);
+  check('and its heritage tags render as chips', (storefront.heritageTags ?? []).length > 0,
+    storefront.heritageTags);
+
+  r = await api(token, 'GET', '/bookings?role=CLIENT');
+  const bookings = r.body?.data ?? [];
+  check('member 1 has bookings', bookings.length >= 3, bookings.length);
+
+  // The list card carries the timeline; the slot is on the detail, which is where the client reads it.
+  const details = [];
+  for (const booking of bookings) {
+    const one = await api(token, 'GET', `/bookings/${booking.id}`);
+    details.push(one.body?.data ?? {});
+  }
+
+  check('a booking has a timeline with stages actually reached',
+    details.some(d => (d.timeline ?? []).some(s => s.reachedAt !== null)),
+    details.map(d => (d.timeline ?? []).filter(s => s.reachedAt).map(s => s.stage)));
+
+  const slotted = details.find(d => d.preferredDate);
+  check('a booking slot is still in the future, not months past (B.2.1)',
+    !!slotted && new Date(slotted.preferredDate) > new Date(),
+    details.map(d => d.preferredDate));
+
+  console.log('\n── B.4 a populated list per member ──────────────────────────');
+  const feed = await api(token, 'GET', '/notifications');
+  check('member 1 opens to a populated list', (feed.body?.data ?? []).length > 0, feed.body?.meta);
+  check('with a non-zero unread total', (feed.body?.meta?.unreadTotal ?? 0) > 0, feed.body?.meta);
+
+  // Asserted at the row level rather than by signing in ten times, which the auth throttle refuses.
+  const perMember = await prisma.notification.groupBy({
+    by: ['userId'],
+    _count: true,
+    where: { user: { email: { endsWith: '@circl.test' } } },
+  });
+  check('and so does every one of the ten', perMember.length >= 10, perMember.length);
+
+  const prefs = await api(token, 'GET', '/users/notification-preferences');
+  const categories = prefs.body?.data?.categories ?? [];
+  check('the preference matrix has its eight rows', categories.length === 8, categories.length);
+  check('with COMPLIANCE locked on', categories.some(c => c.code === 'COMPLIANCE' && c.isLocked),
+    categories.find(c => c.code === 'COMPLIANCE'));
+
   await prisma.user.deleteMany({ where: { id: admin.id } });
   await finish();
 })();

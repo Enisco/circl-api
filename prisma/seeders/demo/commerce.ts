@@ -18,6 +18,9 @@ const STORES = [
     status: 'OPEN',
     delivers: true,
     daysAgo: 170,
+    heritageTags: ['WEST_AFRICAN'],
+    // Minutes from midnight. A day left out is a day closed, which is how `isOpenNow` reads it (4.4.2).
+    hours: { MONDAY: [540, 1140], TUESDAY: [540, 1140], WEDNESDAY: [540, 1140], THURSDAY: [540, 1140], FRIDAY: [540, 1200], SATURDAY: [540, 1080] },
     items: [
       ['yam', 'Puna yam, whole', 'Sweet and firm, good for pounding or frying', 899, 'EACH', 'FRESH_FROZEN', true],
       ['plantain', 'Ripe plantain', 'Sold in fives, ready to fry', 350, 'PER_PACK', 'FRESH_FROZEN', true],
@@ -39,6 +42,9 @@ const STORES = [
     status: 'HOLIDAY',
     delivers: false,
     daysAgo: 40,
+    heritageTags: ['EAST_AFRICAN'],
+    // Weekends only, as the description says.
+    hours: { SATURDAY: [600, 1080], SUNDAY: [600, 960] },
     items: [
       ['chapati', 'Chapati, pack of six', 'Soft, made the morning you collect', 500, 'PER_PACK', 'FOOD_GROCERIES', true],
       ['pilau', 'Beef pilau, family size', 'Feeds four, collection only', 1800, 'EACH', 'FOOD_GROCERIES', true],
@@ -109,6 +115,22 @@ export const seedCommerce = async (ctx: DemoSeedContext) => {
     };
 
     await prisma.store.upsert({ where: { id }, update: data, create: { id, ...data } });
+
+    for (const code of store.heritageTags) {
+      await prisma.storeHeritageTag.upsert({
+        where: { storeId_code: { storeId: id, code } },
+        update: {},
+        create: { storeId: id, code },
+      });
+    }
+
+    for (const [day, [openMinutes, closeMinutes]] of Object.entries(store.hours)) {
+      await prisma.storeOpeningHours.upsert({
+        where: { storeId_day: { storeId: id, day: day as never } },
+        update: { openMinutes, closeMinutes },
+        create: { storeId: id, day: day as never, openMinutes, closeMinutes },
+      });
+    }
 
     for (const item of store.items) {
       const [slug, name, description, price, unitCode, categoryCode, isAvailable] = item as [

@@ -101,6 +101,12 @@ const NOTIFICATIONS: Array<{
   { label: 'n12', user: 6, actor: 1, kind: NotificationKind.REPLY, categoryCode: 'REPLIES', title: 'Amara replied to your guide', body: 'This is the clearest explanation of it I have read.', route: '/community/guide/bank', hoursAgo: 30 },
   { label: 'n13', user: 7, actor: 1, kind: NotificationKind.ANNOUNCEMENT, categoryCode: 'ANNOUNCEMENTS', title: 'You have a new enquiry', body: 'Two items, for delivery.', route: '/commerce/orders/e1', hoursAgo: 3 },
   { label: 'n14', user: 10, actor: 3, kind: NotificationKind.REPLY, categoryCode: 'REPLIES', title: 'Blessing replied to your request', body: 'You do not need proof of address to register.', route: '/community/request/gp', hoursAgo: 28 },
+  // B.4 asks for a populated list per member: without these, three of the ten open to an empty screen and a zero header badge.
+  { label: 'n15', user: 4, actor: 1, kind: NotificationKind.GROUP, categoryCode: 'GROUPS', title: 'You were added to New in Manchester', body: 'Arrived in the last year or so. Ask the obvious questions here.', route: '/community/group/new-in-manchester', hoursAgo: 288 },
+  { label: 'n16', user: 4, kind: NotificationKind.ANNOUNCEMENT, categoryCode: 'ANNOUNCEMENTS', title: 'Your listing is live', body: 'People searching for a handyman in Manchester can find you now.', route: '/professionals/me', hoursAgo: 14 },
+  { label: 'n17', user: 8, actor: 6, kind: NotificationKind.CONNECTION, categoryCode: 'CONNECTIONS', title: 'Someone wants to connect', route: '/connect/requests', hoursAgo: 5 },
+  { label: 'n18', user: 8, actor: 7, kind: NotificationKind.REPLY, categoryCode: 'REPLIES', title: 'Ifeoma replied to your enquiry', body: 'Thursday works, I will put it aside for you.', route: '/commerce/orders/e3', hoursAgo: 52 },
+  { label: 'n19', user: 9, actor: 6, kind: NotificationKind.REPLY, categoryCode: 'REPLIES', title: 'Tendai replied to your request', body: 'The library on Broad Street does free printing.', route: '/community/request/printing', hoursAgo: 130 },
 ];
 
 export const seedNotifications = async (ctx: DemoSeedContext) => {

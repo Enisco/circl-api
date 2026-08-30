@@ -334,6 +334,115 @@ const GUIDES: SeedGuide[] = [
   },
 ];
 
+interface SeedGroup {
+  label: string;
+  name: string;
+  description: string;
+  cityId: string;
+  joinPolicy: 'OPEN' | 'APPROVAL';
+  createdBy: number;
+  daysAgo: number;
+  members: Array<{ user: number; isAdmin?: boolean; state?: 'MEMBER' | 'ADMIN' | 'PENDING'; daysAgo: number }>;
+  posts: Array<{
+    label: string;
+    author: number;
+    content: string;
+    hoursAgo: number;
+    replies: Array<{ author: number; content: string; hoursAgo: number }>;
+  }>;
+}
+
+/** Groups, their posts and the memberships behind the "My groups" pills (B.4). */
+const GROUPS: SeedGroup[] = [
+  {
+    label: 'manchester-nigerians',
+    name: 'Manchester Nigerians',
+    description:
+      'Anything Manchester and anything home. Where to buy what, which schools take mid-year, ' +
+      'who is driving to London at the weekend.',
+    cityId: HOME_CITY,
+    joinPolicy: 'OPEN',
+    createdBy: 6,
+    daysAgo: 500,
+    // A pending member, so the APPROVAL path is not the only place a non-member state renders.
+    members: [
+      { user: 6, isAdmin: true, daysAgo: 500 },
+      { user: 1, daysAgo: 230 },
+      { user: 3, daysAgo: 380 },
+      { user: 4, daysAgo: 15 },
+      { user: 5, daysAgo: 280 },
+    ],
+    posts: [
+      {
+        label: 'market',
+        author: 6,
+        content:
+          'The African market on Cheetham Hill is open Saturdays until four now, not two. Worth ' +
+          'the trip if you have been going to the small one in town.',
+        hoursAgo: 100,
+        replies: [
+          { author: 1, content: 'I go most Saturdays, happy to show you where it is.', hoursAgo: 98 },
+          { author: 5, content: 'Parking is easier round the back.', hoursAgo: 90 },
+        ],
+      },
+      {
+        label: 'schools',
+        author: 3,
+        content: 'Has anyone applied mid-year for a Year 4 place? Trying to work out how long it takes.',
+        hoursAgo: 26,
+        replies: [],
+      },
+    ],
+  },
+  {
+    label: 'manchester-newcomers',
+    name: 'New in Manchester',
+    description: 'Arrived in the last year or so. Ask the obvious questions here, nobody minds.',
+    cityId: HOME_CITY,
+    // The approval path, so a pending membership renders somewhere (1.6).
+    joinPolicy: 'APPROVAL',
+    createdBy: 1,
+    daysAgo: 210,
+    members: [
+      { user: 1, isAdmin: true, daysAgo: 210 },
+      { user: 2, daysAgo: 3 },
+      { user: 4, daysAgo: 12 },
+      { user: 9, state: 'PENDING', daysAgo: 1 },
+    ],
+    posts: [
+      {
+        label: 'buses',
+        author: 2,
+        content: 'Is there one app that actually works for the buses here, or is it different per company?',
+        hoursAgo: 20,
+        replies: [{ author: 1, content: 'Bee Network for the buses and trams. The rest you can ignore.', hoursAgo: 18 }],
+      },
+    ],
+  },
+  {
+    label: 'london-west-african',
+    name: 'West African London',
+    description: 'South London mostly, but everyone is welcome. Food, church, and where to get your hair done.',
+    cityId: 'LONDON',
+    joinPolicy: 'OPEN',
+    createdBy: 7,
+    daysAgo: 160,
+    members: [
+      { user: 7, isAdmin: true, daysAgo: 160 },
+      { user: 8, daysAgo: 90 },
+    ],
+    posts: [
+      {
+        label: 'plantain',
+        author: 7,
+        content: 'Fresh plantain in on Thursdays now. Ask for it before it goes on the shelf.',
+        hoursAgo: 48,
+        replies: [],
+      },
+    ],
+  },
+];
+
 export const seedCommunity = async (ctx: DemoSeedContext) => {
   const { prisma } = ctx;
 
@@ -448,7 +557,92 @@ export const seedCommunity = async (ctx: DemoSeedContext) => {
     create: { guideId: partRead, userId: userId(1), progress: 0.4, updatedAt: hoursAgo(20) },
   });
 
-  return { requests: REQUESTS.length, offers: OFFERS.length, guides: GUIDES.length };
+  for (const group of GROUPS) {
+    const id = seedId(`group:${group.label}`);
+    const posts = group.posts;
+    const active = group.members.filter(member => (member.state ?? 'MEMBER') !== 'PENDING');
+    const lastPostAt = posts.length
+      ? hoursAgo(Math.min(...posts.map(post => post.hoursAgo)))
+      : null;
+
+    const data = {
+      name: group.name,
+      description: group.description,
+      cityId: group.cityId,
+      joinPolicy: group.joinPolicy as never,
+      createdById: userId(group.createdBy),
+      // Held on the row rather than counted per load, so the pill and the list agree.
+      memberCount: active.length,
+      postCount: posts.length,
+      lastPostAt,
+      reportToken: reportToken(`group:${group.label}`),
+      createdAt: daysAgo(group.daysAgo),
+    };
+
+    await prisma.group.upsert({ where: { id }, update: data, create: { id, ...data } });
+
+    for (const member of group.members) {
+      const state = member.state ?? (member.isAdmin ? 'ADMIN' : 'MEMBER');
+      const joinedAt = state === 'PENDING' ? null : daysAgo(member.daysAgo);
+
+      await prisma.groupMembership.upsert({
+        where: { groupId_userId: { groupId: id, userId: userId(member.user) } },
+        update: { state: state as never, isAdmin: member.isAdmin ?? false },
+        create: {
+          groupId: id,
+          userId: userId(member.user),
+          state: state as never,
+          isAdmin: member.isAdmin ?? false,
+          requestedAt: daysAgo(member.daysAgo),
+          joinedAt,
+          decidedAt: joinedAt,
+          // Behind the newest post on one member, so the unread dot on the pill has somewhere to show.
+          lastReadAt: member.user === 1 && group.label === 'manchester-nigerians' ? daysAgo(2) : joinedAt,
+        },
+      });
+    }
+
+    for (const post of posts) {
+      const postId = seedId(`group-post:${group.label}:${post.label}`);
+      const postData = {
+        groupId: id,
+        authorId: userId(post.author),
+        content: post.content,
+        replyCount: post.replies.length,
+        reportToken: reportToken(`group-post:${group.label}:${post.label}`),
+        createdAt: hoursAgo(post.hoursAgo),
+      };
+
+      await prisma.groupPost.upsert({
+        where: { id: postId },
+        update: postData,
+        create: { id: postId, ...postData },
+      });
+
+      for (const [index, reply] of post.replies.entries()) {
+        const replyId = seedId(`group-reply:${group.label}:${post.label}:${index}`);
+        const replyData = {
+          postId,
+          authorId: userId(reply.author),
+          content: reply.content,
+          createdAt: hoursAgo(reply.hoursAgo),
+        };
+
+        await prisma.groupPostReply.upsert({
+          where: { id: replyId },
+          update: replyData,
+          create: { id: replyId, ...replyData },
+        });
+      }
+    }
+  }
+
+  return {
+    requests: REQUESTS.length,
+    offers: OFFERS.length,
+    guides: GUIDES.length,
+    groups: GROUPS.length,
+  };
 };
 
-export { REQUESTS, OFFERS, GUIDES, reportToken };
+export { REQUESTS, OFFERS, GUIDES, GROUPS, reportToken };
