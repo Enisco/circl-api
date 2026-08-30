@@ -2,6 +2,12 @@ import { JobState } from '@prisma/client';
 import { DemoSeedContext, putMedia, userId } from './seed-demo';
 import { daysAhead, hoursAgo, seedId } from './ids';
 import { reportToken } from './community';
+import {
+  MAP_HEIGHT,
+  MAP_WIDTH,
+  MAP_ZOOM,
+} from '../../../src/modules/platform/commerce/services/static-map/static-map.service';
+import { renderTiles } from '../../../src/modules/platform/commerce/services/static-map/tiles';
 
 /** Section 4 (B.4). */
 const STORES = [
@@ -127,6 +133,39 @@ export const seedCommerce = async (ctx: DemoSeedContext) => {
     };
 
     await prisma.store.upsert({ where: { id }, update: data, create: { id, ...data } });
+
+    // The map tile, rendered here so the demo shows one on first open rather than on the second
+    // view. A store that hides its address gets none, which is the point of the flag (G12).
+    if (!store.hidesExactAddress && store.latitude !== null && store.longitude !== null) {
+      const mapKey = `circl/maps/${id}/seed.png`;
+
+      try {
+        const png = await renderTiles({
+          latitude: store.latitude,
+          longitude: store.longitude,
+          zoom: MAP_ZOOM,
+          width: MAP_WIDTH,
+          height: MAP_HEIGHT,
+          tileUrl: (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`,
+          fetchTile: async url => {
+            const response = await fetch(url, {
+              headers: { 'User-Agent': 'circl-api/1.0 (+https://circl.app)' },
+              signal: AbortSignal.timeout(10_000),
+            });
+
+            if (!response.ok) throw new Error(`tile ${response.status}`);
+
+            return Buffer.from(await response.arrayBuffer());
+          },
+        });
+
+        await ctx.storage.put(mapKey, png, 'image/png');
+        await prisma.store.update({ where: { id }, data: { staticMapKey: mapKey } });
+      } catch (error) {
+        // A tile server that is unreachable must not stop the dataset seeding.
+        console.warn(`  ⚠️  Static map for ${store.name} skipped: ${(error as Error).message}`);
+      }
+    }
 
     for (const code of store.heritageTags) {
       await prisma.storeHeritageTag.upsert({

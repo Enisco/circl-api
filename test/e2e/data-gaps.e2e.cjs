@@ -316,6 +316,60 @@ async function signIn(email) {
     && String(r.body?.data?.address?.latitude).split('.')[1]?.length <= 2,
     r.body?.data?.address);
 
+  console.log('\n── G12 the static map tile ─────────────────────────────────');
+  r = await api(token, 'GET', `/commerce/stores/${stores.body?.data?.[0]?.id}`);
+  const mapUrl = r.body?.data?.staticMapUrl;
+  check('a store that shows its address carries a staticMapUrl',
+    typeof mapUrl === 'string' && mapUrl.startsWith('http'), mapUrl);
+  check('it is a signed URL, not a provider URL with a key in it',
+    !!mapUrl && !/api_?key|access_token/i.test(mapUrl) && /X-Amz-Signature/.test(mapUrl),
+    mapUrl?.slice(0, 120));
+
+  const tile = await fetch(mapUrl);
+  const bytes = Buffer.from(await tile.arrayBuffer());
+  check('the object behind it exists', tile.status === 200 && bytes.length > 5000,
+    { status: tile.status, bytes: bytes.length });
+  check('and is a real PNG of the size the doc asks for',
+    bytes.subarray(0, 8).toString('hex') === '89504e470d0a1a0a'
+    && bytes.readUInt32BE(16) === 640 && bytes.readUInt32BE(20) === 220,
+    { w: bytes.readUInt32BE(16), h: bytes.readUInt32BE(20) });
+
+  r = await api(token, 'GET', `/commerce/stores/${hidden.id}`);
+  check('a store that hides its address gets no tile at all',
+    r.body?.data?.staticMapUrl === null, r.body?.data?.staticMapUrl);
+
+  // The backfill: a store created through the API has no tile until something asks for it.
+  const mapper = await makeUser('gapsmap');
+  const built = await api(mapper.token, 'POST', '/commerce/stores', {
+    name: 'Static Map Test Shop', type: 'LOCAL', area: 'Ancoats',
+    description: 'A store that exists to prove the map tile is rendered server-side.',
+    latitude: 53.4839, longitude: -2.2260,
+  });
+  check('a store can be created with coordinates', built.status === 201,
+    { s: built.status, e: built.body?.error });
+
+  let backfilled = null;
+
+  // The first read triggers the render, which then has to reach a tile server, so this polls
+  // rather than assuming the second call is already late enough.
+  for (let attempt = 0; attempt < 20 && !backfilled; attempt += 1) {
+    const detail = await api(mapper.token, 'GET', `/commerce/stores/${built.body?.data?.id}`);
+
+    backfilled = detail.body?.data?.staticMapUrl ?? null;
+
+    if (!backfilled) await new Promise(resolve => setTimeout(resolve, 500));
+  }
+
+  check('a store created through the API gets its tile built on first read',
+    typeof backfilled === 'string', backfilled);
+
+  const backfilledTile = backfilled ? await fetch(backfilled) : null;
+  check('and that object is a real PNG too',
+    backfilledTile?.status === 200
+    && Buffer.from(await backfilledTile.arrayBuffer()).subarray(0, 8).toString('hex')
+      === '89504e470d0a1a0a',
+    backfilledTile?.status);
+
   console.log('\n── G13 Guard resources ─────────────────────────────────────');
   r = await api(token, 'GET', '/guard/resources');
   const resources = r.body?.data ?? [];
@@ -416,7 +470,7 @@ async function signIn(email) {
   check('releasing one that is already gone still succeeds', r.status === 204, r.status);
 
   console.log('\n── Cleanup ─────────────────────────────────────────────────');
-  await prisma.user.deleteMany({ where: { id: { in: [mine.id, second.id, victim.id, revoker.id] } } });
+  await prisma.user.deleteMany({ where: { id: { in: [mine.id, second.id, victim.id, revoker.id, mapper.id] } } });
   await sweep('cleanup');
   await finish();
 })().catch(fail);

@@ -5,6 +5,7 @@ import { CommerceController } from './controllers/commerce.controller';
 import { ManagedRequestController } from './controllers/managed-request.controller';
 import { AiDraftService } from './services/ai-draft.service';
 import { CommerceBrowseService } from './services/commerce-browse.service';
+import { StaticMapService } from './services/static-map/static-map.service';
 import { EnquiryService } from './services/enquiry.service';
 import { ItemService } from './services/item.service';
 import { ManagedRequestService } from './services/managed-request.service';
@@ -20,6 +21,7 @@ const CONTROLLERS = [CommerceController, ManagedRequestController];
   ],
   controllers: CONTROLLERS,
   providers: [
+    StaticMapService,
     StoreService,
     ItemService,
     CommerceBrowseService,

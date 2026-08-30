@@ -210,7 +210,20 @@ export const resetDemo = async (prisma: PrismaClient) => {
     await storage.delete(item.storageKey).catch(() => undefined);
   }
 
+  // Map tiles are written straight to the bucket rather than through Media, so deleting the rows
+  // would leave them behind.
+  const maps = await prisma.store.findMany({
+    where: { ownerId: { in: ids }, staticMapKey: { not: null } },
+    select: { staticMapKey: true },
+  });
+
+  for (const store of maps) {
+    await storage.delete(store.staticMapKey!).catch(() => undefined);
+  }
+
   const { count } = await prisma.user.deleteMany({ where: { id: { in: ids } } });
 
-  console.info(`  🧹 Removed ${count} seeded members, their content and ${media.length} objects`);
+  console.info(
+    `  🧹 Removed ${count} seeded members, their content and ${media.length + maps.length} objects`,
+  );
 };

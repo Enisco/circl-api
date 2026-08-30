@@ -12,6 +12,7 @@ import {
   toTermView,
 } from '../../shared';
 import { ReputationService } from '../../trust/services/reputation.service';
+import { StaticMapService } from './static-map/static-map.service';
 import { CreateStoreDto, StoreContactDto, StoreStatusDto, UpdateStoreDto } from '../dtos/store.dto';
 import {
   isOpenNow,
@@ -46,6 +47,7 @@ export class StoreService {
     private readonly cities: CityService,
     private readonly media: MediaService,
     private readonly reputation: ReputationService,
+    private readonly staticMap: StaticMapService,
   ) {}
 
   // ─── 4.1.2 Setup prefill ───────────────────────────────────────────────────
@@ -360,6 +362,12 @@ export class StoreService {
       // Signed at serialisation time; the field names are unchanged.
       logoUrl: store.logoKey ? this.media.sign(store.logoKey) : null,
       coverUrl: store.coverKey ? this.media.sign(store.coverKey) : null,
+      // Null when the address is hidden, when there are no coordinates, or when no map provider
+      // is configured. The client already renders its placeholder in all three cases (G12).
+      staticMapUrl:
+        !store.hidesExactAddress && store.staticMapKey
+          ? this.media.sign(store.staticMapKey)
+          : null,
       rating: { average: summary.average, count: summary.countedTotal },
       isOpenNow: isOpenNow(store.status, store.timezone, openingHours),
       // Sent in full so the client can render "closes 8pm" without a round trip.
@@ -398,6 +406,10 @@ export class StoreService {
           })
         : Promise.resolve(null),
     ]);
+
+    // Built on the first read that needs it, so a store never waits on a map provider to render
+    // and an existing store picks one up without a backfill job.
+    this.staticMap.ensure(store);
 
     return {
       ...summary,

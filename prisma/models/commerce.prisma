@@ -27,6 +27,9 @@ model Store {
   /// Object keys, signed on read (0.11.3).
   logoKey  String? @map("logo_key")
   coverKey String? @map("cover_key")
+  /// The server-rendered map tile for this store's pin. An object key like every other image:
+  /// rendered here so the map provider's key never reaches an app binary (G12).
+  staticMapKey String? @map("static_map_key")
 
   status          StoreStatus          @default(OPEN) @map("status")
   complianceState StoreComplianceState @default(ACTIVE) @map("compliance_state") // D23: exists, does not gate publishing
