@@ -8,7 +8,11 @@ import {
   RATE_LIMITS,
 } from '@/common';
 import { MODULES } from '@/modules';
-import { CityCompatMiddleware, ReportCompatMiddleware } from '@/modules/platform/shared';
+import {
+  CityCompatMiddleware,
+  ReportCompatMiddleware,
+  TaxonomyCompatMiddleware,
+} from '@/modules/platform/shared';
 import { configValidationSchema } from '@/config';
 import { AppCacheModule, AppLoggerModule, AppQueueModule, PrismaModule } from '@/infrastructure';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -52,7 +56,9 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(DeviceInfoMiddleware, CityCompatMiddleware).forRoutes('*');
+    consumer
+      .apply(DeviceInfoMiddleware, CityCompatMiddleware, TaxonomyCompatMiddleware)
+      .forRoutes('*');
     // Only the report sheet sends these names, so the rewrite is scoped to the one route.
     consumer.apply(ReportCompatMiddleware).forRoutes('api/v1/moderation/reports');
   }

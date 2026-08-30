@@ -1,7 +1,11 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { S3Storage, StorageProvider } from '../media/storage';
-import { CityCompatMiddleware, ReportCompatMiddleware } from './middlewares';
+import {
+  CityCompatMiddleware,
+  ReportCompatMiddleware,
+  TaxonomyCompatMiddleware,
+} from './middlewares';
 import {
   ActivityService,
   BlockingService,
@@ -27,6 +31,7 @@ const SERVICES = [
     ...SERVICES,
     CityCompatMiddleware,
     ReportCompatMiddleware,
+    TaxonomyCompatMiddleware,
     {
       // S3 is the only driver.
       provide: StorageProvider,
@@ -34,6 +39,12 @@ const SERVICES = [
       useFactory: (config: ConfigService): StorageProvider => new S3Storage(config),
     },
   ],
-  exports: [...SERVICES, CityCompatMiddleware, ReportCompatMiddleware, StorageProvider],
+  exports: [
+    ...SERVICES,
+    CityCompatMiddleware,
+    ReportCompatMiddleware,
+    TaxonomyCompatMiddleware,
+    StorageProvider,
+  ],
 })
 export class PlatformSharedModule {}

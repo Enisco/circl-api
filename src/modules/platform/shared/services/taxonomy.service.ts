@@ -113,6 +113,35 @@ export class TaxonomyService {
     return map;
   }
 
+  /**
+   * Resolves whatever the client sent onto a real code: the code itself, a differently cased one,
+   * or the human label from the picker. Returns null when nothing matches.
+   *
+   * The shipped app sends the label for some fields, so `countryOfOrigin: "Nigeria"` arrives where
+   * `NG` is expected. Rejecting it would block onboarding on a value the member picked from a list
+   * this API served them.
+   */
+  async resolveCode(kind: TaxonomyKind, value: string): Promise<string | null> {
+    await this.ensureLoaded();
+
+    const terms = this.cache.get(kind);
+
+    if (!terms) return null;
+
+    const trimmed = value.trim();
+
+    if (terms.has(trimmed)) return trimmed;
+
+    const normalise = (input: string) => input.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const needle = normalise(trimmed);
+
+    for (const term of terms.values()) {
+      if (normalise(term.code) === needle || normalise(term.label) === needle) return term.code;
+    }
+
+    return null;
+  }
+
   /** Rejects an unknown or deactivated code on write. */
   async assertValid(kind: TaxonomyKind, code: string, field: string): Promise<TermRecord> {
     const term = await this.get(kind, code);

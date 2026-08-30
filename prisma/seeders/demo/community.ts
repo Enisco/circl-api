@@ -188,6 +188,51 @@ const REQUESTS: SeedRequest[] = [
       { author: 4, content: 'I can do Saturday morning. Sent you a message.', isHelpOffer: true, hoursAgo: 66 },
     ],
   },
+  // B.3: aggregate rows are suppressed below a floor of 3, so activity spread one-per-category
+  // produces a Pulse dashboard with no bars at all. These cluster BANK_ACCOUNT above the floor,
+  // which is also what gives Auto-Guides three distinct askers to cluster on.
+  {
+    label: 'banks-monzo',
+    author: 2,
+    categoryCode: 'BANK_ACCOUNT',
+    title: 'Has anyone opened a Monzo account on a share code?',
+    description:
+      'I have my BRP share code but no paper letter yet. The app asked for proof of address and I ' +
+      'do not have anything in my name yet.',
+    hoursAgo: 20,
+    status: 'OPEN',
+  },
+  {
+    label: 'banks-joint',
+    author: 10,
+    categoryCode: 'BANK_ACCOUNT',
+    title: 'Which bank is easiest for a joint account when one of us just arrived?',
+    description:
+      'My partner has been here four years and I arrived in June. Two branches have said no so far ' +
+      'and I do not know whether it is me or the joint part that is the problem.',
+    hoursAgo: 52,
+    status: 'OPEN',
+  },
+  {
+    label: 'banks-switch',
+    author: 6,
+    categoryCode: 'BANK_ACCOUNT',
+    title: 'Is it worth switching from a digital bank to a high street one?',
+    description:
+      'Starling has been fine for two years but my landlord says he wants a "proper bank" on the ' +
+      'reference. Is that a real requirement or is he making it up?',
+    hoursAgo: 96,
+    status: 'RESOLVED',
+    replies: [
+      {
+        author: 3,
+        content:
+          'It is not a requirement. A reference needs statements, and a digital bank produces the ' +
+          'same PDF a high street one does.',
+        hoursAgo: 90,
+      },
+    ],
+  },
 ];
 
 interface SeedOffer {
