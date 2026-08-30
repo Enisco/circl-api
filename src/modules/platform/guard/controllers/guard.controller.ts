@@ -9,7 +9,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
 import {
   CreateGuardRequestDto,
@@ -19,6 +19,7 @@ import {
 } from '../dtos/guard.dto';
 import { GuardService } from '../services/guard.service';
 
+@ApiBearerAuth()
 @Controller('guard')
 @ApiTags('Circl Guard')
 @UseGuards(JwtAuthGuard)
@@ -74,7 +75,12 @@ export class GuardController {
 
   @Get('threads')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'My private threads' })
+  @ApiOperation({
+    summary: 'My private threads',
+    description:
+      'The member\'s own Guard threads. Nobody else can see them, including other members of any '+
+      'group they share.',
+  })
   async list(@CurrentUserId() userId: string, @Query() query: ListGuardThreadsDto) {
     const { data, meta } = await this.guard.listMine(userId, query);
 
@@ -83,7 +89,12 @@ export class GuardController {
 
   @Get('threads/:id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'One private thread' })
+  @ApiOperation({
+    summary: 'One private thread',
+    description:
+      'The member\'s own Guard thread, with its conversation id, so the client reopens the ' +
+      'existing thread rather than starting a second (D36).',
+  })
   async findOne(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.guard.findMine(userId, id);
 

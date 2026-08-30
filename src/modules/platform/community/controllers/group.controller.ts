@@ -11,7 +11,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   CurrentUserId,
   Idempotent,
@@ -30,6 +30,7 @@ import {
 } from '../dtos/group.dto';
 import { GroupService } from '../services/group.service';
 
+@ApiBearerAuth()
 @Controller('community/groups')
 @ApiTags('Community · Groups')
 @UseGuards(JwtAuthGuard)
@@ -67,7 +68,12 @@ export class GroupController {
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Group detail' })
+  @ApiOperation({
+    summary: 'Group detail',
+    description:
+      'One group with its member preview, admins and the caller\'s own membership state. Pending '+
+      'members see that they are pending.',
+  })
   async findOne(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.groups.findOne(userId, id);
 
@@ -202,7 +208,10 @@ export class GroupController {
 
   @Delete(':id/posts/:postId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Delete a group post' })
+  @ApiOperation({
+    summary: 'Delete a group post',
+    description: 'The author or a group admin. Replies go with it.',
+  })
   async removePost(
     @CurrentUserId() userId: string,
     @Param('id') id: string,
@@ -247,7 +256,10 @@ export class GroupController {
 
   @Delete(':groupId/posts/:postId/replies/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Delete a group post reply' })
+  @ApiOperation({
+    summary: 'Delete a group post reply',
+    description: 'The reply\'s author, or a group admin.',
+  })
   async removePostReply(
     @CurrentUserId() userId: string,
     @Param('groupId') groupId: string,

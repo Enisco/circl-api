@@ -9,11 +9,12 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, JwtAuthGuard } from '@/common';
 import { FeedQueryDto, LessLikeThisDto } from '../dtos/feed.dto';
 import { FeedService } from '../services/feed.service';
 
+@ApiBearerAuth()
 @Controller('community/feed')
 @ApiTags('Community · Feed')
 @UseGuards(JwtAuthGuard)

@@ -16,12 +16,13 @@ import { CookieService, AuthService, LogOutService } from '../services';
 import { User } from '@prisma/client';
 import { DeviceInfo, Public } from '@/common';
 import { Throttle } from '@nestjs/throttler';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@/common/guards';
 import { LogoutDto } from '../dtos';
 import { AuthSwagger } from '../swagger';
 
 @ApiTags('Auth')
+@ApiBearerAuth()
 @Controller()
 export class TokenController extends BaseController {
   constructor(

@@ -1,6 +1,7 @@
 import { AppModule } from '@/app.module';
 import { HttpExceptionsFilter } from '@/common/filters';
 import { TransformResponseInterceptor } from '@/common/interceptors';
+import { API_DESCRIPTION, applyResponseEnvelope } from '@/common/swagger';
 import { SWAGGER_CUSTOM_CSS, SWAGGER_OPTIONS } from '@/config/swagger.config';
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -93,13 +94,15 @@ async function bootstrap() {
   if (['local', 'development', 'staging'].includes(appEnv)) {
     const swaggerConfig = new DocumentBuilder()
       .setTitle('Circl API')
-      .setDescription('Circl API — backend for the Circl platform.')
+      .setDescription(API_DESCRIPTION)
       .setVersion('1.0')
       .addServer('/', `current host (${appEnv})`)
       .addServer('http://localhost:4000', 'local')
       .addBearerAuth()
       .build();
-    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    // The envelope and the error shape are applied here rather than per handler: one interceptor
+    // wraps every response, so documenting it 200 times would only create 200 places to drift.
+    const document = applyResponseEnvelope(SwaggerModule.createDocument(app, swaggerConfig));
 
     SwaggerModule.setup('docs', app, document, {
       customSiteTitle: 'Circl API',

@@ -1,8 +1,9 @@
 import { Controller, Get, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, JwtAuthGuard } from '@/common';
 import { VerificationService } from '../services/verification.service';
 
+@ApiBearerAuth()
 @Controller('verification')
 @ApiTags('Trust · Verification')
 @UseGuards(JwtAuthGuard)

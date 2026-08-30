@@ -1,9 +1,10 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, JwtAuthGuard } from '@/common';
 import { CreateUploadDto } from '../dtos/create-upload.dto';
 import { MediaUploadService } from '../services/media-upload.service';
 
+@ApiBearerAuth()
 @Controller('media')
 @ApiTags('Media')
 export class MediaController {

@@ -8,11 +8,12 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
 import { ChooseMatchDto, CreateBriefDto } from '../dtos/booking.dto';
 import { BriefService } from '../services/brief.service';
 
+@ApiBearerAuth()
 @Controller('professionals/briefs')
 @ApiTags('Professionals · Circl Handle It')
 @UseGuards(JwtAuthGuard)
@@ -34,7 +35,12 @@ export class BriefController {
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'A brief' })
+  @ApiOperation({
+    summary: 'A brief',
+    description:
+      'One managed brief with its matches. Matching is server-side, so every device sees the ' +
+      'same ordering.',
+  })
   async findOne(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.briefs.findOne(userId, id);
 

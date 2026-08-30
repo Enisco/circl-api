@@ -11,11 +11,12 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage, RateLimit } from '@/common';
 import { CreateOfferDto, ListOffersDto, UpdateOfferDto } from '../dtos/offer.dto';
 import { OfferService } from '../services/offer.service';
 
+@ApiBearerAuth()
 @Controller('community/offers')
 @ApiTags('Community · Offers')
 @UseGuards(JwtAuthGuard)
@@ -38,7 +39,12 @@ export class OfferController {
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Offer detail' })
+  @ApiOperation({
+    summary: 'Offer detail',
+    description:
+      'One community offer with its author, city and price. A free offer carries no price basis '+
+      '(1.4).',
+  })
   async findOne(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.offers.findOne(userId, id);
 
@@ -64,7 +70,10 @@ export class OfferController {
 
   @Patch(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Edit an offer' })
+  @ApiOperation({
+    summary: 'Edit an offer',
+    description: 'Only the author, and only while it is live. Editing does not reset its position in the feed.',
+  })
   async update(
     @CurrentUserId() userId: string,
     @Param('id') id: string,
@@ -77,7 +86,12 @@ export class OfferController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Delete an offer' })
+  @ApiOperation({
+    summary: 'Delete an offer',
+    description:
+      'Soft-deleted, so anyone already in a conversation about it keeps their record of what ' +
+      'was offered.',
+  })
   async remove(@CurrentUserId() userId: string, @Param('id') id: string) {
     await this.offers.remove(userId, id);
   }

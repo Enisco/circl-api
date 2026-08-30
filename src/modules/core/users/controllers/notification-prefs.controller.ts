@@ -8,7 +8,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { JwtAuthGuard, Role, RoleGuard, USER_ROLE_CODE } from '@/common';
 import { User } from '@prisma/client';
@@ -17,6 +17,7 @@ import { RegisterDeviceTokenDto, ReleaseDeviceTokenDto } from '../dtos';
 import { NotificationPrefsSwagger } from '../swagger';
 
 /** Only the device token lives here now. */
+@ApiBearerAuth()
 @Controller('notification-preferences')
 @ApiTags('Users')
 @UseGuards(JwtAuthGuard, RoleGuard)

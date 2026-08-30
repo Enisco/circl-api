@@ -12,9 +12,16 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
 import { BrowseProfessionalsDto, ListSlotsDto } from '../dtos/browse.dto';
+import { SlotsResponseDto } from '../dtos/slots-response.dto';
 import {
   AvailabilityDto,
   CreateListingDto,
@@ -29,6 +36,7 @@ import { ListingService } from '../services/listing.service';
 import { ProfessionalsHomeService } from '../services/professionals-home.service';
 import { AvailabilityService } from '../services/availability.service';
 
+@ApiBearerAuth()
 @Controller('professionals')
 @ApiTags('Professionals')
 @UseGuards(JwtAuthGuard)
@@ -152,7 +160,12 @@ export class ProfessionalsController {
 
   @Patch('listings/:id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Edit a listing, or save a draft between steps' })
+  @ApiOperation({
+    summary: 'Edit a listing, or save a draft between steps',
+    description:
+      'Owner only. A listing stays live and UNVERIFIED throughout (D13); editing resubmits it ' +
+      'for nothing.',
+  })
   async updateListing(
     @CurrentUserId() userId: string,
     @Param('id') id: string,
@@ -180,7 +193,10 @@ export class ProfessionalsController {
 
   @Post('listings/:id/services')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Add a service' })
+  @ApiOperation({
+    summary: 'Add a service',
+    description: 'Services are what a member books. Each carries its own price and basis.',
+  })
   async addService(
     @CurrentUserId() userId: string,
     @Param('id') id: string,
@@ -193,7 +209,12 @@ export class ProfessionalsController {
 
   @Patch('listings/:id/services/:serviceId')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Edit a service, including its availability toggle' })
+  @ApiOperation({
+    summary: 'Edit a service, including its availability toggle',
+    description:
+      'Owner only. An edit never rewrites what was already agreed: a booking copied the name, ' +
+      'description and price when it was made (2.9.2).',
+  })
   async updateService(
     @CurrentUserId() userId: string,
     @Param('id') id: string,
@@ -251,6 +272,7 @@ export class ProfessionalsController {
       'of assuming they do not work then. An empty `days` is a valid answer and the screen falls ' +
       'back to "I am flexible" only.',
   })
+    @ApiOkResponse({ type: SlotsResponseDto })
   async slots(@Param('listingId') listingId: string, @Query() query: ListSlotsDto) {
     const { data } = await this.availability.slots(listingId, query);
 

@@ -11,7 +11,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ReportTargetType, TaxonomyKind } from '@prisma/client';
 import {
   CurrentUserId,
@@ -36,6 +36,7 @@ import { AdminModerationService } from '../services/admin-moderation.service';
 import { AdminTaxonomyService } from '../services/admin-taxonomy.service';
 
 /** Staff endpoints. */
+@ApiBearerAuth()
 @Controller('admin')
 @ApiTags('Admin')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -136,7 +137,12 @@ export class AdminController {
   @Get('guard/cases/:id')
   @Permissions('guard:read')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'One Guard case' })
+  @ApiOperation({
+    summary: 'One Guard case',
+    description:
+      'One case for staff, with its risk signals and history. Requires the `guard:read` ' +
+      'permission.',
+  })
   async guardCase(@Param('id') id: string) {
     const data = await this.guard.findOne(id);
 
@@ -164,7 +170,13 @@ export class AdminController {
   @Get('guard/risk-terms')
   @Permissions('guard:read')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Guard's risk lexicon" })
+  @ApiOperation({
+    summary: "Guard's risk lexicon",
+    description:
+      'The crisis vocabulary, for review. The app carries its own compiled copy too: detection ' +
+      'has to work with no network, and must not tell the server what somebody typed before they ' +
+      'choose to send it.',
+  })
   async riskTerms(@Query() query: ListRiskTermsDto) {
     const { data, meta } = await this.taxonomy.listRiskTerms(query);
 

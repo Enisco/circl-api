@@ -10,7 +10,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   CurrentUserId,
   Idempotent,
@@ -22,6 +22,7 @@ import {
 import { CreateUpdateDto, CreateUpdateReplyDto, ListUpdatesDto } from '../dtos/update.dto';
 import { UpdateService } from '../services/update.service';
 
+@ApiBearerAuth()
 @Controller('community/updates')
 @ApiTags('Community · Updates')
 @UseGuards(JwtAuthGuard)
@@ -30,7 +31,10 @@ export class UpdateController {
 
   @Get()
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'List updates' })
+  @ApiOperation({
+    summary: 'List updates',
+    description: 'The community wall. Updates carry no category, so any category filter excludes them (1.1).',
+  })
   async list(@CurrentUserId() userId: string, @Query() query: ListUpdatesDto) {
     const { data, meta } = await this.updates.list(userId, query);
 
@@ -40,7 +44,12 @@ export class UpdateController {
   @Post()
   @Idempotent()
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Post an update' })
+  @ApiOperation({
+    summary: 'Post an update',
+    description:
+      'A short post with no subject and no category. Media follows the standard rule: send keys, '+
+      'read URLs (0.11).',
+  })
   @RateLimit('CREATE')
   async create(@CurrentUserId() userId: string, @Body() dto: CreateUpdateDto) {
     const data = await this.updates.create(userId, dto);
@@ -50,7 +59,10 @@ export class UpdateController {
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Update detail' })
+  @ApiOperation({
+    summary: 'Update detail',
+    description: 'One update with its reactions and reply count.',
+  })
   async findOne(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.updates.findOne(userId, id);
 
@@ -59,7 +71,10 @@ export class UpdateController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Delete an update' })
+  @ApiOperation({
+    summary: 'Delete an update',
+    description: 'Author only. Replies go with it, because a reply to nothing is not a record of anything.',
+  })
   async remove(@CurrentUserId() userId: string, @Param('id') id: string) {
     await this.updates.remove(userId, id);
   }
@@ -84,7 +99,10 @@ export class UpdateController {
 
   @Delete(':id/reactions')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Remove a like' })
+  @ApiOperation({
+    summary: 'Remove a like',
+    description: 'Idempotent: removing a like that was never added succeeds.',
+  })
   @RateLimit('REACT')
   async unlike(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.updates.react(userId, id, false);
@@ -109,7 +127,10 @@ export class UpdateController {
 
   @Post(':id/replies')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Reply to an update' })
+  @ApiOperation({
+    summary: 'Reply to an update',
+    description: 'Replies are one level deep. There is no reply to a reply.',
+  })
   @RateLimit('CREATE')
   async createReply(
     @CurrentUserId() userId: string,
@@ -123,7 +144,10 @@ export class UpdateController {
 
   @Delete(':updateId/replies/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Delete a reply' })
+  @ApiOperation({
+    summary: 'Delete a reply',
+    description: 'Author only. Tombstoned rather than removed, so the thread does not renumber under a reader.',
+  })
   async removeReply(
     @CurrentUserId() userId: string,
     @Param('updateId') updateId: string,

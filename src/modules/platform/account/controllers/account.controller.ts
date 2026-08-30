@@ -1,9 +1,10 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, JwtAuthGuard } from '@/common';
 import { ConfirmDeletionDto } from '../dtos/deletion.dto';
 import { AccountDeletionService } from '../services/account-deletion.service';
 
+@ApiBearerAuth()
 @Controller('users/me/deletion')
 @ApiTags('Account')
 @UseGuards(JwtAuthGuard)

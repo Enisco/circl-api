@@ -11,7 +11,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
 import {
   AiDraftItemsDto,
@@ -33,6 +33,7 @@ import { EnquiryService } from '../services/enquiry.service';
 import { ItemService } from '../services/item.service';
 import { StoreService } from '../services/store.service';
 
+@ApiBearerAuth()
 @Controller('commerce')
 @ApiTags('Commerce')
 @UseGuards(JwtAuthGuard)
@@ -194,14 +195,20 @@ export class CommerceController {
 
   @Post('enquiries/:id/accept')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Seller confirms they can fulfil it' })
+  @ApiOperation({
+    summary: 'Seller confirms they can fulfil it',
+    description: 'Moves the enquiry to ACCEPTED and posts a system message into the thread.',
+  })
   async acceptEnquiry(@CurrentUserId() userId: string, @Param('id') id: string) {
     return { data: await this.enquiries.accept(userId, id), message: 'Enquiry accepted' };
   }
 
   @Post('enquiries/:id/decline')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Seller declines' })
+  @ApiOperation({
+    summary: 'Seller declines',
+    description: 'Ends the enquiry. The reason is shown to the buyer.',
+  })
   async declineEnquiry(
     @CurrentUserId() userId: string,
     @Param('id') id: string,
@@ -215,7 +222,10 @@ export class CommerceController {
 
   @Post('enquiries/:id/ready')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Out for delivery, or ready to collect' })
+  @ApiOperation({
+    summary: 'Out for delivery, or ready to collect',
+    description: 'One state for both fulfilment modes, because the buyer\'s next action is the same either way.',
+  })
   async readyEnquiry(@CurrentUserId() userId: string, @Param('id') id: string) {
     return { data: await this.enquiries.ready(userId, id), message: 'Marked as ready' };
   }
@@ -260,7 +270,12 @@ export class CommerceController {
 
   @Patch('stores/:id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Edit a store' })
+  @ApiOperation({
+    summary: 'Edit a store',
+    description:
+      'Owner only. Sending `openingHours` or `heritageTags` replaces the whole set; omitting ' +
+      'them leaves it alone.',
+  })
   async updateStore(
     @CurrentUserId() userId: string,
     @Param('id') id: string,
@@ -303,7 +318,12 @@ export class CommerceController {
 
   @Post('stores/:id/items')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Add an item' })
+  @ApiOperation({
+    summary: 'Add an item',
+    description:
+      'Prices are always above zero (4.8.3). A free listing is a Community offer, not a Commerce '+
+      'item.',
+  })
   async addItem(@CurrentUserId() userId: string, @Param('id') id: string, @Body() dto: ItemDto) {
     const data = await this.items.create(userId, id, dto);
 
@@ -325,7 +345,12 @@ export class CommerceController {
 
   @Patch('items/:id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Edit an item, including the stock toggle' })
+  @ApiOperation({
+    summary: 'Edit an item, including the stock toggle',
+    description:
+      'Owner only. An item already in an enquiry is delisted rather than deleted, so the ' +
+      'enquiry keeps its contents (4.8.3).',
+  })
   async updateItem(
     @CurrentUserId() userId: string,
     @Param('id') id: string,
@@ -378,7 +403,12 @@ export class CommerceController {
 
   @Get('ai/draft-items/:jobId')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Poll a draft job' })
+  @ApiOperation({
+    summary: 'Poll a draft job',
+    description:
+      'The job holds its own result, so a client that drops the connection does not lose the ' +
+      'work.',
+  })
   async draftJob(@CurrentUserId() userId: string, @Param('jobId') jobId: string) {
     const data = await this.ai.jobStatus(userId, jobId);
 

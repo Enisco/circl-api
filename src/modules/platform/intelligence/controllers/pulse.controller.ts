@@ -1,5 +1,5 @@
 import { Controller, Get, HttpCode, HttpStatus, Param, Query, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { SuggestionSurface } from '@prisma/client';
 import { ApiException, CurrentUserId, JwtAuthGuard, SuccessMessage } from '@/common';
 import { PrismaService } from '@/infrastructure';
@@ -8,6 +8,7 @@ import { MetricPeriod, MetricSection, MetricsService } from '../services/metrics
 import { PULSE_FLOORS, PulseScope, PulseService } from '../services/pulse.service';
 import { CityService } from '../../shared';
 
+@ApiBearerAuth()
 @Controller('pulse')
 @ApiTags('Circl Intelligence · Pulse')
 @UseGuards(JwtAuthGuard)

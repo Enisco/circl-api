@@ -1,5 +1,5 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Patch, Req, UseGuards } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { JwtAuthGuard, Role, RoleGuard, USER_ROLE_CODE } from '@/common';
 import { User } from '@prisma/client';
@@ -7,6 +7,7 @@ import { ProfileService } from '../services';
 import { UpdateProfileDto } from '../dtos';
 import { ProfileSwagger } from '../swagger';
 
+@ApiBearerAuth()
 @Controller('profile')
 @ApiTags('Users')
 @UseGuards(JwtAuthGuard, RoleGuard)

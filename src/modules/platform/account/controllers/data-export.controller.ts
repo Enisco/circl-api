@@ -1,11 +1,19 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiAcceptedResponse,
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUserId, JwtAuthGuard, RateLimit, SuccessMessage } from '@/common';
 import { DataExportService } from '../services/data-export.service';
 import { EmailChangeService } from '../services/email-change.service';
 import { ChangeEmailDto, ConfirmEmailChangeDto } from '../dtos/account.dto';
+import { DataExportResponseDto, EmailChangeStartedDto } from '../dtos/account-response.dto';
 
 /** Download my data (G9) and change my email (G10). */
+@ApiBearerAuth()
 @Controller('users/me')
 @ApiTags('Users')
 @UseGuards(JwtAuthGuard)
@@ -23,6 +31,7 @@ export class AccountSettingsController {
       'A subject access request under UK GDPR. A second request while one is pending returns 409 ' +
       'rather than queuing a duplicate.',
   })
+    @ApiAcceptedResponse({ type: DataExportResponseDto })
   async requestExport(@CurrentUserId() userId: string) {
     const { data } = await this.exports.request(userId);
 
@@ -32,6 +41,7 @@ export class AccountSettingsController {
   @Get('data-export')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'The latest export request', description: 'Null data when there is none.' })
+    @ApiOkResponse({ type: DataExportResponseDto, description: 'Null data when the member has never asked.' })
   async latestExport(@CurrentUserId() userId: string) {
     const { data } = await this.exports.latest(userId);
 
@@ -47,6 +57,7 @@ export class AccountSettingsController {
       'Sends a six-digit code to the NEW address, because that is the one being proved. 409 ' +
       'EMAIL_TAKEN if it is already on another account.',
   })
+    @ApiAcceptedResponse({ type: EmailChangeStartedDto })
   async changeEmail(@CurrentUserId() userId: string, @Body() dto: ChangeEmailDto) {
     return this.emailChange.request(userId, dto);
   }

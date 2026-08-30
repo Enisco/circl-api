@@ -1,10 +1,11 @@
 import { Controller, Get, HttpCode, HttpStatus, Query, UseGuards } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard, Role, RoleGuard, USER_ROLE_CODE } from '@/common';
 import { ProfileService } from '../services';
 import { CheckUsernameDto } from '../dtos';
 import { ProfileSwagger } from '../swagger';
 
+@ApiBearerAuth()
 @Controller('check-username')
 @ApiTags('Users')
 @UseGuards(JwtAuthGuard, RoleGuard)

@@ -11,7 +11,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { DeflectionOutcome } from '@prisma/client';
 import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage, RateLimit } from '@/common';
 import {
@@ -25,6 +25,7 @@ import {
 import { GuideService } from '../services/guide.service';
 import { GuideMatchService } from '../services/guide-match.service';
 
+@ApiBearerAuth()
 @Controller('community/guides')
 @ApiTags('Community · Guides')
 @UseGuards(JwtAuthGuard)
@@ -83,7 +84,12 @@ export class GuideController {
   @Post()
   @Idempotent()
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Write a guide' })
+  @ApiOperation({
+    summary: 'Write a guide',
+    description:
+      'A guide is steps, not free prose: send `steps`, and the server stores them as positioned '+
+      'blocks.',
+  })
   @RateLimit('CREATE')
   async create(@CurrentUserId() userId: string, @Body() dto: CreateGuideDto) {
     const data = await this.guides.create(userId, dto);
@@ -109,7 +115,10 @@ export class GuideController {
 
   @Post(':id/bookmark')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Bookmark a guide' })
+  @ApiOperation({
+    summary: 'Bookmark a guide',
+    description: 'Saves it to the member\'s own list. Idempotent.',
+  })
   @RateLimit('REACT')
   async bookmark(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.guides.setBookmark(userId, id, true);
@@ -119,7 +128,10 @@ export class GuideController {
 
   @Delete(':id/bookmark')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Remove a bookmark' })
+  @ApiOperation({
+    summary: 'Remove a bookmark',
+    description: 'Idempotent: removing one that was never saved succeeds.',
+  })
   @RateLimit('REACT')
   async unbookmark(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.guides.setBookmark(userId, id, false);
@@ -129,7 +141,10 @@ export class GuideController {
 
   @Post(':id/reactions')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Like a guide' })
+  @ApiOperation({
+    summary: 'Like a guide',
+    description: 'Drives the like count on the card and in the guide header. Idempotent.',
+  })
   @RateLimit('REACT')
   async like(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.guides.react(userId, id, true);
@@ -139,7 +154,10 @@ export class GuideController {
 
   @Delete(':id/reactions')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Remove a like' })
+  @ApiOperation({
+    summary: 'Remove a like',
+    description: 'Idempotent: removing a like that was never added succeeds.',
+  })
   @RateLimit('REACT')
   async unlike(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.guides.react(userId, id, false);

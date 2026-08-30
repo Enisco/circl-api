@@ -9,7 +9,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
 import {
   CancelDto,
@@ -23,6 +23,7 @@ import {
 import { BookingService } from '../services/booking.service';
 import { DisputeService } from '../services/dispute.service';
 
+@ApiBearerAuth()
 @Controller('bookings')
 @ApiTags('Professionals · Bookings')
 @UseGuards(JwtAuthGuard)
@@ -91,7 +92,10 @@ export class BookingController {
 
   @Post(':id/decline')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Decline a booking' })
+  @ApiOperation({
+    summary: 'Decline a booking',
+    description: 'The professional ends it before it starts. The reason is shown to the client.',
+  })
   async decline(
     @CurrentUserId() userId: string,
     @Param('id') id: string,
@@ -102,7 +106,10 @@ export class BookingController {
 
   @Post(':id/start')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Start work' })
+  @ApiOperation({
+    summary: 'Start work',
+    description: 'Moves the booking to IN_PROGRESS and stamps the timeline (2.9.5).',
+  })
   async start(@CurrentUserId() userId: string, @Param('id') id: string) {
     return { data: await this.bookings.start(userId, id), message: 'Work started' };
   }

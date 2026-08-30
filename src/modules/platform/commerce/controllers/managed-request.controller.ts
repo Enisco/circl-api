@@ -1,9 +1,10 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, JwtAuthGuard } from '@/common';
 import { ManagedRequestDto } from '../../professionals/dtos/booking.dto';
 import { ManagedRequestService } from '../services/managed-request.service';
 
+@ApiBearerAuth()
 @Controller('managed-requests')
 @ApiTags('Managed requests')
 @UseGuards(JwtAuthGuard)

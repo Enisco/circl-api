@@ -10,7 +10,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
 import {
   CreateReviewDto,
@@ -20,6 +20,7 @@ import {
 } from '../dtos/review.dto';
 import { ReviewService } from '../services/review.service';
 
+@ApiBearerAuth()
 @Controller('reviews')
 @ApiTags('Trust · Reviews')
 @UseGuards(JwtAuthGuard)

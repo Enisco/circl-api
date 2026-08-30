@@ -1,9 +1,10 @@
 import { Controller, Get, HttpCode, HttpStatus, Param, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, JwtAuthGuard } from '@/common';
 import { NotificationFeedService } from '../services';
 import { ListNotificationsDto } from '../dtos';
 
+@ApiBearerAuth()
 @Controller('notifications')
 @ApiTags('Notifications')
 @UseGuards(JwtAuthGuard)
@@ -39,7 +40,12 @@ export class NotificationController {
 
   @Post('read-all')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Mark every notification read' })
+  @ApiOperation({
+    summary: 'Mark every notification read',
+    description:
+      'Clears the whole list in one call, so a member with two hundred notifications does not ' +
+      'send two hundred requests.',
+  })
   async readAll(@CurrentUserId() userId: string) {
     return this.feed.markAllRead(userId);
   }

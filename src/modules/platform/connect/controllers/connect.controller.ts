@@ -11,7 +11,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, JwtAuthGuard, SuccessMessage } from '@/common';
 import {
   CreateConnectionRequestDto,
@@ -24,6 +24,7 @@ import { ConnectProfileService } from '../services/connect-profile.service';
 import { ConnectionRequestService } from '../services/connection-request.service';
 import { DiscoveryService } from '../services/discovery.service';
 
+@ApiBearerAuth()
 @Controller('connect')
 @ApiTags('Connect')
 @UseGuards(JwtAuthGuard)
@@ -151,7 +152,10 @@ export class ConnectController {
 
   @Delete('requests/:id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Withdraw a request you sent' })
+  @ApiOperation({
+    summary: 'Withdraw a request you sent',
+    description: 'The sender takes it back. The recipient is never told it existed.',
+  })
   async cancel(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.requests.cancel(userId, id);
 

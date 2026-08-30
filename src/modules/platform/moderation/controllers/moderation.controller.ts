@@ -10,11 +10,12 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, JwtAuthGuard, SuccessMessage, RateLimit } from '@/common';
 import { CreateBlockDto, CreateReportDto, ListBlocksDto } from '../dtos/moderation.dto';
 import { ModerationService } from '../services/moderation.service';
 
+@ApiBearerAuth()
 @Controller('moderation')
 @ApiTags('Moderation')
 @UseGuards(JwtAuthGuard)
@@ -54,7 +55,12 @@ export class ModerationController {
 
   @Delete('blocks/:userId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Unblock a member' })
+  @ApiOperation({
+    summary: 'Unblock a member',
+    description:
+      'Symmetric, like the block was. Idempotent: unblocking someone who was never blocked '+
+      'succeeds.',
+  })
   async unblock(@CurrentUserId() blockerId: string, @Param('userId') blockedId: string) {
     await this.moderation.unblock(blockerId, blockedId);
   }

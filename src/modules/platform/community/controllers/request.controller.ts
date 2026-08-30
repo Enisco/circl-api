@@ -11,7 +11,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage, RateLimit } from '@/common';
 import {
   CreateRequestDto,
@@ -23,6 +23,7 @@ import { CreateResponseDto, ListResponsesDto } from '../dtos/response.dto';
 import { RequestService } from '../services/request.service';
 import { RequestResponseService } from '../services/request-response.service';
 
+@ApiBearerAuth()
 @Controller('community/requests')
 @ApiTags('Community · Requests')
 @UseGuards(JwtAuthGuard)

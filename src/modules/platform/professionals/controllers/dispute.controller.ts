@@ -8,12 +8,13 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
 import { DisputeEvidenceDto, OpenDisputeDto } from '../dtos/booking.dto';
 import { DisputeService } from '../services/dispute.service';
 
 /** The shared dispute resource (2.10, 4.1.3). */
+@ApiBearerAuth()
 @Controller('disputes')
 @ApiTags('Disputes')
 @UseGuards(JwtAuthGuard)
@@ -48,7 +49,10 @@ export class DisputeController {
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'One dispute, with the evidence both sides have added' })
+  @ApiOperation({
+    summary: 'One dispute, with the evidence both sides have added',
+    description: 'Circl staff join the existing conversation rather than a new one being opened (D29).',
+  })
   async findOne(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.disputes.findOne(userId, id);
 

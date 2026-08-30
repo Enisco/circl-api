@@ -10,7 +10,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, Idempotent, JwtAuthGuard, RateLimit, SuccessMessage } from '@/common';
 import {
   ListConversationsDto,
@@ -24,6 +24,7 @@ import { ChatGateway } from '../gateway/chat.gateway';
 import { ConversationService } from '../services/conversation.service';
 import { MessageService } from '../services/message.service';
 
+@ApiBearerAuth()
 @Controller('messages')
 @ApiTags('Messaging')
 @UseGuards(JwtAuthGuard)
@@ -192,7 +193,10 @@ export class MessagingController {
 
   @Delete(':conversationId/mute')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Unmute a thread' })
+  @ApiOperation({
+    summary: 'Unmute a thread',
+    description: 'Notifications resume. The unread count was never affected: mute silences the push, not the count (5.4).',
+  })
   async unmute(@CurrentUserId() userId: string, @Param('conversationId') id: string) {
     const data = await this.conversations.setMuted(userId, id, false);
 
@@ -219,7 +223,10 @@ export class MessagingController {
 
   @Delete(':conversationId/archive')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Unarchive a thread' })
+  @ApiOperation({
+    summary: 'Unarchive a thread',
+    description: 'Returns the conversation to the inbox. Archiving deleted nothing.',
+  })
   async unarchive(@CurrentUserId() userId: string, @Param('conversationId') id: string) {
     const data = await this.conversations.setArchived(userId, id, false);
 
