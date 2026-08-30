@@ -3,6 +3,8 @@ import { HttpExceptionsFilter } from '@/common/filters';
 import { TransformResponseInterceptor } from '@/common/interceptors';
 import { API_DESCRIPTION, applyResponseEnvelope } from '@/common/swagger';
 import { SWAGGER_CUSTOM_CSS, SWAGGER_OPTIONS } from '@/config/swagger.config';
+import { PrismaService } from '@/infrastructure';
+import { runStartupSeeds } from '@/infrastructure/database/startup-seed';
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory, Reflector } from '@nestjs/core';
@@ -110,6 +112,12 @@ async function bootstrap() {
       swaggerOptions: SWAGGER_OPTIONS,
     });
   }
+
+  // Before listening, so the app never serves a request against a half seeded database.
+  await runStartupSeeds(app.get(PrismaService), process.env, {
+    info: message => logger.info(message),
+    warn: message => logger.warn(message),
+  });
 
   const port = config.get<number>('PORT') || config.get<number>('APP_PORT') || 4000;
 
