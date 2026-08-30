@@ -8,6 +8,7 @@ import { BookingService } from './services/booking.service';
 import { BriefService } from './services/brief.service';
 import { BrowseService } from './services/browse.service';
 import { DisputeService } from './services/dispute.service';
+import { AvailabilityService } from './services/availability.service';
 import { ListingService } from './services/listing.service';
 import { ProfessionalsHomeService } from './services/professionals-home.service';
 
@@ -25,6 +26,7 @@ const CONTROLLERS = [
   ],
   controllers: CONTROLLERS,
   providers: [
+    AvailabilityService,
     ListingService,
     BrowseService,
     ProfessionalsHomeService,
@@ -32,6 +34,6 @@ const CONTROLLERS = [
     BriefService,
     DisputeService,
   ],
-  exports: [ListingService, BookingService, DisputeService, ProfessionalsHomeService],
+  exports: [ListingService, BookingService, DisputeService, ProfessionalsHomeService, BrowseService],
 })
 export class ProfessionalsModule {}

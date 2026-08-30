@@ -130,39 +130,44 @@ const interests: Array<[string, string]> = [
   ['OUTDOORS', 'Outdoors'],
 ];
 
-const languages: Array<[string, string]> = [
-  ['ENGLISH', 'English'],
-  ['YORUBA', 'Yoruba'],
-  ['IGBO', 'Igbo'],
-  ['HAUSA', 'Hausa'],
-  ['NIGERIAN_PIDGIN', 'Nigerian Pidgin'],
-  ['TWI', 'Twi'],
-  ['SWAHILI', 'Swahili'],
-  ['SOMALI', 'Somali'],
-  ['AMHARIC', 'Amharic'],
-  ['TIGRINYA', 'Tigrinya'],
-  ['ARABIC', 'Arabic'],
-  ['FRENCH', 'French'],
-  ['PORTUGUESE', 'Portuguese'],
-  ['SPANISH', 'Spanish'],
-  ['URDU', 'Urdu'],
-  ['HINDI', 'Hindi'],
-  ['PUNJABI', 'Punjabi'],
-  ['BENGALI', 'Bengali'],
-  ['TAMIL', 'Tamil'],
-  ['GUJARATI', 'Gujarati'],
-  ['MANDARIN', 'Mandarin'],
-  ['CANTONESE', 'Cantonese'],
-  ['TAGALOG', 'Tagalog'],
-  ['POLISH', 'Polish'],
-  ['ROMANIAN', 'Romanian'],
-  ['RUSSIAN', 'Russian'],
-  ['UKRAINIAN', 'Ukrainian'],
-  ['TURKISH', 'Turkish'],
-  ['FARSI', 'Farsi'],
-  ['PASHTO', 'Pashto'],
-  ['KRIO', 'Krio'],
-  ['LINGALA', 'Lingala'],
+/**
+ * The third value is ISO 639-1 (639-3 where no two-letter code exists), served as `iso` so
+ * the client can key on a standard identifier. `code` stays as it is because it is already
+ * stored on member profiles and is stable against a label change on its own.
+ */
+const languages: Array<[string, string, string]> = [
+  ['ENGLISH', 'English', 'en'],
+  ['YORUBA', 'Yoruba', 'yo'],
+  ['IGBO', 'Igbo', 'ig'],
+  ['HAUSA', 'Hausa', 'ha'],
+  ['NIGERIAN_PIDGIN', 'Nigerian Pidgin', 'pcm'],
+  ['TWI', 'Twi', 'tw'],
+  ['SWAHILI', 'Swahili', 'sw'],
+  ['SOMALI', 'Somali', 'so'],
+  ['AMHARIC', 'Amharic', 'am'],
+  ['TIGRINYA', 'Tigrinya', 'ti'],
+  ['ARABIC', 'Arabic', 'ar'],
+  ['FRENCH', 'French', 'fr'],
+  ['PORTUGUESE', 'Portuguese', 'pt'],
+  ['SPANISH', 'Spanish', 'es'],
+  ['URDU', 'Urdu', 'ur'],
+  ['HINDI', 'Hindi', 'hi'],
+  ['PUNJABI', 'Punjabi', 'pa'],
+  ['BENGALI', 'Bengali', 'bn'],
+  ['TAMIL', 'Tamil', 'ta'],
+  ['GUJARATI', 'Gujarati', 'gu'],
+  ['MANDARIN', 'Mandarin', 'zh'],
+  ['CANTONESE', 'Cantonese', 'yue'],
+  ['TAGALOG', 'Tagalog', 'tl'],
+  ['POLISH', 'Polish', 'pl'],
+  ['ROMANIAN', 'Romanian', 'ro'],
+  ['RUSSIAN', 'Russian', 'ru'],
+  ['UKRAINIAN', 'Ukrainian', 'uk'],
+  ['TURKISH', 'Turkish', 'tr'],
+  ['FARSI', 'Farsi', 'fa'],
+  ['PASHTO', 'Pashto', 'ps'],
+  ['KRIO', 'Krio', 'kri'],
+  ['LINGALA', 'Lingala', 'ln'],
 ];
 
 // ─── Countries of origin ──────────────────────────────────────────────────────
@@ -306,6 +311,66 @@ const guardCategories: Array<[string, string]> = [
   ['OTHER', 'Something else'],
 ];
 
+
+// ─── Vocabularies that were Dart constants until now (BACKEND-DATA-GAPS G1) ───
+// Every one of them is content, not chrome: the wording is member-visible and the value is
+// stored against a record, so it could not change without an app release.
+
+const genders: Array<[string, string]> = [
+  ['MALE', 'Male'],
+  ['FEMALE', 'Female'],
+  ['NON_BINARY', 'Non-binary'],
+  ['OTHER', 'Other'],
+];
+
+/** Step 0 of the managed request flow. */
+const managedCategories: Array<[string, string]> = [
+  ['LEGAL_HELP', 'Legal help'],
+  ['HEALTH_NHS', 'Health / NHS'],
+  ['TAX_FINANCE', 'Tax / Finance'],
+  ['IMMIGRATION', 'Immigration'],
+  ['TRANSLATION', 'Translation'],
+  ['CAREER_CV', 'Career / CV'],
+  ['TECH_SUPPORT', 'Tech support'],
+  ['LOGISTICS', 'Logistics'],
+];
+
+/** Matches the ExperienceLevel enum exactly: the label moves, the code does not. */
+const experienceLevels: Array<[string, string]> = [
+  ['BEGINNER', 'Beginner'],
+  ['MID_LEVEL', 'Mid-level'],
+  ['EXPERT', 'Expert'],
+];
+
+/** Matches BriefUrgency. */
+const urgencyOptions: Array<[string, string]> = [
+  ['ASAP', 'ASAP'],
+  ['THIS_WEEK', 'This week'],
+  ['THIS_MONTH', 'This month'],
+  ['FLEXIBLE', 'Flexible'],
+];
+
+/**
+ * Bounds rather than a label the client parses back into a range, which is the drift the price
+ * bands were given minPence/maxPence to avoid. A null maxAge is open-ended, as in "45+".
+ */
+const connectAgeBands: Array<[string, string, number, number | null]> = [
+  ['AGE_18_24', '18–24', 18, 24],
+  ['AGE_25_34', '25–34', 25, 34],
+  ['AGE_35_44', '35–44', 35, 44],
+  ['AGE_45_PLUS', '45+', 45, null],
+];
+
+/** The keys the browse endpoint already accepts. Only the wording moves server-side. */
+const professionalSortOptions: Array<[string, string]> = [
+  ['RECOMMENDED', 'Recommended'],
+  ['RATING', 'Highest rated'],
+  ['REVIEWS', 'Most reviewed'],
+  ['NEAREST', 'Nearest'],
+  ['PRICE', 'Lowest price'],
+  ['RESPONSE', 'Fastest to reply'],
+];
+
 const pair = (
   kind: TaxonomyKind,
   rows: Array<[string, string]>,
@@ -338,7 +403,13 @@ export const taxonomySeeds: TaxonomySeed[] = [
     metadata: { isNewToUk },
   })),
   ...pair(TaxonomyKind.INTEREST, interests),
-  ...pair(TaxonomyKind.LANGUAGE, languages),
+  ...languages.map(([code, label, isoCode], index) => ({
+    kind: TaxonomyKind.LANGUAGE,
+    code,
+    label,
+    sort: index + 1,
+    metadata: { iso: isoCode },
+  })),
   ...pair(TaxonomyKind.COUNTRY_OF_ORIGIN, countries),
   ...connectionTypes.map(([code, label, description], index) => ({
     kind: TaxonomyKind.CONNECTION_TYPE,
@@ -380,4 +451,16 @@ export const taxonomySeeds: TaxonomySeed[] = [
     metadata: { defaultPush: push, defaultEmail: email, isLocked },
   })),
   ...pair(TaxonomyKind.GUARD_CATEGORY, guardCategories),
+  ...pair(TaxonomyKind.GENDER, genders),
+  ...pair(TaxonomyKind.MANAGED_CATEGORY, managedCategories),
+  ...pair(TaxonomyKind.EXPERIENCE_LEVEL, experienceLevels),
+  ...pair(TaxonomyKind.URGENCY, urgencyOptions),
+  ...connectAgeBands.map(([code, label, minAge, maxAge], index) => ({
+    kind: TaxonomyKind.CONNECT_AGE_BAND,
+    code,
+    label,
+    sort: index + 1,
+    metadata: { minAge, maxAge },
+  })),
+  ...pair(TaxonomyKind.PROFESSIONAL_SORT_OPTION, professionalSortOptions),
 ];

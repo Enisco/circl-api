@@ -115,6 +115,21 @@ enum TaxonomyKind {
   HELP_TAG
   GUARD_CATEGORY
   NOTIFICATION_CATEGORY
+  // Vocabularies that were Dart constants until the client had somewhere to read them from.
+  GENDER
+  MANAGED_CATEGORY
+  EXPERIENCE_LEVEL
+  URGENCY
+  PRIVATE_HELP_CATEGORY
+  CONNECT_AGE_BAND
+  PROFESSIONAL_SORT_OPTION
+}
+
+enum DataExportStatus {
+  PENDING
+  READY
+  EXPIRED
+  FAILED
 }
 
 // ─── Shared content enums ────────────────────────────────────────────────────
@@ -268,6 +283,10 @@ enum ReportReason {
   INAPPROPRIATE
   IMPERSONATION
   SAFETY_CONCERN
+  // The report sheet's own chips, which INAPPROPRIATE was standing in for.
+  HATE_SPEECH
+  NUDITY
+  ILLEGAL_ITEM
   OTHER
 }
 

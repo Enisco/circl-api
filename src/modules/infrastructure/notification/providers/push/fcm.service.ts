@@ -33,12 +33,31 @@ export class FcmService implements OnModuleInit {
     data?: Record<string, string>,
   ): Promise<string | null> {
     try {
+      // FCM data payloads are string-to-string. A number or a nested object arrives as something
+      // the client will not read, so everything is stringified here rather than at each caller.
+      const payload = data
+        ? Object.fromEntries(
+            Object.entries(data)
+              .filter(([, value]) => value !== undefined && value !== null)
+              .map(([key, value]) => [key, String(value)]),
+          )
+        : undefined;
+      const badge = Number(payload?.badge);
+
       const messageId = await admin.messaging().send({
         token,
         notification: { title, body },
-        ...(data && { data }),
-        apns: { payload: { aps: { sound: 'default', badge: 1 } } },
-        android: { notification: { sound: 'default' } },
+        ...(payload && { data: payload }),
+        apns: {
+          payload: {
+            aps: { sound: 'default', badge: Number.isFinite(badge) ? badge : 1 },
+          },
+        },
+        android: {
+          notification: { sound: 'default' },
+          // Twenty messages in one thread are one notification, not twenty.
+          ...(payload?.collapseKey ? { collapseKey: payload.collapseKey } : {}),
+        },
       });
 
       this.logger.info(`FCM message sent: ${messageId}`);

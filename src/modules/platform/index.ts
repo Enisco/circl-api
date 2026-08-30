@@ -11,6 +11,7 @@ import { MessagingCoreModule } from './messaging/messaging.module';
 import { ModerationModule } from './moderation/moderation.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ProfessionalsModule } from './professionals/professionals.module';
+import { SearchModule } from './search/search.module';
 import { PlatformSharedModule } from './shared/shared.module';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
 import { TrustModule } from './trust/trust.module';
@@ -28,6 +29,8 @@ export const PLATFORM_MODULES = [
   ProfessionalsModule,
   ConnectModule,
   CommerceModule,
+  // After the four sections it searches.
+  SearchModule,
   ModerationModule,
   CirclGuardModule,
   AccountModule,

@@ -14,6 +14,8 @@ export const RATE_LIMITS = {
   /** Messaging (5.7): 60 a minute AND 300 an hour. */
   MESSAGE_MINUTE: { limit: 60, ttl: 60_000 },
   MESSAGE_HOUR: { limit: 300, ttl: 3_600_000 },
+  /** Anything that sends a six-digit code to an inbox. 5 an hour. */
+  OTP: { limit: 5, ttl: 3_600_000 },
 } as const;
 
 type LimitName = keyof typeof RATE_LIMITS;

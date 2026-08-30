@@ -49,6 +49,9 @@ model ProfessionalListing {
 
   @@index([cityId, isAcceptingWork])
   @@index([verificationStatus])
+  availability      ListingAvailability[]
+  availabilityBlocks ListingAvailabilityBlock[]
+
   @@map("professional_listings")
 }
 
@@ -302,4 +305,35 @@ model ManagedRequest {
   @@index([state, createdAt])
   @@index([userId])
   @@map("managed_requests")
+}
+
+/// The working week behind the booking slot picker (G5). Without it the app offers the same six
+/// days and eight times for every professional, forever.
+model ListingAvailability {
+  listingId String             @map("listing_id")
+  listing   ProfessionalListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  day       Weekday            @map("day")
+
+  /// Minutes from midnight, the same unit the store opening hours use.
+  startMinutes Int @map("start_minutes")
+  endMinutes   Int @map("end_minutes")
+  /// How long one bookable slot runs for, so an hour-long consultation and a 30-minute call differ.
+  slotMinutes  Int @default(60) @map("slot_minutes")
+
+  @@id([listingId, day])
+  @@map("listing_availability")
+}
+
+/// A single day the professional is not working: holiday, or a date they blocked out.
+model ListingAvailabilityBlock {
+  id        String             @id @default(uuid())
+  listingId String             @map("listing_id")
+  listing   ProfessionalListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  date   DateTime @map("date") @db.Date
+  reason String?  @map("reason")
+
+  @@unique([listingId, date])
+  @@index([listingId, date])
+  @@map("listing_availability_blocks")
 }

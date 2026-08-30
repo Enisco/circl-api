@@ -29,6 +29,9 @@ model User {
   userRole          UserRole?
   socialAuths       UserSocialAuth[]
   notificationPrefs UserNotificationPrefs?
+  privacy           PrivacyPreference?
+  dataExports       DataExportRequest[]
+  emailChanges      EmailChangeRequest[]
 
   // ── Community ─────────────────────────────────────────────────────────────
   requests        CommunityRequest[] @relation("RequestAuthor")
@@ -230,4 +233,56 @@ model UserNotificationPrefs {
 
   @@index([userId])
   @@map("user_notification_prefs")
+}
+
+/// The two switches on the Privacy screen, which were local-only in the app (G7).
+model PrivacyPreference {
+  userId String @id @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// False falls the feed back to plain recency and city, so the switch is not decorative.
+  personalisedFeed              Boolean @default(true) @map("personalised_feed")
+  useActivityForRecommendations Boolean @default(true) @map("use_activity_for_recommendations")
+  showInConnectDiscovery        Boolean @default(true) @map("show_in_connect_discovery")
+
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("privacy_preferences")
+}
+
+/// A subject access request under UK GDPR (G9). The button either works or should not be on the screen.
+model DataExportRequest {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status DataExportStatus @default(PENDING) @map("status")
+
+  /// Object key, signed on read like every other file. Null until the export is built.
+  downloadKey String?   @map("download_key")
+  requestedAt DateTime  @default(now()) @map("requested_at") @db.Timestamptz
+  readyAt     DateTime? @map("ready_at") @db.Timestamptz
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz
+  failedAt    DateTime? @map("failed_at") @db.Timestamptz
+
+  @@index([userId, requestedAt])
+  @@map("data_export_requests")
+}
+
+/// Changing a sign-in address verifies the new one before the old one is released (G10).
+model EmailChangeRequest {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  newEmail String @map("new_email")
+  codeHash String @map("code_hash")
+  attempts Int    @default(0) @map("attempts")
+
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz
+  confirmedAt DateTime? @map("confirmed_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userId, createdAt])
+  @@map("email_change_requests")
 }

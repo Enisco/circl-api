@@ -27,6 +27,6 @@ const CONTROLLERS = [CommerceController, ManagedRequestController];
     AiDraftService,
     ManagedRequestService,
   ],
-  exports: [StoreService, EnquiryService],
+  exports: [StoreService, EnquiryService, CommerceBrowseService],
 })
 export class CommerceModule {}

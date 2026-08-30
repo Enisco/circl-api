@@ -9,6 +9,9 @@ import { seedProfessionals } from './professionals';
 import { seedCommerce } from './commerce';
 import { seedSocial } from './social';
 import { seedNotifications } from './notifications';
+import { seedAccountSettings } from './account';
+import { seedAvailability } from './availability';
+import { seedModeration } from './moderation';
 import { connectExtras, PEOPLE } from './people';
 import { hoursAgo, seedId } from './ids';
 import { MetricsService } from '../../../src/modules/platform/intelligence/services/metrics.service';
@@ -162,6 +165,20 @@ export const seedDemo = async (prisma: PrismaClient) => {
 
   await seedGuard(ctx);
   console.info('  ✅ 1 support thread');
+
+  // The rows behind the settings screens and the surfaces that were opening empty.
+  const account = await seedAccountSettings(ctx);
+  console.info(`  ✅ ${account.sessions} device sessions, ${account.privacy} privacy rows`);
+
+  const availability = await seedAvailability(ctx);
+  console.info(
+    `  ✅ ${availability.days} working days across the professionals, ${availability.occupied} slots taken`,
+  );
+
+  const moderation = await seedModeration(ctx);
+  console.info(
+    `  ✅ ${moderation.blocks} blocks, ${moderation.reports} reports, ${moderation.searches} searches behind the demand card`,
+  );
 
   const notifications = await seedNotifications(ctx);
   console.info(`  ✅ ${notifications.notifications} notifications`);

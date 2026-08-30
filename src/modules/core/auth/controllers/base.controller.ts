@@ -35,6 +35,7 @@ export class BaseController {
     const loginResponse = response as LoginResponse;
     const isMobile = this.isMobileClient(req);
 
+    // Cookies stay for the admin web client, which has a cookie jar and wants httpOnly.
     if (!isMobile) {
       this.cookieService.setTokensInCookies(
         res,
@@ -43,12 +44,10 @@ export class BaseController {
       );
     }
 
-    const { refreshToken, accessToken, ...rest } = loginResponse;
-
-    return {
-      message: loginResponse.message,
-      ...rest,
-      ...(isMobile && { accessToken, refreshToken }),
-    };
+    // The tokens are ALSO in the body, unconditionally. The mobile client has no cookie jar and
+    // an httpOnly cookie is invisible to Dart by design, so a body that omitted them parsed
+    // `accessToken` as null and treated a returning member as a brand-new signup. Keying this on
+    // the `x-client-platform` header made it depend on a header the client was not sending.
+    return { message: loginResponse.message, ...loginResponse };
   }
 }

@@ -3,7 +3,9 @@ import { NotificationBucket, NotificationKind, Prisma } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { buildPageMeta, toJsonOrUndefined } from '@/common';
 import { authorSelect, MediaService, toAuthorView } from '../../shared';
+import { FcmService } from '@/modules/infrastructure/notification/providers/push/fcm.service';
 import { ListNotificationsDto } from '../dtos';
+import { NotificationPreferenceService } from './notification-preference.service';
 
 /** What a section hands over when something happens worth telling somebody about. */
 export interface RaiseNotificationInput {
@@ -49,6 +51,8 @@ export class NotificationFeedService {
   constructor(
     private readonly database: PrismaService,
     private readonly media: MediaService,
+    private readonly preferences: NotificationPreferenceService,
+    private readonly fcm: FcmService,
   ) {}
 
   /** Records a notification without blocking or failing the caller. */
@@ -69,7 +73,35 @@ export class NotificationFeedService {
           metadata: toJsonOrUndefined(input.metadata),
         },
       })
+      // Without the push the row exists and nothing on the member's device changes, so the header
+      // badge only moves when they happen to reopen the list (G14 15.1).
+      .then(() => this.push(input))
       .catch(error => this.logger.warn(`Notification not recorded: ${(error as Error).message}`));
+  }
+
+  /** Fire-and-forget, like the row itself: a push that fails must never fail what raised it. */
+  private async push(input: RaiseNotificationInput): Promise<void> {
+    try {
+      // The category's own row of the matrix (6.1.3), not a switch of its own.
+      if (!(await this.preferences.allows(input.userId, input.categoryCode, 'push'))) return;
+
+      const prefs = await this.database.userNotificationPrefs.findUnique({
+        where: { userId: input.userId },
+        select: { devicePushToken: true },
+      });
+
+      if (!prefs?.devicePushToken) return;
+
+      await this.fcm.sendPush(prefs.devicePushToken, input.title, input.body ?? '', {
+        // Anything other than MESSAGE refreshes the notification badge, so the kind travels as-is.
+        type: input.kind,
+        // An in-app path or nothing. A null route is a row that marks itself read and goes nowhere.
+        ...(input.route ? { route: input.route } : {}),
+        badge: String(await this.unreadTotal(input.userId)),
+      });
+    } catch (error) {
+      this.logger.warn(`Notification push failed: ${(error as Error).message}`);
+    }
   }
 
   async list(userId: string, query: ListNotificationsDto) {

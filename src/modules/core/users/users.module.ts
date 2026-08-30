@@ -3,12 +3,14 @@ import { RouterModule } from '@nestjs/core';
 import {
   NotificationPrefsController,
   ProfileController,
+  SessionController,
   UserPublicController,
   UsernameController,
 } from './controllers';
 import {
   NotificationPrefsService,
   ProfileService,
+  SessionListService,
   UserActivityService,
   UserPublicService,
 } from './services';
@@ -23,6 +25,7 @@ import {
         children: [
           ProfileController,
           NotificationPrefsController,
+          SessionController,
           UsernameController,
           UserPublicController,
         ],
@@ -32,9 +35,16 @@ import {
   controllers: [
     ProfileController,
     NotificationPrefsController,
+    SessionController,
     UsernameController,
     UserPublicController,
   ],
-  providers: [ProfileService, NotificationPrefsService, UserActivityService, UserPublicService],
+  providers: [
+    ProfileService,
+    NotificationPrefsService,
+    SessionListService,
+    UserActivityService,
+    UserPublicService,
+  ],
 })
 export class UsersModule {}

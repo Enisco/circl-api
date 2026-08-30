@@ -11,3 +11,10 @@ export class RegisterDeviceTokenDto {
   @IsString()
   token: string;
 }
+
+export class ReleaseDeviceTokenDto {
+  @ApiProperty({ description: 'The token this device registered, released on sign-out.', maxLength: 512 })
+  @MaxLength(512)
+  @IsString()
+  token: string;
+}

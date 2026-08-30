@@ -13,6 +13,6 @@ import { DiscoveryService } from './services/discovery.service';
   ],
   controllers: [ConnectController],
   providers: [ConnectProfileService, DiscoveryService, ConnectionRequestService],
-  exports: [ConnectProfileService],
+  exports: [ConnectProfileService, DiscoveryService],
 })
 export class ConnectModule {}

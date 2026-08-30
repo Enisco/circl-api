@@ -65,9 +65,15 @@ export class FeedService {
     const cursor = decodeCursor<FeedCursor>(query.cursor);
     const profile = await this.profileOf(viewerId);
 
+    // The Privacy switch is the outermost word on this: a member who turned personalisation off
+    // gets plain recency and city whatever they or the cursor asked for, or the switch is
+    // decorative (G7).
+    const personalisationAllowed = await this.personalisationAllowed(viewerId);
+
     // PERSONALISED once the member has completed interests onboarding, else LATEST — but an explicit choice always wins, because ranking that cannot be switched off is ranking that stops being trusted (1.1).
-    const ranking =
-      query.ranking ?? cursor?.ranking ?? (profile.hasInterests ? 'PERSONALISED' : 'LATEST');
+    const ranking = !personalisationAllowed
+      ? 'LATEST'
+      : (query.ranking ?? cursor?.ranking ?? (profile.hasInterests ? 'PERSONALISED' : 'LATEST'));
 
     const blockedIds = await this.blocking.blockedUserIds(viewerId);
     const cityId = this.resolveCity(query.cityId, profile.cityId);
@@ -480,6 +486,16 @@ export class FeedService {
   }
 
   // ─── Viewer signals ────────────────────────────────────────────────────────
+
+  /** Defaults to on, so a member who has never opened the Privacy screen is unaffected. */
+  private async personalisationAllowed(viewerId: string): Promise<boolean> {
+    const row = await this.database.privacyPreference.findUnique({
+      where: { userId: viewerId },
+      select: { personalisedFeed: true },
+    });
+
+    return row?.personalisedFeed ?? true;
+  }
 
   private async profileOf(viewerId: string) {
     const profile = await this.database.userProfile.findUnique({

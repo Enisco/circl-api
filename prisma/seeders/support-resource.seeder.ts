@@ -6,6 +6,8 @@ const RESOURCES: Array<{
   phone: string;
   url: string;
   hours: string;
+  /** What the line is for, in the member's words. The app renders it under the name. */
+  description: string;
   isCrisis: boolean;
 }> = [
   {
@@ -13,6 +15,7 @@ const RESOURCES: Array<{
     phone: '116 123',
     url: 'https://www.samaritans.org',
     hours: 'Free, 24 hours a day',
+    description: 'Free, any time, for anything that is weighing on you.',
     isCrisis: true,
   },
   {
@@ -20,6 +23,7 @@ const RESOURCES: Array<{
     phone: '0808 2000 247',
     url: 'https://www.nationaldahelpline.org.uk',
     hours: 'Free, 24 hours a day',
+    description: 'If you are frightened of someone at home, or someone you know is.',
     isCrisis: true,
   },
   {
@@ -27,6 +31,7 @@ const RESOURCES: Array<{
     phone: '0808 800 4444',
     url: 'https://www.shelter.org.uk',
     hours: '8am to 8pm weekdays, 9am to 5pm weekends',
+    description: 'Eviction, disrepair, homelessness and landlords who will not act.',
     isCrisis: false,
   },
   {
@@ -34,6 +39,7 @@ const RESOURCES: Array<{
     phone: '0800 144 8848',
     url: 'https://www.citizensadvice.org.uk',
     hours: '9am to 5pm, weekdays',
+    description: 'Benefits, debt, work and consumer problems, explained plainly.',
     isCrisis: false,
   },
   {
@@ -41,6 +47,7 @@ const RESOURCES: Array<{
     phone: '08000 121 700',
     url: 'https://www.modernslaveryhelpline.org',
     hours: 'Free, 24 hours a day',
+    description: 'If you are being made to work or live somewhere against your will.',
     isCrisis: true,
   },
   {
@@ -48,6 +55,7 @@ const RESOURCES: Array<{
     phone: '0808 8010 503',
     url: 'https://www.migranthelpuk.org',
     hours: 'Free, 24 hours a day',
+    description: 'Asylum support, accommodation and what you are entitled to ask for.',
     isCrisis: false,
   },
 ];
@@ -63,13 +71,13 @@ export const seedSupportResources = async (prisma: PrismaClient) => {
     if (existing) {
       await prisma.supportResource.update({
         where: { id: existing.id },
-        data: { ...resource, sort: index + 1 },
+        data: { ...resource, sort: index + 1, lastCheckedAt: new Date() },
       });
       continue;
     }
 
     await prisma.supportResource.create({
-      data: { ...resource, countryCode: 'GB', sort: index + 1 },
+      data: { ...resource, countryCode: 'GB', sort: index + 1, lastCheckedAt: new Date() },
     });
   }
 

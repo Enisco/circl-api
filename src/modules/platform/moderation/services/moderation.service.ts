@@ -3,6 +3,7 @@ import {
   ModerationQueueType,
   Prisma,
   ReportReason,
+  ReportState,
   ReportTargetType,
   RiskLevel,
 } from '@prisma/client';
@@ -67,6 +68,36 @@ export class ModerationService {
     const isGuard =
       dto.reasonCode === ReportReason.SAFETY_CONCERN || this.risk.isUrgent(assessment);
 
+    // A member tapping twice on a bad connection should not see a failure (G2). The second tap
+    // reuses the open report rather than filing another for the moderator to close by hand.
+    const existing = await this.database.report.findFirst({
+      where: {
+        reporterId,
+        targetType: dto.targetType,
+        targetId: resolved.id,
+        state: { in: [ReportState.RECEIVED, ReportState.TRIAGED] },
+      },
+      select: { id: true },
+    });
+
+    // Named explicitly, because "also block" on a reported post means block its author and on a
+    // reported group means nothing at all.
+    const blockTargetId = dto.blockUserId
+      ? await this.resolveUserOrToken(dto.blockUserId)
+      : resolved.authorId;
+
+    if (existing) {
+      if (dto.alsoBlock && blockTargetId && blockTargetId !== reporterId) {
+        await this.database.block.upsert({
+          where: { blockerId_blockedId: { blockerId: reporterId, blockedId: blockTargetId } },
+          update: {},
+          create: { blockerId: reporterId, blockedId: blockTargetId },
+        });
+      }
+
+      return;
+    }
+
     await this.database.$transaction(async tx => {
       const report = await tx.report.create({
         data: {
@@ -118,11 +149,13 @@ export class ModerationService {
       });
 
       // Applied in the same transaction, which is what the report sheet's second option promises (1.8.1).
-      if (dto.alsoBlock && resolved.authorId && resolved.authorId !== reporterId) {
+      // In the same transaction as the report: a member who asked for both and got one is worse
+      // off than one who got neither.
+      if (dto.alsoBlock && blockTargetId && blockTargetId !== reporterId) {
         await tx.block.upsert({
-          where: { blockerId_blockedId: { blockerId: reporterId, blockedId: resolved.authorId } },
+          where: { blockerId_blockedId: { blockerId: reporterId, blockedId: blockTargetId } },
           update: {},
-          create: { blockerId: reporterId, blockedId: resolved.authorId },
+          create: { blockerId: reporterId, blockedId: blockTargetId },
         });
       }
     });

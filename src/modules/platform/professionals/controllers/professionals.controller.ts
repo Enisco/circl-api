@@ -14,7 +14,7 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
-import { BrowseProfessionalsDto } from '../dtos/browse.dto';
+import { BrowseProfessionalsDto, ListSlotsDto } from '../dtos/browse.dto';
 import {
   AvailabilityDto,
   CreateListingDto,
@@ -27,6 +27,7 @@ import {
 import { BrowseService } from '../services/browse.service';
 import { ListingService } from '../services/listing.service';
 import { ProfessionalsHomeService } from '../services/professionals-home.service';
+import { AvailabilityService } from '../services/availability.service';
 
 @Controller('professionals')
 @ApiTags('Professionals')
@@ -36,6 +37,7 @@ export class ProfessionalsController {
     private readonly listings: ListingService,
     private readonly browse: BrowseService,
     private readonly home: ProfessionalsHomeService,
+    private readonly availability: AvailabilityService,
   ) {}
 
   // ─── Fixed paths first, so they are never captured as an :id ───────────────
@@ -238,6 +240,22 @@ export class ProfessionalsController {
   }
 
   // ─── Profile (2.4) — last, because :id is the catch-all ────────────────────
+
+  @Get('listings/:listingId/slots')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'When this professional can actually be booked',
+    description:
+      'The working week minus what is already booked or blocked out. An unavailable slot is sent ' +
+      'with a reason rather than omitted, so the member can see the professional is busy instead ' +
+      'of assuming they do not work then. An empty `days` is a valid answer and the screen falls ' +
+      'back to "I am flexible" only.',
+  })
+  async slots(@Param('listingId') listingId: string, @Query() query: ListSlotsDto) {
+    const { data } = await this.availability.slots(listingId, query);
+
+    return { data, message: SuccessMessage.RESOURCE_FETCHED('Availability') };
+  }
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)

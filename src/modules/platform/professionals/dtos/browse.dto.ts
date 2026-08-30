@@ -3,6 +3,7 @@ import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
+  IsDateString,
   IsIn,
   IsInt,
   IsNumber,
@@ -144,4 +145,17 @@ export class BrowseProfessionalsDto extends PageOptionsDto {
   @IsIn(['RECOMMENDED', 'RATING', 'REVIEWS', 'NEAREST', 'PRICE', 'RESPONSE'])
   @IsOptional()
   sort?: 'RECOMMENDED' | 'RATING' | 'REVIEWS' | 'NEAREST' | 'PRICE' | 'RESPONSE';
+}
+
+/** The window the slot picker asks for (G5). */
+export class ListSlotsDto {
+  @ApiPropertyOptional({ description: 'ISO date. Defaults to today.' })
+  @IsDateString()
+  @IsOptional()
+  from?: string;
+
+  @ApiPropertyOptional({ description: 'ISO date. Defaults to two weeks out, capped at sixty days.' })
+  @IsDateString()
+  @IsOptional()
+  to?: string;
 }

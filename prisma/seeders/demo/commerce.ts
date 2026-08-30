@@ -19,6 +19,10 @@ const STORES = [
     delivers: true,
     daysAgo: 170,
     heritageTags: ['WEST_AFRICAN'],
+    // Peckham. Populated because this store does not hide its address, so the map has a pin (G12).
+    latitude: 51.4739,
+    longitude: -0.0686,
+    hidesExactAddress: false,
     // Minutes from midnight. A day left out is a day closed, which is how `isOpenNow` reads it (4.4.2).
     hours: { MONDAY: [540, 1140], TUESDAY: [540, 1140], WEDNESDAY: [540, 1140], THURSDAY: [540, 1140], FRIDAY: [540, 1200], SATURDAY: [540, 1080] },
     items: [
@@ -43,6 +47,11 @@ const STORES = [
     delivers: false,
     daysAgo: 40,
     heritageTags: ['EAST_AFRICAN'],
+    // Chapeltown. A home kitchen, so the exact address is hidden and the serialiser rounds the
+    // pin to about a kilometre rather than dropping the member on their own doorstep.
+    latitude: 53.8175,
+    longitude: -1.5289,
+    hidesExactAddress: true,
     // Weekends only, as the description says.
     hours: { SATURDAY: [600, 1080], SUNDAY: [600, 960] },
     items: [
@@ -106,6 +115,9 @@ export const seedCommerce = async (ctx: DemoSeedContext) => {
       cityId: store.cityId,
       status: store.status as never,
       delivers: store.delivers,
+      latitude: store.latitude,
+      longitude: store.longitude,
+      hidesExactAddress: store.hidesExactAddress,
       logoKey,
       coverKey,
       viewCount: 40 + store.daysAgo,

@@ -162,6 +162,15 @@ export class DiscoveryService {
       }
     }
 
+    // Bio and "can help with" only. A Connect profile is not a name index: someone who did not
+    // want to be found by name should not become findable because search shipped.
+    if (query.q && query.q.length >= 2) {
+      profileFilters.OR = [
+        { bio: { contains: query.q, mode: 'insensitive' } },
+        { canHelpWith: { contains: query.q, mode: 'insensitive' } },
+      ];
+    }
+
     if (query.heritage?.length) {
       const known = await this.taxonomy.knownCodes(TaxonomyKind.HERITAGE_TAG, query.heritage);
 

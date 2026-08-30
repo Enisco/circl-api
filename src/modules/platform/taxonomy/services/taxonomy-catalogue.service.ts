@@ -12,7 +12,7 @@ export interface CatalogueTerm {
 
 export interface TaxonomyCatalogue {
   version: string;
-  cities: Array<{ id: string; name: string; region: string | null }>;
+  cities: Array<{ id: string; label: string; name: string; region: string | null }>;
   communityCategories: CatalogueTerm[];
   professions: CatalogueTerm[];
   guideTopics: CatalogueTerm[];
@@ -29,11 +29,28 @@ export interface TaxonomyCatalogue {
   storeContactChannels: CatalogueTerm[];
   storeHelpAreas: CatalogueTerm[];
   helpTags: CatalogueTerm[];
+  genders: CatalogueTerm[];
+  managedCategories: CatalogueTerm[];
+  experienceLevels: CatalogueTerm[];
+  urgencyOptions: CatalogueTerm[];
+  privateHelpCategories: CatalogueTerm[];
+  spokenLanguages: CatalogueTerm[];
+  connectAgeBands: CatalogueTerm[];
+  professionalSortOptions: CatalogueTerm[];
+  limits: TaxonomyLimits;
   filters: {
     verification: { isActive: boolean };
     immigrantFriendlyRule: string;
   };
   connect: { minimumAge: number };
+}
+
+/** Numbers the app used to compile in, which only the server can be right about. */
+export interface TaxonomyLimits {
+  maxInterests: number;
+  maxLanguages: number;
+  minConnectAge: number;
+  nearMeRadiusMiles: number;
 }
 
 /** The rule text behind the immigrant-friendly filter (D11). */
@@ -42,6 +59,17 @@ export const IMMIGRANT_FRIENDLY_RULE =
 
 /** Enforced server-side (3.1.2). Sent, not hardcoded, so the gate can change. */
 export const CONNECT_MINIMUM_AGE = 18;
+
+/**
+ * The four the client had compiled in. They are the server's rules, so if the server later
+ * refuses a ninth interest the app has to have been able to know that without a release.
+ */
+export const TAXONOMY_LIMITS: TaxonomyLimits = {
+  maxInterests: 8,
+  maxLanguages: 6,
+  minConnectAge: CONNECT_MINIMUM_AGE,
+  nearMeRadiusMiles: 5,
+};
 
 /** `GET /api/v1/taxonomy` (spec 0.8). */
 @Injectable()
@@ -71,6 +99,13 @@ export class TaxonomyCatalogueService {
       storeContactChannels,
       storeHelpAreas,
       helpTags,
+      guardCategories,
+      genders,
+      managedCategories,
+      experienceLevels,
+      urgencyOptions,
+      connectAgeBands,
+      professionalSortOptions,
     ] = await Promise.all([
       this.taxonomy.version(),
       this.cities.list(),
@@ -91,11 +126,24 @@ export class TaxonomyCatalogueService {
       this.taxonomy.list(TaxonomyKind.STORE_CONTACT_CHANNEL, false),
       this.taxonomy.list(TaxonomyKind.STORE_HELP_AREA, false),
       this.taxonomy.list(TaxonomyKind.HELP_TAG, false),
+      this.taxonomy.list(TaxonomyKind.GUARD_CATEGORY, false),
+      this.taxonomy.list(TaxonomyKind.GENDER, false),
+      this.taxonomy.list(TaxonomyKind.MANAGED_CATEGORY, false),
+      this.taxonomy.list(TaxonomyKind.EXPERIENCE_LEVEL, false),
+      this.taxonomy.list(TaxonomyKind.URGENCY, false),
+      this.taxonomy.list(TaxonomyKind.CONNECT_AGE_BAND, false),
+      this.taxonomy.list(TaxonomyKind.PROFESSIONAL_SORT_OPTION, false),
     ]);
 
     return {
       version: version.toISOString(),
-      cities: cities.map(city => ({ id: city.id, name: city.name, region: city.region })),
+      // `label` is what the client's CityRef parses; `name` stays for callers already reading it.
+      cities: cities.map(city => ({
+        id: city.id,
+        label: city.name,
+        name: city.name,
+        region: city.region,
+      })),
       communityCategories: communityCategories.map(flatten),
       professions: professions.map(flatten),
       guideTopics: guideTopics.map(flatten),
@@ -112,6 +160,18 @@ export class TaxonomyCatalogueService {
       storeContactChannels: storeContactChannels.map(flatten),
       storeHelpAreas: storeHelpAreas.map(flatten),
       helpTags: helpTags.map(flatten),
+      genders: genders.map(flatten),
+      managedCategories: managedCategories.map(flatten),
+      experienceLevels: experienceLevels.map(flatten),
+      urgencyOptions: urgencyOptions.map(flatten),
+      // The same rows as `languages`, under the key the client reads. `iso` rides along in metadata.
+      spokenLanguages: languages.map(flatten),
+      // The codes are fixed by 6.3.1 and the client already sends them on POST /guard/requests.
+      // Serving them here moves the labels, not the codes.
+      privateHelpCategories: guardCategories.map(flatten),
+      connectAgeBands: connectAgeBands.map(flatten),
+      professionalSortOptions: professionalSortOptions.map(flatten),
+      limits: TAXONOMY_LIMITS,
       filters: {
         // D13: nothing carries a check other than EMAIL this version, so the client hides the filter row.
         verification: { isActive: false },

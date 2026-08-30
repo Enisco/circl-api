@@ -71,6 +71,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       );
     }
 
-    return user;
+    // The session the token was minted for, so a handler can tell "this device" from the others.
+    return { ...user, sessionId: payload.sid };
   }
 }

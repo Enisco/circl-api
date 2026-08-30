@@ -88,8 +88,13 @@ export class MessagePushService {
         // Never the body on a support thread.
         isSupport ? 'You have a new message from the Circl team.' : this.preview(message),
         {
+          // The three keys the client reads out of message.data (G14 15.1). MESSAGE pulls the
+          // thread and re-reads the unread totals.
+          type: 'MESSAGE',
           // So the tap opens the thread directly rather than the inbox.
           conversationId: input.conversationId,
+          // An in-app path, so a new kind becomes tappable without an app release.
+          route: `/messages/${input.conversationId}`,
           messageId: input.messageId,
           // Per conversation, so twenty messages are one notification.
           collapseKey: input.conversationId,

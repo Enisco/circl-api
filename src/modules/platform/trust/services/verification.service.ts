@@ -5,6 +5,10 @@ import { PrismaService } from '@/infrastructure';
 export interface TrustCheckView {
   check: TrustCheckType;
   status: TrustCheckStatus;
+  /** When this check last moved, which is what the Trust Centre row renders under the status. */
+  updatedAt: string | null;
+  /** Why it needs attention, in words the member can act on. Null unless there is something to say. */
+  note: string | null;
   verifiedAt?: string;
   submittedAt?: string;
   expiresAt?: string;
@@ -35,11 +39,15 @@ export class VerificationService {
     const checks: TrustCheckView[] = VerificationService.ALL_CHECKS.map(check => {
       const row = byCheck.get(check);
 
-      if (!row) return { check, status: TrustCheckStatus.NOT_STARTED };
+      if (!row) {
+        return { check, status: TrustCheckStatus.NOT_STARTED, updatedAt: null, note: null };
+      }
 
       return {
         check,
         status: row.status,
+        updatedAt: row.updatedAt.toISOString(),
+        note: row.rejectionReason ?? null,
         ...(row.verifiedAt ? { verifiedAt: row.verifiedAt.toISOString() } : {}),
         ...(row.submittedAt ? { submittedAt: row.submittedAt.toISOString() } : {}),
         ...(row.expiresAt ? { expiresAt: row.expiresAt.toISOString() } : {}),

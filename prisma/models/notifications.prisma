@@ -72,6 +72,8 @@ model SupportResource {
   countryCode String  @default("GB") @map("country_code")
   name        String  @map("name")
   phone       String? @map("phone")
+  /// What this line is for, in the member's words. The app renders it under the name.
+  description String? @map("description")
   url         String? @map("url")
   hours       String? @map("hours")
 

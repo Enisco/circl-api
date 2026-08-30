@@ -261,11 +261,17 @@ export class GuardService {
       data: rows.map(row => ({
         name: row.name,
         phone: row.phone,
+        // `number` and `description` are the names the app's sheet reads; `phone` and `hours` are
+        // the spec's. Both are sent rather than renaming one side out from under the other.
+        number: row.phone,
+        description: row.description,
         url: row.url,
         isCrisis: row.isCrisis,
         hours: row.hours,
       })),
       meta: {
+        // The ISO date beside the display string, so a client that wants to compare it can.
+        lastChecked: lastCheckedAt ? lastCheckedAt.toISOString().slice(0, 10) : null,
         // A display string, and the one place 0.6's no-preformatted-dates rule is relaxed: the client renders it under the list and never compares it.
         lastCheckedAt: lastCheckedAt
           ? lastCheckedAt.toLocaleDateString('en-GB', {

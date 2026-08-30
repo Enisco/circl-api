@@ -143,6 +143,12 @@ export class DiscoveryDto extends PageOptionsDto {
   @IsOptional()
   cityId?: string;
 
+  @ApiPropertyOptional({ description: 'Matches the bio and what the member can help with.' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @IsOptional()
+  q?: string;
+
   @ApiPropertyOptional()
   @Type(() => Number)
   @IsInt()
