@@ -5,15 +5,18 @@ import {
   DeflectionOutcome,
   Guide,
   GuideBlockType,
+  NotificationKind,
   Prisma,
   TaxonomyKind,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
+import { NotificationFeedService } from '../../notifications';
 import {
   ApiErrorCode,
   ApiException,
   buildPageMeta,
   daysAgo,
+  excerpt,
   Paginated,
   readTimeMinutes,
   toJson,
@@ -28,6 +31,7 @@ import {
   TaxonomyService,
   TermView,
   authorSelect,
+  displayNameOf,
   toAuthorView,
   toCityView,
   toMediaViews,
@@ -92,6 +96,7 @@ export class GuideService {
     private readonly cities: CityService,
     private readonly media: MediaService,
     private readonly activity: ActivityService,
+    private readonly notifications: NotificationFeedService,
   ) {}
 
   // ─── 1.6.1 List ────────────────────────────────────────────────────────────
@@ -104,6 +109,10 @@ export class GuideService {
     }
 
     if (query.cityId) where.cityId = query.cityId;
+
+    // The Bookmarks row in the profile hub. Scoped to the caller, so it can never list somebody
+    // else's saved guides.
+    if (query.bookmarked) where.bookmarks = { some: { userId: viewerId } };
 
     if (query.q) {
       where.OR = [
@@ -299,11 +308,13 @@ export class GuideService {
     userId: string,
     id: string,
     bookmarked: boolean,
-  ): Promise<{ isBookmarked: boolean }> {
-    await this.assertExists(id);
+  ): Promise<{ isBookmarked: boolean; hasLiked: boolean; readProgress: number }> {
+    const guide = await this.assertExists(id);
 
     if (bookmarked) {
-      await this.database.guideBookmark.createMany({
+      // `count` is 0 when the row already existed, which is how a second tap stays silent rather
+      // than notifying the author twice.
+      const { count } = await this.database.guideBookmark.createMany({
         data: [{ guideId: id, userId }],
         skipDuplicates: true,
       });
@@ -314,11 +325,51 @@ export class GuideService {
         subject: ActivitySubject.GUIDE,
         subjectId: id,
       });
+
+      if (count > 0 && guide.authorId) {
+        const actor = await this.database.user.findUnique({
+          where: { id: userId },
+          select: { firstName: true, lastName: true },
+        });
+        const name = displayNameOf(actor?.firstName, actor?.lastName);
+
+        this.notifications.raise({
+          userId: guide.authorId,
+          actorId: userId,
+          kind: NotificationKind.BOOKMARK,
+          categoryCode: 'REACTIONS',
+          title: `${name} saved your guide`,
+          body: excerpt(guide.title, 80),
+          route: `/community/guide/${id}`,
+          collapseKey: `guide:${id}`,
+          collapsedTitle: (count2, actorName) =>
+            count2 === 2
+              ? `${actorName} and 1 other saved your guide`
+              : `${actorName} and ${count2 - 1} others saved your guide`,
+          actorTitle: name,
+          metadata: { guideId: id },
+        });
+      }
     } else {
+      // Un-saving is silent, like an unlike.
       await this.database.guideBookmark.deleteMany({ where: { guideId: id, userId } });
     }
 
-    return { isBookmarked: bookmarked };
+    // The whole viewer, because the client decides which toast to show from `isBookmarked` in the
+    // response rather than from what it asked for.
+    const [liked, progress] = await Promise.all([
+      this.database.guideReaction.findFirst({ where: { guideId: id, userId }, select: { guideId: true } }),
+      this.database.guideProgress.findUnique({
+        where: { guideId_userId: { guideId: id, userId } },
+        select: { progress: true },
+      }),
+    ]);
+
+    return {
+      isBookmarked: bookmarked,
+      hasLiked: !!liked,
+      readProgress: progress?.progress ?? 0,
+    };
   }
 
   async react(

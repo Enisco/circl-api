@@ -12,6 +12,7 @@ import { seedNotifications } from './notifications';
 import { seedAccountSettings } from './account';
 import { seedAvailability } from './availability';
 import { seedModeration } from './moderation';
+import { seedCityFeeds } from './cities';
 import { connectExtras, PEOPLE } from './people';
 import { hoursAgo, seedId } from './ids';
 import { MetricsService } from '../../../src/modules/platform/intelligence/services/metrics.service';
@@ -173,6 +174,15 @@ export const seedDemo = async (prisma: PrismaClient) => {
   const availability = await seedAvailability(ctx);
   console.info(
     `  ✅ ${availability.days} working days across the professionals, ${availability.occupied} slots taken`,
+  );
+
+  // Every city in the picker gets a feed, so a member signing up in Sheffield does not open an
+  // empty app. BRISTOL is deliberately left empty for the client's quiet state.
+  const feeds = await seedCityFeeds(ctx);
+  console.info(
+    `  ✅ ${feeds.updates} posts, ${feeds.replies} replies, ${feeds.requests} requests, ` +
+      `${feeds.offers} offers, ${feeds.guides} guides across ${feeds.cities} cities ` +
+      `(${feeds.emptyCity} left empty on purpose)`,
   );
 
   const moderation = await seedModeration(ctx);

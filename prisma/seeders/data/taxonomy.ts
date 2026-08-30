@@ -297,6 +297,9 @@ const notificationCategories: Array<[string, string, boolean, boolean, boolean]>
   ['BOOKINGS', 'Bookings & orders', true, true, false],
   ['COMPLIANCE', 'Verification & payments', true, true, true],
   ['ANNOUNCEMENTS', 'News from Circl', true, false, false],
+  // Likes and saves. The most mutable notification on the platform, so it is never locked, and
+  // email defaults off because an email per like is how people turn off email entirely.
+  ['REACTIONS', 'Likes and saves', true, false, false],
 ];
 
 // ─── Guard categories (spec 6.3.1) ────────────────────────────────────────────

@@ -18,6 +18,16 @@ export interface RaiseNotificationInput {
   route?: string | null;
   actorId?: string | null;
   metadata?: Record<string, unknown>;
+  /**
+   * Collapses repeats onto one row instead of one per actor. Fifty likes on a post is one
+   * notification that says fifty; fifty rows is how a member stops reading the list at all.
+   * Two notifications collapse together when this key matches and the row is still unread.
+   */
+  collapseKey?: string;
+  /** Renders the collapsed row: `(count, latestActorName) => title`. */
+  collapsedTitle?: (count: number, actor: string | null) => string;
+  /** The actor's display name, for `collapsedTitle`. */
+  actorTitle?: string | null;
 }
 
 /** The bucket boundaries, in the member's own timezone (D32). */
@@ -60,23 +70,71 @@ export class NotificationFeedService {
     // Nobody is notified about their own action.
     if (input.actorId && input.actorId === input.userId) return;
 
-    void this.database.notification
-      .create({
-        data: {
-          userId: input.userId,
-          kind: input.kind,
-          categoryCode: input.categoryCode,
-          title: input.title,
-          body: input.body ?? null,
-          route: input.route ?? null,
-          actorId: input.actorId ?? null,
-          metadata: toJsonOrUndefined(input.metadata),
-        },
-      })
+    void this.write(input)
       // Without the push the row exists and nothing on the member's device changes, so the header
       // badge only moves when they happen to reopen the list (G14 15.1).
-      .then(() => this.push(input))
+      .then(pushed => (pushed ? this.push(pushed) : undefined))
       .catch(error => this.logger.warn(`Notification not recorded: ${(error as Error).message}`));
+  }
+
+  /**
+   * Writes the row, folding into an existing unread one where the caller asked for collapsing.
+   * Returns what should be pushed, which for a collapsed row is the updated title rather than the
+   * original, so the phone says "3 people liked your post" rather than buzzing three times with
+   * the same sentence.
+   */
+  private async write(input: RaiseNotificationInput): Promise<RaiseNotificationInput | null> {
+    if (input.collapseKey) {
+      const existing = await this.database.notification.findFirst({
+        where: {
+          userId: input.userId,
+          kind: input.kind,
+          isRead: false,
+          metadata: { path: ['collapseKey'], equals: input.collapseKey },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, metadata: true },
+      });
+
+      if (existing) {
+        const previous = (existing.metadata as { count?: number } | null)?.count ?? 1;
+        const count = previous + 1;
+        const title = input.collapsedTitle?.(count, input.actorTitle ?? null) ?? input.title;
+
+        await this.database.notification.update({
+          where: { id: existing.id },
+          data: {
+            title,
+            body: input.body ?? null,
+            actorId: input.actorId ?? null,
+            // Moves back to the top of the list: the newest like is why it is worth looking again.
+            createdAt: new Date(),
+            metadata: toJsonOrUndefined({ ...input.metadata, collapseKey: input.collapseKey, count }),
+          },
+        });
+
+        return { ...input, title };
+      }
+    }
+
+    await this.database.notification.create({
+      data: {
+        userId: input.userId,
+        kind: input.kind,
+        categoryCode: input.categoryCode,
+        title: input.title,
+        body: input.body ?? null,
+        route: input.route ?? null,
+        actorId: input.actorId ?? null,
+        metadata: toJsonOrUndefined(
+          input.collapseKey
+            ? { ...input.metadata, collapseKey: input.collapseKey, count: 1 }
+            : input.metadata,
+        ),
+      },
+    });
+
+    return input;
   }
 
   /** Fire-and-forget, like the row itself: a push that fails must never fail what raised it. */

@@ -36,7 +36,8 @@ async function makeStaff(tag, roleCode) {
   let r = await api(owner.token, 'GET', '/users/notification-preferences');
   check('matrix → 200', r.status === 200, { s: r.status, b: r.body });
   const cats = r.body?.data?.categories ?? [];
-  check('eight rows', cats.length === 8, cats.length);
+  // Nine since BACKEND-FEED-ACTIONS §3.6 added REACTIONS, which covers likes and saves.
+  check('nine rows', cats.length === 9, cats.map(c => c.code));
   check('every row carries a label', cats.every(c => typeof c.label === 'string' && c.label), cats);
   check('rows arrive in the order the screen draws them',
     cats[0]?.code === 'REPLIES' && cats[7]?.code === 'ANNOUNCEMENTS', cats.map(c => c.code));
@@ -49,7 +50,7 @@ async function makeStaff(tag, roleCode) {
   r = await api(owner.token, 'PUT', '/users/notification-preferences',
     { categories: [{ code: 'REPLIES', push: false, email: true }] });
   check('a change saves and returns the full matrix',
-    r.status === 200 && r.body?.data?.categories?.length === 8, { s: r.status, n: r.body?.data?.categories?.length });
+    r.status === 200 && r.body?.data?.categories?.length === 9, { s: r.status, n: r.body?.data?.categories?.length });
   check('the change is reflected',
     r.body?.data?.categories?.find(c => c.code === 'REPLIES')?.push === false,
     r.body?.data?.categories?.find(c => c.code === 'REPLIES'));

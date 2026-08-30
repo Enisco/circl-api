@@ -108,6 +108,16 @@ export class ListGuidesDto extends PageOptionsDto {
   @IsIn(['MOST_READ_THIS_WEEK', 'CONTINUE_READING', 'ALL'])
   @IsOptional()
   section?: 'MOST_READ_THIS_WEEK' | 'CONTINUE_READING' | 'ALL';
+
+  @ApiPropertyOptional({
+    description:
+      'Only guides this member has saved, for the Bookmarks row in the profile hub. Paged and ' +
+      'sorted like any other guide list.',
+  })
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  @IsOptional()
+  bookmarked?: boolean;
 }
 
 export class GuideProgressDto {

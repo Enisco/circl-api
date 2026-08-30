@@ -580,6 +580,10 @@ enum NotificationKind {
   REVIEW
   VERIFICATION
   ANNOUNCEMENT
+  // Feed reactions. Their own kinds so the client can give them their own icon rather than
+  // falling back to a grey announcement row.
+  LIKE
+  BOOKMARK
 }
 
 /**

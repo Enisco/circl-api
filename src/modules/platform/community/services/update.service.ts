@@ -29,6 +29,7 @@ import {
   MediaView,
   RiskScannerService,
   authorSelect,
+  displayNameOf,
   toAuthorView,
   toCityView,
   toMediaViews,
@@ -60,6 +61,11 @@ export interface UpdateReplyView {
   id: string;
   content: string;
   author: AuthorView;
+  /** Replies carry no media and are one level deep. Both are sent because the card reads them. */
+  media: MediaView[];
+  replyCount: number;
+  /** The viewer's own permission, decided here. Mirrored inside `viewer` for existing callers. */
+  canDelete: boolean;
   viewer: { isOwner: boolean; canDelete: boolean };
   createdAt: string;
 }
@@ -241,6 +247,31 @@ export class UpdateService {
         subjectId: id,
         cityId: update.cityId,
       });
+
+      // Only on the way up, and only when something actually changed: an unlike is silent, and a
+      // second tap on a slow connection has already returned false above.
+      const actor = await this.database.user.findUnique({
+        where: { id: userId },
+        select: { firstName: true, lastName: true },
+      });
+
+      this.notifications.raise({
+        userId: update.authorId,
+        actorId: userId,
+        kind: NotificationKind.LIKE,
+        categoryCode: 'REACTIONS',
+        title: `${displayNameOf(actor?.firstName, actor?.lastName)} liked your post`,
+        body: excerpt(update.content, 80),
+        route: `/community/post/${id}`,
+        // One row per post, not one per liker.
+        collapseKey: `update:${id}`,
+        collapsedTitle: (count, name) =>
+          count === 2
+            ? `${name} and 1 other liked your post`
+            : `${name} and ${count - 1} others liked your post`,
+        actorTitle: displayNameOf(actor?.firstName, actor?.lastName),
+        metadata: { updateId: id },
+      });
     }
 
     const fresh = await this.database.communityUpdate.findUniqueOrThrow({
@@ -264,7 +295,8 @@ export class UpdateService {
     id: string,
     query: { skip: number; take: number; currentPage: number; perPage: number },
   ): Promise<Paginated<UpdateReplyView>> {
-    await this.load(id);
+    // The post's author can remove a reply on their own post, not only its writer.
+    const update = await this.load(id);
 
     const blockedIds = await this.blocking.blockedUserIds(viewerId);
     const where: Prisma.UpdateReplyWhereInput = {
@@ -290,7 +322,13 @@ export class UpdateService {
         id: row.id,
         content: row.content,
         author: toAuthorView(row.author, { sign: this.media.sign }),
-        viewer: { isOwner: row.authorId === viewerId, canDelete: row.authorId === viewerId },
+        media: [],
+        replyCount: 0,
+        canDelete: row.authorId === viewerId || update.authorId === viewerId,
+        viewer: {
+          isOwner: row.authorId === viewerId,
+          canDelete: row.authorId === viewerId || update.authorId === viewerId,
+        },
         createdAt: row.createdAt.toISOString(),
       })),
       meta: buildPageMeta(query, total),
@@ -337,6 +375,9 @@ export class UpdateService {
       id: reply.id,
       content: reply.content,
       author: toAuthorView(reply.author, { sign: this.media.sign }),
+      media: [],
+      replyCount: 0,
+      canDelete: true,
       viewer: { isOwner: true, canDelete: true },
       createdAt: reply.createdAt.toISOString(),
     };

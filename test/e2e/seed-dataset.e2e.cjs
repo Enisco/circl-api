@@ -112,8 +112,8 @@ async function objectExists(url) {
     [...new Set(rows.map(n => n.kind))]);
 
   r = await api(token, 'GET', '/users/notification-preferences');
-  check('the preference matrix is the eight rows',
-    (r.body?.data?.categories ?? []).length === 8, r.body?.data?.categories?.length);
+  check('the preference matrix is the nine rows',
+    (r.body?.data?.categories ?? []).length === 9, r.body?.data?.categories?.length);
   check('with COMPLIANCE locked',
     r.body?.data?.categories?.find(c => c.code === 'COMPLIANCE')?.isLocked === true,
     r.body?.data?.categories?.find(c => c.code === 'COMPLIANCE'));
@@ -257,7 +257,7 @@ async function objectExists(url) {
 
   const prefs = await api(token, 'GET', '/users/notification-preferences');
   const categories = prefs.body?.data?.categories ?? [];
-  check('the preference matrix has its eight rows', categories.length === 8, categories.length);
+  check('the preference matrix has its nine rows', categories.length === 9, categories.length);
   check('with COMPLIANCE locked on', categories.some(c => c.code === 'COMPLIANCE' && c.isLocked),
     categories.find(c => c.code === 'COMPLIANCE'));
 
