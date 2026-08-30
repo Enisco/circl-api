@@ -22,7 +22,6 @@ import {
 } from '../dtos/message.dto';
 import { ChatGateway } from '../gateway/chat.gateway';
 import { ConversationService } from '../services/conversation.service';
-import { MessagePushService } from '../services/message-push.service';
 import { MessageService } from '../services/message.service';
 
 @Controller('messages')
@@ -32,7 +31,6 @@ export class MessagingController {
   constructor(
     private readonly conversations: ConversationService,
     private readonly messages: MessageService,
-    private readonly push: MessagePushService,
     private readonly gateway: ChatGateway,
   ) {}
 
@@ -131,13 +129,10 @@ export class MessagingController {
   ) {
     const data = await this.messages.send(userId, id, dto);
 
-    // The REST path is the fallback, so the sender has no socket — but the RECIPIENT may well have one, and pushing to someone already looking at the thread is the notification people complain about.
-    const recipientIds = await this.messages.recipientIdsOf(id, userId);
-    const offline = recipientIds.filter(recipientId => !this.gateway.isConnected(recipientId));
-
-    if (offline.length) {
-      this.push.notify({ conversationId: id, messageId: data.id, senderId: userId, recipientIds: offline });
-    }
+    // The same delivery the socket path performs: message.new to whoever is connected, a push to
+    // whoever is not, and the sender's DELIVERED tick. Sending over REST must not mean the
+    // recipient sees nothing until they refresh (5.2).
+    await this.gateway.fanOut(id, data, userId);
 
     return { data, message: 'Message sent' };
   }

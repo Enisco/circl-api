@@ -263,6 +263,176 @@ const waitFor = (socket, event, ms = 4000) =>
     socket.close();
   }
 
+  console.log('\n── 5.2 The REST fallback still delivers ─────────────────────');
+  {
+    // A message sent over REST has to be echoed over the socket anyway (5.2). Without that, a
+    // recipient who is connected sees no bubble and the sender's tick never reaches DELIVERED.
+    const sender = await connect(ada.token);
+    const recipient = await connect(tunde.token);
+    await new Promise(res => setTimeout(res, 400));
+
+    const arriving = waitFor(recipient, 'message.new', 5000);
+    const badge = waitFor(recipient, 'unread.total', 5000);
+    const delivered = waitFor(sender, 'message.status', 5000);
+
+    await api(ada.token, 'POST', `/messages/${conversationId}/messages`,
+      { clientId: 'rest-fanout-1', body: 'Sent over REST while you were watching' });
+
+    check('a REST send reaches a connected recipient over the socket',
+      (await arriving)?.message?.body === 'Sent over REST while you were watching');
+    check('and refreshes their account-wide badge', (await badge) !== null);
+    check('and the sender is told DELIVERED, not left on one tick',
+      (await delivered)?.status === 'DELIVERED');
+
+    sender.disconnect();
+    recipient.disconnect();
+  }
+
+  console.log('\n── 5.5 Media in messages ────────────────────────────────────');
+  {
+    const bytes = Buffer.from('89504e470d0a1a0a', 'hex');
+    const put = async (mimeType, extra = {}) => {
+      const mint = await api(ada.token, 'POST', '/media/uploads', {
+        purpose: 'MESSAGE',
+        files: [{ mimeType, byteSize: bytes.length, ...extra }],
+      });
+      const slot = mint.body?.data?.[0];
+      if (slot?.uploadUrl) {
+        await fetch(slot.uploadUrl, { method: 'PUT', headers: { 'Content-Type': mimeType }, body: bytes });
+      }
+      return slot?.key ?? null;
+    };
+
+    const imageKey = await put('image/png');
+    check('a message key sits under circl/messages/{userId}/',
+      imageKey?.startsWith(`circl/messages/${ada.id}/`), imageKey);
+
+    r = await api(ada.token, 'POST', `/messages/${conversationId}/messages`,
+      { clientId: 'md-img', kind: 'IMAGE', attachmentKeys: [imageKey] });
+    check('an IMAGE message sends', r.status === 201, { s: r.status, e: r.body?.error });
+    check('and its attachment reads back as a signed url, never a key',
+      typeof r.body?.data?.attachments?.[0]?.url === 'string'
+      && !('key' in (r.body?.data?.attachments?.[0] ?? {})),
+      r.body?.data?.attachments?.[0]);
+
+    // Only the recording device knows these, and it knows them before the bytes leave (5.5).
+    const audioKey = await put('audio/m4a', { durationMs: 14000, waveform: [0.2, 0.5, 0.8, 0.4] });
+    r = await api(ada.token, 'POST', `/messages/${conversationId}/messages`,
+      { clientId: 'md-aud', kind: 'AUDIO', attachmentKeys: [audioKey] });
+    check('an AUDIO message sends', r.status === 201, { s: r.status, e: r.body?.error });
+    check('the voice note carries the duration the recorder measured',
+      r.body?.data?.attachments?.[0]?.durationMs === 14000, r.body?.data?.attachments?.[0]);
+    check('and the stored waveform, so both people see the same shape',
+      (r.body?.data?.attachments?.[0]?.waveform ?? []).length === 4,
+      r.body?.data?.attachments?.[0]?.waveform);
+
+    r = await api(ada.token, 'POST', `/messages/${conversationId}/messages`,
+      { clientId: 'md-mismatch', kind: 'AUDIO', attachmentKeys: [await put('image/png')] });
+    check('kind and attachment type must agree → 422', r.status === 422, r.status);
+
+    r = await api(ada.token, 'POST', `/messages/${conversationId}/messages`,
+      { clientId: 'md-none', kind: 'IMAGE', attachmentKeys: [] });
+    check('a media kind with nothing attached → 422', r.status === 422, r.status);
+
+    r = await api(ada.token, 'POST', `/messages/${conversationId}/messages`,
+      { clientId: 'md-cap', kind: 'IMAGE', attachmentKeys: [await put('image/png')], body: 'x'.repeat(1001) });
+    check('a caption is capped shorter than a message → 422 (5.9)', r.status === 422, r.status);
+
+    // 0.4: a shape violation is 400, a well-formed but invalid one is 422.
+    r = await api(ada.token, 'POST', `/messages/${conversationId}/messages`,
+      { clientId: 'md-long', body: 'y'.repeat(4001) });
+    check('a body over 4000 chars → 400 (5.9)', r.status === 400, r.status);
+  }
+
+  console.log('\n── 5.3.1 ordering, filters and search ───────────────────────');
+  r = await api(ada.token, 'GET', '/messages?q=tunde');
+  check('q matches on a participant name (D31)',
+    (r.body?.data ?? []).length > 0, r.body?.data?.length);
+  r = await api(ada.token, 'GET', '/messages?q=zzzznotathing');
+  check('and returns nothing when nothing matches', (r.body?.data ?? []).length === 0,
+    r.body?.data?.length);
+
+  await prisma.conversation.update({ where: { id: conversationId }, data: { isPinned: true } });
+  const newer = await makeUser('pinfoil', { openInbox: true });
+  const newerThread = (await api(ada.token, 'POST', '/messages', { recipientUserId: newer.id })).body?.data?.id;
+  await api(ada.token, 'POST', `/messages/${newerThread}/messages`, { clientId: 'pin-1', body: 'newer' });
+  r = await api(ada.token, 'GET', '/messages');
+  check('pinned sorts first even when another thread is newer, because the support thread must be first for everyone',
+    r.body?.data?.[0]?.id === conversationId,
+    r.body?.data?.map(x => ({ pinned: x.isPinned, id: x.id })));
+  await prisma.conversation.update({ where: { id: conversationId }, data: { isPinned: false } });
+
+  r = await api(ada.token, 'GET', '/messages');
+  check('every row carries the label chip the list renders',
+    (r.body?.data ?? []).every(row => 'label' in row), r.body?.data?.map(x => x.label));
+
+  console.log('\n── 5.3.6 the unsend window ──────────────────────────────────');
+  {
+    const late = await api(ada.token, 'POST', `/messages/${conversationId}/messages`,
+      { clientId: 'late-1', body: 'too old to unsend' });
+    await prisma.message.update({
+      where: { id: late.body.data.id },
+      data: { sentAt: new Date(Date.now() - 16 * 60 * 1000) },
+    });
+    r = await api(ada.token, 'DELETE', `/messages/${conversationId}/messages/${late.body.data.id}`);
+    check('a message older than 15 minutes can no longer be unsent',
+      r.status === 403 || r.status === 422, { s: r.status, code: r.body?.error?.code });
+  }
+
+  console.log('\n── 5.2.3 presence ───────────────────────────────────────────');
+  {
+    const watcher = await connect(ada.token);
+    await new Promise(res => setTimeout(res, 300));
+
+    const online = waitFor(watcher, 'presence', 5000);
+    const other = await connect(tunde.token);
+    check('a participant coming online broadcasts presence',
+      (await online)?.isOnline === true, 'no presence event');
+
+    const offline = waitFor(watcher, 'presence', 5000);
+    other.disconnect();
+    const gone = await offline;
+    check('and going offline carries lastSeenAt for the "last seen" line',
+      gone?.isOnline === false && !!gone?.lastSeenAt, gone);
+
+    watcher.disconnect();
+  }
+
+  console.log('\n── 5.4 the Circl team thread ────────────────────────────────');
+  {
+    // A thread that is SUPPORT before anything is sent, rather than one flipped after the fact:
+    // the rule is about what markRead promotes, so the kind has to be right at read time.
+    const helper = await makeUser('supportee', { openInbox: true });
+    const supportId = (await api(ada.token, 'POST', '/messages', { recipientUserId: helper.id })).body?.data?.id;
+    await prisma.conversation.update({ where: { id: supportId }, data: { kind: 'SUPPORT' } });
+
+    const sent = await api(ada.token, 'POST', `/messages/${supportId}/messages`,
+      { clientId: 'sup-1', body: 'Is anyone there?' });
+    await api(helper.token, 'POST', `/messages/${supportId}/read`,
+      { lastReadMessageId: sent.body.data.id });
+
+    r = await api(ada.token, 'GET', `/messages/${supportId}/messages`);
+    check('read receipts are not shown on a support thread: "seen" from an organisation is a promise nobody made',
+      !(r.body?.data ?? []).filter(m => m.isMine).map(m => m.status).includes('READ'),
+      (r.body?.data ?? []).filter(m => m.isMine).map(m => m.status));
+
+    r = await api(helper.token, 'GET', '/messages');
+    check('but reading it still clears their unread count',
+      (r.body?.data ?? []).find(c => c.id === supportId)?.unreadCount === 0,
+      (r.body?.data ?? []).find(c => c.id === supportId)?.unreadCount);
+
+    // D28: and the other half of the same idea.
+    const watcher = await connect(helper.token);
+    const sender = await connect(ada.token);
+    await new Promise(res => setTimeout(res, 400));
+    const typing = waitFor(watcher, 'typing', 2500);
+    sender.emit('typing.start', { conversationId: supportId });
+    check('and no typing events either, because an organisation typing is not the same signal (D28)',
+      (await typing) === null, 'a typing event escaped a support thread');
+    watcher.disconnect();
+    sender.disconnect();
+  }
+
   console.log('\n── Cleanup ──────────────────────────────────────────────────');
   await sweep('cleanup');
 

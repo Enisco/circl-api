@@ -173,38 +173,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         message,
       });
 
-      const recipients = await this.recipientsOf(payload.conversationId, userId);
-
-      for (const recipient of recipients) {
-        this.server
-          .to(this.roomFor(recipient))
-          .emit('message.new', { conversationId: payload.conversationId, message });
-
-        void this.pushUnread(recipient);
-      }
-
-      // Anyone with a live socket has it on their device, which is what DELIVERED means (5.4).
-      const connected = recipients.filter(id => this.connections.has(id));
-      const offline = recipients.filter(id => !this.connections.has(id));
-
-      if (offline.length) {
-        this.push.notify({
-          conversationId: payload.conversationId,
-          messageId: message.id,
-          senderId: userId,
-          recipientIds: offline,
-        });
-      }
-
-      if (connected.length) {
-        await Promise.all(connected.map(id => this.messages.markDelivered(id, [message.id])));
-
-        this.server.to(this.roomFor(userId)).emit('message.status', {
-          conversationId: payload.conversationId,
-          messageId: message.id,
-          status: 'DELIVERED',
-        });
-      }
+      await this.fanOut(payload.conversationId, message, userId);
     } catch (error) {
       // The store never invents a delivery state, so a failure has to come back as one rather than leaving a bubble spinning forever (5.2.4).
       socket.emit('message.status', {
@@ -293,6 +262,48 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────────
+
+  /**
+   * Delivery for a stored message, whichever path stored it. A message sent over REST has to be
+   * echoed over the socket anyway (5.2), so both paths call this and cannot drift: without it a
+   * recipient who is connected sees no bubble and the sender's tick never reaches DELIVERED.
+   */
+  async fanOut(
+    conversationId: string,
+    message: { id: string },
+    senderId: string,
+  ): Promise<void> {
+    const recipients = await this.recipientsOf(conversationId, senderId);
+
+    for (const recipient of recipients) {
+      this.server.to(this.roomFor(recipient)).emit('message.new', { conversationId, message });
+
+      void this.pushUnread(recipient);
+    }
+
+    // Anyone with a live socket has it on their device, which is what DELIVERED means (5.4).
+    const connected = recipients.filter(id => this.connections.has(id));
+    const offline = recipients.filter(id => !this.connections.has(id));
+
+    if (offline.length) {
+      this.push.notify({
+        conversationId,
+        messageId: message.id,
+        senderId,
+        recipientIds: offline,
+      });
+    }
+
+    if (connected.length) {
+      await Promise.all(connected.map(id => this.messages.markDelivered(id, [message.id])));
+
+      this.server.to(this.roomFor(senderId)).emit('message.status', {
+        conversationId,
+        messageId: message.id,
+        status: 'DELIVERED',
+      });
+    }
+  }
 
   private async emitTyping(socket: AuthedSocket, conversationId: string, isTyping: boolean) {
     const userId = socket.data.userId;
