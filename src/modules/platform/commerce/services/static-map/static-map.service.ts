@@ -93,8 +93,14 @@ export class StaticMapService {
     if (store.latitude === null || store.longitude === null) return;
     if (store.staticMapKey === this.keyName(store.id, store.latitude, store.longitude)) return;
 
-    void this.keyFor(store).catch(error =>
-      this.logger.warn(`Static map for store ${store.id} not built: ${(error as Error).message}`),
+    void this.keyFor(store).catch((error: unknown) =>
+      // Name and stack too: an empty `message` on its own says nothing, which is exactly what
+      // this line used to print.
+      this.logger.warn(
+        `Static map for store ${store.id} not built: ` +
+          `${(error as Error)?.name ?? typeof error}: ${(error as Error)?.message || '(no message)'}` +
+          `${(error as Error)?.stack ? ` | ${(error as Error).stack.split('\n')[1]?.trim()}` : ''}`,
+      ),
     );
   }
 
@@ -127,7 +133,10 @@ export class StaticMapService {
 
       return await this.fetch(this.composedUrl(latitude, longitude));
     } catch (error) {
-      this.logger.warn(`Static map render failed: ${(error as Error).message}`);
+      this.logger.warn(
+        `Static map render failed: ${(error as Error)?.name ?? typeof error}: ` +
+          `${(error as Error)?.message || '(no message)'}`,
+      );
 
       return null;
     }

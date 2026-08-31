@@ -83,6 +83,11 @@ export class FeedService {
 
     if (query.categories?.length) requestedTypes.delete(FeedItemType.UPDATE);
 
+    // Guides have their own tab, served by `GET /community/guides`, so the feed never carries one.
+    // Removed here rather than from FeedItemType so `types=GUIDE` stays a valid request that
+    // simply returns nothing, and so putting them back is one line rather than a migration.
+    requestedTypes.delete(FeedItemType.GUIDE);
+
     const [requests, offers, updates, guides] = await Promise.all([
       requestedTypes.has(FeedItemType.REQUEST)
         ? this.candidateRequests(query, cityId, blockedIds, ranking)

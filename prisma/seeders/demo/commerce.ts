@@ -159,8 +159,14 @@ export const seedCommerce = async (ctx: DemoSeedContext) => {
           },
         });
 
-        await ctx.storage.put(mapKey, png, 'image/png');
-        await prisma.store.update({ where: { id }, data: { staticMapKey: mapKey } });
+        // Null when no tile loaded. Storing a blank grey rectangle would cache an empty map under
+        // a key that never regenerates.
+        if (png) {
+          await ctx.storage.put(mapKey, png, 'image/png');
+          await prisma.store.update({ where: { id }, data: { staticMapKey: mapKey } });
+        } else {
+          console.warn(`  ⚠️  Static map for ${store.name} skipped: no tiles loaded`);
+        }
       } catch (error) {
         // A tile server that is unreachable must not stop the dataset seeding.
         console.warn(`  ⚠️  Static map for ${store.name} skipped: ${(error as Error).message}`);

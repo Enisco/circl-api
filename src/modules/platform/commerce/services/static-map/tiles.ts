@@ -31,7 +31,7 @@ export const renderTiles = async (options: {
   height: number;
   tileUrl: (z: number, x: number, y: number) => string;
   fetchTile: (url: string) => Promise<Buffer>;
-}): Promise<Buffer> => {
+}): Promise<Buffer | null> => {
   const { latitude, longitude, zoom, width, height } = options;
   const centre = project(latitude, longitude, zoom);
   const left = centre.x - width / 2;
@@ -46,7 +46,7 @@ export const renderTiles = async (options: {
   const canvas: Raster = { width, height, data: Buffer.alloc(width * height * 3, 0xe8) };
   const span = 2 ** zoom;
 
-  const jobs: Array<Promise<void>> = [];
+  const jobs: Array<Promise<boolean>> = [];
 
   for (let tileY = firstTileY; tileY <= lastTileY; tileY += 1) {
     for (let tileX = firstTileX; tileX <= lastTileX; tileX += 1) {
@@ -60,14 +60,23 @@ export const renderTiles = async (options: {
       jobs.push(
         options
           .fetchTile(options.tileUrl(zoom, wrappedX, tileY))
-          .then(bytes => blit(canvas, decodePng(bytes), offsetX, offsetY))
-          // One missing tile is a grey square, not a failed map.
-          .catch(() => undefined),
+          .then(bytes => {
+            blit(canvas, decodePng(bytes), offsetX, offsetY);
+
+            return true;
+          })
+          // One missing tile is a grey square, not a failed map. All of them missing is.
+          .catch(() => false),
       );
     }
   }
 
-  await Promise.all(jobs);
+  const loaded = await Promise.all(jobs);
+
+  // Every tile failing produces a blank grey rectangle that compresses to about a kilobyte. Left
+  // to itself the caller would store that under a key that never regenerates, so the store would
+  // show an empty box forever. Better to return nothing and try again on the next read.
+  if (!loaded.some(Boolean)) return null;
 
   drawMarker(canvas, Math.round(width / 2), Math.round(height / 2));
   drawAttribution(canvas);

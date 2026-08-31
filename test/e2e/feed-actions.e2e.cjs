@@ -35,8 +35,22 @@ async function signIn(email) {
   const types = {};
   for (const item of r.body?.data ?? []) types[item.type] = (types[item.type] ?? 0) + 1;
   check('the feed carries UPDATE items, which is the post card', (types.UPDATE ?? 0) > 0, types);
-  check('and still carries the other three kinds',
-    types.REQUEST > 0 && types.OFFER > 0 && types.GUIDE > 0, types);
+  check('and still carries requests and offers',
+    types.REQUEST > 0 && types.OFFER > 0, types);
+  // Guides have their own tab, so the feed never carries one however it is asked.
+  check('but never a guide', !types.GUIDE, types);
+
+  for (const query of ['types=GUIDE', 'types=REQUEST,OFFER,UPDATE,GUIDE']) {
+    const asked = await api(owner, 'GET', `/community/feed?limit=50&${query}`);
+
+    check(`asking for guides explicitly (${query}) returns none`,
+      !(asked.body?.data ?? []).some(x => x.type === 'GUIDE'),
+      (asked.body?.data ?? []).filter(x => x.type === 'GUIDE').length);
+  }
+
+  const guidesTab = await api(owner, 'GET', '/community/guides?limit=50');
+  check('while the guides tab still serves them', (guidesTab.body?.data ?? []).length > 0,
+    guidesTab.body?.data?.length);
 
   console.log('\n── §2 Every city has a feed, except one ─────────────────────');
   const perCity = {};
@@ -46,7 +60,7 @@ async function signIn(email) {
 
     perCity[cityId] = { total: rows.length, updates: rows.filter(x => x.type === 'UPDATE').length };
   }
-  check('every city in the picker has a feed',
+  check('every city in the picker has a feed, guides excluded',
     Object.values(perCity).every(c => c.total > 0),
     Object.entries(perCity).filter(([, c]) => !c.total).map(([id]) => id));
   check('and posts specifically, not just requests',
