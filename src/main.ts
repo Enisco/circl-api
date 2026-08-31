@@ -11,6 +11,7 @@ import { NestFactory, Reflector } from '@nestjs/core';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { useContainer } from 'class-validator';
+import { createServer } from 'net';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
@@ -113,18 +114,47 @@ async function bootstrap() {
     });
   }
 
-  // Before listening, so the app never serves a request against a half seeded database.
+  const port = config.get<number>('PORT') || config.get<number>('APP_PORT') || 4000;
+
+  // Checked BEFORE seeding rather than discovered at listen. Seeding can take half a minute with
+  // the demo dataset, and a port clash found afterwards reads as "the logs stopped after it
+  // seeded" rather than as the one-line problem it is.
+  await assertPortIsFree(port);
+
+  // After the port check and before listening, so the app never serves a request against a half
+  // seeded database, and never seeds for a process that was going to die anyway.
   await runStartupSeeds(app.get(PrismaService), process.env, {
     info: message => logger.info(message),
     warn: message => logger.warn(message),
   });
 
-  const port = config.get<number>('PORT') || config.get<number>('APP_PORT') || 4000;
-
   await app.listen(port, '0.0.0.0', () => {
     logger.info(`Circl API is running on port ${port}`);
   });
 }
+
+/** Fails fast and by name when something else already holds the port. */
+const assertPortIsFree = (port: number): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const probe = createServer();
+
+    probe.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EADDRINUSE') return reject(error);
+
+      reject(
+        new Error(
+          `Port ${port} is already in use, so this process cannot start. Something else is ` +
+            `serving on it: another copy of this app, or one left running in the background. ` +
+            `Find it with \`lsof -nP -iTCP:${port} -sTCP:LISTEN\` and stop it, or set PORT to ` +
+            `something else.`,
+        ),
+      );
+    });
+
+    probe.once('listening', () => probe.close(() => resolve()));
+    probe.listen(port, '0.0.0.0');
+  });
+
 // Nest's buffered logs are discarded when bootstrap throws, so these write straight to the platform log stream.
 process.on('unhandledRejection', reason => {
   console.error('[fatal] Unhandled promise rejection:', reason);
