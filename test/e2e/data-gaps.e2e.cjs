@@ -350,14 +350,15 @@ async function signIn(email) {
 
   let backfilled = null;
 
-  // The first read triggers the render, which then has to reach a tile server, so this polls
-  // rather than assuming the second call is already late enough.
-  for (let attempt = 0; attempt < 20 && !backfilled; attempt += 1) {
+  // The first read triggers the render, which fetches six tiles from a public tile server before
+  // anything is stored. That is slow and occasionally flaky, so the window is generous: a short
+  // one fails on the network rather than on the feature.
+  for (let attempt = 0; attempt < 45 && !backfilled; attempt += 1) {
     const detail = await api(mapper.token, 'GET', `/commerce/stores/${built.body?.data?.id}`);
 
     backfilled = detail.body?.data?.staticMapUrl ?? null;
 
-    if (!backfilled) await new Promise(resolve => setTimeout(resolve, 500));
+    if (!backfilled) await new Promise(resolve => setTimeout(resolve, 800));
   }
 
   check('a store created through the API gets its tile built on first read',
