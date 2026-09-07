@@ -87,7 +87,7 @@ export class GuideController {
   @ApiOperation({
     summary: 'Write a guide',
     description:
-      'A guide is steps, not free prose: send `steps`, and the server stores them as positioned '+
+      'A guide is steps, not free prose: send `steps`, and the server stores them as positioned ' +
       'blocks.',
   })
   @RateLimit('CREATE')
@@ -117,7 +117,7 @@ export class GuideController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Bookmark a guide',
-    description: 'Saves it to the member\'s own list. Idempotent.',
+    description: "Saves it to the member's own list. Idempotent.",
   })
   @RateLimit('REACT')
   async bookmark(@CurrentUserId() userId: string, @Param('id') id: string) {

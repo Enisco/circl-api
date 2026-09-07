@@ -1,10 +1,5 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Patch, UseGuards } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiOkResponse,
-  ApiOperation,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, JwtAuthGuard, SuccessMessage } from '@/common';
 import { PrivacyService } from '../services/privacy.service';
 import { UpdatePrivacyDto } from '../dtos/account.dto';
@@ -23,10 +18,10 @@ export class PrivacyController {
   @ApiOperation({
     summary: 'Privacy preferences',
     description:
-      'The three switches on the Privacy screen. Defaults to all on, so a member who has never '+
+      'The three switches on the Privacy screen. Defaults to all on, so a member who has never ' +
       'opened the screen reads the same values the server applies.',
   })
-    @ApiOkResponse({ type: PrivacyResponseDto })
+  @ApiOkResponse({ type: PrivacyResponseDto })
   async get(@CurrentUserId() userId: string) {
     const { data } = await this.privacy.get(userId);
 
@@ -41,7 +36,7 @@ export class PrivacyController {
       'Accepts any subset and returns the whole object, the same contract the notification ' +
       'matrix uses. `personalisedFeed: false` really does fall the feed back to recency and city.',
   })
-    @ApiOkResponse({ type: PrivacyResponseDto })
+  @ApiOkResponse({ type: PrivacyResponseDto })
   async update(@CurrentUserId() userId: string, @Body() dto: UpdatePrivacyDto) {
     const { data } = await this.privacy.update(userId, dto);
 

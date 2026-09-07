@@ -154,7 +154,9 @@ export class ListSlotsDto {
   @IsOptional()
   from?: string;
 
-  @ApiPropertyOptional({ description: 'ISO date. Defaults to two weeks out, capped at sixty days.' })
+  @ApiPropertyOptional({
+    description: 'ISO date. Defaults to two weeks out, capped at sixty days.',
+  })
   @IsDateString()
   @IsOptional()
   to?: string;

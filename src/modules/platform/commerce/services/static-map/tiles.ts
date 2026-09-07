@@ -11,8 +11,7 @@ export const project = (latitude: number, longitude: number, zoom: number) => {
 
   return {
     x: ((longitude + 180) / 360) * scale,
-    y:
-      (0.5 - Math.log((1 + sinLatitude) / (1 - sinLatitude)) / (4 * Math.PI)) * scale,
+    y: (0.5 - Math.log((1 + sinLatitude) / (1 - sinLatitude)) / (4 * Math.PI)) * scale,
   };
 };
 

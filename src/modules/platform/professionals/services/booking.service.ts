@@ -3,6 +3,7 @@ import {
   Booking,
   JobStage,
   JobState,
+  NotificationKind,
   Prisma,
   SystemMessageType,
   ThreadContextType,
@@ -20,6 +21,7 @@ import {
 } from '@/common';
 import { AuthorView, MediaService, authorSelect, toAuthorView } from '../../shared';
 import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
+import { NotificationFeedService } from '../../notifications';
 import {
   CancelDto,
   CreateBookingDto,
@@ -72,6 +74,7 @@ export class BookingService {
     private readonly database: PrismaService,
     private readonly conversations: ConversationFactoryService,
     private readonly media: MediaService,
+    private readonly notifications: NotificationFeedService,
   ) {}
 
   // ─── 2.9.2 Create ──────────────────────────────────────────────────────────
@@ -213,6 +216,21 @@ export class BookingService {
       return created;
     });
 
+    // A booking request that nobody is told about is a booking that expires unanswered, which is
+    // the professional's reputation and the client's time both spent on nothing.
+    const client = await this.notifications.actorName(clientId);
+
+    this.notifications.raise({
+      userId: booking.professionalId,
+      actorId: clientId,
+      kind: NotificationKind.BOOKING,
+      categoryCode: 'BOOKINGS',
+      title: `${client} requested a booking`,
+      body: booking.serviceName,
+      route: `/bookings/${booking.id}`,
+      metadata: { bookingId: booking.id },
+    });
+
     return this.findOne(clientId, booking.id);
   }
 
@@ -328,6 +346,7 @@ export class BookingService {
       from: [JobState.PENDING_ACCEPTANCE],
       to: JobState.ACCEPTED,
       stage: JobStage.ACCEPTED,
+      notice: 'Your booking was accepted',
     });
   }
 
@@ -338,6 +357,7 @@ export class BookingService {
       to: JobState.CANCELLED,
       stage: JobStage.CANCELLED,
       reason: dto.reason,
+      notice: 'Your booking was declined',
     });
   }
 
@@ -347,6 +367,7 @@ export class BookingService {
       from: [JobState.ACCEPTED],
       to: JobState.IN_PROGRESS,
       stage: JobStage.IN_PROGRESS,
+      notice: 'Work has started on your booking',
     });
   }
 
@@ -360,6 +381,7 @@ export class BookingService {
       stage: JobStage.DELIVERED,
       note: dto.note,
       mediaKeys: media.map(item => item.id),
+      notice: 'Your booking was delivered',
     });
   }
 
@@ -370,6 +392,7 @@ export class BookingService {
       to: JobState.CHANGES_REQUESTED,
       stage: JobStage.CHANGES_REQUESTED,
       note: dto.message,
+      notice: 'Changes were requested on a booking',
     });
   }
 
@@ -380,6 +403,7 @@ export class BookingService {
       from: [JobState.DELIVERED],
       to: JobState.COMPLETED,
       stage: JobStage.DONE,
+      notice: 'A booking was marked complete',
     });
   }
 
@@ -390,6 +414,7 @@ export class BookingService {
       to: JobState.CANCELLED,
       stage: JobStage.CANCELLED,
       reason: dto.reason,
+      notice: 'A booking was cancelled',
     });
   }
 
@@ -405,6 +430,8 @@ export class BookingService {
       reason?: string;
       note?: string;
       mediaKeys?: string[];
+      /** What the other party is told. Absent means the move is not worth telling anybody about. */
+      notice?: string;
     },
   ) {
     const booking = await this.database.booking.findUnique({ where: { id } });
@@ -478,6 +505,23 @@ export class BookingService {
         );
       }
     });
+
+    // The system line written above is not unread and does not push, so until now a professional
+    // learned about a booking only by opening the app and looking for it.
+    if (options.notice) {
+      const recipientId = role === 'CLIENT' ? booking.professionalId : booking.clientId;
+
+      this.notifications.raise({
+        userId: recipientId,
+        actorId: userId,
+        kind: NotificationKind.BOOKING,
+        categoryCode: 'BOOKINGS',
+        title: options.notice,
+        body: options.reason ?? options.note ?? null,
+        route: `/bookings/${id}`,
+        metadata: { bookingId: id, state: options.to },
+      });
+    }
 
     return this.findOne(userId, id);
   }

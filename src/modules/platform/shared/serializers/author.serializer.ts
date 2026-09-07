@@ -11,6 +11,12 @@ export interface AuthorView {
   /** Null is normal, not an error. The client draws initials on a grey circle. */
   avatarUrl: string | null;
   city: CityView | null;
+  /**
+   * ISO 3166-1 alpha-2, for the flag the client draws beside the name. Null is normal and means
+   * draw nothing: the member has not said where they are from, said "Other", or the post is
+   * anonymous.
+   */
+  countryCode: string | null;
   isAnonymous: boolean;
   /** Empty array, never null. Holds ["EMAIL"] at most in this version (D13). */
   trustChecks: TrustCheckType[];
@@ -30,6 +36,7 @@ export const authorSelect = {
   profile: {
     select: {
       city: { select: { id: true, name: true, region: true } },
+      countryOfOrigin: true,
     },
   },
   trustChecks: {
@@ -47,7 +54,10 @@ export type AuthorSource = {
   avatarKey?: string | null;
   profileImageUrl: string | null;
   isAnonymised?: boolean;
-  profile?: { city: { id: string; name: string; region: string | null } | null } | null;
+  profile?: {
+    city: { id: string; name: string; region: string | null } | null;
+    countryOfOrigin?: string | null;
+  } | null;
   trustChecks?: Array<{ check: TrustCheckType }>;
   professionalListing?: { id: string } | null;
 };
@@ -58,6 +68,24 @@ export const displayNameOf = (firstName: string, lastName?: string | null): stri
 
 const ANONYMOUS_NAME = 'Someone';
 const DELETED_NAME = 'Deleted account';
+
+/**
+ * The one country term that is not a country: members who pick it have said where they are from is
+ * not on the list. There is no flag for it, so it is returned as null rather than as a code the
+ * client would look up and fail to find.
+ */
+const NO_COUNTRY = 'OTHER';
+
+/**
+ * The taxonomy stores ISO 3166-1 alpha-2 already, so this only has to filter, not translate.
+ * Exported because the two profile endpoints carry the same field without going through the
+ * author object, and one rule in two places is one rule too many.
+ */
+export const toCountryCode = (code: string | null | undefined): string | null =>
+  code && code !== NO_COUNTRY ? code : null;
+
+const countryCodeOf = (author: AuthorSource | null | undefined): string | null =>
+  toCountryCode(author?.profile?.countryOfOrigin);
 
 /** Anonymity rules (0.9): when a post is anonymous, `id`, `username` and `avatarUrl` are all null and the display name names only the city. */
 export const toAuthorView = (
@@ -80,6 +108,9 @@ export const toAuthorView = (
       avatarUrl: null,
       // The city stays: it is the whole of what an anonymous post reveals, and it is what makes "Someone in Manchester" mean anything.
       city,
+      // The flag does not. City is coarse enough to stay anonymous in; a nationality that is rare
+      // in a given city is not, and two attributes narrow a person far faster than one.
+      countryCode: null,
       isAnonymous: true,
       trustChecks: [],
       isProfessional: false,
@@ -95,6 +126,7 @@ export const toAuthorView = (
       username: null,
       avatarUrl: null,
       city: null,
+      countryCode: null,
       isAnonymous: false,
       trustChecks: [],
       isProfessional: false,
@@ -109,10 +141,9 @@ export const toAuthorView = (
     displayName: displayNameOf(author.firstName, author.lastName),
     username: author.username,
     // An uploaded avatar is Circl's own object and is signed.
-    avatarUrl: author.avatarKey
-      ? options.sign(author.avatarKey)
-      : author.profileImageUrl,
+    avatarUrl: author.avatarKey ? options.sign(author.avatarKey) : author.profileImageUrl,
     city,
+    countryCode: countryCodeOf(author),
     isAnonymous: false,
     trustChecks: (author.trustChecks ?? []).map(check => check.check),
     isProfessional: listingId !== null,

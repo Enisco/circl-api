@@ -13,10 +13,11 @@ import { NotificationFeedService } from '../../notifications';
 import {
   ApiErrorCode,
   ApiException,
-  Paginated,
   buildPageMeta,
   daysAgo,
+  escapeLike,
   excerpt,
+  Paginated,
 } from '@/common';
 import {
   ActivityService,
@@ -97,9 +98,12 @@ export class GroupService {
     if (query.cityId) where.cityId = query.cityId;
 
     if (query.q) {
+      // `%` and `_` are ILIKE wildcards; unescaped, `%` matches the whole table (0.5).
+      const q = escapeLike(query.q);
+
       where.OR = [
-        { name: { contains: query.q, mode: Prisma.QueryMode.insensitive } },
-        { description: { contains: query.q, mode: Prisma.QueryMode.insensitive } },
+        { name: { contains: q, mode: Prisma.QueryMode.insensitive } },
+        { description: { contains: q, mode: Prisma.QueryMode.insensitive } },
       ];
     }
 
@@ -381,6 +385,28 @@ export class GroupService {
         cityId: group.cityId,
         weight: 3,
       });
+    } else {
+      // A pending request sits in a queue nobody is told about otherwise, so a closed group's
+      // members are whoever the owner happened to notice.
+      const actor = await this.notifications.actorName(userId);
+
+      this.notifications.raise({
+        userId: group.createdById,
+        actorId: userId,
+        kind: NotificationKind.GROUP,
+        categoryCode: 'GROUPS',
+        title: `${actor} asked to join ${group.name}`,
+        body: null,
+        route: `/community/group/${id}/requests`,
+        // One row per group: ten requests is one row saying ten, not ten rows.
+        collapseKey: `group-join:${id}`,
+        collapsedTitle: (count, actorName) =>
+          count === 2
+            ? `${actorName} and 1 other asked to join ${group.name}`
+            : `${actorName} and ${count - 1} others asked to join ${group.name}`,
+        actorTitle: actor,
+        metadata: { groupId: id },
+      });
     }
 
     return { membership: isOpen ? 'MEMBER' : 'PENDING', memberCount };
@@ -505,6 +531,27 @@ export class GroupService {
         : await tx.group.findUniqueOrThrow({ where: { id }, select: { memberCount: true } });
 
       return group.memberCount;
+    });
+
+    const group = await this.database.group.findUnique({
+      where: { id },
+      select: { name: true },
+    });
+
+    // Both outcomes, because a request that is silently declined is indistinguishable from one
+    // nobody has looked at yet, and the member keeps checking.
+    this.notifications.raise({
+      userId: subjectUserId,
+      actorId: adminId,
+      kind: NotificationKind.GROUP,
+      categoryCode: 'GROUPS',
+      title: approve
+        ? `You are in ${group?.name ?? 'the group'}`
+        : `Your request to join ${group?.name ?? 'the group'} was declined`,
+      body: null,
+      // A declined member has nowhere useful to go, so that row is unroutable by design (6.1.1).
+      route: approve ? `/community/group/${id}` : null,
+      metadata: { groupId: id },
     });
 
     return { membership: approve ? 'MEMBER' : 'NONE', memberCount };

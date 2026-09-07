@@ -12,13 +12,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiOkResponse,
-  ApiOperation,
-  ApiQuery,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
 import { BrowseProfessionalsDto, ListSlotsDto } from '../dtos/browse.dto';
 import { SlotsResponseDto } from '../dtos/slots-response.dto';
@@ -272,7 +266,7 @@ export class ProfessionalsController {
       'of assuming they do not work then. An empty `days` is a valid answer and the screen falls ' +
       'back to "I am flexible" only.',
   })
-    @ApiOkResponse({ type: SlotsResponseDto })
+  @ApiOkResponse({ type: SlotsResponseDto })
   async slots(@Param('listingId') listingId: string, @Query() query: ListSlotsDto) {
     const { data } = await this.availability.slots(listingId, query);
 

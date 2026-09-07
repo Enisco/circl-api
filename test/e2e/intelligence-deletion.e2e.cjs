@@ -102,6 +102,12 @@ async function plantCode(userId, code) {
   const { TaxonomyService } = require('../../dist/src/modules/platform/shared/services/taxonomy.service.js');
   const demand = new DemandService(prisma, new TaxonomyService(prisma));
 
+  // Cleared first, because the scheduled rollup runs every two hours: on a server that has been up
+  // a while this table is already full, and the assertion below was testing how long the machine
+  // had been running rather than anything about the feature. The rebuild two lines down is what
+  // this section is actually about.
+  await prisma.demandSignal.deleteMany({});
+
   r = await api(helper.token, 'GET', '/pulse/suggestions?surface=COMMUNITY_OFFER');
   check('nothing suggested before the rollup has run', r.status === 200 && r.body?.data?.length === 0, r.body?.data);
 

@@ -113,7 +113,9 @@ export class MediaUploadService {
         ApiErrorCode.MEDIA_TOO_LARGE,
         `Files of this type must be under ${megabytes}MB.`,
         {
-          details: [{ field: `files[${index}].byteSize`, message: `Must be under ${megabytes}MB.` }],
+          details: [
+            { field: `files[${index}].byteSize`, message: `Must be under ${megabytes}MB.` },
+          ],
         },
       );
     }

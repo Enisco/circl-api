@@ -2,12 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { GuardThreadState, Prisma, RiskLevel, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiException, buildPageMeta } from '@/common';
-import {
-  MediaService,
-  TaxonomyService,
-  authorSelect,
-  toAuthorView,
-} from '../../shared';
+import { MediaService, TaxonomyService, authorSelect, toAuthorView } from '../../shared';
 import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
 import { ListGuardCasesDto, UpdateGuardCaseDto } from '../dtos/admin.dto';
 
@@ -103,7 +98,9 @@ export class AdminGuardService {
       subject: thread.subject,
       state: thread.state,
       member: toAuthorView(thread.user, { sign: this.media.sign }),
-      assignedTo: thread.assignedTo ? toAuthorView(thread.assignedTo, { sign: this.media.sign }) : null,
+      assignedTo: thread.assignedTo
+        ? toAuthorView(thread.assignedTo, { sign: this.media.sign })
+        : null,
       risk: {
         level: thread.riskLevel,
         category: thread.riskCategory,

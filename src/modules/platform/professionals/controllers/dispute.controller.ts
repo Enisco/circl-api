@@ -51,7 +51,8 @@ export class DisputeController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'One dispute, with the evidence both sides have added',
-    description: 'Circl staff join the existing conversation rather than a new one being opened (D29).',
+    description:
+      'Circl staff join the existing conversation rather than a new one being opened (D29).',
   })
   async findOne(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.disputes.findOne(userId, id);

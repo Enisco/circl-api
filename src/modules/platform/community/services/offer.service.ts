@@ -9,7 +9,7 @@ import {
   ThreadContextType,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException, buildPageMeta, Paginated } from '@/common';
+import { ApiErrorCode, ApiException, buildPageMeta, escapeLike, Paginated } from '@/common';
 import {
   ActivityService,
   BlockingService,
@@ -223,9 +223,11 @@ export class OfferService {
     }
 
     if (query.q) {
+      // `%` and `_` are ILIKE wildcards; unescaped, `%` matches the whole table (0.5).
+      const q = escapeLike(query.q);
       const search = [
-        { title: { contains: query.q, mode: Prisma.QueryMode.insensitive } },
-        { description: { contains: query.q, mode: Prisma.QueryMode.insensitive } },
+        { title: { contains: q, mode: Prisma.QueryMode.insensitive } },
+        { description: { contains: q, mode: Prisma.QueryMode.insensitive } },
       ];
 
       where.AND = [...(Array.isArray(where.AND) ? where.AND : []), { OR: search }];

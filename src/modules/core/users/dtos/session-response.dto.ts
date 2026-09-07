@@ -20,7 +20,11 @@ export class SessionResponseDto {
   })
   location: string | null;
 
-  @ApiPropertyOptional({ nullable: true, example: null, description: 'Null for the same reason as `location`.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: null,
+    description: 'Null for the same reason as `location`.',
+  })
   ipCountry: string | null;
 
   @ApiProperty({ example: '2026-08-30T07:41:00.000Z' })

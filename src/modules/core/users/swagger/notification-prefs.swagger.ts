@@ -5,7 +5,6 @@ import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse } from '@nestjs/swagg
 import { RegisterDeviceTokenDto } from '../dtos';
 
 export const NotificationPrefsSwagger = {
-
   registerDeviceToken: ApiDocs(
     ApiBearerAuth(),
     ApiOperation({

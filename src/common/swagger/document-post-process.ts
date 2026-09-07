@@ -87,7 +87,9 @@ export const applyResponseEnvelope = (document: OpenAPIObject): OpenAPIObject =>
         if (status === '204') continue;
 
         if (Number(status) >= 400) {
-          response.content = { 'application/json': { schema: { $ref: `#/components/schemas/${ERROR_SCHEMA}` } } };
+          response.content = {
+            'application/json': { schema: { $ref: `#/components/schemas/${ERROR_SCHEMA}` } },
+          };
           response.description = response.description || 'Failed';
           continue;
         }
@@ -105,7 +107,9 @@ export const applyResponseEnvelope = (document: OpenAPIObject): OpenAPIObject =>
       // Every route can fail the same three ways, and a client that has not seen the error
       // envelope writes its own guess at one.
       if (!operation.responses['400']) {
-        operation.responses['400'] = errorResponse('Validation failed. `details` names the fields.');
+        operation.responses['400'] = errorResponse(
+          'Validation failed. `details` names the fields.',
+        );
       }
 
       if (operation.security?.length && !operation.responses['401']) {

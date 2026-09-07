@@ -58,7 +58,9 @@ const subjectOf = (token: string): string | null => {
   try {
     const payload: unknown = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
 
-    return typeof payload === 'object' && payload !== null && typeof (payload as { sub?: unknown }).sub === 'string'
+    return typeof payload === 'object' &&
+      payload !== null &&
+      typeof (payload as { sub?: unknown }).sub === 'string'
       ? (payload as { sub: string }).sub
       : null;
   } catch {

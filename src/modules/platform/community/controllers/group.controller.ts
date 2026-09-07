@@ -71,7 +71,7 @@ export class GroupController {
   @ApiOperation({
     summary: 'Group detail',
     description:
-      'One group with its member preview, admins and the caller\'s own membership state. Pending '+
+      "One group with its member preview, admins and the caller's own membership state. Pending " +
       'members see that they are pending.',
   })
   async findOne(@CurrentUserId() userId: string, @Param('id') id: string) {
@@ -258,7 +258,7 @@ export class GroupController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete a group post reply',
-    description: 'The reply\'s author, or a group admin.',
+    description: "The reply's author, or a group admin.",
   })
   async removePostReply(
     @CurrentUserId() userId: string,

@@ -58,7 +58,7 @@ export class ModerationController {
   @ApiOperation({
     summary: 'Unblock a member',
     description:
-      'Symmetric, like the block was. Idempotent: unblocking someone who was never blocked '+
+      'Symmetric, like the block was. Idempotent: unblocking someone who was never blocked ' +
       'succeeds.',
   })
   async unblock(@CurrentUserId() blockerId: string, @Param('userId') blockedId: string) {

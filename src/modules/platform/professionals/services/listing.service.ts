@@ -73,6 +73,9 @@ export class ListingService {
             select: {
               cityId: true,
               city: { select: { id: true, name: true, region: true } },
+              // Selected because the author object carries `countryCode` (0.9); a hand-rolled
+              // select that omits it returns null rather than failing, which is worse.
+              countryOfOrigin: true,
               phoneNumber: true,
               phoneNumberDiallingCode: true,
               bio: true,

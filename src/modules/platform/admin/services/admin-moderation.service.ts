@@ -9,11 +9,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta } from '@/common';
-import {
-  MediaService,
-  authorSelect,
-  toAuthorView,
-} from '../../shared';
+import { MediaService, authorSelect, toAuthorView } from '../../shared';
 import { DecideQueueItemDto, ListQueueDto, SuspendUserDto } from '../dtos/admin.dto';
 
 /** Ordering weight per band, so CRITICAL always outranks a heavily-reported spam post. */

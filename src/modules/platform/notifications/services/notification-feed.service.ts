@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { NotificationBucket, NotificationKind, Prisma } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { buildPageMeta, toJsonOrUndefined } from '@/common';
-import { authorSelect, MediaService, toAuthorView } from '../../shared';
+import { authorSelect, displayNameOf, MediaService, toAuthorView } from '../../shared';
 import { FcmService } from '@/modules/infrastructure/notification/providers/push/fcm.service';
 import { ListNotificationsDto } from '../dtos';
 import { NotificationPreferenceService } from './notification-preference.service';
@@ -65,6 +65,22 @@ export class NotificationFeedService {
     private readonly fcm: FcmService,
   ) {}
 
+  /**
+   * The actor's name, for a title that reads "Ada liked your guide" rather than "Somebody did".
+   * Here rather than in each section because five of them now need the same two lines, and a
+   * deleted or anonymised member has to fall back to the same word in all five.
+   */
+  async actorName(userId: string): Promise<string> {
+    const actor = await this.database.user.findUnique({
+      where: { id: userId },
+      select: { firstName: true, lastName: true, isAnonymised: true },
+    });
+
+    if (!actor || actor.isAnonymised) return 'Someone';
+
+    return displayNameOf(actor.firstName, actor.lastName) || 'Someone';
+  }
+
   /** Records a notification without blocking or failing the caller. */
   raise(input: RaiseNotificationInput): void {
     // Nobody is notified about their own action.
@@ -109,7 +125,11 @@ export class NotificationFeedService {
             actorId: input.actorId ?? null,
             // Moves back to the top of the list: the newest like is why it is worth looking again.
             createdAt: new Date(),
-            metadata: toJsonOrUndefined({ ...input.metadata, collapseKey: input.collapseKey, count }),
+            metadata: toJsonOrUndefined({
+              ...input.metadata,
+              collapseKey: input.collapseKey,
+              count,
+            }),
           },
         });
 
@@ -140,26 +160,55 @@ export class NotificationFeedService {
   /** Fire-and-forget, like the row itself: a push that fails must never fail what raised it. */
   private async push(input: RaiseNotificationInput): Promise<void> {
     try {
-      // The category's own row of the matrix (6.1.3), not a switch of its own.
+      // The category's own row of the matrix (6.1.4), not a switch of its own.
       if (!(await this.preferences.allows(input.userId, input.categoryCode, 'push'))) return;
 
-      const prefs = await this.database.userNotificationPrefs.findUnique({
+      // Every handset they are signed in on, not the most recent one. A member reading on a
+      // tablet and carrying a phone should be reachable on both, and until this was a table it
+      // was a column: the second device to register silently unsubscribed the first.
+      const devices = await this.database.pushDevice.findMany({
         where: { userId: input.userId },
-        select: { devicePushToken: true },
+        select: { token: true },
+        orderBy: { lastSeenAt: 'desc' },
       });
 
-      if (!prefs?.devicePushToken) return;
+      if (!devices.length) return;
 
-      await this.fcm.sendPush(prefs.devicePushToken, input.title, input.body ?? '', {
-        // Anything other than MESSAGE refreshes the notification badge, so the kind travels as-is.
-        type: input.kind,
-        // An in-app path or nothing. A null route is a row that marks itself read and goes nowhere.
-        ...(input.route ? { route: input.route } : {}),
-        badge: String(await this.unreadTotal(input.userId)),
-      });
+      const { deadTokens } = await this.fcm.sendPushToMany(
+        devices.map(device => device.token),
+        input.title,
+        input.body ?? '',
+        {
+          // Anything other than MESSAGE refreshes the notification badge, so the kind travels as-is.
+          type: input.kind,
+          // An in-app path or nothing. A null route is a row that marks itself read and goes nowhere.
+          ...(input.route ? { route: input.route } : {}),
+          badge: String(await this.unreadTotal(input.userId)),
+        },
+      );
+
+      await this.forget(deadTokens);
     } catch (error) {
       this.logger.warn(`Notification push failed: ${(error as Error).message}`);
     }
+  }
+
+  /**
+   * Drops tokens FCM has told us are dead. Without this a member who reinstalls leaves a token
+   * behind that fails on every notification forever: an error line per like, and a device that
+   * quietly receives nothing with nothing in the data saying why.
+   *
+   * Deleted by token rather than by member, so the phone that just registered is untouched by a
+   * tablet's failure.
+   */
+  private async forget(tokens: string[]): Promise<void> {
+    if (!tokens.length) return;
+
+    const { count } = await this.database.pushDevice.deleteMany({
+      where: { token: { in: tokens } },
+    });
+
+    if (count) this.logger.log(`Dropped ${count} dead push device(s)`);
   }
 
   async list(userId: string, query: ListNotificationsDto) {

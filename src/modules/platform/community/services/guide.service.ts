@@ -16,6 +16,7 @@ import {
   ApiException,
   buildPageMeta,
   daysAgo,
+  escapeLike,
   excerpt,
   Paginated,
   readTimeMinutes,
@@ -115,9 +116,13 @@ export class GuideService {
     if (query.bookmarked) where.bookmarks = { some: { userId: viewerId } };
 
     if (query.q) {
+      // Escaped: `%` and `_` are ILIKE wildcards, so an unescaped `%` matches every row in the
+      // table and does it without the trigram index.
+      const q = escapeLike(query.q);
+
       where.OR = [
-        { title: { contains: query.q, mode: Prisma.QueryMode.insensitive } },
-        { intro: { contains: query.q, mode: Prisma.QueryMode.insensitive } },
+        { title: { contains: q, mode: Prisma.QueryMode.insensitive } },
+        { intro: { contains: q, mode: Prisma.QueryMode.insensitive } },
       ];
     }
 
@@ -358,7 +363,10 @@ export class GuideService {
     // The whole viewer, because the client decides which toast to show from `isBookmarked` in the
     // response rather than from what it asked for.
     const [liked, progress] = await Promise.all([
-      this.database.guideReaction.findFirst({ where: { guideId: id, userId }, select: { guideId: true } }),
+      this.database.guideReaction.findFirst({
+        where: { guideId: id, userId },
+        select: { guideId: true },
+      }),
       this.database.guideProgress.findUnique({
         where: { guideId_userId: { guideId: id, userId } },
         select: { progress: true },
@@ -377,7 +385,8 @@ export class GuideService {
     id: string,
     liked: boolean,
   ): Promise<{ hasLiked: boolean; likeCount: number }> {
-    await this.assertExists(id);
+    const guide = await this.assertExists(id);
+    let isFirstLike = false;
 
     await this.database.$transaction(async tx => {
       if (liked) {
@@ -387,6 +396,7 @@ export class GuideService {
         });
 
         if (result.count) {
+          isFirstLike = true;
           await tx.guide.update({ where: { id }, data: { likeCount: { increment: 1 } } });
         }
       } else {
@@ -397,6 +407,35 @@ export class GuideService {
         }
       }
     });
+
+    // `count` was 0 on a repeat tap, which is how a second tap stays silent rather than notifying
+    // the author twice. Saving a guide has notified since it shipped; liking one did not, and the
+    // author had no way to tell the difference from the outside.
+    if (isFirstLike && guide.authorId) {
+      const actor = await this.database.user.findUnique({
+        where: { id: userId },
+        select: { firstName: true, lastName: true },
+      });
+      const name = displayNameOf(actor?.firstName, actor?.lastName);
+
+      this.notifications.raise({
+        userId: guide.authorId,
+        actorId: userId,
+        kind: NotificationKind.LIKE,
+        categoryCode: 'REACTIONS',
+        title: `${name} liked your guide`,
+        body: excerpt(guide.title, 80),
+        route: `/community/guide/${id}`,
+        // One row per guide, not one per liker.
+        collapseKey: `guide-like:${id}`,
+        collapsedTitle: (count, actorName) =>
+          count === 2
+            ? `${actorName} and 1 other liked your guide`
+            : `${actorName} and ${count - 1} others liked your guide`,
+        actorTitle: name,
+        metadata: { guideId: id },
+      });
+    }
 
     const fresh = await this.database.guide.findUniqueOrThrow({
       where: { id },

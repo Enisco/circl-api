@@ -33,7 +33,8 @@ export class UpdateController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'List updates',
-    description: 'The community wall. Updates carry no category, so any category filter excludes them (1.1).',
+    description:
+      'The community wall. Updates carry no category, so any category filter excludes them (1.1).',
   })
   async list(@CurrentUserId() userId: string, @Query() query: ListUpdatesDto) {
     const { data, meta } = await this.updates.list(userId, query);
@@ -47,7 +48,7 @@ export class UpdateController {
   @ApiOperation({
     summary: 'Post an update',
     description:
-      'A short post with no subject and no category. Media follows the standard rule: send keys, '+
+      'A short post with no subject and no category. Media follows the standard rule: send keys, ' +
       'read URLs (0.11).',
   })
   @RateLimit('CREATE')
@@ -73,7 +74,8 @@ export class UpdateController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete an update',
-    description: 'Author only. Replies go with it, because a reply to nothing is not a record of anything.',
+    description:
+      'Author only. Replies go with it, because a reply to nothing is not a record of anything.',
   })
   async remove(@CurrentUserId() userId: string, @Param('id') id: string) {
     await this.updates.remove(userId, id);
@@ -146,7 +148,8 @@ export class UpdateController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete a reply',
-    description: 'Author only. Tombstoned rather than removed, so the thread does not renumber under a reader.',
+    description:
+      'Author only. Tombstoned rather than removed, so the thread does not renumber under a reader.',
   })
   async removeReply(
     @CurrentUserId() userId: string,

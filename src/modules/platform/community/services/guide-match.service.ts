@@ -97,7 +97,9 @@ export class GuideMatchService {
             status: request.status,
             city: toCityView(request.city),
             counts: { helpers: request.helperCount, replies: request.replyCount },
-            author: toAuthorView(request.author, { sign: this.media.sign, isAnonymous: request.visibility === 'ANONYMOUS',
+            author: toAuthorView(request.author, {
+              sign: this.media.sign,
+              isAnonymous: request.visibility === 'ANONYMOUS',
             }),
             createdAt: request.createdAt.toISOString(),
           },

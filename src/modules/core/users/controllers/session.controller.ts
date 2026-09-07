@@ -1,10 +1,5 @@
 import { Controller, Delete, Get, HttpCode, HttpStatus, Param, UseGuards } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiOkResponse,
-  ApiOperation,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentSessionId, CurrentUserId, JwtAuthGuard, SuccessMessage } from '@/common';
 import { SessionListService } from '../services/session-list.service';
 import { RevokedResponseDto, SessionResponseDto } from '../dtos/session-response.dto';
@@ -24,7 +19,7 @@ export class SessionController {
     description:
       'Real sessions, so "sign out everywhere" ejects a device rather than filtering a local list.',
   })
-    @ApiOkResponse({ type: [SessionResponseDto] })
+  @ApiOkResponse({ type: [SessionResponseDto] })
   async list(@CurrentUserId() userId: string, @CurrentSessionId() sessionId: string | null) {
     const { data } = await this.sessions.list(userId, sessionId);
 
@@ -36,10 +31,10 @@ export class SessionController {
   @ApiOperation({
     summary: 'Sign one device out',
     description:
-      'Refuses the caller\'s own session with 409: Log out is the path for that, so the app can ' +
+      "Refuses the caller's own session with 409: Log out is the path for that, so the app can " +
       'clear the keychain in the same step.',
   })
-    @ApiOkResponse({ type: RevokedResponseDto })
+  @ApiOkResponse({ type: RevokedResponseDto })
   async revoke(
     @CurrentUserId() userId: string,
     @CurrentSessionId() currentSessionId: string | null,
@@ -55,10 +50,10 @@ export class SessionController {
   @ApiOperation({
     summary: 'Sign out everywhere except this device',
     description:
-      'Revokes every other session and returns how many. The caller\'s own session is deliberately '+
+      "Revokes every other session and returns how many. The caller's own session is deliberately " +
       'left, so the member is not signed out of the app they are holding.',
   })
-    @ApiOkResponse({ type: RevokedResponseDto })
+  @ApiOkResponse({ type: RevokedResponseDto })
   async revokeOthers(
     @CurrentUserId() userId: string,
     @CurrentSessionId() sessionId: string | null,

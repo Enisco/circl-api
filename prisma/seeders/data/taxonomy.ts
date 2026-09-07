@@ -173,24 +173,77 @@ const languages: Array<[string, string, string]> = [
 // ─── Countries of origin ──────────────────────────────────────────────────────
 // ISO 3166-1 alpha-2.
 const countries: Array<[string, string]> = [
-  ['NG', 'Nigeria'], ['GH', 'Ghana'], ['KE', 'Kenya'], ['ZA', 'South Africa'],
-  ['ZW', 'Zimbabwe'], ['UG', 'Uganda'], ['TZ', 'Tanzania'], ['CM', 'Cameroon'],
-  ['CI', "Côte d'Ivoire"], ['SN', 'Senegal'], ['SL', 'Sierra Leone'], ['LR', 'Liberia'],
-  ['GM', 'Gambia'], ['CD', 'DR Congo'], ['AO', 'Angola'], ['MZ', 'Mozambique'],
-  ['ET', 'Ethiopia'], ['ER', 'Eritrea'], ['SO', 'Somalia'], ['SD', 'Sudan'],
-  ['EG', 'Egypt'], ['MA', 'Morocco'], ['DZ', 'Algeria'], ['TN', 'Tunisia'],
-  ['JM', 'Jamaica'], ['TT', 'Trinidad and Tobago'], ['BB', 'Barbados'], ['GY', 'Guyana'],
-  ['IN', 'India'], ['PK', 'Pakistan'], ['BD', 'Bangladesh'], ['LK', 'Sri Lanka'],
-  ['NP', 'Nepal'], ['AF', 'Afghanistan'], ['IR', 'Iran'], ['IQ', 'Iraq'],
-  ['SY', 'Syria'], ['LB', 'Lebanon'], ['JO', 'Jordan'], ['PS', 'Palestine'],
-  ['TR', 'Türkiye'], ['CN', 'China'], ['HK', 'Hong Kong'], ['PH', 'Philippines'],
-  ['MY', 'Malaysia'], ['ID', 'Indonesia'], ['VN', 'Vietnam'], ['TH', 'Thailand'],
-  ['PL', 'Poland'], ['RO', 'Romania'], ['BG', 'Bulgaria'], ['LT', 'Lithuania'],
-  ['LV', 'Latvia'], ['UA', 'Ukraine'], ['RU', 'Russia'], ['AL', 'Albania'],
-  ['PT', 'Portugal'], ['ES', 'Spain'], ['IT', 'Italy'], ['FR', 'France'],
-  ['DE', 'Germany'], ['BR', 'Brazil'], ['CO', 'Colombia'], ['VE', 'Venezuela'],
-  ['US', 'United States'], ['CA', 'Canada'], ['AU', 'Australia'], ['NZ', 'New Zealand'],
-  ['IE', 'Ireland'], ['GB', 'United Kingdom'], ['OTHER', 'Other'],
+  ['NG', 'Nigeria'],
+  ['GH', 'Ghana'],
+  ['KE', 'Kenya'],
+  ['ZA', 'South Africa'],
+  ['ZW', 'Zimbabwe'],
+  ['UG', 'Uganda'],
+  ['TZ', 'Tanzania'],
+  ['CM', 'Cameroon'],
+  ['CI', "Côte d'Ivoire"],
+  ['SN', 'Senegal'],
+  ['SL', 'Sierra Leone'],
+  ['LR', 'Liberia'],
+  ['GM', 'Gambia'],
+  ['CD', 'DR Congo'],
+  ['AO', 'Angola'],
+  ['MZ', 'Mozambique'],
+  ['ET', 'Ethiopia'],
+  ['ER', 'Eritrea'],
+  ['SO', 'Somalia'],
+  ['SD', 'Sudan'],
+  ['EG', 'Egypt'],
+  ['MA', 'Morocco'],
+  ['DZ', 'Algeria'],
+  ['TN', 'Tunisia'],
+  ['JM', 'Jamaica'],
+  ['TT', 'Trinidad and Tobago'],
+  ['BB', 'Barbados'],
+  ['GY', 'Guyana'],
+  ['IN', 'India'],
+  ['PK', 'Pakistan'],
+  ['BD', 'Bangladesh'],
+  ['LK', 'Sri Lanka'],
+  ['NP', 'Nepal'],
+  ['AF', 'Afghanistan'],
+  ['IR', 'Iran'],
+  ['IQ', 'Iraq'],
+  ['SY', 'Syria'],
+  ['LB', 'Lebanon'],
+  ['JO', 'Jordan'],
+  ['PS', 'Palestine'],
+  ['TR', 'Türkiye'],
+  ['CN', 'China'],
+  ['HK', 'Hong Kong'],
+  ['PH', 'Philippines'],
+  ['MY', 'Malaysia'],
+  ['ID', 'Indonesia'],
+  ['VN', 'Vietnam'],
+  ['TH', 'Thailand'],
+  ['PL', 'Poland'],
+  ['RO', 'Romania'],
+  ['BG', 'Bulgaria'],
+  ['LT', 'Lithuania'],
+  ['LV', 'Latvia'],
+  ['UA', 'Ukraine'],
+  ['RU', 'Russia'],
+  ['AL', 'Albania'],
+  ['PT', 'Portugal'],
+  ['ES', 'Spain'],
+  ['IT', 'Italy'],
+  ['FR', 'France'],
+  ['DE', 'Germany'],
+  ['BR', 'Brazil'],
+  ['CO', 'Colombia'],
+  ['VE', 'Venezuela'],
+  ['US', 'United States'],
+  ['CA', 'Canada'],
+  ['AU', 'Australia'],
+  ['NZ', 'New Zealand'],
+  ['IE', 'Ireland'],
+  ['GB', 'United Kingdom'],
+  ['OTHER', 'Other'],
 ];
 
 const connectionTypes: Array<[string, string, string]> = [
@@ -261,7 +314,6 @@ const storeHelpAreas: Array<[string, string]> = [
   ['LISTINGS', 'Writing and photographing listings'],
   ['ADVERTISING', 'Advertising and reach'],
   ['SEO', 'Search and discovery'],
-  ['ORDERS', 'Handling enquiries and orders'],
   ['DELIVERY', 'Delivery and collection'],
   ['PRICING', 'Pricing and stock'],
 ];
@@ -285,8 +337,8 @@ const helpTags: Array<[string, string]> = [
   ['GOOD_QUALITY', 'Good quality'],
 ];
 
-// ─── Notification categories (spec 6.1.3, D38) ────────────────────────────────
-// The eight rows of the preference matrix.
+// ─── Notification categories (spec 6.1.4, D38) ────────────────────────────────
+// The nine rows of the preference matrix.
 const notificationCategories: Array<[string, string, boolean, boolean, boolean]> = [
   // code, label, default push, default email, locked
   ['REPLIES', 'Replies to my posts', true, false, false],
@@ -313,7 +365,6 @@ const guardCategories: Array<[string, string]> = [
   ['WORK', 'Work'],
   ['OTHER', 'Something else'],
 ];
-
 
 // ─── Vocabularies that were Dart constants until now (BACKEND-DATA-GAPS G1) ───
 // Every one of them is content, not chrome: the wording is member-visible and the value is
@@ -374,10 +425,8 @@ const professionalSortOptions: Array<[string, string]> = [
   ['RESPONSE', 'Fastest to reply'],
 ];
 
-const pair = (
-  kind: TaxonomyKind,
-  rows: Array<[string, string]>,
-): TaxonomySeed[] => rows.map(([code, label], index) => ({ kind, code, label, sort: index + 1 }));
+const pair = (kind: TaxonomyKind, rows: Array<[string, string]>): TaxonomySeed[] =>
+  rows.map(([code, label], index) => ({ kind, code, label, sort: index + 1 }));
 
 export const taxonomySeeds: TaxonomySeed[] = [
   ...communityCategories.map(([code, label, isActive, suggested], index) => ({

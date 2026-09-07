@@ -8,9 +8,11 @@ import {
   Param,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Response } from 'express';
 import { CurrentUserId, Idempotent, JwtAuthGuard, RateLimit, SuccessMessage } from '@/common';
 import {
   ListConversationsDto,
@@ -53,16 +55,34 @@ export class MessagingController {
 
   @Post()
   @Idempotent()
-  @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    summary: 'Start a plain direct message',
+    summary: 'Open a thread with a member, about something or about nothing',
     description:
-      'ONLY for a thread with no subject. Every subject-bearing thread is created by the section ' +
-      'that owns the subject and returns its id — nothing in the app constructs a thread id. ' +
-      'Returns the existing conversation when one already matches.',
+      'Without `context`, a plain DM. With one, a thread pinned to the subject: an item somebody ' +
+      'is asking about, or an offer. Those two are here because they are the only subjects a ' +
+      'member starts a thread about before there is anything to create — every other ' +
+      'subject-bearing thread comes back from the section that owns it (5.0, rule 3).\n\n' +
+      '**Safe to call without checking first.** Threads are unique on (participants, contextType, ' +
+      'contextId), so this returns the existing thread rather than a second one: `201` when it ' +
+      'created the thread, `200` when it opened one that already existed.\n\n' +
+      'With a `context`, `recipientUserId` is optional and derived from the subject.',
   })
-  async start(@CurrentUserId() userId: string, @Body() dto: StartThreadDto) {
+  @ApiResponse({ status: 201, description: 'The thread did not exist and was created.' })
+  @ApiResponse({ status: 200, description: 'A thread already matched, and this is it.' })
+  @ApiResponse({
+    status: 422,
+    description: 'The recipient does not own the subject of the thread.',
+  })
+  async start(
+    @CurrentUserId() userId: string,
+    @Body() dto: StartThreadDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
     const { conversation, created } = await this.conversations.startDirect(userId, dto);
+
+    // 201 only when something was created. The client calls this every time it opens a chat
+    // screen, and most of those are not creations (5.3.5).
+    response.status(created ? HttpStatus.CREATED : HttpStatus.OK);
 
     return {
       data: conversation,
@@ -195,7 +215,8 @@ export class MessagingController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Unmute a thread',
-    description: 'Notifications resume. The unread count was never affected: mute silences the push, not the count (5.4).',
+    description:
+      'Notifications resume. The unread count was never affected: mute silences the push, not the count (5.4).',
   })
   async unmute(@CurrentUserId() userId: string, @Param('conversationId') id: string) {
     const data = await this.conversations.setMuted(userId, id, false);

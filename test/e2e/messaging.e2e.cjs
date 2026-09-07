@@ -211,6 +211,21 @@ const waitFor = (socket, event, ms = 4000) =>
   const readPayload = await readEvent;
   check('read receipt relayed to the sender', readPayload?.userId === tunde.id, readPayload);
 
+  // The socket has no validation pipe in front of it, so a payload the REST route would have
+  // rejected reaches the service instead. It used to reach Prisma, which threw an unreadable
+  // error on `where: { id: undefined }` and logged it on every thread the app opened.
+  const beforeJunk = (await api(tunde.token, 'GET', `/messages/${conversationId}`)).status;
+
+  tundeSocket.emit('message.read', { conversationId });
+  tundeSocket.emit('message.read', {});
+  tundeSocket.emit('message.read', { conversationId: 'not-an-id', lastReadMessageId: 'nope' });
+  await new Promise(res => setTimeout(res, 500));
+
+  check('a read event with no message id, or no ids at all, does not break the socket',
+    tundeSocket.connected && beforeJunk === 200
+      && (await api(tunde.token, 'GET', `/messages/${conversationId}`)).status === 200,
+    { connected: tundeSocket.connected });
+
   // The tunnel case: disconnect, miss messages, reconnect and sync.
   tundeSocket.disconnect();
   await new Promise(res => setTimeout(res, 300));
@@ -315,6 +330,37 @@ const waitFor = (socket, event, ms = 4000) =>
       && !('key' in (r.body?.data?.attachments?.[0] ?? {})),
       r.body?.data?.attachments?.[0]);
 
+    // The name an early client shipped. `POST /media/uploads` only ever returns a key, so this is
+    // the same value under a wrong name rather than a different kind of value.
+    r = await api(ada.token, 'POST', `/messages/${conversationId}/messages`,
+      { clientId: 'md-img-alias', kind: 'IMAGE', attachmentIds: [await put('image/png')] });
+    check('and `attachmentIds` still sends, as the deprecated alias for the same keys',
+      r.status === 201 && r.body?.data?.attachments?.length === 1,
+      { s: r.status, e: r.body?.error, n: r.body?.data?.attachments?.length });
+
+    // The silent one: a photo sent as TEXT is accepted and the attachment is dropped, which is
+    // worth pinning down because it is the failure a client never sees.
+    r = await api(ada.token, 'POST', `/messages/${conversationId}/messages`,
+      { clientId: 'md-text-drop', kind: 'TEXT', body: 'a caption', attachmentKeys: [await put('image/png')] });
+    check('a photo sent as kind TEXT is accepted with the attachment dropped',
+      r.status === 201 && (r.body?.data?.attachments ?? []).length === 0,
+      { s: r.status, n: r.body?.data?.attachments?.length });
+
+    // A lost acknowledgement is the common retry, and it must not duplicate or 422 on the key.
+    const retryKey = await put('image/png');
+    const firstSend = await api(ada.token, 'POST', `/messages/${conversationId}/messages`,
+      { clientId: 'md-retry', kind: 'IMAGE', attachmentKeys: [retryKey] });
+    r = await api(ada.token, 'POST', `/messages/${conversationId}/messages`,
+      { clientId: 'md-retry', kind: 'IMAGE', attachmentKeys: [retryKey] });
+    check('retrying a send with the same clientId returns the same message, not a second one',
+      r.body?.data?.id === firstSend.body?.data?.id,
+      { first: firstSend.body?.data?.id, retry: r.body?.data?.id, e: r.body?.error?.code });
+
+    r = await api(ada.token, 'POST', `/messages/${conversationId}/messages`,
+      { clientId: 'md-reuse', kind: 'IMAGE', attachmentKeys: [retryKey] });
+    check('but the same key on a NEW message is refused, so a key is used once',
+      r.status === 422 && r.body?.error?.code === 'MEDIA_ALREADY_ATTACHED',
+      { s: r.status, code: r.body?.error?.code });
     // Only the recording device knows these, and it knows them before the bytes leave (5.5).
     const audioKey = await put('audio/m4a', { durationMs: 14000, waveform: [0.2, 0.5, 0.8, 0.4] });
     r = await api(ada.token, 'POST', `/messages/${conversationId}/messages`,
@@ -432,6 +478,297 @@ const waitFor = (socket, event, ms = 4000) =>
     watcher.disconnect();
     sender.disconnect();
   }
+
+  console.log('\n── 5.2 Presence: online means a live socket ─────────────────');
+
+  const watcher = await makeUser('pr-watch');
+  const subject = await makeUser('pr-subject');
+
+  await prisma.userProfile.update({ where: { userId: subject.id }, data: { openInbox: true } });
+
+  const prThread = (await api(watcher.token, 'POST', '/messages', { recipientUserId: subject.id }))
+    .body?.data?.id;
+
+  await api(subject.token, 'POST', `/messages/${prThread}/messages`,
+    { clientId: 'pr-1', body: 'so the thread has something in it' });
+
+  const presenceOf = async () =>
+    (await api(watcher.token, 'GET', `/presence?userIds=${subject.id}`)).body?.data?.[0];
+  const inboxOnline = async () => {
+    const inbox = await api(watcher.token, 'GET', '/messages?limit=20');
+
+    return (inbox.body?.data ?? []).find(row => row.id === prThread)?.participant?.isOnline;
+  };
+
+  let presence = await presenceOf();
+
+  check('a member with no socket is offline, with a last seen',
+    presence?.isOnline === false && typeof presence?.lastSeenAt === 'string', presence);
+  check('and the inbox agrees', (await inboxOnline()) === false, await inboxOnline());
+
+  const first = await connect(subject.token);
+
+  await new Promise(res => setTimeout(res, 300));
+  presence = await presenceOf();
+
+  check('a live socket makes them online', presence?.isOnline === true, presence);
+  check('and the inbox row says so too, which it never did before',
+    (await inboxOnline()) === true, await inboxOnline());
+
+  // Two devices: closing one must not fake going offline.
+  const second = await connect(subject.token);
+
+  await new Promise(res => setTimeout(res, 300));
+  first.disconnect();
+  await new Promise(res => setTimeout(res, 400));
+
+  check('closing one of two devices leaves them online',
+    (await presenceOf())?.isOnline === true, await presenceOf());
+
+  second.disconnect();
+  await new Promise(res => setTimeout(res, 400));
+
+  check('and the last one takes them offline', (await presenceOf())?.isOnline === false,
+    await presenceOf());
+
+  const hidden = await connect(subject.token);
+
+  await new Promise(res => setTimeout(res, 300));
+  await api(subject.token, 'POST', '/moderation/blocks', { userId: watcher.id });
+  presence = await presenceOf();
+
+  check('somebody who blocked you reads as offline with no last seen, not as an error',
+    presence?.isOnline === false && presence?.lastSeenAt === null, presence);
+
+  hidden.disconnect();
+  await prisma.block.deleteMany({ where: { blockerId: subject.id } });
+
+  r = await api(watcher.token, 'GET', '/presence?userIds=not-a-real-user');
+  check('an unknown id answers offline rather than 404',
+    r.status === 200 && r.body?.data?.[0]?.isOnline === false
+      && r.body?.data?.[0]?.lastSeenAt === null, r.body?.data);
+
+  r = await api(watcher.token, 'GET',
+    `/presence?userIds=${[subject.id, watcher.id, 'ghost'].join(',')}`);
+  check('every id asked about comes back, in the order asked',
+    (r.body?.data ?? []).map(p => p.userId).join(',') === [subject.id, watcher.id, 'ghost'].join(','),
+    r.body?.data?.map(p => p.userId));
+
+  r = await api(watcher.token, 'GET', `/presence/${subject.id}`);
+  check('and one member can be asked about on their own', r.status === 200
+    && r.body?.data?.userId === subject.id, { s: r.status, d: r.body?.data });
+
+  console.log('\n── 5.3.1 The two inbox fields a cache is checked against ────');
+
+  r = await api(ada.token, 'GET', '/messages?limit=20');
+  check('every inbox row carries lastMessageAt and unreadCount',
+    (r.body?.data ?? []).length > 0
+      && r.body.data.every(row => 'lastMessageAt' in row && 'unreadCount' in row),
+    (r.body?.data ?? [])[0] && Object.keys(r.body.data[0]));
+
+  console.log('\n── 5.3.3 Paging: exact hasMore, and a total order ───────────');
+
+  const pager = await makeUser('pg-user');
+
+  await prisma.userProfile.update({ where: { userId: pager.id }, data: { openInbox: true } });
+
+  const pageThread = (await api(ada.token, 'POST', '/messages', { recipientUserId: pager.id }))
+    .body?.data?.id;
+
+  for (let i = 1; i <= 6; i += 1) {
+    await api(ada.token, 'POST', `/messages/${pageThread}/messages`,
+      { clientId: `pg-${i}`, body: `message ${i}` });
+  }
+
+  // The case the client could not tell apart: a thread whose length is exactly the limit.
+  r = await api(ada.token, 'GET', `/messages/${pageThread}/messages?limit=6`);
+  check('a full last page reports hasMore false, rather than costing a wasted request',
+    r.body?.data?.length === 6 && r.body?.meta?.hasMore === false && r.body?.meta?.nextCursor === null,
+    r.body?.meta);
+
+  r = await api(ada.token, 'GET', `/messages/${pageThread}/messages?limit=3`);
+  check('a genuinely partial read reports hasMore true with a cursor',
+    r.body?.meta?.hasMore === true && typeof r.body?.meta?.nextCursor === 'string', r.body?.meta);
+
+  r = await api(ada.token, 'GET', `/messages/${pageThread}/messages?before=${r.body.meta.nextCursor}&limit=3`);
+  check('and that cursor returns the next three, oldest last',
+    r.body?.data?.map(m => m.body).join(',') === 'message 3,message 2,message 1'
+      && r.body?.meta?.hasMore === false,
+    { bodies: r.body?.data?.map(m => m.body), meta: r.body?.meta });
+
+  // Two messages sharing a timestamp is the case that used to lose one silently.
+  const pageRows = await prisma.message.findMany({
+    where: { conversationId: pageThread }, orderBy: { sentAt: 'asc' }, select: { id: true },
+  });
+  const tiedAt = new Date();
+
+  await prisma.message.update({ where: { id: pageRows[2].id }, data: { sentAt: tiedAt } });
+  await prisma.message.update({ where: { id: pageRows[3].id }, data: { sentAt: tiedAt } });
+
+  r = await api(ada.token, 'GET', `/messages/${pageThread}/messages?limit=30`);
+  const twins = (r.body?.data ?? [])
+    .filter(m => [pageRows[2].id, pageRows[3].id].includes(m.id))
+    .map(m => m.id);
+
+  check('two messages sharing a timestamp both come back', twins.length === 2, twins);
+
+  r = await api(ada.token, 'GET', `/messages/${pageThread}/messages?before=${twins[0]}&limit=30`);
+  const afterTwin = (r.body?.data ?? []).map(m => m.id);
+
+  check('and paging before one of them does not swallow the other',
+    afterTwin.includes(twins[1]) && afterTwin.length === 5, {
+      includesTwin: afterTwin.includes(twins[1]), returned: afterTwin.length,
+    });
+
+  console.log('\n── 5.3.3 `since`: reconciling a cached window ───────────────');
+
+  const withdrawn = pageRows[0].id;
+  const mark = new Date();
+
+  await new Promise(res => setTimeout(res, 50));
+  await api(ada.token, 'DELETE', `/messages/${pageThread}/messages/${withdrawn}`);
+
+  r = await api(ada.token, 'GET',
+    `/messages/${pageThread}/messages?since=${encodeURIComponent(mark.toISOString())}&limit=30`);
+  const tombstone = (r.body?.data ?? []).find(m => m.id === withdrawn);
+
+  check('a message withdrawn after the mark comes back through `since`', !!tombstone, {
+    returned: r.body?.data?.length,
+  });
+  check('and it arrives as a tombstone, not as its original text',
+    tombstone?.body === '' && !!tombstone?.deletedAt && (tombstone?.attachments ?? []).length === 0,
+    tombstone);
+  check('while a message that did not change is left out',
+    !(r.body?.data ?? []).some(m => m.id === pageRows[5].id), r.body?.data?.map(m => m.id));
+
+  r = await api(ada.token, 'GET',
+    `/messages/${pageThread}/messages?since=${encodeURIComponent(mark.toISOString())}&before=${withdrawn}`);
+  check('`since` with `before` is a 400, because it reads forwards', r.status === 400, r.status);
+
+  const hourAgo = encodeURIComponent(new Date(Date.now() - 3_600_000).toISOString());
+
+  r = await api(ada.token, 'GET', `/messages/${pageThread}/messages?since=${hourAgo}&limit=2`);
+  check('`since` pages like anything else', r.body?.meta?.hasMore === true, r.body?.meta);
+  r = await api(ada.token, 'GET',
+    `/messages/${pageThread}/messages?since=${hourAgo}&after=${r.body.meta.nextCursor}&limit=2`);
+  check('and `after` carries it forward', r.status === 200 && r.body?.data?.length === 2,
+    { s: r.status, n: r.body?.data?.length });
+
+  console.log('\n── 5.3.6 Opening a thread reads it, even an empty one ───────');
+
+  const quiet = await makeUser('rd-quiet');
+
+  await prisma.userProfile.update({ where: { userId: quiet.id }, data: { openInbox: true } });
+
+  const emptyThread = (await api(ada.token, 'POST', '/messages', { recipientUserId: quiet.id }))
+    .body?.data?.id;
+
+  // Exactly what the app sends when it opens a thread nobody has spoken in yet: there is no
+  // message to name, so it sends none.
+  r = await api(ada.token, 'POST', `/messages/${emptyThread}/read`, {});
+  check('marking an empty thread read is a 200, not a 400',
+    r.status === 200 && r.body?.data?.lastReadMessageId === null,
+    { s: r.status, d: r.body?.data, e: r.body?.error?.message });
+
+  await api(quiet.token, 'POST', `/messages/${emptyThread}/messages`, {
+    clientId: 'rd-1', body: 'The first thing either of us has said.',
+  });
+
+  r = await api(ada.token, 'POST', `/messages/${emptyThread}/read`, {});
+  check('and with no id it reads to the newest message',
+    r.status === 200 && typeof r.body?.data?.lastReadMessageId === 'string',
+    r.body?.data);
+
+  r = await api(ada.token, 'POST', `/messages/${emptyThread}/read`, { lastReadMessageId: 'nope' });
+  check('but naming a message that is not there is still a 404',
+    r.status === 404, { s: r.status, code: r.body?.error?.code });
+
+  console.log('\n── 5.3.5 A thread that carries its subject ──────────────────');
+
+  const seller = await makeUser('ctx-seller');
+  const buyer = await makeUser('ctx-buyer');
+
+  // Deliberately closed: a listed item is its own invitation to be asked about.
+  await prisma.userProfile.update({ where: { userId: seller.id }, data: { openInbox: false } });
+
+  const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY','SUNDAY']
+    .map(day => ({ day, openMinutes: 0, closeMinutes: 1439 }));
+
+  r = await api(seller.token, 'POST', '/commerce/stores', {
+    name: `Ctx Shop ${Date.now()}`, type: 'LOCAL',
+    description: 'A shop that exists so somebody can ask about its items.',
+    area: 'Moss Side', openingHours: allDay(),
+  });
+  const ctxStoreId = r.body?.data?.id;
+  const itemA = (await api(seller.token, 'POST', `/commerce/stores/${ctxStoreId}/items`,
+    { name: 'Egusi', price: 1300, categoryCode: 'FOOD_GROCERIES' })).body?.data?.id;
+  const itemB = (await api(seller.token, 'POST', `/commerce/stores/${ctxStoreId}/items`,
+    { name: 'Whiting fish', price: 1800, categoryCode: 'FRESH_FROZEN' })).body?.data?.id;
+
+  r = await api(buyer.token, 'GET', `/commerce/items/${itemA}`);
+  check('item detail carries the shop owner, so "Ask the seller" has a recipient',
+    r.body?.data?.store?.owner?.id === seller.id, r.body?.data?.store?.owner);
+
+  r = await api(buyer.token, 'POST', '/messages', {
+    recipientUserId: seller.id, context: { kind: 'COMMERCE_ITEM', itemId: itemA },
+  });
+  const aboutA = r.body?.data;
+
+  check('asking about an item creates a thread pinned to it', r.status === 201 && !!aboutA?.id,
+    { status: r.status, error: r.body?.error });
+  check('and the strip renders without a second call',
+    aboutA?.context?.type === 'ITEM' && aboutA?.context?.title === 'Egusi'
+      && aboutA?.context?.trailing === '£13.00' && aboutA?.context?.route.includes(itemA),
+    aboutA?.context);
+
+  r = await api(buyer.token, 'POST', '/messages', { context: { kind: 'COMMERCE_ITEM', itemId: itemA } });
+  check('asking again reopens the same thread, with 200 rather than 201 (5.3.5)',
+    r.status === 200 && r.body?.data?.id === aboutA?.id, { status: r.status, id: r.body?.data?.id });
+  check('and the recipient can be left out, because the item says who the seller is',
+    r.body?.data?.id === aboutA?.id, r.body?.data?.id);
+
+  r = await api(buyer.token, 'POST', '/messages', { context: { kind: 'COMMERCE_ITEM', itemId: itemB } });
+  check('a different item is a different thread, not the same DM twice',
+    r.status === 201 && r.body?.data?.id !== aboutA?.id, r.body?.data?.id);
+
+  r = await api(buyer.token, 'POST', '/messages', { recipientUserId: seller.id });
+  check('a plain DM to a closed inbox is still refused', r.status === 403, r.status);
+
+  r = await api(buyer.token, 'POST', '/messages', {
+    recipientUserId: buyer.id, context: { kind: 'COMMERCE_ITEM', itemId: itemA },
+  });
+  check('a recipient who does not own the subject is rejected, not quietly ignored',
+    r.status === 422, { status: r.status, error: r.body?.error?.message });
+
+  r = await api(buyer.token, 'POST', '/messages', { context: { kind: 'COMMERCE_ITEM', itemId: 'nope' } });
+  check('an id for an item that does not exist is a 404, not an empty thread', r.status === 404, r.status);
+
+  r = await api(buyer.token, 'POST', '/messages', {});
+  check('neither a recipient nor a context is a 400', r.status === 400, r.status);
+
+  // The offer half of the same rule.
+  r = await api(seller.token, 'POST', '/community/offers', {
+    categoryCode: 'AIRPORT_PICKUP', title: 'Airport pickups from Manchester Airport',
+    description: 'Weekday runs to and from the airport, boot space for two large cases.',
+    cityId: 'MANCHESTER', priceFrom: 3000, priceBasis: 'PER_JOB',
+  });
+  const offerId = r.body?.data?.id;
+
+  check('offer created', r.status === 201 && !!offerId, r.body?.error);
+
+  r = await api(buyer.token, 'POST', '/messages', {
+    context: { kind: 'COMMUNITY_OFFER', offerId },
+  });
+  check('an offer works the same way, and derives its author',
+    r.status === 201 && r.body?.data?.context?.type === 'OFFER'
+      && r.body?.data?.context?.route.includes(offerId)
+      && r.body?.data?.context?.trailing === '£30.00',
+    { status: r.status, context: r.body?.data?.context });
+
+  r = await api(buyer.token, 'GET', '/messages?limit=20');
+  const pinned = (r.body?.data ?? []).filter(row => row.context?.type === 'ITEM');
+  check('both item threads sit in the inbox as separate rows', pinned.length === 2,
+    pinned.map(row => row.context?.title));
 
   console.log('\n── Cleanup ──────────────────────────────────────────────────');
   await sweep('cleanup');

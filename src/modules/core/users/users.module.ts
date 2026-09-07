@@ -4,6 +4,7 @@ import {
   NotificationPrefsController,
   ProfileController,
   SessionController,
+  UserDirectoryController,
   UserPublicController,
   UsernameController,
 } from './controllers';
@@ -12,6 +13,7 @@ import {
   ProfileService,
   SessionListService,
   UserActivityService,
+  UserDirectoryService,
   UserPublicService,
 } from './services';
 
@@ -23,6 +25,9 @@ import {
         module: UsersModule,
         // `UserPublicController` is last because its path is `:id`, and a route parameter registered ahead of `profile` or `username` swallows them.
         children: [
+          // `UserDirectoryController` answers the bare `users` path, so it is registered ahead of
+          // the `:id` controller for the same reason `profile` and `username` are.
+          UserDirectoryController,
           ProfileController,
           NotificationPrefsController,
           SessionController,
@@ -33,6 +38,7 @@ import {
     ]),
   ],
   controllers: [
+    UserDirectoryController,
     ProfileController,
     NotificationPrefsController,
     SessionController,
@@ -44,7 +50,9 @@ import {
     NotificationPrefsService,
     SessionListService,
     UserActivityService,
+    UserDirectoryService,
     UserPublicService,
   ],
+  exports: [UserDirectoryService],
 })
 export class UsersModule {}

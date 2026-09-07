@@ -50,7 +50,7 @@ export class GuardController {
     summary: 'A private request to Circl',
     description:
       'What the private help composer posts, and where the PRIVATE_TO_CIRCL route out of 1.2.3 ' +
-      'lands. Creates or reuses the member\'s SUPPORT conversation and posts the body as a ' +
+      "lands. Creates or reuses the member's SUPPORT conversation and posts the body as a " +
       'message: one support thread per member, forever, so the team sees one history rather ' +
       'than fragments (D36). No response time is promised (D35).',
   })
@@ -78,7 +78,7 @@ export class GuardController {
   @ApiOperation({
     summary: 'My private threads',
     description:
-      'The member\'s own Guard threads. Nobody else can see them, including other members of any '+
+      "The member's own Guard threads. Nobody else can see them, including other members of any " +
       'group they share.',
   })
   async list(@CurrentUserId() userId: string, @Query() query: ListGuardThreadsDto) {
@@ -92,7 +92,7 @@ export class GuardController {
   @ApiOperation({
     summary: 'One private thread',
     description:
-      'The member\'s own Guard thread, with its conversation id, so the client reopens the ' +
+      "The member's own Guard thread, with its conversation id, so the client reopens the " +
       'existing thread rather than starting a second (D36).',
   })
   async findOne(@CurrentUserId() userId: string, @Param('id') id: string) {

@@ -11,14 +11,7 @@ import {
   ReportTargetType,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import {
-  ApiErrorCode,
-  ApiException,
-  Paginated,
-  buildPageMeta,
-  excerpt,
-  toJson,
-} from '@/common';
+import { ApiErrorCode, ApiException, Paginated, buildPageMeta, excerpt, toJson } from '@/common';
 import {
   ActivityService,
   AuthorView,

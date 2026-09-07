@@ -20,7 +20,10 @@ export class SlotDayDto {
   @ApiProperty({ example: '2026-09-01' })
   date: string;
 
-  @ApiProperty({ example: 'Mon 1', description: 'Server-formatted, so the app holds no date vocabulary.' })
+  @ApiProperty({
+    example: 'Mon 1',
+    description: 'Server-formatted, so the app holds no date vocabulary.',
+  })
   label: string;
 
   @ApiProperty({ type: [SlotDto] })
@@ -31,7 +34,10 @@ export class SlotsResponseDto {
   @ApiProperty({ example: 'Europe/London', description: "From the listing's city." })
   timezone: string;
 
-  @ApiProperty({ example: true, description: 'False means the listing refuses new bookings (2.9).' })
+  @ApiProperty({
+    example: true,
+    description: 'False means the listing refuses new bookings (2.9).',
+  })
   isAcceptingWork: boolean;
 
   @ApiProperty({ example: true, description: 'Whether "I am flexible" is offered at all.' })

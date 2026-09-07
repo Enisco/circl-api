@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, TaxonomyKind, ThreadContextType, TrustCheckType } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { ageFromDateOfBirth, ApiException, buildPageMeta } from '@/common';
+import { ageFromDateOfBirth, ApiException, buildPageMeta, escapeLike } from '@/common';
 import { BlockingService, TaxonomyService } from '../../shared';
 import { CONNECT_MINIMUM_AGE } from '../../taxonomy/services/taxonomy-catalogue.service';
 import { DiscoveryDto } from '../dtos/connect.dto';
+import { normaliseTerm, termVariants } from '../../search/services/search-terms';
 import { ConnectProfileService } from './connect-profile.service';
 
 export interface SharedContext {
@@ -24,7 +25,7 @@ export class DiscoveryService {
 
   // ─── 3.4 Discovery ─────────────────────────────────────────────────────────
 
-  async discover(viewerId: string, query: DiscoveryDto) {
+  async discover(viewerId: string, query: DiscoveryDto, options: { facets?: boolean } = {}) {
     // Reciprocity gate first: a member with no visible profile gets 403 and the client renders the set-up-first card.
     const own = await this.profiles.requireOwn(viewerId);
     const blockedIds = await this.blocking.blockedUserIds(viewerId);
@@ -96,7 +97,9 @@ export class DiscoveryService {
       this.connectedUserIds(own.id),
     ]);
 
-    const facets = await this.facets(where);
+    // Search asks for three rows and shows no filter bar, so it opts out: facets read up to 500
+    // profiles with two joins each, which is a filter bar's worth of work for nothing.
+    const facets = options.facets === false ? undefined : await this.facets(where);
 
     return {
       data: views.map((view, index) => {
@@ -113,7 +116,7 @@ export class DiscoveryService {
           sharedContext: sharedContexts.get(row.userId) ?? {},
         };
       }),
-      meta: buildPageMeta(query, total, { facets }),
+      meta: buildPageMeta(query, total, facets ? { facets } : undefined),
     };
   }
 
@@ -145,6 +148,9 @@ export class DiscoveryService {
 
     const userFilters: Prisma.UserWhereInput = { isAnonymised: false };
     const profileFilters: Prisma.UserProfileWhereInput = {};
+    // Held apart and ANDed in below, because `where.OR` already belongs to the city clause and a
+    // second assignment to it would silently widen the city filter into "anywhere".
+    let nameFilters: Prisma.ConnectProfileWhereInput[] = [];
 
     if (query.languages?.length) {
       const known = await this.taxonomy.knownCodes(TaxonomyKind.LANGUAGE, query.languages);
@@ -162,13 +168,29 @@ export class DiscoveryService {
       }
     }
 
-    // Bio and "can help with" only. A Connect profile is not a name index: someone who did not
-    // want to be found by name should not become findable because search shipped.
-    if (query.q && query.q.length >= 2) {
-      profileFilters.OR = [
-        { bio: { contains: query.q, mode: 'insensitive' } },
-        { canHelpWith: { contains: query.q, mode: 'insensitive' } },
-      ];
+    // Name, username and what they are looking for, as well as the two profile texts. `lookingFor`
+    // is included here and deliberately not in `PERSON` search: on Connect it is the point, and
+    // members wrote it knowing it is the public part of the profile. A Connect profile is opt-in
+    // visible, so being findable by name in it is the member's own decision, not a leak.
+    // Normalised first: a term with a double space in it splits into words that match nothing.
+    const term = normaliseTerm(query.q);
+
+    if (term.length >= 2) {
+      const variants = termVariants(term);
+      // Escaped: `%` and `_` are ILIKE wildcards, and `%` alone would return every visible profile.
+      const like = (value: string) => ({
+        contains: escapeLike(value),
+        mode: Prisma.QueryMode.insensitive,
+      });
+
+      nameFilters = variants.flatMap(variant => [
+        { user: { firstName: like(variant) } },
+        { user: { lastName: like(variant) } },
+        { user: { username: like(variant) } },
+        { lookingFor: like(variant) },
+        { user: { profile: { bio: like(variant) } } },
+        { user: { profile: { canHelpWith: like(variant) } } },
+      ]);
     }
 
     if (query.heritage?.length) {
@@ -189,6 +211,10 @@ export class DiscoveryService {
 
     if (Object.keys(profileFilters).length) {
       userFilters.profile = profileFilters;
+    }
+
+    if (nameFilters.length) {
+      where.AND = [...(Array.isArray(where.AND) ? where.AND : []), { OR: nameFilters }];
     }
 
     if (query.verifiedOnly) {

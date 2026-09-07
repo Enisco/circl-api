@@ -1,4 +1,11 @@
-import { excerpt, keywordCoverage, keywords, readTimeMinutes, toPlainText } from '../text.util';
+import {
+  escapeLike,
+  excerpt,
+  keywordCoverage,
+  keywords,
+  readTimeMinutes,
+  toPlainText,
+} from '../text.util';
 
 describe('text utilities', () => {
   describe('keywords', () => {
@@ -67,5 +74,22 @@ describe('text utilities', () => {
         'hello alert(1)there',
       );
     });
+  });
+});
+
+describe('escapeLike', () => {
+  // Every `q=` filter in the app ends up inside an ILIKE, where `%` and `_` are wildcards. A
+  // member typing `%%` would otherwise match every row in the table, without the trigram index,
+  // on every type at once.
+  it('escapes the two ILIKE wildcards and the escape character itself', () => {
+    expect(escapeLike('100%')).toBe('100\\%');
+    expect(escapeLike('a_b')).toBe('a\\_b');
+    expect(escapeLike('back\\slash')).toBe('back\\\\slash');
+  });
+
+  it('leaves ordinary text, including punctuation, alone', () => {
+    expect(escapeLike("o'brien & co.")).toBe("o'brien & co.");
+    expect(escapeLike('visa')).toBe('visa');
+    expect(escapeLike('')).toBe('');
   });
 });

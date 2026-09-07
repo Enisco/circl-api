@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { MessageKind, ThreadKind } from '@prisma/client';
+import { MessageKind, ThreadContextType, ThreadKind } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -7,6 +7,7 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -14,6 +15,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { PageOptionsDto } from '@/common';
 
@@ -49,15 +51,35 @@ export class ListConversationsDto extends PageOptionsDto {
 
 /** History is newest-first and cursor-paged. */
 export class ListMessagesDto {
-  @ApiPropertyOptional({ description: 'Older than this message.' })
+  @ApiPropertyOptional({
+    description:
+      'Older than this message. Send `meta.nextCursor` from the previous page rather than the ' +
+      'oldest id you hold, so paging survives a message being removed.',
+  })
+  @Trim()
   @IsString()
   @IsOptional()
   before?: string;
 
   @ApiPropertyOptional({ description: 'Newer than this one. Used by `sync` after a reconnect.' })
+  @Trim()
   @IsString()
   @IsOptional()
   after?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Everything **changed** at or after this ISO timestamp, oldest first: sent, edited and ' +
+      'deleted, tombstones included. For reconciling a cached window, where `after` cannot help ' +
+      'because it only reports what is newer, never what changed.\n\n' +
+      'Page it with `after` (`since` stays on every call, `after` carries `meta.nextCursor`). ' +
+      'Combining it with `before` is a `400`: it reads forwards.',
+    example: '2026-09-07T09:00:00.000Z',
+  })
+  @Trim()
+  @IsDateString()
+  @IsOptional()
+  since?: string;
 
   @ApiPropertyOptional({ default: 30, maximum: 100 })
   @Type(() => Number)
@@ -110,26 +132,113 @@ export class SendMessageDto {
   @IsString({ each: true })
   @MaxLength(512, { each: true })
   attachmentKeys?: string[];
+
+  /**
+   * The same array under the name an early client shipped. `POST /media/uploads` only ever returns
+   * a `key`, so a client sending `attachmentIds` is sending keys under a wrong name rather than a
+   * different kind of value, which is why accepting it is safe rather than ambiguous.
+   */
+  @ApiPropertyOptional({
+    type: [String],
+    deprecated: true,
+    description: 'Deprecated alias for `attachmentKeys`. Same S3 object keys, old name.',
+  })
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsOptional()
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  attachmentIds?: string[];
+}
+
+/**
+ * The subjects a member can start a thread about from a screen. Everything else with a subject is
+ * created by the section that owns it: a booking by accepting one, an order by placing one, a
+ * dispute by raising one. These two have no such moment. Somebody asking about an item has not
+ * bought it, and somebody asking about an offer has not accepted it.
+ */
+export const START_THREAD_CONTEXTS = {
+  COMMERCE_ITEM: ThreadContextType.ITEM,
+  COMMUNITY_OFFER: ThreadContextType.OFFER,
+  // The enum's own names, accepted because half the spec writes them this way (5.0) and rejecting
+  // a synonym helps nobody.
+  ITEM: ThreadContextType.ITEM,
+  OFFER: ThreadContextType.OFFER,
+} as const;
+
+export class ThreadContextDto {
+  @ApiProperty({
+    enum: Object.keys(START_THREAD_CONTEXTS),
+    description:
+      'What the thread is about. `COMMERCE_ITEM` and `COMMUNITY_OFFER` are the names 4.5.3 uses; ' +
+      '`ITEM` and `OFFER` are the same two under the enum names in 5.0.',
+    example: 'COMMERCE_ITEM',
+  })
+  @Trim()
+  @IsIn(Object.keys(START_THREAD_CONTEXTS))
+  kind: keyof typeof START_THREAD_CONTEXTS;
+
+  @ApiPropertyOptional({
+    description: 'The subject id. `itemId` and `offerId` are accepted aliases.',
+  })
+  @Trim()
+  @IsString()
+  @IsOptional()
+  id?: string;
+
+  @ApiPropertyOptional({ description: 'Alias for `id` when `kind` is COMMERCE_ITEM.' })
+  @Trim()
+  @IsString()
+  @IsOptional()
+  itemId?: string;
+
+  @ApiPropertyOptional({ description: 'Alias for `id` when `kind` is COMMUNITY_OFFER.' })
+  @Trim()
+  @IsString()
+  @IsOptional()
+  offerId?: string;
 }
 
 export class StartThreadDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     description:
-      'Only for a plain DM with no subject. Every subject-bearing thread is created by the section ' +
-      'that owns the subject and returns its id.',
+      'The member to talk to. **Optional when `context` is sent**, because the server derives the ' +
+      "other party from the subject: the item's seller, the offer's author. Send it anyway if " +
+      'you like — it is checked against the derived member and a mismatch is rejected rather ' +
+      'than quietly opening a thread with the wrong person.',
   })
   @Trim()
   @IsString()
-  recipientUserId: string;
+  @IsOptional()
+  recipientUserId?: string;
+
+  @ApiPropertyOptional({
+    type: ThreadContextDto,
+    description:
+      'What the thread is about, when it is about something. Threads are unique on ' +
+      '(participants, contextType, contextId), so asking about two different items opens two ' +
+      'threads and asking about the same item twice reopens the first.\n\n' +
+      'Omit it for a plain DM. Every other subject-bearing thread is created by the section that ' +
+      'owns the subject and returns its id (5.0, rule 3).',
+  })
+  @ValidateNested()
+  @Type(() => ThreadContextDto)
+  @IsOptional()
+  context?: ThreadContextDto;
 }
 
 export class MarkReadDto {
-  @ApiProperty({
-    description: 'Marks everything up to this message read, clearing a backlog in one call.',
+  @ApiPropertyOptional({
+    description:
+      'Marks everything up to this message read, clearing a backlog in one call.\n\n' +
+      '**Optional.** Omit it to mark the whole thread read, which is what opening a thread means ' +
+      'and the only thing a thread with no messages in it yet can be asked for. The response then ' +
+      'carries `lastReadMessageId: null`, because nothing was read.',
   })
   @Trim()
   @IsString()
-  lastReadMessageId: string;
+  @IsOptional()
+  lastReadMessageId?: string;
 }
 
 export class MuteDto {

@@ -63,7 +63,9 @@ export class AvailabilityService {
     if (!listing) throw ApiException.notFound('That listing could not be found.');
 
     const from = startOfDay(query.from ? new Date(query.from) : new Date());
-    const requestedTo = query.to ? startOfDay(new Date(query.to)) : addDays(from, DEFAULT_WINDOW_DAYS - 1);
+    const requestedTo = query.to
+      ? startOfDay(new Date(query.to))
+      : addDays(from, DEFAULT_WINDOW_DAYS - 1);
     const to = min(requestedTo, addDays(from, MAX_WINDOW_DAYS - 1));
 
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to < from) {

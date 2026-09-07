@@ -1,4 +1,13 @@
-import { Controller, Get, HttpCode, HttpStatus, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, JwtAuthGuard } from '@/common';
 import { NotificationFeedService } from '../services';
@@ -17,7 +26,7 @@ export class NotificationController {
     summary: 'The in-app notification list',
     description:
       'A different list from push (5.6): it includes things that never produce a push, and it ' +
-      'survives a push being dismissed. `bucket` is computed server-side in the member\'s ' +
+      "survives a push being dismissed. `bucket` is computed server-side in the member's " +
       'timezone (D32), and `meta.unreadTotal` is account-wide and backs the header badge.',
   })
   async list(@CurrentUserId() userId: string, @Query() query: ListNotificationsDto) {
@@ -32,7 +41,7 @@ export class NotificationController {
       'The badge sits in the header of all four home screens and the shipped client gets it ' +
       'from `GET /notifications?limit=1`, throwing the row away. 6.1.4 names this endpoint as ' +
       'the preferred fix and says it will be adopted, so it is here: it is a single covered ' +
-      'count and never touches the member\'s history.',
+      "count and never touches the member's history.",
   })
   async unreadCount(@CurrentUserId() userId: string) {
     return { data: { unreadTotal: await this.feed.unreadTotal(userId) } };

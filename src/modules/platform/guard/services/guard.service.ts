@@ -15,7 +15,11 @@ import { ApiException, buildPageMeta, toJson } from '@/common';
 import { MediaRules, MediaService, RiskScannerService, TaxonomyService } from '../../shared';
 import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
 import { MessageService } from '../../messaging/services/message.service';
-import { CreateGuardRequestDto, CreateGuardThreadDto, ListGuardThreadsDto } from '../dtos/guard.dto';
+import {
+  CreateGuardRequestDto,
+  CreateGuardThreadDto,
+  ListGuardThreadsDto,
+} from '../dtos/guard.dto';
 
 /** Photos only, and few of them: this is evidence, not a gallery (6.3.1). */
 const GUARD_MEDIA_RULES: MediaRules = { maxImages: 5, allowVideo: false, allowAudio: false };

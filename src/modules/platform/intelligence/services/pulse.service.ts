@@ -27,7 +27,12 @@ interface ScopeShape {
   barsMetric: string;
   actionsTitle: string;
   actionsMetric: string;
-  action: (item: MetricItem) => { label: string; detail: string; actionLabel: string; route: string };
+  action: (item: MetricItem) => {
+    label: string;
+    detail: string;
+    actionLabel: string;
+    route: string;
+  };
 }
 
 const SHAPES: Record<PulseScope, ScopeShape> = {

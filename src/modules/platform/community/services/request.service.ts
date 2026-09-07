@@ -5,6 +5,7 @@ import {
   CommunityRequest,
   Media,
   ModerationQueueType,
+  NotificationKind,
   PostVisibility,
   Prisma,
   ReportTargetType,
@@ -12,7 +13,15 @@ import {
   TaxonomyKind,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException, buildPageMeta, Paginated, toJson } from '@/common';
+import {
+  ApiErrorCode,
+  ApiException,
+  buildPageMeta,
+  escapeLike,
+  excerpt,
+  Paginated,
+  toJson,
+} from '@/common';
 import {
   ActivityService,
   BlockingService,
@@ -22,6 +31,7 @@ import {
   TaxonomyService,
   authorSelect,
 } from '../../shared';
+import { NotificationFeedService } from '../../notifications';
 import {
   CreateRequestDto,
   ListRequestsDto,
@@ -54,6 +64,7 @@ export class RequestService {
     private readonly blocking: BlockingService,
     private readonly activity: ActivityService,
     private readonly risk: RiskScannerService,
+    private readonly notifications: NotificationFeedService,
   ) {}
 
   // ─── 1.2.1 List ────────────────────────────────────────────────────────────
@@ -132,9 +143,12 @@ export class RequestService {
     }
 
     if (query.q) {
+      // `%` and `_` are ILIKE wildcards; unescaped, `%` matches the whole table (0.5).
+      const q = escapeLike(query.q);
+
       where.OR = [
-        { title: { contains: query.q, mode: 'insensitive' } },
-        { description: { contains: query.q, mode: 'insensitive' } },
+        { title: { contains: q, mode: 'insensitive' } },
+        { description: { contains: q, mode: 'insensitive' } },
       ];
     }
 
@@ -369,6 +383,25 @@ export class RequestService {
         });
       }
     });
+
+    if (helperIds.length) {
+      // Being credited is the whole reward for answering a stranger's question, and it showed up
+      // nowhere: the helper had to revisit the request to find out it had been resolved at all.
+      const actor = await this.notifications.actorName(userId);
+
+      for (const helperUserId of helperIds) {
+        this.notifications.raise({
+          userId: helperUserId,
+          actorId: userId,
+          kind: NotificationKind.HELP_OFFER,
+          categoryCode: 'OFFERS',
+          title: `${actor} credited you for helping`,
+          body: excerpt(request.title, 80),
+          route: `/community/request/${id}`,
+          metadata: { requestId: id },
+        });
+      }
+    }
 
     return this.findOne(userId, id);
   }

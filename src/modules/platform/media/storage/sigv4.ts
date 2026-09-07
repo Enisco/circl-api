@@ -53,14 +53,12 @@ export const presignGetV4 = (options: PresignGetOptions): string => {
     'UNSIGNED-PAYLOAD',
   ].join('\n');
 
-  const stringToSign = [
-    'AWS4-HMAC-SHA256',
-    amzDate,
-    scope,
-    sha256Hex(canonicalRequest),
-  ].join('\n');
+  const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
 
-  const signature = hmac(signingKey(options.secretAccessKey, dateStamp, options.region), stringToSign).toString('hex');
+  const signature = hmac(
+    signingKey(options.secretAccessKey, dateStamp, options.region),
+    stringToSign,
+  ).toString('hex');
 
   return `https://${host}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
 };
@@ -74,9 +72,13 @@ const toAmzDate = (date: Date): string => `${date.toISOString().replace(/[:-]|\.
 
 /** RFC 3986 unreserved-set encoding. */
 const rfc3986 = (value: string): string =>
-  encodeURIComponent(value).replace(/[!'()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
 
-const sha256Hex = (value: string): string => createHash('sha256').update(value, 'utf8').digest('hex');
+const sha256Hex = (value: string): string =>
+  createHash('sha256').update(value, 'utf8').digest('hex');
 
 const hmac = (key: Buffer | string, value: string): Buffer =>
   createHmac('sha256', key).update(value, 'utf8').digest();

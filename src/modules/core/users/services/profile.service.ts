@@ -14,7 +14,8 @@ import {
   MediaService,
   SINGLE_IMAGE_RULES,
   TaxonomyService,
-} from '@/modules/platform';
+  toCountryCode,
+} from '@/modules/platform/shared';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { TaxonomyKind } from '@prisma/client';
 import { PinoLogger } from 'nestjs-pino';
@@ -81,6 +82,9 @@ export class ProfileService {
         ...rest,
         // Signed at read time, and falling back to the social provider's URL for a member who never uploaded one of their own (0.11.3).
         avatarUrl: avatarKey ? this.media.sign(avatarKey) : user.profileImageUrl,
+        // Beside the name, exactly as it is on the shared author object (0.9), so the screen that
+        // draws your own row does not need a different rule from the one that draws everybody else's.
+        countryCode: toCountryCode(profile?.countryOfOrigin),
         profile: profile
           ? {
               ...profile,

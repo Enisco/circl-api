@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Conversation, MessageKind, Prisma, ThreadContextType, ThreadKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException, buildPageMeta } from '@/common';
+import { ApiErrorCode, ApiException, buildPageMeta, escapeLike } from '@/common';
 import {
   AuthorView,
   BlockingService,
@@ -9,8 +9,31 @@ import {
   authorSelect,
   toAuthorView,
 } from '../../shared';
-import { ListConversationsDto, StartThreadDto } from '../dtos/message.dto';
-import { ConversationFactoryService } from './conversation-factory.service';
+import {
+  ListConversationsDto,
+  START_THREAD_CONTEXTS,
+  StartThreadDto,
+  ThreadContextDto,
+} from '../dtos/message.dto';
+import { ContextSnapshot, ConversationFactoryService } from './conversation-factory.service';
+import { PresenceRegistry } from './presence.registry';
+
+/** The strip renders `trailing` verbatim, so the currency is formatted here rather than on a device. */
+const priceLabel = (pence: number | null, currency: string): string | null => {
+  if (pence === null) return null;
+
+  const symbol = currency === 'GBP' ? '£' : `${currency} `;
+
+  return `${symbol}${(pence / 100).toFixed(2)}`;
+};
+
+/** What a thread's subject contributes: the other party, the uniqueness key, and the pinned strip. */
+interface ThreadSubject {
+  ownerId: string;
+  contextType: ThreadContextType;
+  contextId: string;
+  snapshot: ContextSnapshot;
+}
 
 export interface ContextView {
   type: ThreadContextType | null;
@@ -61,6 +84,7 @@ export class ConversationService {
     private readonly blocking: BlockingService,
     private readonly factory: ConversationFactoryService,
     private readonly media: MediaService,
+    private readonly presence: PresenceRegistry,
   ) {}
 
   // ─── 5.3.1 The inbox ───────────────────────────────────────────────────────
@@ -85,30 +109,33 @@ export class ConversationService {
 
     if (query.q) {
       // D31: names and CONTEXT TITLES at launch — both short, so both stay fast.
+      // Escaped first: `%` and `_` are ILIKE wildcards, and `%` alone would match every thread.
+      const q = escapeLike(query.q);
+
       where.AND = [
         {
           OR: [
             {
               participants: {
-                some: { user: { firstName: { contains: query.q, mode: 'insensitive' } } },
+                some: { user: { firstName: { contains: q, mode: 'insensitive' } } },
               },
             },
             {
               participants: {
-                some: { user: { lastName: { contains: query.q, mode: 'insensitive' } } },
+                some: { user: { lastName: { contains: q, mode: 'insensitive' } } },
               },
             },
             {
               contextSnapshot: {
                 path: ['title'],
-                string_contains: query.q,
+                string_contains: q,
                 mode: 'insensitive',
               },
             },
             {
               contextSnapshot: {
                 path: ['subtitle'],
-                string_contains: query.q,
+                string_contains: q,
                 mode: 'insensitive',
               },
             },
@@ -164,6 +191,37 @@ export class ConversationService {
 
   /** Returns the existing conversation when one already matches the uniqueness key, so the client opens the same thread either way (5.3.5). */
   async startDirect(userId: string, dto: StartThreadDto) {
+    // A thread about something derives its other party from that something: the item's seller, the
+    // offer's author. Trusting the client for both the subject and the recipient would let the two
+    // disagree, and a thread pinned to an item that the other person does not sell is nonsense
+    // nobody can act on.
+    const subject = dto.context ? await this.resolveSubject(dto.context) : null;
+    const recipientUserId = subject?.ownerId ?? dto.recipientUserId;
+
+    if (!recipientUserId) {
+      throw ApiException.badRequest(
+        ApiErrorCode.VALIDATION_FAILED,
+        'Send either recipientUserId or a context the recipient can be derived from.',
+        { details: [{ field: 'recipientUserId', message: 'recipientUserId is required.' }] },
+      );
+    }
+
+    if (subject && dto.recipientUserId && dto.recipientUserId !== subject.ownerId) {
+      // Loud rather than silent: a client sending both and getting them wrong has a bug worth
+      // seeing, and the alternative is a thread opened with the wrong member.
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'That recipient does not own the subject of this thread.',
+        { details: [{ field: 'recipientUserId', message: 'Does not match the subject owner.' }] },
+      );
+    }
+
+    return this.open(userId, recipientUserId, subject);
+  }
+
+  private async open(userId: string, recipientUserId: string, subject: ThreadSubject | null) {
+    const dto = { recipientUserId };
+
     if (dto.recipientUserId === userId) {
       throw ApiException.unprocessable(
         ApiErrorCode.CANNOT_MESSAGE_YOURSELF,
@@ -193,7 +251,10 @@ export class ConversationService {
       select: { openInbox: true },
     });
 
-    if (!profile?.openInbox) {
+    // A subject is its own invitation: listing an item or posting an offer is asking to be asked
+    // about it, so the open-inbox gate does not apply to a thread pinned to one. Blocking still
+    // does, above, and always will.
+    if (!subject && !profile?.openInbox) {
       const connected = await this.database.connectionRequest.findFirst({
         where: {
           state: 'ACCEPTED',
@@ -213,9 +274,14 @@ export class ConversationService {
       }
     }
 
+    // Unique on (participants, contextType, contextId), so two questions about two items are two
+    // threads and two questions about one item are one.
     const { conversation, created } = await this.factory.ensure({
       kind: ThreadKind.DIRECT,
       participantIds: [userId, dto.recipientUserId],
+      contextType: subject?.contextType ?? null,
+      contextId: subject?.contextId ?? null,
+      snapshot: subject?.snapshot ?? null,
     });
 
     const full = await this.database.conversation.findUniqueOrThrow({
@@ -275,13 +341,100 @@ export class ConversationService {
 
   // ─── Internals ─────────────────────────────────────────────────────────────
 
+  /**
+   * Turns a client's `{ kind, id }` into the three things a thread needs: who the other party is,
+   * what the thread is keyed on, and what the pinned strip renders. Loading the subject is also
+   * how a made-up id is caught: it 404s here rather than opening a thread about nothing.
+   */
+  private async resolveSubject(context: ThreadContextDto): Promise<ThreadSubject> {
+    const contextType = START_THREAD_CONTEXTS[context.kind];
+    const contextId = context.id ?? context.itemId ?? context.offerId;
+
+    if (!contextId) {
+      throw ApiException.badRequest(
+        ApiErrorCode.VALIDATION_FAILED,
+        'A thread context needs the id of what it is about.',
+        { details: [{ field: 'context.id', message: 'context.id is required.' }] },
+      );
+    }
+
+    if (contextType === ThreadContextType.ITEM) {
+      const item = await this.database.storeItem.findFirst({
+        where: { id: contextId, deletedAt: null },
+        include: { store: { select: { id: true, ownerId: true, name: true } } },
+      });
+
+      if (!item) throw ApiException.notFound('That item could not be found.');
+
+      // Item photos live in the media table, not on the row, and the strip wants the first one.
+      const photos = await this.media.forOwner('STORE_ITEM', item.id);
+
+      return {
+        ownerId: item.store.ownerId,
+        contextType,
+        contextId,
+        // Everything the pinned strip draws, so it renders without a second call.
+        snapshot: {
+          title: item.name,
+          subtitle: item.store.name,
+          trailing: priceLabel(item.price, item.currency),
+          thumbnailKey: photos[0]?.storageKey ?? null,
+          route: `/commerce/item/${item.id}`,
+        },
+      };
+    }
+
+    const offer = await this.database.communityOffer.findFirst({
+      where: { id: contextId, deletedAt: null },
+      select: { id: true, title: true, authorId: true, priceFrom: true, currency: true },
+    });
+
+    if (!offer) throw ApiException.notFound('That offer could not be found.');
+
+    return {
+      ownerId: offer.authorId,
+      contextType,
+      contextId,
+      snapshot: {
+        title: offer.title,
+        subtitle: null,
+        trailing: priceLabel(offer.priceFrom, offer.currency),
+        route: `/community/offer/${offer.id}`,
+      },
+    };
+  }
+
   async requireParticipant(userId: string, conversationId: string): Promise<ConversationRow> {
+    // The socket handlers take a raw payload with no validation pipe in front of them, so an id
+    // that is missing or the wrong shape reaches this method rather than being rejected earlier.
+    // Prisma throws its own unreadable error on `where: { id: undefined }`; this is the same
+    // outcome the caller would have got for an id that simply does not exist.
+    if (typeof conversationId !== 'string' || !conversationId) {
+      throw ApiException.notFound('That conversation could not be found.');
+    }
+
     const conversation = await this.database.conversation.findUnique({
       where: { id: conversationId },
       include: conversationInclude,
     });
 
-    if (!conversation) throw ApiException.notFound('That conversation could not be found.');
+    if (!conversation) {
+      // A user id and a conversation id are different id spaces, and passing the first where the
+      // second belongs is the easy mistake to make from a profile screen: the id is right there
+      // and the route takes an id. Saying so costs one query on a path that already failed, and
+      // saves the caller guessing. It reveals nothing: any signed-in member can read that profile.
+      const isUserId = await this.database.user.findUnique({
+        where: { id: conversationId },
+        select: { id: true },
+      });
+
+      throw ApiException.notFound(
+        isUserId
+          ? 'That is a member id, not a conversation id. Read `viewer.conversationId` from ' +
+              'GET /users/{id}/profile, or POST /messages with `recipientUserId` to open the thread.'
+          : 'That conversation could not be found.',
+      );
+    }
 
     if (!conversation.participants.some(participant => participant.userId === userId)) {
       throw ApiException.forbidden(
@@ -360,8 +513,10 @@ export class ConversationService {
       other
         ? {
             ...toAuthorView(other.user, { sign: this.media.sign }),
-            // Nobody is "online" without a live socket; the gateway overlays that.
-            isOnline: false,
+            // Read from the live socket registry. This used to be a hardcoded `false` with a
+            // comment promising the gateway would overlay it, and nothing ever did: the inbox
+            // said everybody was offline, including whoever was typing at the time.
+            isOnline: this.presence.isOnline(other.userId),
             lastSeenAt: other.user.sessions?.[0]?.lastActiveAt.toISOString() ?? null,
           }
         : null;

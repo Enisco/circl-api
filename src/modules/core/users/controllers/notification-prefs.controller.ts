@@ -37,7 +37,7 @@ export class NotificationPrefsController {
   @Delete('device-token')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
-    summary: 'Release this device\'s push token',
+    summary: "Release this device's push token",
     description:
       'Called during logout. Releasing a token that is already gone succeeds: a failed release ' +
       'must not block signing out.',

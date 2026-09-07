@@ -99,7 +99,10 @@ async function objectExists(url) {
   check('with a non-zero unread total', (r.body?.meta?.unreadTotal ?? 0) > 0, r.body?.meta);
 
   console.log('\n── B.4 the badges and the deliberate empties ────────────────');
-  r = await api(token, 'GET', '/notifications');
+  // Deliberately past the default page of 20. What Appendix B asks for is that the dataset CONTAINS
+  // each kind, including a row with no route; whether one of them lands on page one depends on how
+  // much engagement that member has picked up since, which is not what this file is testing.
+  r = await api(token, 'GET', '/notifications?limit=50');
   const rows = r.body?.data ?? [];
   check('notifications are populated', rows.length > 0, rows.length);
   check('the header badge shows a count', (r.body?.meta?.unreadTotal ?? 0) > 0, r.body?.meta);

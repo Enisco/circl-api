@@ -35,7 +35,7 @@ export class MessagePushService {
   }): Promise<void> {
     if (!input.recipientIds.length) return;
 
-    const [conversation, message, sender, participants, prefs] = await Promise.all([
+    const [conversation, message, sender, participants, devices] = await Promise.all([
       this.database.conversation.findUnique({
         where: { id: input.conversationId },
         select: { kind: true, contextSnapshot: true },
@@ -52,17 +52,26 @@ export class MessagePushService {
         where: { conversationId: input.conversationId, userId: { in: input.recipientIds } },
         select: { userId: true, isMuted: true, mutedUntil: true, unreadCount: true },
       }),
-      this.database.userNotificationPrefs.findMany({
+      // Every handset each recipient is signed in on, grouped below. A message that reaches only
+      // the last device to register is a message the member misses on the one in their hand.
+      this.database.pushDevice.findMany({
         where: { userId: { in: input.recipientIds } },
-        select: { userId: true, devicePushToken: true },
+        select: { userId: true, token: true },
+        orderBy: { lastSeenAt: 'desc' },
       }),
     ]);
 
     if (!conversation || !message) return;
 
     const isSupport = conversation.kind === ThreadKind.SUPPORT;
-    const prefsByUser = new Map(prefs.map(row => [row.userId, row]));
+    const tokensByUser = new Map<string, string[]>();
+
+    for (const device of devices) {
+      tokensByUser.set(device.userId, [...(tokensByUser.get(device.userId) ?? []), device.token]);
+    }
+
     const now = new Date();
+    const dead: string[] = [];
 
     for (const participant of participants) {
       const muted =
@@ -70,9 +79,9 @@ export class MessagePushService {
 
       if (muted) continue;
 
-      const pref = prefsByUser.get(participant.userId);
+      const tokens = tokensByUser.get(participant.userId) ?? [];
 
-      if (!pref?.devicePushToken) continue;
+      if (!tokens.length) continue;
 
       // The MESSAGES row of the matrix (6.1.3), not a boolean of its own.
       if (!(await this.preferences.allows(participant.userId, 'MESSAGES', 'push'))) continue;
@@ -82,9 +91,11 @@ export class MessagePushService {
         _sum: { unreadCount: true },
       });
 
-      await this.fcm.sendPush(
-        pref.devicePushToken,
-        isSupport ? 'Circl' : `${sender?.firstName ?? 'Someone'} ${sender?.lastName?.charAt(0) ?? ''}`.trim(),
+      const { deadTokens } = await this.fcm.sendPushToMany(
+        tokens,
+        isSupport
+          ? 'Circl'
+          : `${sender?.firstName ?? 'Someone'} ${sender?.lastName?.charAt(0) ?? ''}`.trim(),
         // Never the body on a support thread.
         isSupport ? 'You have a new message from the Circl team.' : this.preview(message),
         {
@@ -101,6 +112,14 @@ export class MessagePushService {
           badge: String(total._sum.unreadCount ?? 0),
         },
       );
+
+      dead.push(...deadTokens);
+    }
+
+    // Reinstalled, signed out elsewhere, or rotated. Dropped by token, so the devices that did
+    // receive the message keep theirs.
+    if (dead.length) {
+      await this.database.pushDevice.deleteMany({ where: { token: { in: dead } } });
     }
   }
 

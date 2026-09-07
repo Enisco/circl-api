@@ -42,7 +42,7 @@ export class OfferController {
   @ApiOperation({
     summary: 'Offer detail',
     description:
-      'One community offer with its author, city and price. A free offer carries no price basis '+
+      'One community offer with its author, city and price. A free offer carries no price basis ' +
       '(1.4).',
   })
   async findOne(@CurrentUserId() userId: string, @Param('id') id: string) {
@@ -72,7 +72,8 @@ export class OfferController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Edit an offer',
-    description: 'Only the author, and only while it is live. Editing does not reset its position in the feed.',
+    description:
+      'Only the author, and only while it is live. Editing does not reset its position in the feed.',
   })
   async update(
     @CurrentUserId() userId: string,

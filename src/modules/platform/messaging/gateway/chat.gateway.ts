@@ -17,6 +17,7 @@ import { ConversationService } from '../services/conversation.service';
 import { MessageService } from '../services/message.service';
 import { MessagePushService } from '../services/message-push.service';
 import { SendMessageDto } from '../dtos/message.dto';
+import { PresenceRegistry } from '../services/presence.registry';
 
 interface AuthedSocket extends Socket {
   data: { userId?: string };
@@ -47,9 +48,6 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
   private readonly logger = new Logger(ChatGateway.name);
 
-  /** Live socket count per user, which is what makes presence and push honest. */
-  private readonly connections = new Map<string, Set<string>>();
-
   private readonly typingTimers = new Map<string, NodeJS.Timeout>();
 
   /** Send timestamps per member, trimmed to the longest window on each check. */
@@ -62,6 +60,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     private readonly conversations: ConversationService,
     private readonly messages: MessageService,
     private readonly push: MessagePushService,
+    private readonly presence: PresenceRegistry,
   ) {}
 
   // ─── 5.2.1 Connection ──────────────────────────────────────────────────────
@@ -110,14 +109,13 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
     await socket.join(this.roomFor(userId));
 
-    const sockets = this.connections.get(userId) ?? new Set();
-
-    sockets.add(socket.id);
-    this.connections.set(userId, sockets);
+    const cameOnline = this.presence.add(userId, socket.id);
 
     // The badge is in four section headers, so it is sent on connect rather than waiting for the first message to make it correct.
     socket.emit('unread.total', await this.conversations.unreadTotal(userId));
-    this.broadcastPresence(userId, true);
+
+    // Only the first socket is news. A second device connecting does not make them "more online".
+    if (cameOnline) this.broadcastPresence(userId, true);
   }
 
   handleDisconnect(socket: AuthedSocket) {
@@ -125,12 +123,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
     if (!userId) return;
 
-    const sockets = this.connections.get(userId);
-
-    sockets?.delete(socket.id);
-
-    if (!sockets?.size) {
-      this.connections.delete(userId);
+    if (this.presence.remove(userId, socket.id)) {
       // Send history goes with the last socket: it is a burst guard, not a durable quota, and holding it for every member who ever connected is an unbounded map on a long-running process.
       this.sendHistory.delete(userId);
       this.broadcastPresence(userId, false);
@@ -189,7 +182,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   @SubscribeMessage('message.read')
   async onRead(
     @ConnectedSocket() socket: AuthedSocket,
-    @MessageBody() payload: { conversationId: string; lastReadMessageId: string },
+    @MessageBody() payload: { conversationId: string; lastReadMessageId?: string },
   ) {
     const userId = socket.data.userId;
 
@@ -199,7 +192,13 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       .markRead(userId, payload.conversationId, payload.lastReadMessageId)
       .catch(() => null);
 
-    if (!result) return;
+    // Nothing to announce when nothing was read: a thread opened before anybody has spoken is a
+    // visit, not a receipt, and the other side has no bubble to tick.
+    if (!result?.lastReadMessageId) {
+      void this.pushUnread(userId);
+
+      return;
+    }
 
     const recipients = await this.recipientsOf(payload.conversationId, userId);
 
@@ -268,11 +267,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
    * echoed over the socket anyway (5.2), so both paths call this and cannot drift: without it a
    * recipient who is connected sees no bubble and the sender's tick never reaches DELIVERED.
    */
-  async fanOut(
-    conversationId: string,
-    message: { id: string },
-    senderId: string,
-  ): Promise<void> {
+  async fanOut(conversationId: string, message: { id: string }, senderId: string): Promise<void> {
     const recipients = await this.recipientsOf(conversationId, senderId);
 
     for (const recipient of recipients) {
@@ -282,8 +277,8 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     }
 
     // Anyone with a live socket has it on their device, which is what DELIVERED means (5.4).
-    const connected = recipients.filter(id => this.connections.has(id));
-    const offline = recipients.filter(id => !this.connections.has(id));
+    const connected = recipients.filter(id => this.presence.isOnline(id));
+    const offline = recipients.filter(id => !this.presence.isOnline(id));
 
     if (offline.length) {
       this.push.notify({
@@ -395,11 +390,9 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
    * without producing a message, so nothing else would push it.
    */
   async pushConversationUpdated(userId: string, conversationId: string): Promise<void> {
-    if (!this.connections.has(userId)) return;
+    if (!this.presence.isOnline(userId)) return;
 
-    const conversation = await this.conversations
-      .findOne(userId, conversationId)
-      .catch(() => null);
+    const conversation = await this.conversations.findOne(userId, conversationId).catch(() => null);
 
     if (!conversation) return;
 
@@ -407,7 +400,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   }
 
   private async pushUnread(userId: string) {
-    if (!this.connections.has(userId)) return;
+    if (!this.presence.isOnline(userId)) return;
 
     this.server
       .to(this.roomFor(userId))
@@ -441,7 +434,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
   /** Whether this member has a live socket, which is what decides socket vs push. */
   isConnected(userId: string): boolean {
-    return this.connections.has(userId);
+    return this.presence.isOnline(userId);
   }
 
   private roomFor(userId: string): string {

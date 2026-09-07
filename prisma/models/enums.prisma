@@ -584,6 +584,9 @@ enum NotificationKind {
   // falling back to a grey announcement row.
   LIKE
   BOOKMARK
+  // Bookings and shop orders, which share the `BOOKINGS` preference row. One kind rather than two:
+  // the icon is the same and the route already says which of the two it is.
+  BOOKING
 }
 
 /**
@@ -591,6 +594,13 @@ enum NotificationKind {
  * means the grouping shifts as a phone crosses midnight or changes country, and
  * two devices on one account disagree.
  */
+/// Diagnosis only. Push routes by token, so a wrong or missing platform costs nothing.
+enum DevicePlatform {
+  IOS
+  ANDROID
+  WEB
+}
+
 enum NotificationBucket {
   TODAY
   THIS_WEEK

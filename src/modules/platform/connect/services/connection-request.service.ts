@@ -259,6 +259,22 @@ export class ConnectionRequestService {
       return conversation.id;
     });
 
+    // The sender is told, unlike a decline, which stays silent by design (3.5.3). Without this the
+    // only signal that somebody accepted is a conversation appearing in the inbox unannounced.
+    const actor = await this.notifications.actorName(userId);
+
+    this.notifications.raise({
+      userId: request.fromUserId,
+      actorId: userId,
+      kind: NotificationKind.CONNECTION,
+      categoryCode: 'CONNECTIONS',
+      title: `${actor} accepted your connection request`,
+      body: null,
+      // Straight into the thread, which is the only thing there is to do next.
+      route: `/messages/${conversationId}`,
+      metadata: { requestId: id, conversationId },
+    });
+
     return { id, state: ConnectionRequestState.ACCEPTED, conversationId };
   }
 

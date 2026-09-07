@@ -4,6 +4,7 @@ import { TransformResponseInterceptor } from '@/common/interceptors';
 import { API_DESCRIPTION, applyResponseEnvelope } from '@/common/swagger';
 import { SWAGGER_CUSTOM_CSS, SWAGGER_OPTIONS } from '@/config/swagger.config';
 import { PrismaService } from '@/infrastructure';
+import { assertInvisibleIndexes } from '@/infrastructure/database/startup-indexes';
 import { runStartupSeeds } from '@/infrastructure/database/startup-seed';
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -123,10 +124,14 @@ async function bootstrap() {
 
   // After the port check and before listening, so the app never serves a request against a half
   // seeded database, and never seeds for a process that was going to die anyway.
-  await runStartupSeeds(app.get(PrismaService), process.env, {
-    info: message => logger.info(message),
-    warn: message => logger.warn(message),
-  });
+  const log = {
+    info: (message: string) => logger.info(message),
+    warn: (message: string) => logger.warn(message),
+  };
+
+  // Before the seed, because the seed writes through the two unique indexes this restores.
+  await assertInvisibleIndexes(app.get(PrismaService), log);
+  await runStartupSeeds(app.get(PrismaService), process.env, log);
 
   await app.listen(port, '0.0.0.0', () => {
     logger.info(`Circl API is running on port ${port}`);

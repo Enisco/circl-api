@@ -88,10 +88,15 @@ describe('static map PNG codec', () => {
 
   it('reverses the Up filter', () => {
     const png = Buffer.concat([
-      buildPng(1, 2, 2, Buffer.concat([
-        Buffer.concat([Buffer.from([0]), Buffer.from([9, 9, 9])]),
-        Buffer.concat([Buffer.from([2]), Buffer.from([1, 1, 1])]),
-      ])),
+      buildPng(
+        1,
+        2,
+        2,
+        Buffer.concat([
+          Buffer.concat([Buffer.from([0]), Buffer.from([9, 9, 9])]),
+          Buffer.concat([Buffer.from([2]), Buffer.from([1, 1, 1])]),
+        ]),
+      ),
     ]);
 
     expect([...decodePng(png).data]).toEqual([9, 9, 9, 10, 10, 10]);
@@ -141,7 +146,9 @@ describe('slippy map projection', () => {
       const zoom = 12;
       const { y } = project(latitude, 0, zoom);
       const reference =
-        ((1 - Math.asinh(Math.tan((latitude * Math.PI) / 180)) / Math.PI) / 2) * TILE_SIZE * 2 ** zoom;
+        ((1 - Math.asinh(Math.tan((latitude * Math.PI) / 180)) / Math.PI) / 2) *
+        TILE_SIZE *
+        2 ** zoom;
 
       expect(y).toBeCloseTo(reference, 6);
     }

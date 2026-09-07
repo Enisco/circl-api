@@ -365,9 +365,7 @@ export class StoreService {
       // Null when the address is hidden, when there are no coordinates, or when no map provider
       // is configured. The client already renders its placeholder in all three cases (G12).
       staticMapUrl:
-        !store.hidesExactAddress && store.staticMapKey
-          ? this.media.sign(store.staticMapKey)
-          : null,
+        !store.hidesExactAddress && store.staticMapKey ? this.media.sign(store.staticMapKey) : null,
       rating: { average: summary.average, count: summary.countedTotal },
       isOpenNow: isOpenNow(store.status, store.timezone, openingHours),
       // Sent in full so the client can render "closes 8pm" without a round trip.

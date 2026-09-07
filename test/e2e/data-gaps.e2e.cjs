@@ -462,7 +462,7 @@ async function signIn(email) {
 
   const second = await makeUser('gapsphone');
   await api(second.token, 'POST', '/users/notification-preferences/device-token', { token: 'seed-fcm-1' });
-  const holders = await prisma.userNotificationPrefs.count({ where: { devicePushToken: 'seed-fcm-1' } });
+  const holders = await prisma.pushDevice.count({ where: { token: 'seed-fcm-1' } });
   check('the same handset on a second account MOVES rather than sitting on both', holders === 1, holders);
 
   r = await api(second.token, 'DELETE', '/users/notification-preferences/device-token', { token: 'seed-fcm-1' });

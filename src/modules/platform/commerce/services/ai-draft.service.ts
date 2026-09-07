@@ -59,7 +59,13 @@ export class AiDraftService {
     try {
       const drafts = await Promise.all(
         photos.map(photo =>
-          this.draftOne(this.media.sign(photo.storageKey), dto.tone ?? 'WARM', categories, units, anchors),
+          this.draftOne(
+            this.media.sign(photo.storageKey),
+            dto.tone ?? 'WARM',
+            categories,
+            units,
+            anchors,
+          ),
         ),
       );
 

@@ -163,9 +163,13 @@ async function makeStaff(tag, roleCode) {
   });
   await new Promise(res => setTimeout(res, 400));
 
-  r = await api(moderator.token, 'GET', '/admin/moderation/queue?type=REPORTED_CONTENT');
+  // Past the default page of 20, because the queue is ordered oldest-first and a long-lived
+  // database accumulates: on a developer machine this suite was failing not because the report
+  // never landed but because it landed on page three.
+  r = await api(moderator.token, 'GET', '/admin/moderation/queue?type=REPORTED_CONTENT&limit=50');
   const spamQueueId = r.body?.data?.find(i => i.targetId === spamId)?.id;
-  check('a report lands in the queue', !!spamQueueId, r.body?.data?.length);
+  check('a report lands in the queue', !!spamQueueId,
+    { returned: r.body?.data?.length, total: r.body?.meta?.totalCount });
 
   r = await api(moderator.token, 'POST', `/admin/moderation/queue/${spamQueueId}/decide`, {
     decision: 'REMOVE_CONTENT', reason: 'Advertising.',

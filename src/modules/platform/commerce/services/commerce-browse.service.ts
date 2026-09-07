@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ActivitySubject, ActivityVerb, Prisma, StoreStatus, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { buildPageMeta, daysAgo, distanceMiles } from '@/common';
+import { buildPageMeta, daysAgo, distanceMiles, escapeLike } from '@/common';
 import { ActivityService, MediaService, TaxonomyService, toTermView } from '../../shared';
 import { BrowseCommerceDto } from '../dtos/store.dto';
 import { isOpenNow, toOpeningHours } from '../serializers/store.serializer';
@@ -106,10 +106,13 @@ export class CommerceBrowseService {
     }
 
     if (query.q) {
+      // `%` and `_` are ILIKE wildcards; unescaped, `%` matches the whole table (0.5).
+      const q = escapeLike(query.q);
+
       and.push({
         OR: [
-          { name: { contains: query.q, mode: Prisma.QueryMode.insensitive } },
-          { description: { contains: query.q, mode: Prisma.QueryMode.insensitive } },
+          { name: { contains: q, mode: Prisma.QueryMode.insensitive } },
+          { description: { contains: q, mode: Prisma.QueryMode.insensitive } },
         ],
       });
     }
@@ -171,10 +174,13 @@ export class CommerceBrowseService {
     where.store = storeFilter;
 
     if (query.q) {
+      // `%` and `_` are ILIKE wildcards; unescaped, `%` matches the whole table (0.5).
+      const q = escapeLike(query.q);
+
       and.push({
         OR: [
-          { name: { contains: query.q, mode: Prisma.QueryMode.insensitive } },
-          { description: { contains: query.q, mode: Prisma.QueryMode.insensitive } },
+          { name: { contains: q, mode: Prisma.QueryMode.insensitive } },
+          { description: { contains: q, mode: Prisma.QueryMode.insensitive } },
         ],
       });
     }

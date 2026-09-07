@@ -41,7 +41,8 @@ export class StaticMapService {
     // Community tiles, so the feature works with no account. A deployment with real traffic should
     // set MAP_PROVIDER to one it pays for.
     this.tileTemplate =
-      config.get<string>('MAP_TILE_URL_TEMPLATE') || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+      config.get<string>('MAP_TILE_URL_TEMPLATE') ||
+      'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
     this.provider = this.resolveProvider(config.get<string>('MAP_PROVIDER'));
   }
 
@@ -106,7 +107,9 @@ export class StaticMapService {
 
   private keyName(storeId: string, latitude: number, longitude: number): string {
     const stamp = createHash('sha256')
-      .update(`${latitude.toFixed(5)},${longitude.toFixed(5)},${MAP_ZOOM},${MAP_WIDTH}x${MAP_HEIGHT}`)
+      .update(
+        `${latitude.toFixed(5)},${longitude.toFixed(5)},${MAP_ZOOM},${MAP_WIDTH}x${MAP_HEIGHT}`,
+      )
       .digest('hex')
       .slice(0, 12);
 

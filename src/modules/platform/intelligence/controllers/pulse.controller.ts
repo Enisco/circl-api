@@ -95,7 +95,7 @@ export class PulseController {
   @ApiOperation({
     summary: 'A Pulse dashboard',
     description:
-      'Aggregate only, and it never names anybody (D34). Below the scope\'s floor the shape ' +
+      "Aggregate only, and it never names anybody (D34). Below the scope's floor the shape " +
       'comes back with empty arrays rather than a chart drawn from four people, and the real ' +
       'contributingMembers is kept so a suppressed dashboard is debuggable (6.2.1).',
   })

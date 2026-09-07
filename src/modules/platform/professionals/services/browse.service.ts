@@ -6,6 +6,7 @@ import {
   ApiException,
   buildPageMeta,
   distanceMiles,
+  escapeLike,
   money,
   PageMeta,
 } from '@/common';
@@ -101,12 +102,15 @@ export class BrowseService {
     }
 
     if (query.q) {
+      // `%` and `_` are ILIKE wildcards; unescaped, `%` matches the whole table (0.5).
+      const q = escapeLike(query.q);
+
       const search: Prisma.ProfessionalListingWhereInput[] = [
-        { professionTitle: { contains: query.q, mode: Prisma.QueryMode.insensitive } },
-        { about: { contains: query.q, mode: Prisma.QueryMode.insensitive } },
-        { city: { name: { contains: query.q, mode: Prisma.QueryMode.insensitive } } },
-        { user: { firstName: { contains: query.q, mode: Prisma.QueryMode.insensitive } } },
-        { user: { lastName: { contains: query.q, mode: Prisma.QueryMode.insensitive } } },
+        { professionTitle: { contains: q, mode: Prisma.QueryMode.insensitive } },
+        { about: { contains: q, mode: Prisma.QueryMode.insensitive } },
+        { city: { name: { contains: q, mode: Prisma.QueryMode.insensitive } } },
+        { user: { firstName: { contains: q, mode: Prisma.QueryMode.insensitive } } },
+        { user: { lastName: { contains: q, mode: Prisma.QueryMode.insensitive } } },
       ];
 
       where.AND = [...(Array.isArray(where.AND) ? where.AND : []), { OR: search }];
@@ -216,7 +220,8 @@ export class BrowseService {
 
     if (cityId && cityId !== 'ANYWHERE') where.cityId = cityId;
     if (query.maxPrice !== undefined) where.priceFrom = { lte: query.maxPrice };
-    if (query.q) where.title = { contains: query.q, mode: Prisma.QueryMode.insensitive };
+    if (query.q)
+      where.title = { contains: escapeLike(query.q), mode: Prisma.QueryMode.insensitive };
 
     const window: { skip: number; take: number } =
       query.listingType === 'BOTH'

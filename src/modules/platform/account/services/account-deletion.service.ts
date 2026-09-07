@@ -164,10 +164,8 @@ export class AccountDeletionService {
         data: { isActive: false, revokedAt: now, refreshToken: null },
       });
       await tx.userSocialAuth.deleteMany({ where: { userId } });
-      await tx.userNotificationPrefs.updateMany({
-        where: { userId },
-        data: { devicePushToken: null },
-      });
+      // Every handset, not the current one: a deleted account must not keep pushing to a phone.
+      await tx.pushDevice.deleteMany({ where: { userId } });
 
       // ── Uploads: deleted from storage, not just dereferenced ─────────────── Their avatar, any identity document, and anything reserved but never attached.
       await tx.media.deleteMany({

@@ -132,7 +132,11 @@ export class TaxonomyService {
 
     if (terms.has(trimmed)) return trimmed;
 
-    const normalise = (input: string) => input.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const normalise = (input: string) =>
+      input
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '');
     const needle = normalise(trimmed);
 
     for (const term of terms.values()) {

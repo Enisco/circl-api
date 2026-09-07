@@ -1,12 +1,17 @@
-/* The eleven indexes Prisma cannot see.
+/* The seventeen indexes Prisma cannot see.
  *
- * Nine trigram GIN indexes and two partial unique indexes are written by hand in migrations,
+ * Fifteen trigram GIN indexes and two partial unique indexes are written by hand in migrations,
  * because neither can be expressed in a Prisma schema. That means `prisma migrate dev` proposes
- * DROPping all eleven on EVERY subsequent migration, and one of those DROPs was accepted: they
+ * DROPping all seventeen on EVERY subsequent migration, and one of those DROPs was accepted: they
  * were absent from the database for a whole release.
  *
- * Nothing failed when they went, which is the point of this file. The nine are a silent fall back
- * to sequential scans, and the two are correctness rules the database quietly stopped enforcing. */
+ * Nothing failed when they went, which is the point of this file. The fifteen are a silent fall back
+ * to sequential scans, and the two are correctness rules the database quietly stopped enforcing.
+ *
+ * It has now happened three times, so the app no longer relies on somebody running this file:
+ * `src/infrastructure/database/startup-indexes.ts` re-asserts all seventeen on every boot and warns
+ * by name about any it had to recreate. This file is still the thing that fails a build; the boot
+ * guard is what stops a developer's database sitting broken in the meantime. */
 const { check, finish, prisma } = require('./harness.cjs');
 
 const TRIGRAM = [
@@ -19,6 +24,13 @@ const TRIGRAM = [
   'stores_name_trgm_idx',
   'store_items_name_trgm_idx',
   'professional_listings_title_trgm_idx',
+  // Search reads these six: people by name, and Connect profiles by their own text.
+  'users_first_name_trgm_idx',
+  'users_last_name_trgm_idx',
+  'users_username_trgm_idx',
+  'connect_profiles_looking_for_trgm_idx',
+  'user_profile_bio_trgm_idx',
+  'user_profile_can_help_with_trgm_idx',
 ];
 
 const PARTIAL_UNIQUE = [
@@ -36,7 +48,7 @@ const PARTIAL_UNIQUE = [
   for (const name of TRIGRAM) {
     check(`${name} exists`, byName.has(name), 'missing — a q= filter just became a table scan');
   }
-  check('all nine are GIN over gin_trgm_ops',
+  check('all fifteen are GIN over gin_trgm_ops',
     TRIGRAM.every(name => /USING gin/i.test(byName.get(name) ?? '')
       && /gin_trgm_ops/.test(byName.get(name) ?? '')),
     TRIGRAM.filter(name => !/gin_trgm_ops/.test(byName.get(name) ?? '')));

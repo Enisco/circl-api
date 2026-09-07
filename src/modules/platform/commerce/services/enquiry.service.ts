@@ -5,6 +5,7 @@ import {
   Fulfilment,
   JobStage,
   JobState,
+  NotificationKind,
   Prisma,
   StoreStatus,
   SystemMessageType,
@@ -15,6 +16,7 @@ import { PrismaService } from '@/infrastructure';
 import { addDays, ApiErrorCode, ApiException, buildPageMeta, money } from '@/common';
 import { ActivityService, authorSelect, MediaService, toAuthorView } from '../../shared';
 import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
+import { NotificationFeedService } from '../../notifications';
 import { CreateEnquiryDto, ListEnquiriesDto, ValidateCartDto } from '../dtos/store.dto';
 
 /** D24: 30 days without a transition sets EXPIRED and drops it off the active list. */
@@ -45,6 +47,7 @@ export class EnquiryService {
     private readonly conversations: ConversationFactoryService,
     private readonly activity: ActivityService,
     private readonly media: MediaService,
+    private readonly notifications: NotificationFeedService,
   ) {}
 
   // ─── 4.6.1 Cart validation ─────────────────────────────────────────────────
@@ -259,6 +262,21 @@ export class EnquiryService {
       weight: 5,
     });
 
+    // The one notification in this file that pays for the rest: a seller who is not told somebody
+    // wants to buy finds out when the buyer has already gone somewhere else.
+    const buyer = await this.notifications.actorName(buyerId);
+
+    this.notifications.raise({
+      userId: store.ownerId,
+      actorId: buyerId,
+      kind: NotificationKind.BOOKING,
+      categoryCode: 'BOOKINGS',
+      title: `${buyer} sent you an order`,
+      body: enquiry.reference,
+      route: `/commerce/orders/${enquiry.id}`,
+      metadata: { enquiryId: enquiry.id, storeId: store.id },
+    });
+
     return this.findOne(buyerId, enquiry.id);
   }
 
@@ -307,7 +325,9 @@ export class EnquiryService {
         state: row.state,
         stage: this.stageFor(row.state),
         store: this.storeCard(row.store),
-        counterpart: toAuthorView(role === 'BUYER' ? row.seller : row.buyer, { sign: this.media.sign }),
+        counterpart: toAuthorView(role === 'BUYER' ? row.seller : row.buyer, {
+          sign: this.media.sign,
+        }),
         estimatedTotal: money(row.estimatedTotal, row.currency),
         fulfilment: row.fulfilment,
         itemCount: row.lines.length,
@@ -346,7 +366,9 @@ export class EnquiryService {
       // The human-readable code the buyer quotes to the seller.
       reference: enquiry.reference,
       store: this.storeCard(enquiry.store),
-      counterpart: toAuthorView(role === 'BUYER' ? enquiry.seller : enquiry.buyer, { sign: this.media.sign }),
+      counterpart: toAuthorView(role === 'BUYER' ? enquiry.seller : enquiry.buyer, {
+        sign: this.media.sign,
+      }),
       state: enquiry.state,
       stage: this.stageFor(enquiry.state),
       lines: enquiry.lines.map(line => ({
@@ -379,6 +401,7 @@ export class EnquiryService {
       to: JobState.IN_PROGRESS,
       stage: JobStage.ACCEPTED,
       message: 'The seller confirmed they can fulfil this.',
+      notice: 'Your order was accepted',
     });
   }
 
@@ -390,6 +413,7 @@ export class EnquiryService {
       stage: JobStage.CANCELLED,
       reason,
       message: 'The seller could not fulfil this enquiry.',
+      notice: 'Your order was declined',
     });
   }
 
@@ -400,6 +424,7 @@ export class EnquiryService {
       to: JobState.DELIVERED,
       stage: JobStage.DELIVERED,
       message: 'Your order is on the way, or ready to collect.',
+      notice: 'Your order is ready',
     });
   }
 
@@ -411,6 +436,7 @@ export class EnquiryService {
       to: JobState.COMPLETED,
       stage: JobStage.DONE,
       message: 'The buyer confirmed they received this. You can both leave a review.',
+      notice: 'Your order was confirmed as received',
     });
   }
 
@@ -422,6 +448,7 @@ export class EnquiryService {
       stage: JobStage.CANCELLED,
       reason,
       message: 'This enquiry was cancelled.',
+      notice: 'An order was cancelled',
     });
   }
 
@@ -435,6 +462,8 @@ export class EnquiryService {
       stage: JobStage;
       reason?: string;
       message: string;
+      /** What the other party is told. Absent means the move is not worth telling anybody about. */
+      notice?: string;
     },
   ) {
     const enquiry = await this.database.enquiry.findUnique({ where: { id } });
@@ -499,6 +528,23 @@ export class EnquiryService {
         );
       }
     });
+
+    // The system line above is not unread and does not push, so before this the other party
+    // learned their order had moved only by opening the thread and reading it.
+    if (options.notice) {
+      const recipientId = role === 'BUYER' ? enquiry.sellerId : enquiry.buyerId;
+
+      this.notifications.raise({
+        userId: recipientId,
+        actorId: userId,
+        kind: NotificationKind.BOOKING,
+        categoryCode: 'BOOKINGS',
+        title: options.notice,
+        body: enquiry.reference,
+        route: `/commerce/orders/${id}`,
+        metadata: { enquiryId: id, state: options.to },
+      });
+    }
 
     return this.findOne(userId, id);
   }

@@ -442,7 +442,10 @@ export class FeedService {
   }
 
   private authorOf(row: { author: AuthorSource | null; visibility?: PostVisibility }) {
-    return toAuthorView(row.author, { sign: this.media.sign, isAnonymous: row.visibility === PostVisibility.ANONYMOUS });
+    return toAuthorView(row.author, {
+      sign: this.media.sign,
+      isAnonymous: row.visibility === PostVisibility.ANONYMOUS,
+    });
   }
 
   private async viewerState(viewerId: string, idsByType: Map<FeedItemType, string[]>) {

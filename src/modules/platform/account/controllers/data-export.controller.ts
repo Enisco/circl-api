@@ -31,7 +31,7 @@ export class AccountSettingsController {
       'A subject access request under UK GDPR. A second request while one is pending returns 409 ' +
       'rather than queuing a duplicate.',
   })
-    @ApiAcceptedResponse({ type: DataExportResponseDto })
+  @ApiAcceptedResponse({ type: DataExportResponseDto })
   async requestExport(@CurrentUserId() userId: string) {
     const { data } = await this.exports.request(userId);
 
@@ -40,8 +40,14 @@ export class AccountSettingsController {
 
   @Get('data-export')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'The latest export request', description: 'Null data when there is none.' })
-    @ApiOkResponse({ type: DataExportResponseDto, description: 'Null data when the member has never asked.' })
+  @ApiOperation({
+    summary: 'The latest export request',
+    description: 'Null data when there is none.',
+  })
+  @ApiOkResponse({
+    type: DataExportResponseDto,
+    description: 'Null data when the member has never asked.',
+  })
   async latestExport(@CurrentUserId() userId: string) {
     const { data } = await this.exports.latest(userId);
 
@@ -57,7 +63,7 @@ export class AccountSettingsController {
       'Sends a six-digit code to the NEW address, because that is the one being proved. 409 ' +
       'EMAIL_TAKEN if it is already on another account.',
   })
-    @ApiAcceptedResponse({ type: EmailChangeStartedDto })
+  @ApiAcceptedResponse({ type: EmailChangeStartedDto })
   async changeEmail(@CurrentUserId() userId: string, @Body() dto: ChangeEmailDto) {
     return this.emailChange.request(userId, dto);
   }
@@ -70,10 +76,7 @@ export class AccountSettingsController {
       'Returns the updated user so the row refreshes in place. Deliberately does not invalidate ' +
       'the session: being thrown out mid-flow for changing an email is the worse outcome.',
   })
-  async confirmEmailChange(
-    @CurrentUserId() userId: string,
-    @Body() dto: ConfirmEmailChangeDto,
-  ) {
+  async confirmEmailChange(@CurrentUserId() userId: string, @Body() dto: ConfirmEmailChangeDto) {
     return this.emailChange.confirm(userId, dto);
   }
 }

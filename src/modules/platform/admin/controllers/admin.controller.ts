@@ -286,7 +286,7 @@ export class AdminController {
     summary: 'Run a scheduled job now',
     description:
       'The cron decorators are the schedule; this is the switch. Without it a stale dashboard ' +
-      'cannot be fixed until the job\'s hour comes round, and the whole set is untestable end ' +
+      "cannot be fixed until the job's hour comes round, and the whole set is untestable end " +
       'to end. Runs synchronously and returns when the job has finished.',
   })
   async runJob(@Param('name') name: string) {
@@ -294,5 +294,4 @@ export class AdminController {
 
     return { data: { job: ran }, message: `Ran ${ran}` };
   }
-
 }

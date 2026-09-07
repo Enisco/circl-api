@@ -5,10 +5,11 @@ import {
   ActivityService,
   MediaService,
   TaxonomyService,
+  toAuthorView,
   toMediaViews,
   toTermView,
 } from '../../shared';
-import { ApiException, buildPageMeta, money, Paginated } from '@/common';
+import { ApiException, buildPageMeta, escapeLike, money, Paginated } from '@/common';
 import { ItemDto, ListStoreItemsDto, UpdateItemDto } from '../dtos/store.dto';
 import { StoreService } from './store.service';
 
@@ -143,7 +144,10 @@ export class ItemService {
       deletedAt: null,
       ...(query.category ? { categoryCode: query.category } : {}),
       ...(query.availableOnly ? { isAvailable: true } : {}),
-      ...(query.q ? { name: { contains: query.q, mode: Prisma.QueryMode.insensitive } } : {}),
+      // `%` and `_` are ILIKE wildcards; unescaped, `%` matches the whole table (0.5).
+      ...(query.q
+        ? { name: { contains: escapeLike(query.q), mode: Prisma.QueryMode.insensitive } }
+        : {}),
     };
 
     const [total, rows] = await this.database.$transaction([
@@ -219,6 +223,9 @@ export class ItemService {
         isOpenNow: storeSummary.isOpenNow,
         distanceMiles: storeSummary.distanceMiles,
         rating: storeSummary.rating,
+        // "Ask the seller" has no recipient without this, so the button was being hidden rather
+        // than shown and broken. The same shared author object the shop detail returns (4.5.1).
+        owner: toAuthorView(item.store.owner, { sign: this.media.sign }),
       },
     };
   }

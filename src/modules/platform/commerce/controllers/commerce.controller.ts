@@ -224,7 +224,8 @@ export class CommerceController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Out for delivery, or ready to collect',
-    description: 'One state for both fulfilment modes, because the buyer\'s next action is the same either way.',
+    description:
+      "One state for both fulfilment modes, because the buyer's next action is the same either way.",
   })
   async readyEnquiry(@CurrentUserId() userId: string, @Param('id') id: string) {
     return { data: await this.enquiries.ready(userId, id), message: 'Marked as ready' };
@@ -321,7 +322,7 @@ export class CommerceController {
   @ApiOperation({
     summary: 'Add an item',
     description:
-      'Prices are always above zero (4.8.3). A free listing is a Community offer, not a Commerce '+
+      'Prices are always above zero (4.8.3). A free listing is a Community offer, not a Commerce ' +
       'item.',
   })
   async addItem(@CurrentUserId() userId: string, @Param('id') id: string, @Body() dto: ItemDto) {

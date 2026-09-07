@@ -29,6 +29,7 @@ model User {
   userRole          UserRole?
   socialAuths       UserSocialAuth[]
   notificationPrefs UserNotificationPrefs?
+  pushDevices       PushDevice[]
   privacy           PrivacyPreference?
   dataExports       DataExportRequest[]
   emailChanges      EmailChangeRequest[]
@@ -221,11 +222,10 @@ model UserSession {
 }
 
 model UserNotificationPrefs {
-  id              String   @id @default(uuid())
-  userId          String   @unique @map("user_id")
-  devicePushToken String?  @map("device_push_token")
+  id     String @id @default(uuid())
+  userId String @unique @map("user_id")
 
-  // The per-category toggles that used to live here are the eight-row matrix in 6.1.3, held on NotificationPreference.
+  // The per-category toggles that used to live here are the nine-row matrix in 6.1.4, held on NotificationPreference. The single `devicePushToken` that used to live here is now PushDevice, one row per handset.
 
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -233,6 +233,26 @@ model UserNotificationPrefs {
 
   @@index([userId])
   @@map("user_notification_prefs")
+}
+
+/// One row per handset a member is signed in on. It was a single column on UserNotificationPrefs, which meant signing in on a tablet silently stopped push to the phone: the second registration overwrote the first, and nothing said so.
+model PushDevice {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The FCM registration token. Globally unique rather than unique per member: one handset holds one token, so when a phone changes hands the row MOVES to whoever signed in rather than sitting on two accounts and delivering the previous member's notifications.
+  token String @unique @map("token")
+
+  /// Optional, and only ever used for diagnosis: FCM routes by token, not by platform.
+  platform DevicePlatform? @map("platform")
+
+  /// Bumped on every re-registration, which the client does on launch. It is what the device cap prunes by, so the handset in a drawer loses its slot before the one in a pocket.
+  lastSeenAt DateTime @default(now()) @map("last_seen_at") @db.Timestamptz
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userId])
+  @@map("push_devices")
 }
 
 /// The two switches on the Privacy screen, which were local-only in the app (G7).

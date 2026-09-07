@@ -8,7 +8,7 @@ import {
   TaxonomyService,
   toAuthorView,
   toTermView,
-} from '@/modules/platform';
+} from '@/modules/platform/shared';
 import { ConversationFactoryService } from '@/modules/platform/messaging/services/conversation-factory.service';
 
 /** A member's public community profile (0.16.3). */

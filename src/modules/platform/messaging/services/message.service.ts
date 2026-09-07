@@ -33,32 +33,79 @@ export class MessageService {
 
   // ─── 5.3.3 History ─────────────────────────────────────────────────────────
 
+  /**
+   * History, and the two things cursor paging needs to be correct.
+   *
+   * **The order is total.** `sentAt` alone is not: two messages can share a timestamp, and did —
+   * a burst from one sender, or a system message written in the same transaction as a user one.
+   * With a `sentAt`-only cursor, `lt` skipped the anchor's twin entirely and the sort between
+   * equals was whatever the planner felt like. Ordering and comparing on `(sentAt, id)` makes both
+   * deterministic. `id` is not chronological, but a tie-break only has to be stable.
+   *
+   * **`hasMore` is counted, not guessed.** It used to be `rows.length === limit`, which is wrong
+   * for exactly the thread whose length is a multiple of the limit: a full last page reads as
+   * "there is more" and costs a round trip to find out there is not. Asking for one row more than
+   * the caller wants answers it exactly, for no extra query.
+   */
   async history(userId: string, conversationId: string, query: ListMessagesDto) {
     await this.conversations.requireParticipant(userId, conversationId);
 
+    // `after` is how a `since` result pages: it reads forwards, so the cursor applies unchanged.
+    // `before` reads backwards and would ask for changes older than the window they define, which
+    // is a request with no meaning rather than one with a surprising answer.
+    if (query.since && query.before) {
+      throw ApiException.badRequest(
+        ApiErrorCode.VALIDATION_FAILED,
+        '`since` reads forwards, so it pages with `after`, not `before`.',
+        { details: [{ field: 'before', message: 'Use after to page a since result.' }] },
+      );
+    }
+
     const limit = Math.min(query.limit ?? 30, 100);
     const anchor = await this.anchor(query.before ?? query.after);
+    // `since` and `after` both read forwards; only the default and `before` scroll backwards.
+    const ascending = Boolean(query.after || query.since);
+    const direction = ascending ? 'asc' : 'desc';
 
     const where: Prisma.MessageWhereInput = {
       conversationId,
-      ...(anchor && query.before ? { sentAt: { lt: anchor.sentAt } } : {}),
-      ...(anchor && query.after ? { sentAt: { gt: anchor.sentAt } } : {}),
+      ...(anchor ? { AND: [cursorClause(anchor, Boolean(query.after))] } : {}),
+      // Changed, not created: a message the sender withdrew has to come back so a cached copy can
+      // be replaced with the tombstone. `sentAt` covers new, `editedAt` edited, `deletedAt` gone.
+      ...(query.since
+        ? {
+            OR: [
+              { sentAt: { gte: new Date(query.since) } },
+              { editedAt: { gte: new Date(query.since) } },
+              { deletedAt: { gte: new Date(query.since) } },
+            ],
+          }
+        : {}),
     };
 
     const rows = await this.database.message.findMany({
       where,
       include: messageInclude,
-      // Newest first, because a chat scrolls backwards.
-      orderBy: { sentAt: query.after ? 'asc' : 'desc' },
-      take: limit,
+      // Newest first, because a chat scrolls backwards. `id` breaks ties so the order is total.
+      orderBy: [{ sentAt: direction }, { id: direction }],
+      // One more than asked for, which is how `hasMore` is known rather than inferred.
+      take: limit + 1,
     });
 
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+
     return {
-      data: rows.map(row => this.toView(row, userId)),
+      data: page.map(row => this.toView(row, userId)),
       meta: {
-        hasMore: rows.length === limit,
-        oldestId: rows.at(-1)?.id ?? null,
-        newestId: rows[0]?.id ?? null,
+        hasMore,
+        // The value to send back: `before` when scrolling up, `after` or `since` when catching up.
+        // Null when there is nothing more, so the client never pages off the end.
+        // The last row of the page in whichever direction it was read, which is exactly what the
+        // next `before`, `after` or `since` call should carry.
+        nextCursor: hasMore ? (page.at(-1)?.id ?? null) : null,
+        oldestId: ascending ? (page[0]?.id ?? null) : (page.at(-1)?.id ?? null),
+        newestId: ascending ? (page.at(-1)?.id ?? null) : (page[0]?.id ?? null),
       },
     };
   }
@@ -118,7 +165,12 @@ export class MessageService {
       );
     }
 
-    const attachments = await this.validateAttachments(userId, kind, dto.attachmentKeys);
+    // `attachmentIds` is the same array under the name an early client shipped (5.3.4).
+    const attachments = await this.validateAttachments(
+      userId,
+      kind,
+      dto.attachmentKeys ?? dto.attachmentIds,
+    );
 
     const message = await this.database.$transaction(async tx => {
       const created = await tx.message.create({
@@ -179,20 +231,46 @@ export class MessageService {
 
   // ─── 5.4 Read receipts ─────────────────────────────────────────────────────
 
-  /** One event clears a backlog rather than one per message (5.4). */
-  async markRead(userId: string, conversationId: string, lastReadMessageId: string) {
+  /**
+   * One event clears a backlog rather than one per message (5.4).
+   *
+   * `lastReadMessageId` is optional and means "everything in the thread". Opening a thread reads
+   * it, and a thread opened before anybody has said anything has no message to name: the client
+   * would otherwise have to special-case the empty conversation, which is exactly the case it is
+   * most likely to get wrong.
+   */
+  async markRead(userId: string, conversationId: string, lastReadMessageId?: string) {
     await this.conversations.requireParticipant(userId, conversationId);
 
-    const anchor = await this.database.message.findUnique({
-      where: { id: lastReadMessageId },
-      select: { id: true, conversationId: true, sentAt: true },
-    });
+    const anchor = lastReadMessageId
+      ? await this.database.message.findUnique({
+          where: { id: lastReadMessageId },
+          select: { id: true, conversationId: true, sentAt: true },
+        })
+      : await this.database.message.findFirst({
+          where: { conversationId },
+          orderBy: { sentAt: 'desc' },
+          select: { id: true, conversationId: true, sentAt: true },
+        });
 
-    if (!anchor || anchor.conversationId !== conversationId) {
+    // A named message that is not in this thread is still an error: the caller believed something
+    // that is not true, and silently reading the whole thread instead would hide it.
+    if (lastReadMessageId && (!anchor || anchor.conversationId !== conversationId)) {
       throw ApiException.notFound('That message could not be found.');
     }
 
     const now = new Date();
+
+    if (!anchor) {
+      // Nothing has been said yet. Record the visit, because "opened at" is still true, and
+      // report honestly that no message was read.
+      await this.database.conversationParticipant.update({
+        where: { conversationId_userId: { conversationId, userId } },
+        data: { unreadCount: 0, lastReadAt: now },
+      });
+
+      return { lastReadMessageId: null, readAt: now.toISOString(), unreadCount: 0 };
+    }
 
     await this.database.$transaction(async tx => {
       await tx.messageReceipt.updateMany({
@@ -357,9 +435,10 @@ export class MessageService {
   private async anchor(messageId: string | undefined) {
     if (!messageId) return null;
 
+    // `id` as well as `sentAt`, because the cursor comparison is over both (see `history`).
     return this.database.message.findUnique({
       where: { id: messageId },
-      select: { sentAt: true },
+      select: { id: true, sentAt: true },
     });
   }
 
@@ -393,3 +472,20 @@ export class MessageService {
 }
 
 export type MessageView = ReturnType<MessageService['toView']>;
+
+/**
+ * "Older than this message" and "newer than this message" over a total `(sentAt, id)` order.
+ * A plain `sentAt` comparison drops every message sharing the anchor's timestamp, which is a
+ * message silently missing from a thread and close to impossible to diagnose from a device.
+ */
+const cursorClause = (
+  anchor: { id: string; sentAt: Date },
+  forwards: boolean,
+): Prisma.MessageWhereInput =>
+  forwards
+    ? {
+        OR: [{ sentAt: { gt: anchor.sentAt } }, { sentAt: anchor.sentAt, id: { gt: anchor.id } }],
+      }
+    : {
+        OR: [{ sentAt: { lt: anchor.sentAt } }, { sentAt: anchor.sentAt, id: { lt: anchor.id } }],
+      };

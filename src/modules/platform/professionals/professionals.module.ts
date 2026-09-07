@@ -34,6 +34,12 @@ const CONTROLLERS = [
     BriefService,
     DisputeService,
   ],
-  exports: [ListingService, BookingService, DisputeService, ProfessionalsHomeService, BrowseService],
+  exports: [
+    ListingService,
+    BookingService,
+    DisputeService,
+    ProfessionalsHomeService,
+    BrowseService,
+  ],
 })
 export class ProfessionalsModule {}

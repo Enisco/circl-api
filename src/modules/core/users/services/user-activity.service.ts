@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { buildPageMeta, excerpt } from '@/common';
-import { MediaService } from '@/modules/platform';
+import { MediaService } from '@/modules/platform/shared';
 import { ActivityType, ListUserActivityDto } from '../dtos';
 
 /** One row of the UNION, before it is dressed for the client. */
