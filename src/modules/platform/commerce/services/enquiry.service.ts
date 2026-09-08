@@ -274,6 +274,7 @@ export class EnquiryService {
       title: `${buyer} sent you an order`,
       body: enquiry.reference,
       route: `/commerce/orders/${enquiry.id}`,
+      target: { type: 'ORDER', id: enquiry.id },
       metadata: { enquiryId: enquiry.id, storeId: store.id },
     });
 
@@ -542,6 +543,7 @@ export class EnquiryService {
         title: options.notice,
         body: enquiry.reference,
         route: `/commerce/orders/${id}`,
+        target: { type: 'ORDER', id },
         metadata: { enquiryId: id, state: options.to },
       });
     }

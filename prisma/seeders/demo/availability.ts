@@ -77,6 +77,14 @@ export const seedAvailability = async (ctx: DemoSeedContext) => {
   const { prisma } = ctx;
   let days = 0;
 
+  // Worked out before anything is written, because the blocks below have to avoid them.
+  const bookedDates = new Set(
+    OCCUPIED.map(
+      taken =>
+        `${seedId(`listing:${taken.listing}`)}|${nextWeekday(taken.weekday).toISOString().slice(0, 10)}`,
+    ),
+  );
+
   for (const [label, rule] of Object.entries(WEEKS)) {
     const listingId = seedId(`listing:${label}`);
 
@@ -94,6 +102,14 @@ export const seedAvailability = async (ctx: DemoSeedContext) => {
 
     for (const offset of rule.blocks) {
       const date = new Date(daysAhead(offset).toISOString().slice(0, 10));
+
+      // A day cannot be both blocked and booked: it is contradictory data, and the availability
+      // view reports BLOCKED first, so a block landing on a booked day hides the booking entirely
+      // and the dataset stops demonstrating a BOOKED slot at all. The two use different rules for
+      // picking dates — blocks count days ahead, bookings find the next weekday — so whether they
+      // collide depends on what day the seed is run, which is exactly the kind of bug that appears
+      // one morning having changed nothing.
+      if (bookedDates.has(`${listingId}|${date.toISOString().slice(0, 10)}`)) continue;
 
       await prisma.listingAvailabilityBlock.upsert({
         where: { listingId_date: { listingId, date } },

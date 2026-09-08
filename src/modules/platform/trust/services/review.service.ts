@@ -207,6 +207,7 @@ export class ReviewService {
       title: 'You have a new review',
       body: dto.comment ? excerpt(dto.comment, 80) : `${dto.rating} stars`,
       route: `/reviews/${dto.subjectUserId}`,
+      target: { type: 'PROFILE', id: dto.subjectUserId },
     });
 
     return this.toView(

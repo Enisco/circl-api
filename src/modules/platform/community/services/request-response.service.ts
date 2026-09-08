@@ -181,6 +181,7 @@ export class RequestResponseService {
       title: isHelpOffer ? 'Someone offered to help' : 'New reply to your request',
       body: excerpt(request.title, 80),
       route: `/community/request/${requestId}`,
+      target: { type: 'REQUEST', id: requestId },
     });
 
     const counts = await this.counts(requestId);

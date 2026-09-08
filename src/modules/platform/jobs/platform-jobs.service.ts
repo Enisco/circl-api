@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '@/infrastructure';
 import { ApiException } from '@/common';
+import { MediaDerivationService } from '../media/derivation/media-derivation.service';
 import { MediaUploadService } from '../media/services/media-upload.service';
 import { BookingService } from '../professionals/services/booking.service';
 import { ProfessionalsHomeService } from '../professionals/services/professionals-home.service';
@@ -20,6 +21,7 @@ export class PlatformJobsService {
     private readonly config: ConfigService,
     private readonly database: PrismaService,
     private readonly media: MediaUploadService,
+    private readonly derivation: MediaDerivationService,
     private readonly bookings: BookingService,
     private readonly enquiries: EnquiryService,
     private readonly professionals: ProfessionalsHomeService,
@@ -62,6 +64,21 @@ export class PlatformJobsService {
       });
 
       return result.count ? `expired ${result.count} past-dated requests` : null;
+    });
+  }
+
+  /**
+   * Reads width, height and duration out of anything uploaded since the last pass (0.11.4).
+   * `attach` already schedules this for the common case; the sweep is what makes it a guarantee
+   * rather than a best effort, and it is the only thing that visits media uploaded but never
+   * attached.
+   */
+  @Cron(CronExpression.EVERY_30_MINUTES, { name: 'media.derive' })
+  async deriveMedia() {
+    await this.run('media.derive', async () => {
+      const derived = await this.derivation.sweep();
+
+      return derived ? `read ${derived} object header(s)` : null;
     });
   }
 

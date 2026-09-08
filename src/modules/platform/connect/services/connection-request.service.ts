@@ -157,6 +157,7 @@ export class ConnectionRequestService {
       title: 'Someone wants to connect',
       body: null,
       route: '/connect/requests',
+      target: { type: 'CONNECT_REQUEST', id: request.id },
     });
 
     return {
@@ -272,6 +273,7 @@ export class ConnectionRequestService {
       body: null,
       // Straight into the thread, which is the only thing there is to do next.
       route: `/messages/${conversationId}`,
+      target: { type: 'CONVERSATION', id: conversationId },
       metadata: { requestId: id, conversationId },
     });
 

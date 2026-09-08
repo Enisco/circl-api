@@ -228,6 +228,7 @@ export class BookingService {
       title: `${client} requested a booking`,
       body: booking.serviceName,
       route: `/bookings/${booking.id}`,
+      target: { type: 'BOOKING', id: booking.id },
       metadata: { bookingId: booking.id },
     });
 
@@ -519,6 +520,7 @@ export class BookingService {
         title: options.notice,
         body: options.reason ?? options.note ?? null,
         route: `/bookings/${id}`,
+        target: { type: 'BOOKING', id },
         metadata: { bookingId: id, state: options.to },
       });
     }

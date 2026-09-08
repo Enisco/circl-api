@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Media, MediaScanStatus, MediaStatus, MediaType, Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@/infrastructure';
+import { MediaDerivationService } from '../../media/derivation/media-derivation.service';
 import { ApiErrorCode, ApiException } from '@/common';
 import { StorageProvider } from '../../media/storage/storage.interface';
 import { UrlSigner } from '../serializers/media.serializer';
@@ -42,6 +43,7 @@ export class MediaService {
   constructor(
     private readonly database: PrismaService,
     private readonly storage: StorageProvider,
+    private readonly derivation: MediaDerivationService,
     config: ConfigService,
   ) {
     this.scanRequired = config.get<string>('MEDIA_SCAN_REQUIRED') === 'true';
@@ -191,6 +193,11 @@ export class MediaService {
         }),
       ),
     );
+
+    // The first moment the bytes are known to be in storage, which is the earliest anything can be
+    // read out of them (0.11.4). Fire-and-forget: a photo must not fail to send because its
+    // dimensions could not be read, and the hourly sweep catches whatever this misses.
+    this.derivation.schedule(media.filter(item => item.derivedAt === null).map(item => item.id));
   }
 
   /** Everything attached to one resource, in render order. */

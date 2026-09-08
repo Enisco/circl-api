@@ -272,6 +272,84 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
     check('connect request created', false, r.body?.error);
   }
 
+  console.log('\n── Every notification knows where it goes ───────────────────');
+
+  const inboxOf = async token => (await api(token, 'GET', '/notifications?limit=40')).body?.data ?? [];
+  const routed = await inboxOf(owner.token);
+
+  check('every row carries a route and a matching target, or neither',
+    routed.every(row => (row.route === null) === (row.target === null)),
+    routed.filter(row => (row.route === null) !== (row.target === null))
+      .map(row => ({ kind: row.kind, route: row.route, target: row.target })));
+
+  check('a target names a type and an id, never half of one',
+    routed.every(row => !row.target || (!!row.target.type && !!row.target.id)),
+    routed.map(row => row.target).filter(Boolean).slice(0, 3));
+
+  check('and the target id appears in the route it agrees with',
+    routed.every(row => !row.target || row.route.includes(row.target.id)
+      || row.target.type === 'CONNECT_REQUEST'),
+    routed.filter(row => row.target && !row.route.includes(row.target.id))
+      .map(row => ({ r: row.route, t: row.target }))); 
+
+  check('every row carries a collapse count, 1 when it did not collapse',
+    routed.every(row => typeof row.count === 'number' && row.count >= 1),
+    routed.map(row => row.count).slice(0, 5));
+
+  // The one that was broken: a like and a reply on the same post went to different screens.
+  r = await api(owner.token, 'POST', '/community/updates', {
+    content: 'One more post, to check a like and a reply agree on where they point.',
+    cityId: 'MANCHESTER',
+  });
+  const agreeId = r.body?.data?.id;
+
+  await api(other.token, 'POST', `/community/updates/${agreeId}/reactions`, { liked: true });
+  await api(other.token, 'POST', `/community/updates/${agreeId}/replies`, {
+    content: 'Replying to the very same post, which should land on the very same screen.',
+  });
+  await waitFor(owner.token, 'REPLY', 'reply to your update');
+
+  const both = (await inboxOf(owner.token)).filter(row => row.route?.includes(agreeId));
+
+  check('a like and a reply on one post route to the same screen',
+    both.length >= 2 && new Set(both.map(row => row.route)).size === 1,
+    both.map(row => `${row.kind}:${row.route}`));
+
+  // A group post is the one target that cannot be opened from its own id: its replies live under
+  // its group, and nothing resolves a post to its group.
+  r = await api(owner.token, 'POST', '/community/groups', {
+    name: `Notify Post Group ${Date.now()}`,
+    description: 'A group whose post reply notification has to be openable.',
+    cityId: 'MANCHESTER', joinPolicy: 'OPEN',
+  });
+  const postGroupId = r.body?.data?.id;
+
+  await api(other.token, 'POST', `/community/groups/${postGroupId}/join`);
+  r = await api(owner.token, 'POST', `/community/groups/${postGroupId}/posts`, {
+    content: 'A post in the group, waiting for somebody to reply to it.',
+  });
+  const groupPostId = r.body?.data?.id;
+
+  await api(other.token, 'POST', `/community/groups/${postGroupId}/posts/${groupPostId}/replies`, {
+    content: 'Replying, so the post author is told about it.',
+  });
+
+  const postRows = await waitFor(owner.token, 'GROUP', 'reply in your group post');
+  const postRow = postRows.find(row => row.target?.type === 'GROUP_POST');
+
+  check('a group post reply names its group as well as the post',
+    postRow?.target?.id === groupPostId && postRow?.target?.parent?.id === postGroupId
+      && postRow?.target?.parent?.type === 'GROUP',
+    postRow?.target);
+  check('and its route carries both ids, so it is openable',
+    postRow?.route === `/community/group/${postGroupId}/post/${groupPostId}`, postRow?.route);
+
+  r = await api(owner.token, 'GET',
+    `/community/groups/${postRow?.target?.parent?.id}/posts/${postRow?.target?.id}/replies`);
+  check('the two ids off the notification fetch the replies with no other lookup',
+    r.status === 200 && (r.body?.data?.replies ?? []).length >= 1,
+    { s: r.status, n: r.body?.data?.replies?.length });
+
   console.log('\n── Push: every device, not the last one to register ─────────');
 
   const register = (user, token) =>

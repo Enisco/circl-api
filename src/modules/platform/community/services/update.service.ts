@@ -255,7 +255,11 @@ export class UpdateService {
         categoryCode: 'REACTIONS',
         title: `${displayNameOf(actor?.firstName, actor?.lastName)} liked your post`,
         body: excerpt(update.content, 80),
-        route: `/community/post/${id}`,
+        // `/community/post/` was the odd one out: the reply notification and the activity list
+        // both use `/community/update/`, so a like and a reply on the same post sent the app to
+        // two different screens.
+        route: `/community/update/${id}`,
+        target: { type: 'UPDATE', id },
         // One row per post, not one per liker.
         collapseKey: `update:${id}`,
         collapsedTitle: (count, name) =>
@@ -362,6 +366,7 @@ export class UpdateService {
       title: 'New reply to your update',
       body: excerpt(dto.content, 80),
       route: `/community/update/${id}`,
+      target: { type: 'UPDATE', id },
     });
 
     return {

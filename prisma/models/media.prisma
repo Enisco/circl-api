@@ -26,10 +26,13 @@ model Media {
   /// Derived by the same handler.
   thumbnailKey String? @map("thumbnail_key")
 
-  // Reserved so the client can size the frame before the bytes land (spec 0.11).
+  // So the client can size the frame before the bytes land (spec 0.11). Derived from the object's own header, after upload.
   width    Int?    @map("width")
   height   Int?    @map("height")
   blurHash String? @map("blur_hash")
+
+  /// When derivation last ran, successfully or not. Without it the sweeper cannot tell "not tried yet" from "tried, and this file has nothing to give", and would re-read the same unreadable object every hour forever.
+  derivedAt DateTime? @map("derived_at") @db.Timestamptz
 
   // Audio only. The recording device is the only thing that knows these (5.5).
   durationMs Int?   @map("duration_ms")

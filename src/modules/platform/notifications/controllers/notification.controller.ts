@@ -8,10 +8,10 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserId, JwtAuthGuard } from '@/common';
 import { NotificationFeedService } from '../services';
-import { ListNotificationsDto } from '../dtos';
+import { ListNotificationsDto, NotificationDto } from '../dtos';
 
 @ApiBearerAuth()
 @Controller('notifications')
@@ -29,6 +29,7 @@ export class NotificationController {
       "survives a push being dismissed. `bucket` is computed server-side in the member's " +
       'timezone (D32), and `meta.unreadTotal` is account-wide and backs the header badge.',
   })
+  @ApiOkResponse({ type: [NotificationDto] })
   async list(@CurrentUserId() userId: string, @Query() query: ListNotificationsDto) {
     return this.feed.list(userId, query);
   }

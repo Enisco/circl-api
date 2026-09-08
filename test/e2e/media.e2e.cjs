@@ -118,5 +118,90 @@ const { api, makeUser, check, finish, sweep, prisma } = require('./harness.cjs')
 
 
   await sweep();
-  await finish();
+    console.log('\n── 0.11.4 Derived fields ────────────────────────────────────');
+
+  // A real PNG, so the bytes on S3 genuinely are an image and the header read is genuine.
+  const zlib = require('zlib');
+  const pngChunk = (type, data) => {
+    const len = Buffer.alloc(4);
+
+    len.writeUInt32BE(data.length);
+
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const crc = Buffer.alloc(4);
+    let c = ~0;
+
+    for (const byte of body) {
+      c ^= byte;
+      for (let k = 0; k < 8; k += 1) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+    }
+
+    crc.writeUInt32BE((~c) >>> 0);
+
+    return Buffer.concat([len, body, crc]);
+  };
+  const realPng = (w, h) => {
+    const ihdr = Buffer.alloc(13);
+
+    ihdr.writeUInt32BE(w, 0);
+    ihdr.writeUInt32BE(h, 4);
+    ihdr[8] = 8;
+    ihdr[9] = 2;
+
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      pngChunk('IHDR', ihdr),
+      pngChunk('IDAT', zlib.deflateSync(Buffer.alloc(h * (1 + w * 3)))),
+      pngChunk('IEND', Buffer.alloc(0)),
+    ]);
+  };
+
+  // A fresh member: the sweep above removed the one this file started with.
+  const deriver = await makeUser('media-derive');
+  const derivedBytes = realPng(1290, 2796);
+  const derivedMint = await api(deriver.token, 'POST', '/media/uploads', {
+    purpose: 'COMMUNITY',
+    files: [{ mimeType: 'image/png', byteSize: derivedBytes.length }],
+  });
+  const derivedSlot = derivedMint.body?.data?.[0];
+
+  await fetch(derivedSlot.uploadUrl, {
+    method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: derivedBytes,
+  });
+
+  const beforeDerive = await prisma.media.findUnique({
+    where: { storageKey: derivedSlot.key }, select: { width: true, derivedAt: true },
+  });
+
+  check('nothing is derived at mint, because the bytes do not exist yet',
+    beforeDerive?.width === null && beforeDerive?.derivedAt === null, beforeDerive);
+
+  const { MediaDerivationService } =
+    require('../../dist/src/modules/platform/media/derivation/media-derivation.service.js');
+  const { S3Storage } = require('../../dist/src/modules/platform/media/storage/s3.storage.js');
+  const derivation = new MediaDerivationService(
+    prisma,
+    new S3Storage({ get: k => process.env[k], getOrThrow: k => process.env[k] }),
+  );
+
+  await derivation.sweep();
+
+  const afterDerive = await prisma.media.findUnique({
+    where: { storageKey: derivedSlot.key },
+    select: { width: true, height: true, derivedAt: true },
+  });
+
+  check('the sweep reads the real size out of the object header',
+    afterDerive?.width === 1290 && afterDerive?.height === 2796, afterDerive);
+  check('and stamps the visit, so an unreadable object is not re-fetched forever',
+    !!afterDerive?.derivedAt, afterDerive);
+
+  const secondPass = await derivation.sweep();
+
+  check('a second sweep does no work, because everything has been visited',
+    secondPass === 0, secondPass);
+
+  await prisma.media.deleteMany({ where: { storageKey: derivedSlot.key } });
+
+await finish();
 })();

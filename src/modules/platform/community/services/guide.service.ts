@@ -346,6 +346,7 @@ export class GuideService {
           title: `${name} saved your guide`,
           body: excerpt(guide.title, 80),
           route: `/community/guide/${id}`,
+          target: { type: 'GUIDE', id },
           collapseKey: `guide:${id}`,
           collapsedTitle: (count2, actorName) =>
             count2 === 2
@@ -426,6 +427,7 @@ export class GuideService {
         title: `${name} liked your guide`,
         body: excerpt(guide.title, 80),
         route: `/community/guide/${id}`,
+        target: { type: 'GUIDE', id },
         // One row per guide, not one per liker.
         collapseKey: `guide-like:${id}`,
         collapsedTitle: (count, actorName) =>

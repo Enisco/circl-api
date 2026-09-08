@@ -398,6 +398,7 @@ export class GroupService {
         title: `${actor} asked to join ${group.name}`,
         body: null,
         route: `/community/group/${id}/requests`,
+        target: { type: 'GROUP', id },
         // One row per group: ten requests is one row saying ten, not ten rows.
         collapseKey: `group-join:${id}`,
         collapsedTitle: (count, actorName) =>
@@ -551,6 +552,8 @@ export class GroupService {
       body: null,
       // A declined member has nowhere useful to go, so that row is unroutable by design (6.1.1).
       route: approve ? `/community/group/${id}` : null,
+      // A declined member has nowhere to go, so there is no target either.
+      target: approve ? { type: 'GROUP', id } : null,
       metadata: { groupId: id },
     });
 
@@ -823,7 +826,12 @@ export class GroupService {
       categoryCode: 'GROUPS',
       title: 'New reply in your group post',
       body: excerpt(dto.content, 80),
-      route: `/community/group-post/${postId}`,
+      // Both ids, because neither the screen nor the API can open a group post without its group:
+      // replies live at `/community/groups/{groupId}/posts/{postId}/replies`, and nothing resolves
+      // a post id to its group. The old `/community/group-post/{postId}` named something real and
+      // was still unopenable.
+      route: `/community/group/${groupId}/post/${postId}`,
+      target: { type: 'GROUP_POST', id: postId, parent: { type: 'GROUP', id: groupId } },
     });
 
     return {

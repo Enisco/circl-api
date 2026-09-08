@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { MediaDerivationService } from '../media/derivation/media-derivation.service';
 import { S3Storage, StorageProvider } from '../media/storage';
 import {
   CityCompatMiddleware,
@@ -19,6 +20,7 @@ const SERVICES = [
   ActivityService,
   BlockingService,
   CityService,
+  MediaDerivationService,
   MediaService,
   RiskScannerService,
   TaxonomyService,

@@ -192,8 +192,14 @@ async function signIn(email) {
     likeRows.map(n => n.title));
   check('and the row says how many', /3 others|2 others|and \d+ other/.test(likeRows[0]?.title ?? ''),
     likeRows[0]?.title);
-  check('its route opens the post thread',
-    likeRows[0]?.route === `/community/post/${postId}`, likeRows[0]?.route);
+  // `/community/update/`, not `/community/post/`. The activity list (0.16.5) and the reply
+  // notification both route an update this way; the like notification was the only thing in the
+  // codebase using the other spelling, so a like and a reply on one post opened two screens.
+  check('its route opens the post, the same way every other reference to a post does',
+    likeRows[0]?.route === `/community/update/${postId}`, likeRows[0]?.route);
+  check('and it carries the structured target alongside',
+    likeRows[0]?.target?.type === 'UPDATE' && likeRows[0]?.target?.id === postId,
+    likeRows[0]?.target);
   check('it is filed under REACTIONS so it can be switched off',
     likeRows[0]?.categoryCode === 'REACTIONS' || true, likeRows[0]?.categoryCode);
 

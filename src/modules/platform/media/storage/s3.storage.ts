@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -142,6 +143,28 @@ export class S3Storage extends StorageProvider {
         mimeType: result.ContentType ?? 'application/octet-stream',
       };
     } catch {
+      return null;
+    }
+  }
+
+  async read(storageKey: string, range?: { start: number; end: number }): Promise<Buffer | null> {
+    try {
+      const result = await this.client.send(
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: storageKey,
+          // S3 answers a ranged GET with 206 and only those bytes, which is the whole point: a
+          // container header is the first few kilobytes of a file that may be ninety megabytes.
+          ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}),
+        }),
+      );
+
+      if (!result.Body) return null;
+
+      return Buffer.from(await result.Body.transformToByteArray());
+    } catch {
+      // A missing object, a range past the end, or a permissions problem all mean the same thing
+      // to the caller: there is nothing here to read.
       return null;
     }
   }

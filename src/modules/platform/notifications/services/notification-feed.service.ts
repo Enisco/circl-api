@@ -7,6 +7,47 @@ import { FcmService } from '@/modules/infrastructure/notification/providers/push
 import { ListNotificationsDto } from '../dtos';
 import { NotificationPreferenceService } from './notification-preference.service';
 
+/**
+ * What the notification is *about*, structured, so the client can route natively instead of
+ * parsing `route` as a string.
+ *
+ * `route` stays the authority — it is server-owned precisely so a new kind is tappable without an
+ * app release (6.1.1) — and this is the companion for a client that would rather push a typed
+ * screen than a path. Both always point at the same thing.
+ */
+export type NotificationTargetType =
+  | 'REQUEST'
+  | 'UPDATE'
+  | 'GUIDE'
+  | 'GROUP'
+  | 'GROUP_POST'
+  | 'CONVERSATION'
+  | 'BOOKING'
+  | 'ORDER'
+  | 'CONNECT_REQUEST'
+  | 'PROFILE'
+  | 'VERIFICATION';
+
+export interface NotificationTarget {
+  type: NotificationTargetType;
+  id: string;
+  /**
+   * The thing the target lives inside, when it cannot be opened without it. A group post is the
+   * case that forced this: the screen that shows its replies is
+   * `/community/groups/{groupId}/posts/{postId}/replies`, so a post id alone names something the
+   * client cannot fetch, and there is no endpoint that resolves a post to its group.
+   *
+   * Set it only where it is genuinely needed. A request, a guide and an order are all openable
+   * from their own id, and inventing a parent for them would be noise.
+   */
+  parent?: { type: NotificationTargetType; id: string };
+}
+
+/** A written notification, on its way to the device. The id is what a tap reports back as read. */
+interface PushableNotification extends RaiseNotificationInput {
+  notificationId: string;
+}
+
 /** What a section hands over when something happens worth telling somebody about. */
 export interface RaiseNotificationInput {
   userId: string;
@@ -16,6 +57,12 @@ export interface RaiseNotificationInput {
   title: string;
   body?: string | null;
   route?: string | null;
+  /**
+   * The thing the notification is about. Set it wherever there is one: it is what lets the client
+   * open a screen without reverse-engineering a URL, and leaving it to each caller's `metadata` is
+   * how the two drifted apart in the first place.
+   */
+  target?: NotificationTarget | null;
   actorId?: string | null;
   metadata?: Record<string, unknown>;
   /**
@@ -99,7 +146,7 @@ export class NotificationFeedService {
    * original, so the phone says "3 people liked your post" rather than buzzing three times with
    * the same sentence.
    */
-  private async write(input: RaiseNotificationInput): Promise<RaiseNotificationInput | null> {
+  private async write(input: RaiseNotificationInput): Promise<PushableNotification | null> {
     if (input.collapseKey) {
       const existing = await this.database.notification.findFirst({
         where: {
@@ -127,17 +174,18 @@ export class NotificationFeedService {
             createdAt: new Date(),
             metadata: toJsonOrUndefined({
               ...input.metadata,
+              ...(input.target ? { target: input.target } : {}),
               collapseKey: input.collapseKey,
               count,
             }),
           },
         });
 
-        return { ...input, title };
+        return { ...input, title, notificationId: existing.id };
       }
     }
 
-    await this.database.notification.create({
+    const created = await this.database.notification.create({
       data: {
         userId: input.userId,
         kind: input.kind,
@@ -146,19 +194,19 @@ export class NotificationFeedService {
         body: input.body ?? null,
         route: input.route ?? null,
         actorId: input.actorId ?? null,
-        metadata: toJsonOrUndefined(
-          input.collapseKey
-            ? { ...input.metadata, collapseKey: input.collapseKey, count: 1 }
-            : input.metadata,
-        ),
+        metadata: toJsonOrUndefined({
+          ...input.metadata,
+          ...(input.target ? { target: input.target } : {}),
+          ...(input.collapseKey ? { collapseKey: input.collapseKey, count: 1 } : {}),
+        }),
       },
     });
 
-    return input;
+    return { ...input, notificationId: created.id };
   }
 
   /** Fire-and-forget, like the row itself: a push that fails must never fail what raised it. */
-  private async push(input: RaiseNotificationInput): Promise<void> {
+  private async push(input: PushableNotification): Promise<void> {
     try {
       // The category's own row of the matrix (6.1.4), not a switch of its own.
       if (!(await this.preferences.allows(input.userId, input.categoryCode, 'push'))) return;
@@ -183,6 +231,10 @@ export class NotificationFeedService {
           type: input.kind,
           // An in-app path or nothing. A null route is a row that marks itself read and goes nowhere.
           ...(input.route ? { route: input.route } : {}),
+          // The same target the list carries, so a tap from a cold start opens the right screen
+          // without fetching the list first to find out where it goes.
+          ...(input.target ? { targetType: input.target.type, targetId: input.target.id } : {}),
+          notificationId: input.notificationId,
           badge: String(await this.unreadTotal(input.userId)),
         },
       );
@@ -253,6 +305,12 @@ export class NotificationFeedService {
         bucket: bucketFor(row.createdAt, now, timezone),
         isRead: row.isRead,
         route: row.route,
+        // The structured companion to `route`. Null on a row that goes nowhere, such as an
+        // announcement or a declined join request.
+        target: targetOf(row.metadata),
+        // How many actions this row folded together: 1 unless it collapsed (6.1.2). The title
+        // already says it in words; this is for a client that would rather draw it.
+        count: countOf(row.metadata),
         actor: row.actor ? toAuthorView(row.actor, { sign: this.media.sign }) : null,
         createdAt: row.createdAt.toISOString(),
       })),
@@ -296,3 +354,19 @@ export class NotificationFeedService {
     return profile?.city?.timezone ?? 'Europe/London';
   }
 }
+
+/** Reads the target back out of the stored metadata, tolerating rows written before it existed. */
+const targetOf = (metadata: unknown): NotificationTarget | null => {
+  const target = (metadata as { target?: NotificationTarget } | null)?.target;
+
+  if (!target?.type || !target?.id) return null;
+
+  return {
+    type: target.type,
+    id: target.id,
+    ...(target.parent?.type && target.parent?.id ? { parent: target.parent } : {}),
+  };
+};
+
+const countOf = (metadata: unknown): number =>
+  (metadata as { count?: number } | null)?.count ?? 1;

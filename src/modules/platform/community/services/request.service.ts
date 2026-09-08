@@ -398,6 +398,7 @@ export class RequestService {
           title: `${actor} credited you for helping`,
           body: excerpt(request.title, 80),
           route: `/community/request/${id}`,
+          target: { type: 'REQUEST', id },
           metadata: { requestId: id },
         });
       }

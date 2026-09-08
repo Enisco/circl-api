@@ -29,6 +29,16 @@ export abstract class StorageProvider {
 
   /** Object size and content type, read after upload by the derived-field job. */
   abstract head(storageKey: string): Promise<{ byteSize: number; mimeType: string } | null>;
+
+  /**
+   * Reads bytes back out. `range` is a byte range, inclusive of both ends, so a caller that only
+   * needs a header does not pay to move a 90MB video across the network to read twenty bytes.
+   * Null when the object is not there.
+   */
+  abstract read(
+    storageKey: string,
+    range?: { start: number; end: number },
+  ): Promise<Buffer | null>;
 }
 
 /** The window a read URL is valid for (0.11.3). */
