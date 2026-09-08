@@ -8,10 +8,9 @@ const ERROR_SCHEMA = 'ErrorEnvelope';
 const PAGE_META_SCHEMA = 'PageMeta';
 
 /**
- * Every successful response in this API is wrapped by one interceptor, and every failure by one
- * filter. Documenting that per handler would mean 200 copies of the same decorator that drift the
- * moment one is forgotten, so it is applied to the finished document instead: whatever a handler
- * declared becomes `data`, and the wrapper around it is written once, here.
+ * One interceptor wraps every success and one filter every failure. Documenting that per handler
+ * would be 200 copies of one decorator, so it is applied to the finished document instead:
+ * whatever a handler declared becomes `data`, and the wrapper is written once, here.
  */
 export const applyResponseEnvelope = (document: OpenAPIObject): OpenAPIObject => {
   document.components = document.components ?? {};

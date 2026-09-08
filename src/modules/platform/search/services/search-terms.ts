@@ -1,12 +1,6 @@
 /**
- * Query shaping and in-group ranking, kept out of the service so both can be unit tested without
- * a database.
- *
- * Two ideas do the work. A term is *expanded* before it reaches SQL, so "visas" also asks for
- * "visa" and the member does not have to guess our grammar. Results are then *ranked in memory*
- * over a small overfetched window, because eight types with eight different shapes cannot share
- * one ORDER BY, and sorting twenty rows in process costs microseconds against the milliseconds a
- * second round trip would cost.
+ * Query shaping and in-group ranking, kept out of the service so both are unit testable. A term is
+ * expanded before it reaches SQL, and results are ranked in memory over a small window.
  */
 
 /** Longer than this is a paste, not a search, and trigram matching degrades badly on it. */
@@ -18,11 +12,7 @@ export const MIN_TERM_LENGTH = 2;
 export const normaliseTerm = (raw: string | undefined | null): string =>
   (raw ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_TERM_LENGTH);
 
-/**
- * One crude English stem, not a stemmer. It exists so a member typing the plural of the word a
- * poster typed in the singular still finds the post, which is the single most common near miss.
- * It deliberately does nothing to short words, where the ending is usually part of the word.
- */
+/** One crude stem, so a plural finds a singular. Short words are left alone. */
 export const stemOf = (word: string): string | null => {
   const lower = word.toLowerCase();
 
@@ -35,10 +25,7 @@ export const stemOf = (word: string): string | null => {
   return null;
 };
 
-/**
- * The forms a single-word term is asked for in SQL. A phrase is left alone: stemming only the
- * last word of "visa applications" would ask for something nobody wrote.
- */
+/** A phrase is left alone: stemming its last word asks for something nobody wrote. */
 export const termVariants = (term: string): string[] => {
   const words = term.split(' ');
 
@@ -89,16 +76,13 @@ export const bestScore = (texts: Array<string | null | undefined>, variants: str
 };
 
 /**
- * A city match is a nudge, never a filter (the spec is explicit: someone searching "visa" in
- * London should see the London request first, not only London requests). Twelve points moves a
- * row past an equal one and never past a better textual match, which is the whole intent.
+ * A nudge, never a filter: it moves a row past an equal one, never past a better match.
  */
 export const CITY_BIAS = 12;
 
 /**
- * Recency decay, applied per type rather than globally: a request from eight months ago is almost
- * never useful, a guide from eight months ago usually is. A fully stale row keeps 40% of its
- * score, so an exact title match still beats a fresh row that merely contains the word.
+ * Per type: a request from eight months ago is useless, a guide usually is not. A stale row keeps
+ * 40%, so an exact title match still beats a fresh row that merely contains the word.
  */
 export const recencyFactor = (
   createdAt: Date | string | null | undefined,

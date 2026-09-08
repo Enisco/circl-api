@@ -117,9 +117,8 @@ async function bootstrap() {
 
   const port = config.get<number>('PORT') || config.get<number>('APP_PORT') || 4000;
 
-  // Checked BEFORE seeding rather than discovered at listen. Seeding can take half a minute with
-  // the demo dataset, and a port clash found afterwards reads as "the logs stopped after it
-  // seeded" rather than as the one-line problem it is.
+  // Before seeding, not at listen: the demo dataset takes half a minute, and a clash found after
+  // it reads as "the logs stopped" rather than as the one-line problem it is.
   await assertPortIsFree(port);
 
   // After the port check and before listening, so the app never serves a request against a half

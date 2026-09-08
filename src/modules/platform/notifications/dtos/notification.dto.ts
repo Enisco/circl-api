@@ -69,13 +69,19 @@ export class NotificationDto {
   })
   kind: string;
 
-  @ApiProperty({ example: 'Ada liked your post', description: 'Already worded. The client does no string assembly.' })
+  @ApiProperty({
+    example: 'Ada liked your post',
+    description: 'Already worded. The client does no string assembly.',
+  })
   title: string;
 
   @ApiProperty({ nullable: true, example: 'Three weeks in and the paperwork is finally done.' })
   body: string | null;
 
-  @ApiProperty({ enum: ['TODAY', 'THIS_WEEK', 'EARLIER'], description: "Computed in the member's timezone." })
+  @ApiProperty({
+    enum: ['TODAY', 'THIS_WEEK', 'EARLIER'],
+    description: "Computed in the member's timezone.",
+  })
   bucket: string;
 
   @ApiProperty({ example: false })
@@ -107,7 +113,10 @@ export class NotificationDto {
   })
   count: number;
 
-  @ApiProperty({ nullable: true, description: 'The shared author object (0.9). Null for ANNOUNCEMENT and VERIFICATION.' })
+  @ApiProperty({
+    nullable: true,
+    description: 'The shared author object (0.9). Null for ANNOUNCEMENT and VERIFICATION.',
+  })
   actor: Record<string, unknown> | null;
 
   @ApiProperty({ example: '2026-09-08T09:41:02.000Z' })

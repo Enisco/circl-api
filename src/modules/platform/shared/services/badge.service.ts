@@ -11,12 +11,8 @@ export interface BadgeCounts {
 }
 
 /**
- * The two counts a member is waiting on, computed in one place.
- *
- * They were computed in two, and both were sent under the key `badge`: a notification push carried
- * the unread *notification* count and a message push carried the unread *message* count. The iOS
- * icon badge is set straight from that key, so it flipped between two different meanings depending
- * on which push arrived last, and neither was the number a member would expect to see.
+ * The two counts a member is waiting on, in one place. They were computed in two and both sent as
+ * `badge`, so the iOS icon flipped meaning depending on which push arrived last.
  */
 @Injectable()
 export class BadgeService {

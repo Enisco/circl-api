@@ -133,11 +133,7 @@ export class SendMessageDto {
   @MaxLength(512, { each: true })
   attachmentKeys?: string[];
 
-  /**
-   * The same array under the name an early client shipped. `POST /media/uploads` only ever returns
-   * a `key`, so a client sending `attachmentIds` is sending keys under a wrong name rather than a
-   * different kind of value, which is why accepting it is safe rather than ambiguous.
-   */
+  /** The same keys under the name an early client shipped: uploads only ever return a `key`. */
   @ApiPropertyOptional({
     type: [String],
     deprecated: true,
@@ -152,10 +148,8 @@ export class SendMessageDto {
 }
 
 /**
- * The subjects a member can start a thread about from a screen. Everything else with a subject is
- * created by the section that owns it: a booking by accepting one, an order by placing one, a
- * dispute by raising one. These two have no such moment. Somebody asking about an item has not
- * bought it, and somebody asking about an offer has not accepted it.
+ * The subjects a member starts a thread about from a screen. Everything else is created by the
+ * section that owns it, at the moment the subject exists; these have no such moment.
  */
 export const START_THREAD_CONTEXTS = {
   COMMERCE_ITEM: ThreadContextType.ITEM,
@@ -169,11 +163,8 @@ export const START_THREAD_CONTEXTS = {
 } as const;
 
 /**
- * The subjects that name the other person by themselves. An item has one seller and an offer one
- * author, so the recipient is derived and sending a different one is an error.
- *
- * A request is not one of them: it has as many helpers as answered it, so `recipientUserId` is
- * required alongside the context and says which of them this thread is with.
+ * The subjects that name the other person by themselves. A request does not: it has as many
+ * helpers as answered it, so it needs `recipientUserId` too.
  */
 export const CONTEXTS_THAT_NAME_THE_RECIPIENT: readonly ThreadContextType[] = [
   ThreadContextType.ITEM,

@@ -409,9 +409,8 @@ export class GuideService {
       }
     });
 
-    // `count` was 0 on a repeat tap, which is how a second tap stays silent rather than notifying
-    // the author twice. Saving a guide has notified since it shipped; liking one did not, and the
-    // author had no way to tell the difference from the outside.
+    // `count` is 0 on a repeat tap, which is how a second tap stays silent rather than notifying
+    // the author twice.
     if (isFirstLike && guide.authorId) {
       const actor = await this.database.user.findUnique({
         where: { id: userId },

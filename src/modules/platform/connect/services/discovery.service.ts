@@ -168,11 +168,8 @@ export class DiscoveryService {
       }
     }
 
-    // Name, username and what they are looking for, as well as the two profile texts. `lookingFor`
-    // is included here and deliberately not in `PERSON` search: on Connect it is the point, and
-    // members wrote it knowing it is the public part of the profile. A Connect profile is opt-in
-    // visible, so being findable by name in it is the member's own decision, not a leak.
-    // Normalised first: a term with a double space in it splits into words that match nothing.
+    // `lookingFor` is searched here and not in `PERSON`: a Connect profile is opt-in visible, and
+    // this field is the point of it. Normalised first, or a double space splits into nothing.
     const term = normaliseTerm(query.q);
 
     if (term.length >= 2) {

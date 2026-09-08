@@ -35,31 +35,16 @@ export interface SearchGroup {
 const DEFAULT_LIMIT = 3;
 const MAX_LIMIT = 25;
 
-/**
- * How many rows a type is asked for before ranking, as a multiple of the requested limit. Ranking
- * happens over this window rather than in SQL, because eight shapes cannot share one ORDER BY.
- * Four is enough for the city bias to have something to choose between and small enough that the
- * hydration each list service does stays trivial.
- */
+/** Rows fetched per type before ranking: eight shapes cannot share one SQL ORDER BY. */
 const OVERFETCH = 4;
 const MAX_CANDIDATES = 24;
 
-/**
- * A type that has not answered in this long is dropped from the response rather than allowed to
- * hold the other seven. Search is a keystroke-latency surface: a partial answer now beats a
- * complete one after a second and a half.
- */
+/** A slow type degrades to an empty group rather than holding the other seven. */
 const RESOLVER_DEADLINE_MS = 1500;
 
 /**
- * The same member typing, deleting and retyping asks for the same term repeatedly, and going into
- * a result and back asks for it again. Ten seconds is long enough to make all of that free and
- * short enough that a post deleted or a member suspended mid-search disappears while it still
- * feels like the same action.
- *
- * Blocking is the exception and is not left to the clock: the key carries a fingerprint of the
- * caller's blocks, so blocking somebody invalidates every cached answer for that caller at once.
- * "Invisible in every result of every type, in both directions" cannot be eventually true.
+ * Retyping the same term is free for ten seconds. Blocking is not left to the clock: the key
+ * carries a fingerprint of the caller's blocks, so a block invalidates their cached answers now.
  */
 const CACHE_TTL_MS = 10_000;
 const CACHE_MAX_ENTRIES = 500;
@@ -95,29 +80,9 @@ interface Candidates {
 }
 
 /**
- * One endpoint, parameterised by `types`, doing exactly one job: the **All** view. A mixed,
- * grouped preview with a true count per type, in one round trip.
- *
- * It takes no filters. The moment a member narrows to a single type the app leaves `/search` and
- * calls that type's own list endpoint, which already has `q`, its own categories, sort and paging.
- * A subcategory is not a shared vocabulary — "Legal" is a request category, a profession code and
- * a store category, three taxonomies that happen to share an English word — so a flat `category=`
- * across a multi-type search would have no single meaning.
- *
- * Latency comes from four decisions, in order of how much they matter:
- *
- * 1. **Every type resolves concurrently**, and one slow or broken type degrades to an empty group
- *    instead of holding the response (`RESOLVER_DEADLINE_MS`).
- * 2. **Every column search reads has a trigram GIN index**, so an `ILIKE '%term%'` is an index
- *    scan rather than a sequential one. `test/e2e/schema-indexes.e2e.cjs` is the guard.
- * 3. **Only `limit x 4` rows are hydrated per type.** Hydration, not matching, is what costs: a
- *    list row carries an author, a city, signed media and taxonomy labels.
- * 4. **Repeat terms are served from a short-lived cache**, which is most of what a search box
- *    actually asks for.
- *
- * Elasticity is two things and neither of them is a second engine. A term is expanded before it
- * reaches SQL, so a plural finds a singular; and matching is substring, so a prefix or an infix
- * both land. `PERSON` adds a trigram pass on top, because names are where typos actually happen.
+ * The All view: a grouped preview with a true count per type, in one round trip. No filters, since
+ * narrowing to one type leaves this endpoint for that type's own list. Types resolve concurrently,
+ * every searched column has a trigram index, and repeat terms come from a short cache.
  */
 @Injectable()
 export class SearchService {
@@ -140,8 +105,7 @@ export class SearchService {
     const wanted = this.typesFor(dto);
     const limit = Math.min(Math.max(dto.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
 
-    // A direct call below two characters is answered, not refused: the client debounces and will
-    // not ask, but an empty result is the honest answer to "wh". Nothing reaches the database.
+    // Answered, not refused: an empty result is the honest answer to "wh". No query is run.
     if (term.length < MIN_TERM_LENGTH || !wanted.length) {
       return { data: { groups: [], suggestions: [] } };
     }
@@ -151,12 +115,10 @@ export class SearchService {
 
     if (hit) return { data: hit };
 
-    // Never below `limit`: the window exists to give ranking something to choose between, and a
-    // cap that fell under the requested limit would silently return fewer rows than asked for.
+    // Never below `limit`, or the cap would silently return fewer rows than asked for.
     const take = Math.max(limit, Math.min(limit * OVERFETCH, MAX_CANDIDATES));
 
-    // One round of I/O: every type, the viewer's city and the completions all at once. The city is
-    // only needed to rank rows that have already come back, so it never has to be waited on first.
+    // One round of I/O. The city only ranks rows already returned, so it is not waited on first.
     const [candidates, cityId, suggestions] = await Promise.all([
       Promise.all(wanted.map(type => this.candidatesFor(type, viewerId, term, take))),
       dto.cityId ? Promise.resolve(dto.cityId) : this.viewerCity(viewerId),
@@ -173,16 +135,11 @@ export class SearchService {
     return { data };
   }
 
-  /**
-   * `types` wins, `scope` is honoured when it is all that was sent, and everything is the default.
-   * Unknown codes are dropped rather than rejected, so retiring a type never breaks an older build
-   * and a new type can ship server-first.
-   */
+  /** Unknown codes are dropped, not rejected, so retiring a type never breaks an older build. */
   private typesFor(dto: SearchDto): SearchType[] {
     if (dto.types?.length) {
       const known = new Set<string>(SEARCH_TYPES);
-      // Deduped: a repeated code would otherwise mean two identical groups in the response and
-      // the same eight queries run twice.
+      // Deduped: a repeated code would mean two identical groups and the queries run twice.
       const asked = new Set(dto.types.filter((code): code is SearchType => known.has(code)));
 
       return [...asked];
@@ -191,11 +148,7 @@ export class SearchService {
     return SCOPE_TYPES[dto.scope ?? 'ALL'];
   }
 
-  /**
-   * Ranking happens here, in memory, over the window the resolver returned. Within a group only:
-   * the response is grouped and the app renders groups in its own order, so a global ordering
-   * would be computed and then thrown away.
-   */
+  /** Ranked in memory, within a group only: the app renders groups in its own order. */
   private finalise(
     type: SearchType,
     candidates: Candidates,
@@ -246,8 +199,7 @@ export class SearchService {
         RESOLVER_DEADLINE_MS,
       );
     } catch (error) {
-      // A gate is not a failure, and it must not become a response status: a 403 on the whole call
-      // would let one gated type destroy the other seven groups.
+      // A gate is a group status, never a response status: a 403 would destroy the other groups.
       if (error instanceof ApiException && error.code === ApiErrorCode.CONNECT_PROFILE_REQUIRED) {
         return { ...empty, gate: ApiErrorCode.CONNECT_PROFILE_REQUIRED };
       }
@@ -259,13 +211,8 @@ export class SearchService {
   }
 
   /**
-   * The expansion pass. A list endpoint takes one `q` and matches it as a substring, so the stem
-   * cannot be ORed into its query without changing six services. Asking a second time costs a
-   * query only when the first found nothing at all, which is the only time it can change an
-   * answer, and it is what makes "bursaries" find the guide somebody titled "Bursary".
-   *
-   * `PERSON` is skipped: its resolver already ORs every variant in one query, and has its own
-   * trigram fallback below that.
+   * Retries with the stem when the term found nothing, so "bursaries" finds "Bursary". Skipped for
+   * PERSON, whose resolver already ORs every variant and has a trigram fallback.
    */
   private async resolveElastic(
     type: SearchType,
@@ -283,13 +230,8 @@ export class SearchService {
   }
 
   /**
-   * One resolver per type, each owning its own permission rules. Every one returns the row its own
-   * list endpoint returns, so the client reuses the parser and the card it already has rather than
-   * a shape invented for search.
-   *
-   * `cityId` is deliberately not passed down: it biases the ranking, it does not filter. A hard
-   * city filter would make search feel broken for anyone who has moved recently or is still
-   * planning their move, which is a large share of the membership.
+   * One resolver per type, each returning its own list row so the client reuses its parser.
+   * `cityId` is not passed down: it biases the ranking, it does not filter.
    */
   private async resolve(
     type: SearchType,
@@ -314,7 +256,7 @@ export class SearchService {
       case 'PERSON':
         return this.people.preview(viewerId, term, take, null);
       case 'CONNECT_PROFILE':
-        // Facets are a filter bar's worth of work over 500 rows, and search shows no filter bar.
+        // Facets read 500 rows for a filter bar search does not show.
         return paged(this.connect.discover(viewerId, query as never, { facets: false }));
       case 'PROFESSIONAL':
         return paged(this.professionals.browse(viewerId, query as never));
@@ -325,10 +267,7 @@ export class SearchService {
     }
   }
 
-  /**
-   * Enough of the caller's block list to notice it changed, without reading it. Both directions,
-   * and the count moves on an unblock as well as a block. One indexed aggregate.
-   */
+  /** Enough of the block list to notice it changed, without reading it. One indexed aggregate. */
   private async blockFingerprint(viewerId: string): Promise<string> {
     const summary = await this.database.block.aggregate({
       where: { OR: [{ blockerId: viewerId }, { blockedId: viewerId }] },
@@ -354,8 +293,7 @@ export class SearchService {
       where: {
         deletedAt: null,
         name: { contains: escapeLike(term), mode: 'insensitive' },
-        // Only when the caller named a city. Unlike the groups, a completion the member cannot act
-        // on is noise, so this one does filter.
+        // This one filters: a completion the member cannot act on is noise.
         ...(cityId ? { store: { cityId } } : {}),
       },
       select: { name: true },
@@ -381,8 +319,7 @@ export class SearchService {
   }
 
   private remember(key: string, data: unknown): void {
-    // Insertion-ordered, so the oldest key is the first one iteration yields. Bounded because an
-    // unbounded per-term cache is a memory leak with a search box attached to it.
+    // Insertion-ordered, so the oldest key goes first. Bounded, or it is a memory leak.
     if (this.cache.size >= CACHE_MAX_ENTRIES) {
       const oldest = this.cache.keys().next();
 
@@ -393,12 +330,7 @@ export class SearchService {
   }
 }
 
-/**
- * Rejects when the work outlives the deadline, which `candidatesFor` turns into an empty group
- * marked `degraded` so one slow type cannot hold the other seven. The work itself is not
- * cancelled, because none of the underlying queries are cancellable: it finishes into a promise
- * nobody is listening to.
- */
+/** Rejects past the deadline. The work is not cancelled; it finishes unheard. */
 const withDeadline = <T>(work: Promise<T>, ms: number): Promise<T> =>
   new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
@@ -416,21 +348,9 @@ const withDeadline = <T>(work: Promise<T>, ms: number): Promise<T> =>
   });
 
 /**
- * The type discriminator: an item is the type's ordinary shape plus the fields that say what it
- * is, never a wrapper. A wrapper would mean a second parser per type and a second place for them
- * to drift.
- *
- * Two rows already own a `type` of their own, and it means something else: a Connect profile's is
- * the connection type (FRIENDSHIP, DATING) and a shop's is the shop type (Grocery, Salon).
- * Overwriting either would silently blank a field the card renders, so instead:
- *
- * - `resultType` is **always** the search code, on every item of every type. Dispatch on this, or
- *   on `group.type`, and nothing can collide with it later.
- * - `type` is the search code wherever the row does not already define one, which is six types of
- *   the eight. Where it does, the row keeps its own value and it is mirrored onto `connectionType`
- *   or `storeType` so the client can move off `type` at its own pace.
- *
- * Nothing is lost either way, which is the property worth having.
+ * `resultType` is always the search code. `type` is too, except on the two rows that already own
+ * one — a Connect profile's connection type and a shop's shop type — which keep theirs and mirror
+ * it onto `connectionType` / `storeType`. Overwriting would blank a field the card renders.
  */
 const OWN_TYPE_ALIAS: Partial<Record<SearchType, string>> = {
   CONNECT_PROFILE: 'connectionType',

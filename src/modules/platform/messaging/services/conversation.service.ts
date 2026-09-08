@@ -1,5 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { Conversation, MessageKind, Prisma, RequestStatus, TaxonomyKind, ThreadContextType, ThreadKind } from '@prisma/client';
+import {
+  Conversation,
+  MessageKind,
+  Prisma,
+  RequestStatus,
+  TaxonomyKind,
+  ThreadContextType,
+  ThreadKind,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta, escapeLike } from '@/common';
 import {
@@ -41,7 +49,11 @@ interface ThreadSubject {
 
 /** The status chip the context strip renders, worded here so two clients cannot word it differently. */
 const statusLabel = (status: RequestStatus): string =>
-  status === RequestStatus.OPEN ? 'Open' : status === RequestStatus.RESOLVED ? 'Resolved' : 'Expired';
+  status === RequestStatus.OPEN
+    ? 'Open'
+    : status === RequestStatus.RESOLVED
+      ? 'Resolved'
+      : 'Expired';
 
 export interface ContextView {
   type: ThreadContextType | null;
@@ -200,10 +212,8 @@ export class ConversationService {
 
   /** Returns the existing conversation when one already matches the uniqueness key, so the client opens the same thread either way (5.3.5). */
   async startDirect(userId: string, dto: StartThreadDto) {
-    // A thread about something derives its other party from that something: the item's seller, the
-    // offer's author. Trusting the client for both the subject and the recipient would let the two
-    // disagree, and a thread pinned to an item that the other person does not sell is nonsense
-    // nobody can act on.
+    // The subject names the other party, where it can. Trusting the client for both would let a
+    // thread be pinned to an item the other person does not sell.
     const subject = dto.context ? await this.resolveSubject(dto.context) : null;
     const recipientUserId = subject?.ownerId ?? dto.recipientUserId;
 
@@ -234,12 +244,7 @@ export class ConversationService {
     return this.open(userId, recipientUserId, subject);
   }
 
-  /**
-   * A request thread is between the person who asked and somebody who offered to help, in either
-   * direction. Without this, any two members could open a thread pinned to a stranger's request,
-   * which is not a leak so much as a nonsense: it would show a context strip about something
-   * neither of them has anything to do with.
-   */
+  /** Between the asker and a helper, either direction: otherwise two strangers could open one. */
   private async assertRequestPair(
     subject: ThreadSubject,
     userId: string,
@@ -300,9 +305,7 @@ export class ConversationService {
       select: { openInbox: true },
     });
 
-    // A subject is its own invitation: listing an item or posting an offer is asking to be asked
-    // about it, so the open-inbox gate does not apply to a thread pinned to one. Blocking still
-    // does, above, and always will.
+    // A subject is its own invitation, so the open-inbox gate does not apply. Blocking still does.
     if (!subject && !profile?.openInbox) {
       const connected = await this.database.connectionRequest.findFirst({
         where: {
@@ -323,8 +326,7 @@ export class ConversationService {
       }
     }
 
-    // Unique on (participants, contextType, contextId), so two questions about two items are two
-    // threads and two questions about one item are one.
+    // Unique on (participants, contextType, contextId).
     const { conversation, created } = await this.factory.ensure({
       kind: ThreadKind.DIRECT,
       participantIds: [userId, dto.recipientUserId],
@@ -390,11 +392,7 @@ export class ConversationService {
 
   // ─── Internals ─────────────────────────────────────────────────────────────
 
-  /**
-   * Turns a client's `{ kind, id }` into the three things a thread needs: who the other party is,
-   * what the thread is keyed on, and what the pinned strip renders. Loading the subject is also
-   * how a made-up id is caught: it 404s here rather than opening a thread about nothing.
-   */
+  /** The other party, the uniqueness key and the pinned strip. A made-up id 404s here. */
   private async resolveSubject(context: ThreadContextDto): Promise<ThreadSubject> {
     const contextType = START_THREAD_CONTEXTS[context.kind];
     const contextId = context.id ?? context.itemId ?? context.offerId;
@@ -441,9 +439,11 @@ export class ConversationService {
 
       if (!request) throw ApiException.notFound('That request could not be found.');
 
-      const [category] = await this.taxonomy.list(TaxonomyKind.COMMUNITY_CATEGORY, false).then(
-        terms => [terms.find(term => term.code === request.categoryCode)?.label ?? 'Request'],
-      );
+      const [category] = await this.taxonomy
+        .list(TaxonomyKind.COMMUNITY_CATEGORY, false)
+        .then(terms => [
+          terms.find(term => term.code === request.categoryCode)?.label ?? 'Request',
+        ]);
 
       return {
         // A request has many helpers, so the subject cannot say who this thread is with. The
@@ -482,10 +482,8 @@ export class ConversationService {
   }
 
   async requireParticipant(userId: string, conversationId: string): Promise<ConversationRow> {
-    // The socket handlers take a raw payload with no validation pipe in front of them, so an id
-    // that is missing or the wrong shape reaches this method rather than being rejected earlier.
-    // Prisma throws its own unreadable error on `where: { id: undefined }`; this is the same
-    // outcome the caller would have got for an id that simply does not exist.
+    // Socket payloads have no validation pipe, so a missing id reaches this instead of Prisma,
+    // which throws an unreadable error on `where: { id: undefined }`.
     if (typeof conversationId !== 'string' || !conversationId) {
       throw ApiException.notFound('That conversation could not be found.');
     }
@@ -496,10 +494,8 @@ export class ConversationService {
     });
 
     if (!conversation) {
-      // A user id and a conversation id are different id spaces, and passing the first where the
-      // second belongs is the easy mistake to make from a profile screen: the id is right there
-      // and the route takes an id. Saying so costs one query on a path that already failed, and
-      // saves the caller guessing. It reveals nothing: any signed-in member can read that profile.
+      // Passing a member id here is the easy mistake from a profile screen. One query on a path
+      // that already failed, and it reveals nothing a signed-in member cannot already read.
       const isUserId = await this.database.user.findUnique({
         where: { id: conversationId },
         select: { id: true },
@@ -590,9 +586,8 @@ export class ConversationService {
       other
         ? {
             ...toAuthorView(other.user, { sign: this.media.sign }),
-            // Read from the live socket registry. This used to be a hardcoded `false` with a
-            // comment promising the gateway would overlay it, and nothing ever did: the inbox
-            // said everybody was offline, including whoever was typing at the time.
+            // From the live socket registry. It was a hardcoded `false`, so the inbox said
+            // everybody was offline, including whoever was typing at the time.
             isOnline: this.presence.isOnline(other.userId),
             lastSeenAt: other.user.sessions?.[0]?.lastActiveAt.toISOString() ?? null,
           }

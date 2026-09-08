@@ -2,9 +2,11 @@ import { FcmService } from '../fcm.service';
 
 /** `buildMessage` is private; the shape it produces is the contract with APNs and FCM. */
 const build = (data?: Record<string, string>) =>
-  (FcmService.prototype as unknown as {
-    buildMessage: (t: string, b: string, d?: Record<string, string>) => Record<string, never>;
-  }).buildMessage.call({}, 'Title', 'Body', data) as {
+  (
+    FcmService.prototype as unknown as {
+      buildMessage: (t: string, b: string, d?: Record<string, string>) => Record<string, never>;
+    }
+  ).buildMessage.call({}, 'Title', 'Body', data) as {
     apns: { headers?: Record<string, string>; payload: { aps: { badge?: number } } };
     android: { collapseKey?: string };
     data?: Record<string, string>;

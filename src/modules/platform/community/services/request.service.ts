@@ -410,11 +410,8 @@ export class RequestService {
   }
 
   /**
-   * Somebody who offered to help and was not credited used to hear nothing, ever: their offer
-   * simply went quiet. That silence is the one real problem an accept/decline flow would have
-   * solved, and this solves it without anybody being declined.
-   *
-   * One notification, at resolution, to each person who offered and was not credited.
+   * One notification, at resolution, to each person who offered and was not credited. Without it
+   * their offer simply goes quiet, which is the one real problem an accept/decline flow solves.
    */
   private async tellTheRestItIsOver(
     requestId: string,

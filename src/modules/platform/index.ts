@@ -1,7 +1,6 @@
-// Import the leaf barrels (`@/modules/platform/shared`) from a core module, never this one: it
-// pulls in every platform module, and `SearchModule` imports `UsersModule` for the PERSON
-// resolver. Going through here from `core/users` closes that loop and Nest boots with one of the
-// two modules undefined.
+// From a core module import the leaf barrels (`@/modules/platform/shared`), never this one: it
+// pulls in every platform module, and `SearchModule` imports `UsersModule`, so going through here
+// closes the cycle and Nest boots with one of the two undefined.
 import { AccountModule } from './account/account.module';
 import { AdminModule } from './admin/admin.module';
 import { CommerceModule } from './commerce/commerce.module';

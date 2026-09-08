@@ -26,11 +26,8 @@ export class CustomThrottlerGuard extends ThrottlerGuard {
   }
 
   /**
-   * The member, falling back to the IP when there is no token.
-   *
-   * The token is read unverified because this only picks a bucket. The guard runs
-   * before JwtAuthGuard, so `req.user` is not set yet and everyone behind one IP
-   * would otherwise share a limit.
+   * The member, falling back to the IP when there is no token. Read unverified because this only
+   * picks a bucket: the guard runs before JwtAuthGuard, so `req.user` is not set yet.
    */
   protected async getTracker(req: Record<string, any>): Promise<string> {
     const authenticated = req.user?.id;

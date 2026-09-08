@@ -18,15 +18,9 @@ const FIELDS: Record<string, TaxonomyKind> = {
 };
 
 /**
- * The 0.7 compatibility shim, alongside the city one.
- *
- * The shipped client's pickers are lists of display labels and it sends the label rather than the
- * code, so `countryOfOrigin: "Nigeria"` arrives where `NG` is expected and onboarding stops on a
- * value the member chose from a list this API served them. Resolution keys off the value rather
- * than the field name, so a client already sending codes is untouched.
- *
- * Delete this file once the app's pickers hold codes. Every rewrite is logged, so the logs say
- * when that is.
+ * The 0.7 shim: the shipped client's pickers send labels, so `countryOfOrigin: "Nigeria"` arrives
+ * where `NG` is expected. Keys off the value, so a client already sending codes is untouched.
+ * Delete once the pickers hold codes; every rewrite is logged, so the logs say when.
  */
 @Injectable()
 export class TaxonomyCompatMiddleware implements NestMiddleware {

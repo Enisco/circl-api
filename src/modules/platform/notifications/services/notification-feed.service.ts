@@ -13,14 +13,7 @@ import { FcmService } from '@/modules/infrastructure/notification/providers/push
 import { ListNotificationsDto } from '../dtos';
 import { NotificationPreferenceService } from './notification-preference.service';
 
-/**
- * What the notification is *about*, structured, so the client can route natively instead of
- * parsing `route` as a string.
- *
- * `route` stays the authority — it is server-owned precisely so a new kind is tappable without an
- * app release (6.1.1) — and this is the companion for a client that would rather push a typed
- * screen than a path. Both always point at the same thing.
- */
+/** What the notification is about, so a client can route without parsing `route` (6.1.1). */
 export type NotificationTargetType =
   | 'REQUEST'
   | 'UPDATE'
@@ -38,13 +31,8 @@ export interface NotificationTarget {
   type: NotificationTargetType;
   id: string;
   /**
-   * The thing the target lives inside, when it cannot be opened without it. A group post is the
-   * case that forced this: the screen that shows its replies is
-   * `/community/groups/{groupId}/posts/{postId}/replies`, so a post id alone names something the
-   * client cannot fetch, and there is no endpoint that resolves a post to its group.
-   *
-   * Set it only where it is genuinely needed. A request, a guide and an order are all openable
-   * from their own id, and inventing a parent for them would be noise.
+   * Set only where the target cannot be opened without it: a group post needs its group, since
+   * the replies route is `/community/groups/{groupId}/posts/{postId}/replies`.
    */
   parent?: { type: NotificationTargetType; id: string };
 }
@@ -63,19 +51,11 @@ export interface RaiseNotificationInput {
   title: string;
   body?: string | null;
   route?: string | null;
-  /**
-   * The thing the notification is about. Set it wherever there is one: it is what lets the client
-   * open a screen without reverse-engineering a URL, and leaving it to each caller's `metadata` is
-   * how the two drifted apart in the first place.
-   */
+  /** Set it wherever there is one. Leaving it to each caller's metadata is how they drifted. */
   target?: NotificationTarget | null;
   actorId?: string | null;
   metadata?: Record<string, unknown>;
-  /**
-   * Collapses repeats onto one row instead of one per actor. Fifty likes on a post is one
-   * notification that says fifty; fifty rows is how a member stops reading the list at all.
-   * Two notifications collapse together when this key matches and the row is still unread.
-   */
+  /** Collapses repeats onto one unread row: fifty likes is one notification that says fifty. */
   collapseKey?: string;
   /** Renders the collapsed row: `(count, latestActorName) => title`. */
   collapsedTitle?: (count: number, actor: string | null) => string;
@@ -119,11 +99,7 @@ export class NotificationFeedService {
     private readonly badges: BadgeService,
   ) {}
 
-  /**
-   * The actor's name, for a title that reads "Ada liked your guide" rather than "Somebody did".
-   * Here rather than in each section because five of them now need the same two lines, and a
-   * deleted or anonymised member has to fall back to the same word in all five.
-   */
+  /** The actor's name for a title. Here so five sections fall back to the same word. */
   async actorName(userId: string): Promise<string> {
     const actor = await this.database.user.findUnique({
       where: { id: userId },
@@ -147,12 +123,7 @@ export class NotificationFeedService {
       .catch(error => this.logger.warn(`Notification not recorded: ${(error as Error).message}`));
   }
 
-  /**
-   * Writes the row, folding into an existing unread one where the caller asked for collapsing.
-   * Returns what should be pushed, which for a collapsed row is the updated title rather than the
-   * original, so the phone says "3 people liked your post" rather than buzzing three times with
-   * the same sentence.
-   */
+  /** Folds into an existing unread row when asked, and returns the title that should be pushed. */
   private async write(input: RaiseNotificationInput): Promise<PushableNotification | null> {
     if (input.collapseKey) {
       const existing = await this.database.notification.findFirst({
@@ -218,9 +189,7 @@ export class NotificationFeedService {
       // The category's own row of the matrix (6.1.4), not a switch of its own.
       if (!(await this.preferences.allows(input.userId, input.categoryCode, 'push'))) return;
 
-      // Every handset they are signed in on, not the most recent one. A member reading on a
-      // tablet and carrying a phone should be reachable on both, and until this was a table it
-      // was a column: the second device to register silently unsubscribed the first.
+      // Every handset, not the most recent: it was a column, and a second device unsubscribed the first.
       const devices = await this.database.pushDevice.findMany({
         where: { userId: input.userId },
         select: { token: true },
@@ -239,11 +208,9 @@ export class NotificationFeedService {
           type: input.kind,
           // An in-app path or nothing. A null route is a row that marks itself read and goes nowhere.
           ...(input.route ? { route: input.route } : {}),
-          // The same target the list carries, so a tap from a cold start opens the right screen
-          // without fetching the list first to find out where it goes.
+          // So a tap from a cold start routes without fetching the list first.
           ...(input.target ? { targetType: input.target.type, targetId: input.target.id } : {}),
-          // The parent travels too, or a group post push is unopenable for exactly the reason the
-          // list row was: replies live under the group and nothing resolves a post to its group.
+          // The parent too, or a group post push is unopenable: nothing resolves a post to its group.
           ...(input.target?.parent
             ? {
                 targetParentType: input.target.parent.type,
@@ -251,9 +218,7 @@ export class NotificationFeedService {
               }
             : {}),
           notificationId: input.notificationId,
-          // One number for the icon, and both halves named, so the client can update either
-          // in-app counter without a fetch. `badge` used to mean two different things depending
-          // on which kind of push arrived last.
+          // One number for the icon, both halves named, so either counter updates without a fetch.
           badge: String(counts.total),
           unreadNotifications: String(counts.notifications),
           unreadMessages: String(counts.messages),
@@ -266,14 +231,7 @@ export class NotificationFeedService {
     }
   }
 
-  /**
-   * Drops tokens FCM has told us are dead. Without this a member who reinstalls leaves a token
-   * behind that fails on every notification forever: an error line per like, and a device that
-   * quietly receives nothing with nothing in the data saying why.
-   *
-   * Deleted by token rather than by member, so the phone that just registered is untouched by a
-   * tablet's failure.
-   */
+  /** Drops dead tokens by token, so one device's failure does not unsubscribe the others. */
   private async forget(tokens: string[]): Promise<void> {
     if (!tokens.length) return;
 
@@ -376,7 +334,7 @@ export class NotificationFeedService {
   }
 }
 
-/** Reads the target back out of the stored metadata, tolerating rows written before it existed. */
+/** Tolerates rows written before `target` existed. */
 const targetOf = (metadata: unknown): NotificationTarget | null => {
   const target = (metadata as { target?: NotificationTarget } | null)?.target;
 
@@ -389,5 +347,4 @@ const targetOf = (metadata: unknown): NotificationTarget | null => {
   };
 };
 
-const countOf = (metadata: unknown): number =>
-  (metadata as { count?: number } | null)?.count ?? 1;
+const countOf = (metadata: unknown): number => (metadata as { count?: number } | null)?.count ?? 1;

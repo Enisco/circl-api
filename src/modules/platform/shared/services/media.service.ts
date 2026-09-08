@@ -194,9 +194,8 @@ export class MediaService {
       ),
     );
 
-    // The first moment the bytes are known to be in storage, which is the earliest anything can be
-    // read out of them (0.11.4). Fire-and-forget: a photo must not fail to send because its
-    // dimensions could not be read, and the hourly sweep catches whatever this misses.
+    // The earliest the bytes are known to be in storage (0.11.4). Fire-and-forget, since a photo
+    // must not fail to send over this, and the hourly sweep catches what it misses.
     this.derivation.schedule(media.filter(item => item.derivedAt === null).map(item => item.id));
   }
 

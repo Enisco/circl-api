@@ -69,9 +69,7 @@ export class PlatformJobsService {
 
   /**
    * Reads width, height and duration out of anything uploaded since the last pass (0.11.4).
-   * `attach` already schedules this for the common case; the sweep is what makes it a guarantee
-   * rather than a best effort, and it is the only thing that visits media uploaded but never
-   * attached.
+   * `attach` covers the common case; only the sweep visits media uploaded but never attached.
    */
   @Cron(CronExpression.EVERY_30_MINUTES, { name: 'media.derive' })
   async deriveMedia() {

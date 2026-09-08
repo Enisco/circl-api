@@ -255,9 +255,8 @@ export class UpdateService {
         categoryCode: 'REACTIONS',
         title: `${displayNameOf(actor?.firstName, actor?.lastName)} liked your post`,
         body: excerpt(update.content, 80),
-        // `/community/post/` was the odd one out: the reply notification and the activity list
-        // both use `/community/update/`, so a like and a reply on the same post sent the app to
-        // two different screens.
+        // `/community/update/`, matching the reply notification and the activity list: under
+        // `/community/post/` a like and a reply on one post opened two different screens.
         route: `/community/update/${id}`,
         target: { type: 'UPDATE', id },
         // One row per post, not one per liker.

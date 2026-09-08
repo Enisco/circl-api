@@ -5,11 +5,7 @@ import { StorageProvider } from '../storage';
 import { imageDimensions } from './image-dimensions';
 import { videoMetadata, videoMetadataFromTail } from './video-metadata';
 
-/**
- * How much of an object to fetch to read its header. Generous for an image because a JPEG's SOF
- * can sit behind a large EXIF block, and because this is a ranged GET: the cost is the bytes moved,
- * not the size of the file.
- */
+/** A JPEG's frame header can sit behind a large EXIF block. Ranged, so the cost is bytes moved. */
 const IMAGE_HEAD_BYTES = 256 * 1024;
 const VIDEO_HEAD_BYTES = 512 * 1024;
 
@@ -20,18 +16,9 @@ const VIDEO_TAIL_BYTES = 2 * 1024 * 1024;
 const SETTLE_MS = 1500;
 
 /**
- * The producer for the derived fields the spec has always promised (0.11.4) and nothing ever
- * wrote: `width`, `height` and a video's duration were null on everything a member uploaded, and
- * populated only on seeded rows, which is the worst possible arrangement — it looks built.
- *
- * The bytes never pass through the API, so the only way to learn anything about them is to read
- * them back out of storage. This reads the **header** rather than the file: a ranged GET of the
- * first few hundred kilobytes is enough for every format the API accepts, so deriving a 90MB
- * video's dimensions costs half a megabyte of transfer.
- *
- * It runs after the bytes are known to exist rather than at mint time, when the object does not
- * exist yet: on attach, and again from an hourly sweep for anything missed or uploaded and never
- * attached.
+ * The derived fields of 0.11.4. Uploads never pass through the API, so this reads the header back
+ * out of storage: a ranged GET of a few hundred kilobytes covers every format. Runs on attach,
+ * once the object is known to exist, and again from the sweep.
  */
 @Injectable()
 export class MediaDerivationService {
@@ -42,16 +29,12 @@ export class MediaDerivationService {
     private readonly storage: StorageProvider,
   ) {}
 
-  /**
-   * Fire-and-forget, like a notification: a member sending a photo must not wait on, or fail
-   * because of, a metadata read. The sweep catches whatever this misses.
-   */
+  /** Fire-and-forget: a photo must not fail to send over a metadata read. The sweep catches misses. */
   schedule(mediaIds: string[]): void {
     if (!mediaIds.length) return;
 
-    // Deferred, because `attach` runs inside the caller's transaction and these rows are locked
-    // until it commits. Writing to them from another connection before then would wait on that
-    // lock while holding one of its own, which is a deadlock waiting for a busy pool.
+    // Deferred: `attach` runs inside the caller's transaction and holds these rows, so writing
+    // from another connection before it commits deadlocks on a busy pool.
     setTimeout(() => {
       void this.deriveMany(mediaIds).catch(error =>
         this.logger.warn(`Media derivation failed: ${(error as Error).message}`),
@@ -85,7 +68,10 @@ export class MediaDerivationService {
 
     try {
       if (row.type === MediaType.IMAGE) {
-        const head = await this.storage.read(row.storageKey, { start: 0, end: IMAGE_HEAD_BYTES - 1 });
+        const head = await this.storage.read(row.storageKey, {
+          start: 0,
+          end: IMAGE_HEAD_BYTES - 1,
+        });
         const size = head ? imageDimensions(row.mimeType, head) : null;
 
         await this.database.media.update({
@@ -97,7 +83,10 @@ export class MediaDerivationService {
       }
 
       if (row.type === MediaType.VIDEO) {
-        const head = await this.storage.read(row.storageKey, { start: 0, end: VIDEO_HEAD_BYTES - 1 });
+        const head = await this.storage.read(row.storageKey, {
+          start: 0,
+          end: VIDEO_HEAD_BYTES - 1,
+        });
 
         if (!head) {
           await this.database.media.update({ where: { id: row.id }, data: { derivedAt: now } });
@@ -153,10 +142,7 @@ export class MediaDerivationService {
     }
   }
 
-  /**
-   * The catch-all. Anything attached but never visited, plus anything uploaded and left
-   * unattached, which still gets dimensions in case it is attached later.
-   */
+  /** The catch-all: anything never visited, attached or not. */
   async sweep(limit = 200): Promise<number> {
     const rows = await this.database.media.findMany({
       where: { derivedAt: null },

@@ -78,9 +78,8 @@ describe('text utilities', () => {
 });
 
 describe('escapeLike', () => {
-  // Every `q=` filter in the app ends up inside an ILIKE, where `%` and `_` are wildcards. A
-  // member typing `%%` would otherwise match every row in the table, without the trigram index,
-  // on every type at once.
+  // Every `q=` filter ends up inside an ILIKE, where `%` and `_` are wildcards: `%%` would match
+  // every row of every type at once, without the trigram index.
   it('escapes the two ILIKE wildcards and the escape character itself', () => {
     expect(escapeLike('100%')).toBe('100\\%');
     expect(escapeLike('a_b')).toBe('a\\_b');

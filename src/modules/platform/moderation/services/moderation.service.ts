@@ -148,9 +148,8 @@ export class ModerationService {
         },
       });
 
-      // Applied in the same transaction, which is what the report sheet's second option promises (1.8.1).
-      // In the same transaction as the report: a member who asked for both and got one is worse
-      // off than one who got neither.
+      // In the same transaction as the report (1.8.1): a member who asked for both and got one is
+      // worse off than one who got neither.
       if (dto.alsoBlock && blockTargetId && blockTargetId !== reporterId) {
         await tx.block.upsert({
           where: { blockerId_blockedId: { blockerId: reporterId, blockedId: blockTargetId } },

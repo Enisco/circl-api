@@ -35,10 +35,7 @@ export abstract class StorageProvider {
    * needs a header does not pay to move a 90MB video across the network to read twenty bytes.
    * Null when the object is not there.
    */
-  abstract read(
-    storageKey: string,
-    range?: { start: number; end: number },
-  ): Promise<Buffer | null>;
+  abstract read(storageKey: string, range?: { start: number; end: number }): Promise<Buffer | null>;
 }
 
 /** The window a read URL is valid for (0.11.3). */

@@ -65,9 +65,8 @@ export class FeedService {
     const cursor = decodeCursor<FeedCursor>(query.cursor);
     const profile = await this.profileOf(viewerId);
 
-    // The Privacy switch is the outermost word on this: a member who turned personalisation off
-    // gets plain recency and city whatever they or the cursor asked for, or the switch is
-    // decorative (G7).
+    // The Privacy switch has the last word: personalisation off means plain recency and city,
+    // whatever the caller or the cursor asked for (G7).
     const personalisationAllowed = await this.personalisationAllowed(viewerId);
 
     // PERSONALISED once the member has completed interests onboarding, else LATEST — but an explicit choice always wins, because ranking that cannot be switched off is ranking that stops being trusted (1.1).
@@ -83,9 +82,8 @@ export class FeedService {
 
     if (query.categories?.length) requestedTypes.delete(FeedItemType.UPDATE);
 
-    // Guides have their own tab, served by `GET /community/guides`, so the feed never carries one.
-    // Removed here rather than from FeedItemType so `types=GUIDE` stays a valid request that
-    // simply returns nothing, and so putting them back is one line rather than a migration.
+    // Guides have their own tab (`GET /community/guides`). Dropped here rather than from
+    // FeedItemType, so `types=GUIDE` stays valid and putting them back is one line.
     requestedTypes.delete(FeedItemType.GUIDE);
 
     const [requests, offers, updates, guides] = await Promise.all([

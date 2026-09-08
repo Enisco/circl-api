@@ -34,16 +34,9 @@ const FUZZY_SCAN_LIMIT = 50;
 const FUZZY_MIN_LENGTH = 4;
 
 /**
- * Member search (`PERSON`). Nothing else in the API lists members: every other endpoint returns
- * people attached to something, as an author, a professional listing or a Connect profile, so the
- * People chip had nothing to call.
- *
- * It matches display name and username, and deliberately not bio, city or interests. A name search
- * that returns people because of a word in their bio is confusing, and searching over what members
- * wrote about themselves opens a privacy surface with no matching benefit.
- *
- * The result is the shared `author` object (0.9) unchanged, so the client parses it with the
- * `AuthorRef` it already has rather than a shape invented for search.
+ * Member search. Matches display name and username, deliberately not bio, city or interests:
+ * searching what members wrote about themselves opens a privacy surface for no benefit.
+ * Returns the shared author object (0.9) unchanged.
  */
 @Injectable()
 export class UserDirectoryService {
@@ -110,11 +103,7 @@ export class UserDirectoryService {
     };
   }
 
-  /**
-   * The preview `GET /search` asks for: a true total plus a small ranked window. It overfetches
-   * `take` rows and ranks them here rather than in SQL, because relevance over a name is three
-   * string comparisons and expressing it as an ORDER BY would cost a second index.
-   */
+  /** A true total plus a small ranked window, ranked here rather than in a second index. */
   async preview(
     viewerId: string,
     term: string,
@@ -149,9 +138,8 @@ export class UserDirectoryService {
   }
 
   /**
-   * Never returned: anyone blocked in either direction, anyone suspended or deleted, and the
-   * caller themselves. `isAnonymous` has no meaning here — anonymity attaches to a post, not to a
-   * person, and someone who posts anonymously is still findable by name.
+   * Never returned: blocked either way, suspended, deleted, or the caller. Anonymity attaches to a
+   * post, not a person, so somebody who posts anonymously is still findable by name.
    */
   private buildWhere(viewerId: string, term: string, blockedIds: string[]): Prisma.UserWhereInput {
     const words = termWords(term);
@@ -160,9 +148,8 @@ export class UserDirectoryService {
     // two names joined. One word expands to its stem as well.
     const clauses = (words.length ? words : [term]).map(word => ({
       OR: termVariants(word).flatMap(variant => {
-        // Escaped: `%` and `_` are ILIKE wildcards. Unescaped, `%%` would list the whole
-        // membership two characters at a time, which is exactly what the two-character floor
-        // exists to prevent.
+        // Escaped: `%` and `_` are ILIKE wildcards, and `%%` would otherwise list the whole
+        // membership.
         const like = { contains: escapeLike(variant), mode: Prisma.QueryMode.insensitive };
 
         return [{ firstName: like }, { lastName: like }, { username: like }];
@@ -180,11 +167,7 @@ export class UserDirectoryService {
     };
   }
 
-  /**
-   * The typo path. `%` is pg_trgm's similarity operator and is answered by the same GIN indexes
-   * the exact pass uses, so this costs an index scan rather than a table scan. It only runs when
-   * the exact pass found nothing, which is the only time it can change an answer.
-   */
+  /** The typo path. `%` is pg_trgm's similarity operator, on the same indexes. Only runs on zero hits. */
   private async fuzzy(
     viewerId: string,
     term: string,
@@ -221,9 +204,8 @@ export class UserDirectoryService {
     const byId = new Map(users.map(user => [user.id, user]));
 
     return {
-      // Capped at the scan limit rather than counted exactly: a fallback total only has to be
-      // honest enough to render "See all", and a second full count would double the cost of the
-      // one path that already failed once.
+      // Capped at the scan limit rather than counted exactly: a fallback total only has to render
+      // "See all", and a second full count would double the cost of the slow path.
       total: rows.length,
       items: ordered.flatMap(id => {
         const user = byId.get(id);

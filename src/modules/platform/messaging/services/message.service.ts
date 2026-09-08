@@ -34,25 +34,13 @@ export class MessageService {
   // ─── 5.3.3 History ─────────────────────────────────────────────────────────
 
   /**
-   * History, and the two things cursor paging needs to be correct.
-   *
-   * **The order is total.** `sentAt` alone is not: two messages can share a timestamp, and did —
-   * a burst from one sender, or a system message written in the same transaction as a user one.
-   * With a `sentAt`-only cursor, `lt` skipped the anchor's twin entirely and the sort between
-   * equals was whatever the planner felt like. Ordering and comparing on `(sentAt, id)` makes both
-   * deterministic. `id` is not chronological, but a tie-break only has to be stable.
-   *
-   * **`hasMore` is counted, not guessed.** It used to be `rows.length === limit`, which is wrong
-   * for exactly the thread whose length is a multiple of the limit: a full last page reads as
-   * "there is more" and costs a round trip to find out there is not. Asking for one row more than
-   * the caller wants answers it exactly, for no extra query.
+   * The order is total, `(sentAt, id)`: two messages can share a timestamp, and a `sentAt`-only
+   * cursor skipped the anchor's twin. `hasMore` is counted by fetching one row more than asked.
    */
   async history(userId: string, conversationId: string, query: ListMessagesDto) {
     await this.conversations.requireParticipant(userId, conversationId);
 
-    // `after` is how a `since` result pages: it reads forwards, so the cursor applies unchanged.
-    // `before` reads backwards and would ask for changes older than the window they define, which
-    // is a request with no meaning rather than one with a surprising answer.
+    // `since` pages with `after`. `before` would ask for changes older than the window itself.
     if (query.since && query.before) {
       throw ApiException.badRequest(
         ApiErrorCode.VALIDATION_FAILED,
@@ -70,8 +58,7 @@ export class MessageService {
     const where: Prisma.MessageWhereInput = {
       conversationId,
       ...(anchor ? { AND: [cursorClause(anchor, Boolean(query.after))] } : {}),
-      // Changed, not created: a message the sender withdrew has to come back so a cached copy can
-      // be replaced with the tombstone. `sentAt` covers new, `editedAt` edited, `deletedAt` gone.
+      // Changed, not created, so a withdrawn message comes back as a tombstone.
       ...(query.since
         ? {
             OR: [
@@ -99,10 +86,8 @@ export class MessageService {
       data: page.map(row => this.toView(row, userId)),
       meta: {
         hasMore,
-        // The value to send back: `before` when scrolling up, `after` or `since` when catching up.
-        // Null when there is nothing more, so the client never pages off the end.
-        // The last row of the page in whichever direction it was read, which is exactly what the
-        // next `before`, `after` or `since` call should carry.
+        // The last row of the page, whichever direction it was read: what the next `before`,
+        // `after` or `since` should carry. Null when there is nothing more.
         nextCursor: hasMore ? (page.at(-1)?.id ?? null) : null,
         oldestId: ascending ? (page[0]?.id ?? null) : (page.at(-1)?.id ?? null),
         newestId: ascending ? (page.at(-1)?.id ?? null) : (page[0]?.id ?? null),
@@ -232,12 +217,8 @@ export class MessageService {
   // ─── 5.4 Read receipts ─────────────────────────────────────────────────────
 
   /**
-   * One event clears a backlog rather than one per message (5.4).
-   *
-   * `lastReadMessageId` is optional and means "everything in the thread". Opening a thread reads
-   * it, and a thread opened before anybody has said anything has no message to name: the client
-   * would otherwise have to special-case the empty conversation, which is exactly the case it is
-   * most likely to get wrong.
+   * One event clears a backlog rather than one per message (5.4). `lastReadMessageId` is optional
+   * because a thread nobody has spoken in has no message to name.
    */
   async markRead(userId: string, conversationId: string, lastReadMessageId?: string) {
     await this.conversations.requireParticipant(userId, conversationId);
@@ -473,11 +454,7 @@ export class MessageService {
 
 export type MessageView = ReturnType<MessageService['toView']>;
 
-/**
- * "Older than this message" and "newer than this message" over a total `(sentAt, id)` order.
- * A plain `sentAt` comparison drops every message sharing the anchor's timestamp, which is a
- * message silently missing from a thread and close to impossible to diagnose from a device.
- */
+/** A `sentAt`-only comparison drops every message sharing the anchor's timestamp. */
 const cursorClause = (
   anchor: { id: string; sentAt: Date },
   forwards: boolean,

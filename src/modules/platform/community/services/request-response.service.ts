@@ -1,5 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { ActivitySubject, ActivityVerb, NotificationKind, Prisma, RequestStatus, ThreadContextType } from '@prisma/client';
+import {
+  ActivitySubject,
+  ActivityVerb,
+  NotificationKind,
+  Prisma,
+  RequestStatus,
+  ThreadContextType,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import {
   ApiErrorCode,

@@ -1,12 +1,6 @@
 /**
- * Width and height out of an image's header, without decoding it.
- *
- * Every format the API accepts announces its size in the first few bytes, long before any pixel
- * data. Reading it costs a ranged GET of the head of the object rather than the whole file, which
- * matters when the file is a photo from a modern phone.
- *
- * Deliberately header-only: this file never decodes an image and has no dependencies. A thumbnail
- * or a blur hash needs real pixels and belongs to whatever decoder is chosen for that job.
+ * Width and height from an image header, without decoding it or adding a dependency. A thumbnail
+ * or blur hash needs real pixels and belongs to whatever decoder is chosen for that.
  */
 export interface Dimensions {
   width: number;
@@ -22,12 +16,7 @@ const png = (buffer: Buffer): Dimensions | null => {
   return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
 };
 
-/**
- * JPEG: a chain of markers. The size lives in a Start Of Frame, of which there are several kinds
- * (baseline, progressive, and the arithmetic-coded variants), so the scan matches the family
- * rather than one marker. DHT, DAC and RST markers are skipped explicitly because they are not
- * frames and would otherwise be misread as one.
- */
+/** JPEG: the size is in a Start Of Frame, of which there are several kinds, so match the family. */
 const jpeg = (buffer: Buffer): Dimensions | null => {
   if (buffer.length < 4 || buffer.readUInt16BE(0) !== 0xffd8) return null;
 
@@ -100,11 +89,8 @@ const webp = (buffer: Buffer): Dimensions | null => {
 };
 
 /**
- * HEIC: ISO base media format, the same box tree as MP4. The size is in an `ispe` box, which sits
- * several levels down inside `meta`. Rather than walking the tree, this scans for the box type,
- * which is safe because `ispe` appears only in that one place and carries its size immediately.
- *
- * It matters because it is what an iPhone produces by default.
+ * HEIC, which is what an iPhone produces by default. The size is in an `ispe` box; scanning for
+ * the type is safe because it appears in only one place.
  */
 const heic = (buffer: Buffer): Dimensions | null => {
   if (buffer.length < 12 || buffer.toString('ascii', 4, 8) !== 'ftyp') return null;
@@ -136,9 +122,8 @@ export const imageDimensions = (mimeType: string, buffer: Buffer): Dimensions | 
 
   if (first) return first;
 
-  // The declared type is only the client's word for it, and clients mislabel constantly — a HEIC
-  // sent as `image/jpeg` is routine. Every parser reads a handful of bytes and rejects anything
-  // that is not its own format, so trying the rest costs nothing and saves a jumping layout.
+  // The declared type is only the client's word for it, and a HEIC sent as `image/jpeg` is
+  // routine. Each parser reads a few bytes and rejects anything else, so trying them all is free.
   for (const [type, candidate] of Object.entries(PARSERS)) {
     if (type === mimeType) continue;
 

@@ -16,11 +16,8 @@ export const project = (latitude: number, longitude: number, zoom: number) => {
 };
 
 /**
- * Fetches the tiles a viewport covers and composites them into one image, with a marker in the
- * middle and the attribution burned into the corner.
- *
- * Doing this here rather than in the app is the whole point: a client that renders its own tiles
- * has to ship a provider key, and a key in a binary is a key that has leaked.
+ * Fetches the tiles a viewport covers and composites them into one image, marker in the middle and
+ * attribution in the corner. Server-side so no provider key ships in an app binary.
  */
 export const renderTiles = async (options: {
   latitude: number;
@@ -72,9 +69,8 @@ export const renderTiles = async (options: {
 
   const loaded = await Promise.all(jobs);
 
-  // Every tile failing produces a blank grey rectangle that compresses to about a kilobyte. Left
-  // to itself the caller would store that under a key that never regenerates, so the store would
-  // show an empty box forever. Better to return nothing and try again on the next read.
+  // Every tile failing yields a blank grey rectangle, and the caller would store it under a key
+  // that never regenerates. Return nothing instead and try again on the next read.
   if (!loaded.some(Boolean)) return null;
 
   drawMarker(canvas, Math.round(width / 2), Math.round(height / 2));

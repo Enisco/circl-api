@@ -15,16 +15,9 @@ const isEnabled = (value: string | undefined, fallback: boolean): boolean => {
 };
 
 /**
- * Seeding on boot, governed by two environment variables.
- *
- * `RUN_SEED` covers the reference data every environment needs and every environment shares:
- * permissions, roles, cities, taxonomy, risk terms and support resources. All upserts, so running
- * it on every boot is safe.
- *
- * `RUN_DEMO_SEED` additionally builds the Appendix B dataset: ten invented members and everything
- * they have done. It implies the base seed, because the demo data is validated against the
- * taxonomy and cities that seed creates. It refuses to run in production, and that refusal lives
- * inside `seedDemo` rather than here, so no caller can route around it.
+ * `RUN_SEED` is the shared reference data, all upserts, safe on every boot. `RUN_DEMO_SEED` adds
+ * the Appendix B dataset and implies the base seed, since it is validated against it. The refusal
+ * to run in production lives in `seedDemo`, so no caller can route around it.
  */
 export const runStartupSeeds = async (
   prisma: PrismaClient,

@@ -2,22 +2,14 @@ import { PrismaService } from '@/infrastructure';
 import { Injectable } from '@nestjs/common';
 import { RegisterDeviceTokenDto, ReleaseDeviceTokenDto } from '../dtos';
 
-/**
- * How many handsets one member can hold at once. Not a product limit anybody will meet: it is a
- * bound on token churn, because FCM rotates a token when an app is restored to a new device and
- * the old one may never fail loudly enough to be pruned on send. The least recently seen goes
- * first, so the phone in a pocket outlives the tablet in a drawer.
- */
+/** A bound on token churn, not a product limit. Least recently seen goes first. */
 const MAX_DEVICES_PER_USER = 10;
 
 @Injectable()
 export class NotificationPrefsService {
   constructor(private readonly database: PrismaService) {}
 
-  /**
-   * Called on every launch, not only the first: re-registering is how the client tells us the
-   * token is still good, and how a rotated one replaces the one it replaced.
-   */
+  /** Called on every launch: re-registering is how a rotated token replaces its predecessor. */
   async registerDeviceToken(userId: string, dto: RegisterDeviceTokenDto) {
     await this.database.$transaction(async tx => {
       // Keyed on the token, so a handset that changes hands MOVES to whoever signed in rather
@@ -44,11 +36,8 @@ export class NotificationPrefsService {
   }
 
   /**
-   * Called during logout, before the client clears its keychain. Only the server can drop the
-   * row: the client forgetting the token locally leaves it pointing this handset at the member
-   * who just left.
-   *
-   * One device, not all of them. Signing out of a tablet must not stop push to the phone.
+   * Logout, before the client clears its keychain: only the server can drop the row. One device,
+   * so signing out of a tablet does not stop push to the phone.
    */
   async releaseDeviceToken(userId: string, dto: ReleaseDeviceTokenDto) {
     // Releasing a token that is already gone is a success, not a 404: a failed release must never

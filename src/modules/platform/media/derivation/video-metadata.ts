@@ -1,14 +1,7 @@
 /**
- * Width, height and duration out of an MP4 or QuickTime file, without decoding a frame.
- *
- * Both are ISO base media files: a tree of boxes, each `[4-byte length][4-byte type][payload]`.
- * Everything needed is in the `moov` box, which is metadata only — `mvhd` carries the duration and
- * a timescale, `tkhd` carries each track's dimensions.
- *
- * The awkward part is that `moov` may sit at the front of the file or at the very end. A recorder
- * cannot know the final duration until it stops, so a phone typically writes the media data first
- * and the header last. A reader that only looks at the head finds nothing on exactly the files
- * members upload, which is why the caller is told which end to fetch next rather than given up on.
+ * Width, height and duration from an MP4 or QuickTime header, without decoding a frame: `mvhd` for
+ * duration, `tkhd` per track for dimensions. `moov` may sit at either end, since a recorder cannot
+ * know the duration until it stops and phones write the header last.
  */
 export interface VideoMetadata {
   width: number | null;
@@ -48,7 +41,12 @@ const boxesIn = (buffer: Buffer, start: number, end: number): Box[] => {
 
     const boxEnd = Math.min(offset + size, end);
 
-    boxes.push({ type: buffer.toString('ascii', offset + 4, offset + 8), start: offset, end: boxEnd, payload });
+    boxes.push({
+      type: buffer.toString('ascii', offset + 4, offset + 8),
+      start: offset,
+      end: boxEnd,
+      payload,
+    });
     offset += size;
   }
 
@@ -89,10 +87,7 @@ const durationFrom = (buffer: Buffer, moov: Box): number | null => {
   }
 };
 
-/**
- * `tkhd`: per track. The dimensions are 16.16 fixed point at the end of the box, and are zero on a
- * sound track, so the video track is the one with a non-zero size rather than the first one.
- */
+/** `tkhd`: 16.16 fixed point at the end of the box, and zero on a sound track. */
 const dimensionsFrom = (buffer: Buffer, moov: Box): { width: number; height: number } | null => {
   for (const trak of boxesIn(buffer, moov.payload, moov.end).filter(box => box.type === 'trak')) {
     const tkhd = findBox(buffer, trak.payload, trak.end, 'tkhd');
@@ -115,14 +110,8 @@ const dimensionsFrom = (buffer: Buffer, moov: Box): { width: number; height: num
   return null;
 };
 
-/**
- * Reads what it can from the bytes given. Returns `needsTail` when the file's boxes were walked to
- * the end without finding `moov`, which means it is at the other end of the object and the caller
- * should fetch the tail and try again.
- */
-export const videoMetadata = (
-  buffer: Buffer,
-): { metadata: VideoMetadata; needsTail: boolean } => {
+/** `needsTail` means `moov` was not in these bytes: fetch the tail and try again. */
+export const videoMetadata = (buffer: Buffer): { metadata: VideoMetadata; needsTail: boolean } => {
   const empty: VideoMetadata = { width: null, height: null, durationMs: null };
   const top = boxesIn(buffer, 0, buffer.length);
   const moov = top.find(box => box.type === 'moov');

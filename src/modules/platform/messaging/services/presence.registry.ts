@@ -1,18 +1,8 @@
 import { Injectable } from '@nestjs/common';
 
 /**
- * Who has a live socket right now.
- *
- * It lives here rather than inside the gateway because two different things need it and they
- * cannot both depend on the gateway: the gateway *writes* it on connect and disconnect, and the
- * conversation and presence services *read* it to answer over REST. A map on the gateway meant
- * `isOnline` was hardcoded `false` everywhere outside the socket, which is worse than not
- * answering at all.
- *
- * **This is per process.** Socket.IO is running on the plain in-memory adapter, so a member
- * connected to one instance is invisible to another. That is correct today, when there is one
- * process, and it is the first thing to fix before running two: `@socket.io/redis-adapter` plus a
- * shared registry, not a bigger map.
+ * Who has a live socket right now: the gateway writes it, the REST services read it. Per process,
+ * so a second instance needs `@socket.io/redis-adapter` and a shared registry.
  */
 @Injectable()
 export class PresenceRegistry {

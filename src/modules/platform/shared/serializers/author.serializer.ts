@@ -11,11 +11,7 @@ export interface AuthorView {
   /** Null is normal, not an error. The client draws initials on a grey circle. */
   avatarUrl: string | null;
   city: CityView | null;
-  /**
-   * ISO 3166-1 alpha-2, for the flag the client draws beside the name. Null is normal and means
-   * draw nothing: the member has not said where they are from, said "Other", or the post is
-   * anonymous.
-   */
+  /** ISO 3166-1 alpha-2 for the flag. Null means draw nothing: unset, "Other", or anonymous. */
   countryCode: string | null;
   isAnonymous: boolean;
   /** Empty array, never null. Holds ["EMAIL"] at most in this version (D13). */
@@ -69,18 +65,11 @@ export const displayNameOf = (firstName: string, lastName?: string | null): stri
 const ANONYMOUS_NAME = 'Someone';
 const DELETED_NAME = 'Deleted account';
 
-/**
- * The one country term that is not a country: members who pick it have said where they are from is
- * not on the list. There is no flag for it, so it is returned as null rather than as a code the
- * client would look up and fail to find.
- */
+/** The one country term with no flag, so it is nulled rather than sent as an unfindable code. */
 const NO_COUNTRY = 'OTHER';
 
-/**
- * The taxonomy stores ISO 3166-1 alpha-2 already, so this only has to filter, not translate.
- * Exported because the two profile endpoints carry the same field without going through the
- * author object, and one rule in two places is one rule too many.
- */
+/** The taxonomy already stores alpha-2, so this filters rather than translates. Exported because
+ * the profile endpoints carry the same field without going through the author object. */
 export const toCountryCode = (code: string | null | undefined): string | null =>
   code && code !== NO_COUNTRY ? code : null;
 

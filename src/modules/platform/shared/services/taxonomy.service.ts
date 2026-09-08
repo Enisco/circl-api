@@ -114,12 +114,8 @@ export class TaxonomyService {
   }
 
   /**
-   * Resolves whatever the client sent onto a real code: the code itself, a differently cased one,
-   * or the human label from the picker. Returns null when nothing matches.
-   *
-   * The shipped app sends the label for some fields, so `countryOfOrigin: "Nigeria"` arrives where
-   * `NG` is expected. Rejecting it would block onboarding on a value the member picked from a list
-   * this API served them.
+   * Resolves a code, a differently cased code, or the picker's label onto a real code; null when
+   * nothing matches. The shipped app sends labels, and rejecting them would block onboarding.
    */
   async resolveCode(kind: TaxonomyKind, value: string): Promise<string | null> {
     await this.ensureLoaded();

@@ -826,10 +826,8 @@ export class GroupService {
       categoryCode: 'GROUPS',
       title: 'New reply in your group post',
       body: excerpt(dto.content, 80),
-      // Both ids, because neither the screen nor the API can open a group post without its group:
-      // replies live at `/community/groups/{groupId}/posts/{postId}/replies`, and nothing resolves
-      // a post id to its group. The old `/community/group-post/{postId}` named something real and
-      // was still unopenable.
+      // Both ids: replies live at `/community/groups/{groupId}/posts/{postId}/replies` and nothing
+      // resolves a post id to its group, so a post id alone is unopenable.
       route: `/community/group/${groupId}/post/${postId}`,
       target: { type: 'GROUP_POST', id: postId, parent: { type: 'GROUP', id: groupId } },
     });

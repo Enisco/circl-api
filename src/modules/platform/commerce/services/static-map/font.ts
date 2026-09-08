@@ -1,9 +1,6 @@
 /**
- * A 5x7 bitmap font covering exactly the characters in "© OpenStreetMap contributors".
- *
- * It exists so the OpenStreetMap attribution is burned into the tile rather than sent as a field
- * the client may or may not render. The ODbL requires the credit; making compliance depend on
- * somebody else's layout code is how it ends up missing.
+ * A 5x7 bitmap font covering exactly the characters in "© OpenStreetMap contributors", so the ODbL
+ * credit is burned into the tile rather than left to a client that may not render it.
  */
 const GLYPHS: Record<string, string[]> = {
   ' ': ['     ', '     ', '     ', '     ', '     ', '     ', '     '],

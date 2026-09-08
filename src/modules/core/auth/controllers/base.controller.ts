@@ -44,10 +44,8 @@ export class BaseController {
       );
     }
 
-    // The tokens are ALSO in the body, unconditionally. The mobile client has no cookie jar and
-    // an httpOnly cookie is invisible to Dart by design, so a body that omitted them parsed
-    // `accessToken` as null and treated a returning member as a brand-new signup. Keying this on
-    // the `x-client-platform` header made it depend on a header the client was not sending.
+    // Tokens are also in the body, unconditionally: the mobile client has no cookie jar and an
+    // httpOnly cookie is invisible to Dart, so omitting them read as a brand-new signup.
     return { message: loginResponse.message, ...loginResponse };
   }
 }

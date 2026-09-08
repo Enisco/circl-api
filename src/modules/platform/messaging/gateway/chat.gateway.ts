@@ -263,9 +263,8 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   // ─── Internals ─────────────────────────────────────────────────────────────
 
   /**
-   * Delivery for a stored message, whichever path stored it. A message sent over REST has to be
-   * echoed over the socket anyway (5.2), so both paths call this and cannot drift: without it a
-   * recipient who is connected sees no bubble and the sender's tick never reaches DELIVERED.
+   * Delivery for a stored message, whichever path stored it: REST sends are echoed over the socket
+   * too (5.2), so both call this and cannot drift.
    */
   async fanOut(conversationId: string, message: { id: string }, senderId: string): Promise<void> {
     const recipients = await this.recipientsOf(conversationId, senderId);
@@ -384,10 +383,8 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   }
 
   /**
-   * Tells one member their view of a thread changed (5.2.3).
-   *
-   * Muting, archiving and a refreshed context snapshot all change the inbox row
-   * without producing a message, so nothing else would push it.
+   * Tells one member their view of a thread changed (5.2.3). Muting, archiving and a refreshed
+   * context snapshot all change the inbox row without producing a message.
    */
   async pushConversationUpdated(userId: string, conversationId: string): Promise<void> {
     if (!this.presence.isOnline(userId)) return;

@@ -1,15 +1,9 @@
 import Joi from 'joi';
 
 /**
- * The attach gate this flag turns on rejects any media whose `scanStatus` is not `CLEAN`, and
- * nothing in the codebase ever writes `CLEAN`, because no scanner has been built. Setting it to
- * true therefore does not make uploads stricter, it makes every one of them permanently
- * unattachable: photos, videos and voice notes all fail at the point of sending, with an error
- * that reads like a transient one.
- *
- * Refusing to boot is the only honest response. A flag that silently breaks the product is worth
- * one line of validation, and a deploy that fails immediately is far cheaper than a day spent
- * wondering why nobody can send a picture.
+ * The gate this flag turns on rejects media whose `scanStatus` is not `CLEAN`, and nothing ever
+ * writes `CLEAN` because no scanner exists: enabling it makes every upload permanently
+ * unattachable. Refusing to boot is cheaper than a day spent wondering why nobody can send a photo.
  */
 const scanFlag = Joi.boolean()
   .truthy('true')

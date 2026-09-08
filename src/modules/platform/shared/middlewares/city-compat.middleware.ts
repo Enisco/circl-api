@@ -6,11 +6,8 @@ import { CityService } from '../services';
 const CITY_FIELDS = ['cityId', 'city', 'cityIdOverride'] as const;
 
 /**
- * The 1.0.3 compatibility shim, in one removable place.
- *
- * The shipped client sends a city NAME in `cityId`, so resolution keys off the
- * value rather than the parameter name. Delete this file once the app's pickers
- * hold ids.
+ * The 1.0.3 shim: the shipped client sends a city name in `cityId`, so resolution keys off the
+ * value rather than the parameter name. Delete once the app's pickers hold ids.
  */
 @Injectable()
 export class CityCompatMiddleware implements NestMiddleware {

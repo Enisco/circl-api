@@ -2,13 +2,9 @@ import { Injectable, NestMiddleware } from '@nestjs/common';
 import { NextFunction, Request, Response } from 'express';
 
 /**
- * The report sheet names its fields `subjectType` / `subjectId` / `reason` / `detail`; the spec
- * names them `targetType` / `targetId` / `reasonCode` / `note`. Renaming either side would break
- * the other, and a report that 400s is a report nobody files twice.
- *
- * It runs here rather than as a `@Transform` on the DTO because class-transformer only fires a
- * property's transform when that property is present in the payload, so a transform on
- * `targetType` never runs for a body that only carries `subjectType`.
+ * The report sheet sends `subjectType` / `subjectId` / `reason` / `detail`; the spec names them
+ * `targetType` / `targetId` / `reasonCode` / `note`. Middleware rather than a DTO `@Transform`,
+ * which only fires when the property it is attached to is already present.
  */
 const FIELD_ALIASES: Record<string, string> = {
   subjectType: 'targetType',

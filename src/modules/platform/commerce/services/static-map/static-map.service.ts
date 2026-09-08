@@ -16,12 +16,8 @@ const FETCH_TIMEOUT_MS = 8_000;
 type Provider = 'osm' | 'mapbox' | 'google' | 'template' | 'none';
 
 /**
- * A map image rendered server-side (G12).
- *
- * The reasoning is the one that put S3 signing on the server: if the client renders the tile it
- * has to hold the provider key, and a key in an app binary is a key that has leaked. So the
- * server fetches it once, writes it to the bucket like any other media, and hands back a signed
- * URL that expires.
+ * A map image rendered server-side (G12), so the provider key never ships in an app binary. The
+ * server fetches it once, writes it to the bucket like any other media, and signs a read URL.
  */
 @Injectable()
 export class StaticMapService {
@@ -51,9 +47,8 @@ export class StaticMapService {
   }
 
   /**
-   * The key for a store's map, generating it on first use. Returns null when there is nothing to
-   * draw or no provider to draw it with — the caller sends `staticMapUrl: null` and the client
-   * renders its placeholder, which is the honest outcome.
+   * The key for a store's map, generated on first use. Null when there is nothing to draw or no
+   * provider to draw it with, and the caller then sends `staticMapUrl: null`.
    */
   async keyFor(store: {
     id: string;

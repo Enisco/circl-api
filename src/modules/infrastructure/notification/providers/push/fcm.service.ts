@@ -30,9 +30,8 @@ export class FcmService implements OnModuleInit {
   }
 
   /**
-   * True when FCM says this token will never work again: the app was uninstalled, the token was
-   * rotated, or it was never a token. The caller is expected to stop storing it. Anything else,
-   * including a network blip or an FCM outage, is not this and must not cost a member their push.
+   * True only when FCM says the token is permanently dead, so the caller can forget it. A network
+   * blip or an FCM outage is not this and must not cost a member their push.
    */
   static isDeadToken(error: unknown): boolean {
     const code =
@@ -48,12 +47,9 @@ export class FcmService implements OnModuleInit {
   }
 
   /**
-   * Sends one notification to every device a member is signed in on, and reports back which
-   * tokens are dead so the caller can forget them.
-   *
-   * One call rather than a loop: `sendEachForMulticast` returns a response per token, aligned by
-   * index, so a dead tablet token is identified precisely instead of failing the whole send or
-   * being lost among the successes.
+   * Sends to every device a member is signed in on, reporting back the dead tokens.
+   * `sendEachForMulticast` answers per token, aligned by index, so one dead device is named
+   * precisely rather than failing the whole send.
    */
   async sendPushToMany(
     tokens: string[],
@@ -127,9 +123,8 @@ export class FcmService implements OnModuleInit {
         )
       : undefined;
     const badge = Number(payload?.badge);
-    // Omitted rather than guessed when the caller sent no usable count: iOS then leaves the icon
-    // as it is. It used to fall back to `1`, which put a "1" on the icon for a member who might
-    // have had five things waiting or none, and looked exactly like a real count.
+    // Omitted rather than guessed when there is no usable count, so iOS leaves the icon as it is.
+    // A fallback of `1` looks exactly like a real count and is wrong for everyone.
     const hasBadge = payload?.badge !== undefined && Number.isFinite(badge);
     const collapseKey = payload?.collapseKey;
 
@@ -137,9 +132,8 @@ export class FcmService implements OnModuleInit {
       notification: { title, body },
       ...(payload && { data: payload }),
       apns: {
-        // Twenty messages in one thread are one notification on iOS too. Android does this with
-        // `collapseKey` below; APNs needs the header, and without it iOS was the only platform
-        // stacking up a row per message.
+        // Twenty messages in one thread are one notification on iOS too. Android uses
+        // `collapseKey` below; APNs needs this header.
         ...(collapseKey ? { headers: { 'apns-collapse-id': collapseKey.slice(0, 64) } } : {}),
         payload: {
           aps: { sound: 'default', ...(hasBadge ? { badge } : {}) },

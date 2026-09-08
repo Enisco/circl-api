@@ -11,15 +11,8 @@ export interface PresenceView {
 }
 
 /**
- * "Is this member online, and when were they last here."
- *
- * Online means one thing and one thing only: **a live socket**. Not a recent request, not a fresh
- * token, not an app in the background. Anything softer would make the dot on the screen a guess,
- * and a wrong green dot is worse than no dot at all, because a member reads it as "they are
- * ignoring me" rather than "the server is unsure".
- *
- * `lastSeenAt` is the softer signal and is kept separate: the newest `lastActiveAt` across their
- * sessions, which moves on sign-in and on every token refresh.
+ * Online means a live socket and nothing softer: a wrong green dot reads as "they are ignoring me".
+ * `lastSeenAt` is the soft signal, kept separate — the newest `lastActiveAt` across their sessions.
  */
 @Injectable()
 export class PresenceService {

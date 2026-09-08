@@ -150,9 +150,8 @@ export class MessagingController {
   ) {
     const data = await this.messages.send(userId, id, dto);
 
-    // The same delivery the socket path performs: message.new to whoever is connected, a push to
-    // whoever is not, and the sender's DELIVERED tick. Sending over REST must not mean the
-    // recipient sees nothing until they refresh (5.2).
+    // The delivery the socket path performs: `message.new`, a push to whoever is not connected,
+    // and the sender's DELIVERED tick. A REST send must not wait on a refresh (5.2).
     await this.gateway.fanOut(id, data, userId);
 
     return { data, message: 'Message sent' };

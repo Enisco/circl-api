@@ -1,21 +1,9 @@
 import { PrismaClient } from '@prisma/client';
 
 /**
- * The indexes Prisma cannot see, re-asserted on every boot.
- *
- * Neither a GIN index over `gin_trgm_ops` nor a partial unique index can be expressed in a Prisma
- * schema. `prisma migrate dev` therefore treats all seventeen as drift and proposes DROPping them,
- * on every migration, forever. That proposal has been accepted three times now: once in
- * `20260830071030_full_api_spec`, once in `bcc41fa`, and once in `20260907071851`, which contains
- * nothing else at all.
- *
- * Nothing fails when they go, which is what makes it worth guarding rather than remembering. The
- * fifteen trigram indexes are a silent fall back to sequential scans on every `q=` filter in the
- * API, and the two partial unique indexes are correctness rules the database simply stops
- * enforcing.
- *
- * Restoring them by migration only fixes the database that ran the migration. This runs on every
- * start, so the next restart heals it wherever it happened.
+ * The indexes Prisma cannot express, re-asserted on every boot. `migrate dev` proposes DROPping
+ * all seventeen on every migration and that has been accepted three times. Nothing fails when they
+ * go: the trigram ones silently become sequential scans, the two unique ones stop being enforced.
  */
 const TRIGRAM: Array<[index: string, table: string, column: string]> = [
   ['community_requests_title_trgm_idx', 'community_requests', 'title'],
