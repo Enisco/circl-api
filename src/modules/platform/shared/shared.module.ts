@@ -9,6 +9,7 @@ import {
 } from './middlewares';
 import {
   ActivityService,
+  BadgeService,
   BlockingService,
   CityService,
   MediaService,
@@ -18,6 +19,7 @@ import {
 
 const SERVICES = [
   ActivityService,
+  BadgeService,
   BlockingService,
   CityService,
   MediaDerivationService,

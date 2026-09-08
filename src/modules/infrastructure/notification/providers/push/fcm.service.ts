@@ -127,19 +127,28 @@ export class FcmService implements OnModuleInit {
         )
       : undefined;
     const badge = Number(payload?.badge);
+    // Omitted rather than guessed when the caller sent no usable count: iOS then leaves the icon
+    // as it is. It used to fall back to `1`, which put a "1" on the icon for a member who might
+    // have had five things waiting or none, and looked exactly like a real count.
+    const hasBadge = payload?.badge !== undefined && Number.isFinite(badge);
+    const collapseKey = payload?.collapseKey;
 
     return {
       notification: { title, body },
       ...(payload && { data: payload }),
       apns: {
+        // Twenty messages in one thread are one notification on iOS too. Android does this with
+        // `collapseKey` below; APNs needs the header, and without it iOS was the only platform
+        // stacking up a row per message.
+        ...(collapseKey ? { headers: { 'apns-collapse-id': collapseKey.slice(0, 64) } } : {}),
         payload: {
-          aps: { sound: 'default', badge: Number.isFinite(badge) ? badge : 1 },
+          aps: { sound: 'default', ...(hasBadge ? { badge } : {}) },
         },
       },
       android: {
         notification: { sound: 'default' },
         // Twenty messages in one thread are one notification, not twenty.
-        ...(payload?.collapseKey ? { collapseKey: payload.collapseKey } : {}),
+        ...(collapseKey ? { collapseKey } : {}),
       },
     };
   }

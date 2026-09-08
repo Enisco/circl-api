@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MessageKind, ThreadKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
+import { BadgeService } from '../../shared';
 import { FcmService } from '@/modules/infrastructure/notification/providers/push/fcm.service';
 import { NotificationPreferenceService } from '../../notifications';
 
@@ -13,6 +14,7 @@ export class MessagePushService {
     private readonly preferences: NotificationPreferenceService,
     private readonly database: PrismaService,
     private readonly fcm: FcmService,
+    private readonly badges: BadgeService,
   ) {}
 
   /** Fire-and-forget: a push that fails must never fail the send that produced it. */
@@ -86,10 +88,7 @@ export class MessagePushService {
       // The MESSAGES row of the matrix (6.1.3), not a boolean of its own.
       if (!(await this.preferences.allows(participant.userId, 'MESSAGES', 'push'))) continue;
 
-      const total = await this.database.conversationParticipant.aggregate({
-        where: { userId: participant.userId, isArchived: false },
-        _sum: { unreadCount: true },
-      });
+      const counts = await this.badges.of(participant.userId);
 
       const { deadTokens } = await this.fcm.sendPushToMany(
         tokens,
@@ -109,7 +108,10 @@ export class MessagePushService {
           messageId: input.messageId,
           // Per conversation, so twenty messages are one notification.
           collapseKey: input.conversationId,
-          badge: String(total._sum.unreadCount ?? 0),
+          // The same three keys a notification push carries, meaning the same three things.
+          badge: String(counts.total),
+          unreadNotifications: String(counts.notifications),
+          unreadMessages: String(counts.messages),
         },
       );
 

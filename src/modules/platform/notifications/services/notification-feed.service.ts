@@ -2,7 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { NotificationBucket, NotificationKind, Prisma } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { buildPageMeta, toJsonOrUndefined } from '@/common';
-import { authorSelect, displayNameOf, MediaService, toAuthorView } from '../../shared';
+import {
+  authorSelect,
+  BadgeService,
+  displayNameOf,
+  MediaService,
+  toAuthorView,
+} from '../../shared';
 import { FcmService } from '@/modules/infrastructure/notification/providers/push/fcm.service';
 import { ListNotificationsDto } from '../dtos';
 import { NotificationPreferenceService } from './notification-preference.service';
@@ -110,6 +116,7 @@ export class NotificationFeedService {
     private readonly media: MediaService,
     private readonly preferences: NotificationPreferenceService,
     private readonly fcm: FcmService,
+    private readonly badges: BadgeService,
   ) {}
 
   /**
@@ -222,6 +229,7 @@ export class NotificationFeedService {
 
       if (!devices.length) return;
 
+      const counts = await this.badges.of(input.userId);
       const { deadTokens } = await this.fcm.sendPushToMany(
         devices.map(device => device.token),
         input.title,
@@ -234,8 +242,21 @@ export class NotificationFeedService {
           // The same target the list carries, so a tap from a cold start opens the right screen
           // without fetching the list first to find out where it goes.
           ...(input.target ? { targetType: input.target.type, targetId: input.target.id } : {}),
+          // The parent travels too, or a group post push is unopenable for exactly the reason the
+          // list row was: replies live under the group and nothing resolves a post to its group.
+          ...(input.target?.parent
+            ? {
+                targetParentType: input.target.parent.type,
+                targetParentId: input.target.parent.id,
+              }
+            : {}),
           notificationId: input.notificationId,
-          badge: String(await this.unreadTotal(input.userId)),
+          // One number for the icon, and both halves named, so the client can update either
+          // in-app counter without a fetch. `badge` used to mean two different things depending
+          // on which kind of push arrived last.
+          badge: String(counts.total),
+          unreadNotifications: String(counts.notifications),
+          unreadMessages: String(counts.messages),
         },
       );
 

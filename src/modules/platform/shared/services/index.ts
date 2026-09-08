@@ -1,3 +1,4 @@
+export * from './badge.service';
 export * from './activity.service';
 export * from './blocking.service';
 export * from './city.service';
