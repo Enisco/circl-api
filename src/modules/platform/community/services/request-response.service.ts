@@ -1,11 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  ActivitySubject,
-  ActivityVerb,
-  NotificationKind,
-  Prisma,
-  RequestStatus,
-} from '@prisma/client';
+import { ActivitySubject, ActivityVerb, NotificationKind, Prisma, RequestStatus, ThreadContextType } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import {
   ApiErrorCode,
@@ -34,7 +28,16 @@ export interface ResponseView {
   availableOn: string | null;
   thankYouExpected: { amount: number; currency: string } | null;
   author: AuthorView;
-  viewer: { isOwner: boolean; canDelete: boolean };
+  viewer: {
+    isOwner: boolean;
+    canDelete: boolean;
+    /**
+     * The thread between the viewer and **this responder** about **this request**, or null. It
+     * draws UI, not just navigation: non-null is what turns "Take up their offer" into "You're in
+     * touch", so a thread about anything else must not count.
+     */
+    conversationId: string | null;
+  };
   createdAt: string;
 }
 
@@ -87,8 +90,10 @@ export class RequestResponseService {
       }),
     ]);
 
+    const threads = await this.threadsAbout(requestId, viewerId);
+
     return {
-      data: rows.map(row => this.toView(row, viewerId, isRequestOwner)),
+      data: rows.map(row => this.toView(row, viewerId, isRequestOwner, threads.get(row.authorId))),
       meta: buildPageMeta(query, total),
     };
   }
@@ -188,7 +193,9 @@ export class RequestResponseService {
 
     // Returned so the client does not need a refetch to update the parent card (1.3.2).
     return {
-      response: this.toView(created, userId, request.authorId === userId),
+      // A thread cannot exist yet for a response posted a moment ago, so this is always null here;
+      // it is passed through so the shape does not differ between 1.3.1 and 1.3.2.
+      response: this.toView(created, userId, request.authorId === userId, undefined),
       requestCounts: counts,
     };
   }
@@ -265,10 +272,36 @@ export class RequestResponseService {
     return request;
   }
 
+  /**
+   * Every thread this viewer already has about this request, keyed by the other person. One query
+   * for the page rather than one per response, because a busy request has a dozen helpers on it.
+   */
+  private async threadsAbout(requestId: string, viewerId: string): Promise<Map<string, string>> {
+    const conversations = await this.database.conversation.findMany({
+      where: {
+        contextType: ThreadContextType.REQUEST,
+        contextId: requestId,
+        participants: { some: { userId: viewerId } },
+      },
+      select: { id: true, participants: { select: { userId: true } } },
+    });
+
+    const byOther = new Map<string, string>();
+
+    for (const conversation of conversations) {
+      for (const participant of conversation.participants) {
+        if (participant.userId !== viewerId) byOther.set(participant.userId, conversation.id);
+      }
+    }
+
+    return byOther;
+  }
+
   private toView(
     row: Prisma.RequestResponseGetPayload<{ include: { author: { select: typeof authorSelect } } }>,
     viewerId: string,
     isRequestOwner: boolean,
+    conversationId: string | undefined,
   ): ResponseView {
     const isOwner = row.authorId === viewerId;
 
@@ -280,7 +313,13 @@ export class RequestResponseService {
       availableOn: toDateOnly(row.availableOn),
       thankYouExpected: money(row.thankYouExpected, row.currency),
       author: toAuthorView(row.author, { sign: this.media.sign }),
-      viewer: { isOwner, canDelete: isOwner || isRequestOwner },
+      viewer: {
+        isOwner,
+        canDelete: isOwner || isRequestOwner,
+        // Null rather than absent, and null on a response that is not an offer of help: there is
+        // no button there, so there is nothing for an id to mean.
+        conversationId: row.isHelpOffer ? (conversationId ?? null) : null,
+      },
       createdAt: row.createdAt.toISOString(),
     };
   }

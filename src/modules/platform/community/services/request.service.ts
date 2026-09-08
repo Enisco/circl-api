@@ -404,7 +404,50 @@ export class RequestService {
       }
     }
 
+    await this.tellTheRestItIsOver(id, userId, request.title, helperIds, dto.outcome);
+
     return this.findOne(userId, id);
+  }
+
+  /**
+   * Somebody who offered to help and was not credited used to hear nothing, ever: their offer
+   * simply went quiet. That silence is the one real problem an accept/decline flow would have
+   * solved, and this solves it without anybody being declined.
+   *
+   * One notification, at resolution, to each person who offered and was not credited.
+   */
+  private async tellTheRestItIsOver(
+    requestId: string,
+    ownerId: string,
+    title: string,
+    creditedIds: string[],
+    outcome: string | undefined,
+  ): Promise<void> {
+    // Nothing was needed and nobody was thanked: there is no news here worth a notification.
+    if (outcome === 'NO_LONGER_NEEDED' && !creditedIds.length) return;
+
+    const credited = new Set([...creditedIds, ownerId]);
+    const offers = await this.database.requestResponse.findMany({
+      where: { requestId, isHelpOffer: true, deletedAt: null },
+      select: { authorId: true },
+      distinct: ['authorId'],
+    });
+
+    for (const offer of offers) {
+      if (credited.has(offer.authorId)) continue;
+
+      this.notifications.raise({
+        userId: offer.authorId,
+        actorId: ownerId,
+        kind: NotificationKind.HELP_OFFER,
+        categoryCode: 'OFFERS',
+        title: 'A request you offered to help with has been resolved',
+        body: excerpt(title, 80),
+        route: `/community/request/${requestId}`,
+        target: { type: 'REQUEST', id: requestId },
+        metadata: { requestId },
+      });
+    }
   }
 
   // ─── 1.2.6 Delete ──────────────────────────────────────────────────────────

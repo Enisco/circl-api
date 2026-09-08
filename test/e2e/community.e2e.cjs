@@ -375,6 +375,115 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   await prisma.moderationQueueItem.deleteMany({ where: { subjectUserId: { in: ids } } });
   await prisma.report.deleteMany({ where: { OR: [{ reporterId: { in: ids } }, { targetUserId: { in: ids } }] } });
   await prisma.activityEvent.deleteMany({ where: { userId: { in: ids } } });
+  console.log('\n── 1.3 Reaching the person who offered to help ──────────────');
+
+  const asker = await makeUser('ht-asker');
+  const willing = await makeUser('ht-willing');
+  const alsoWilling = await makeUser('ht-also');
+  const stranger = await makeUser('ht-stranger');
+
+  r = await api(asker.token, 'POST', '/community/requests', {
+    categoryCode: 'LANGUAGE_HELP',
+    title: 'Who can help me practise for an interview this week?',
+    description: 'I have an interview on Thursday and would like to run through questions once.',
+    cityId: 'MANCHESTER',
+  });
+  const helpReqId = r.body?.data?.id;
+
+  await api(willing.token, 'POST', `/community/requests/${helpReqId}/responses`,
+    { content: 'Yes, I can help with that. I interview people for a living.', isHelpOffer: true });
+  await api(alsoWilling.token, 'POST', `/community/requests/${helpReqId}/responses`,
+    { content: 'I could also run through some questions with you if that helps.', isHelpOffer: true });
+  await api(stranger.token, 'POST', `/community/requests/${helpReqId}/responses`,
+    { content: 'Good luck with it, you will be fine on the day.', isHelpOffer: false });
+
+  const responsesFor = async token =>
+    (await api(token, 'GET', `/community/requests/${helpReqId}/responses`)).body?.data ?? [];
+  let responses = await responsesFor(asker.token);
+
+  check('every response carries viewer.conversationId, null before any thread exists',
+    responses.length === 3 && responses.every(row => 'conversationId' in row.viewer)
+      && responses.every(row => row.viewer.conversationId === null),
+    responses.map(row => row.viewer));
+
+  r = await api(asker.token, 'POST', '/messages', {
+    recipientUserId: willing.id,
+    context: { kind: 'COMMUNITY_REQUEST', id: helpReqId },
+  });
+  const helpThreadId = r.body?.data?.id;
+
+  check('taking up an offer opens a thread pinned to the request', r.status === 201 && !!helpThreadId,
+    { s: r.status, e: r.body?.error });
+  check('and its strip names the request, its category and its status',
+    r.body?.data?.context?.type === 'REQUEST'
+      && r.body?.data?.context?.title?.startsWith('Who can help me practise')
+      && r.body?.data?.context?.subtitle === 'Request · Language Help'
+      && r.body?.data?.context?.trailing === 'Open',
+    r.body?.data?.context);
+
+  responses = await responsesFor(asker.token);
+  const contacted = responses.find(row => row.author.id === willing.id);
+  const notContacted = responses.find(row => row.author.id === alsoWilling.id);
+
+  check('only the helper actually contacted reads as in touch',
+    contacted?.viewer?.conversationId === helpThreadId
+      && notContacted?.viewer?.conversationId === null,
+    { contacted: contacted?.viewer, other: notContacted?.viewer });
+
+  const plainReply = responses.find(row => row.author.id === stranger.id);
+
+  check('a response that is not an offer of help never carries a thread id',
+    plainReply?.viewer?.conversationId === null, plainReply?.viewer);
+
+  r = await api(asker.token, 'POST', '/messages', {
+    recipientUserId: willing.id, context: { kind: 'COMMUNITY_REQUEST', id: helpReqId },
+  });
+  check('tapping the button twice reopens the same thread, with 200',
+    r.status === 200 && r.body?.data?.id === helpThreadId, { s: r.status, id: r.body?.data?.id });
+
+  r = await api(willing.token, 'POST', '/messages', {
+    recipientUserId: asker.id, context: { kind: 'COMMUNITY_REQUEST', id: helpReqId },
+  });
+  check('and the helper answering from their side lands in it too',
+    r.body?.data?.id === helpThreadId, r.body?.data?.id);
+
+  r = await api(asker.token, 'POST', '/messages', {
+    context: { kind: 'COMMUNITY_REQUEST', id: helpReqId },
+  });
+  check('a request context without a recipient is a 400, because it has many helpers',
+    r.status === 400, { s: r.status, m: r.body?.error?.message });
+
+  r = await api(stranger.token, 'POST', '/messages', {
+    recipientUserId: willing.id, context: { kind: 'COMMUNITY_REQUEST', id: helpReqId },
+  });
+  check('somebody who is neither the asker nor a helper cannot open one', r.status === 403,
+    { s: r.status, code: r.body?.error?.code });
+
+  await api(asker.token, 'POST', `/community/requests/${helpReqId}/resolve`,
+    { outcome: 'HELPED', helperUserIds: [willing.id] });
+
+  const titlesFor = async token => {
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      const rows = (await api(token, 'GET', '/notifications?limit=10')).body?.data ?? [];
+
+      if (rows.length) return rows.map(row => row.title);
+
+      await new Promise(res => setTimeout(res, 200));
+    }
+
+    return [];
+  };
+
+  check('the credited helper is thanked',
+    (await titlesFor(willing.token)).some(t => t.includes('credited you')), 'no credit row');
+  check('and the one who offered but was not credited is told it is over, rather than left waiting',
+    (await titlesFor(alsoWilling.token)).some(t => t.includes('has been resolved')), 'no closing row');
+  check('while somebody who only commented is not notified at all',
+    ((await api(stranger.token, 'GET', '/notifications?limit=10')).body?.data ?? []).length === 0,
+    'the commenter was notified');
+
+  ids.push(asker.id, willing.id, alsoWilling.id, stranger.id);
+
   await prisma.idempotencyRecord.deleteMany({ where: { userId: { in: ids } } });
   await prisma.user.deleteMany({ where: { id: { in: ids } } });
   console.log('  removed 3 test users and their content');

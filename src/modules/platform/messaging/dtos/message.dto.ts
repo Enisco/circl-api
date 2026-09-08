@@ -160,11 +160,25 @@ export class SendMessageDto {
 export const START_THREAD_CONTEXTS = {
   COMMERCE_ITEM: ThreadContextType.ITEM,
   COMMUNITY_OFFER: ThreadContextType.OFFER,
+  COMMUNITY_REQUEST: ThreadContextType.REQUEST,
   // The enum's own names, accepted because half the spec writes them this way (5.0) and rejecting
   // a synonym helps nobody.
   ITEM: ThreadContextType.ITEM,
   OFFER: ThreadContextType.OFFER,
+  REQUEST: ThreadContextType.REQUEST,
 } as const;
+
+/**
+ * The subjects that name the other person by themselves. An item has one seller and an offer one
+ * author, so the recipient is derived and sending a different one is an error.
+ *
+ * A request is not one of them: it has as many helpers as answered it, so `recipientUserId` is
+ * required alongside the context and says which of them this thread is with.
+ */
+export const CONTEXTS_THAT_NAME_THE_RECIPIENT: readonly ThreadContextType[] = [
+  ThreadContextType.ITEM,
+  ThreadContextType.OFFER,
+];
 
 export class ThreadContextDto {
   @ApiProperty({

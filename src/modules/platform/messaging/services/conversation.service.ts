@@ -1,11 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { Conversation, MessageKind, Prisma, ThreadContextType, ThreadKind } from '@prisma/client';
+import { Conversation, MessageKind, Prisma, RequestStatus, TaxonomyKind, ThreadContextType, ThreadKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta, escapeLike } from '@/common';
 import {
   AuthorView,
   BlockingService,
   MediaService,
+  TaxonomyService,
   authorSelect,
   toAuthorView,
 } from '../../shared';
@@ -29,11 +30,18 @@ const priceLabel = (pence: number | null, currency: string): string | null => {
 
 /** What a thread's subject contributes: the other party, the uniqueness key, and the pinned strip. */
 interface ThreadSubject {
-  ownerId: string;
+  /** The other party, when the subject names one. Null for a request, which has many helpers. */
+  ownerId: string | null;
+  /** Set only for a request: who owns it, so the pair can be checked against it. */
+  requestAuthorId?: string;
   contextType: ThreadContextType;
   contextId: string;
   snapshot: ContextSnapshot;
 }
+
+/** The status chip the context strip renders, worded here so two clients cannot word it differently. */
+const statusLabel = (status: RequestStatus): string =>
+  status === RequestStatus.OPEN ? 'Open' : status === RequestStatus.RESOLVED ? 'Resolved' : 'Expired';
 
 export interface ContextView {
   type: ThreadContextType | null;
@@ -85,6 +93,7 @@ export class ConversationService {
     private readonly factory: ConversationFactoryService,
     private readonly media: MediaService,
     private readonly presence: PresenceRegistry,
+    private readonly taxonomy: TaxonomyService,
   ) {}
 
   // ─── 5.3.1 The inbox ───────────────────────────────────────────────────────
@@ -201,12 +210,14 @@ export class ConversationService {
     if (!recipientUserId) {
       throw ApiException.badRequest(
         ApiErrorCode.VALIDATION_FAILED,
-        'Send either recipientUserId or a context the recipient can be derived from.',
+        subject
+          ? 'A request has many helpers, so recipientUserId says which of them this thread is with.'
+          : 'Send either recipientUserId or a context the recipient can be derived from.',
         { details: [{ field: 'recipientUserId', message: 'recipientUserId is required.' }] },
       );
     }
 
-    if (subject && dto.recipientUserId && dto.recipientUserId !== subject.ownerId) {
+    if (subject?.ownerId && dto.recipientUserId && dto.recipientUserId !== subject.ownerId) {
       // Loud rather than silent: a client sending both and getting them wrong has a bug worth
       // seeing, and the alternative is a thread opened with the wrong member.
       throw ApiException.unprocessable(
@@ -216,7 +227,45 @@ export class ConversationService {
       );
     }
 
+    if (subject?.requestAuthorId) {
+      await this.assertRequestPair(subject, userId, recipientUserId);
+    }
+
     return this.open(userId, recipientUserId, subject);
+  }
+
+  /**
+   * A request thread is between the person who asked and somebody who offered to help, in either
+   * direction. Without this, any two members could open a thread pinned to a stranger's request,
+   * which is not a leak so much as a nonsense: it would show a context strip about something
+   * neither of them has anything to do with.
+   */
+  private async assertRequestPair(
+    subject: ThreadSubject,
+    userId: string,
+    recipientUserId: string,
+  ): Promise<void> {
+    const author = subject.requestAuthorId!;
+    const helper = userId === author ? recipientUserId : userId;
+    const refuse = () =>
+      ApiException.forbidden(
+        ApiErrorCode.FORBIDDEN,
+        'A thread about a request is between the person who asked and somebody who offered to help.',
+      );
+
+    if (userId !== author && recipientUserId !== author) throw refuse();
+
+    const offered = await this.database.requestResponse.findFirst({
+      where: {
+        requestId: subject.contextId,
+        authorId: helper,
+        isHelpOffer: true,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+
+    if (!offered) throw refuse();
   }
 
   private async open(userId: string, recipientUserId: string, subject: ThreadSubject | null) {
@@ -380,6 +429,34 @@ export class ConversationService {
           trailing: priceLabel(item.price, item.currency),
           thumbnailKey: photos[0]?.storageKey ?? null,
           route: `/commerce/item/${item.id}`,
+        },
+      };
+    }
+
+    if (contextType === ThreadContextType.REQUEST) {
+      const request = await this.database.communityRequest.findFirst({
+        where: { id: contextId, deletedAt: null },
+        select: { id: true, title: true, authorId: true, status: true, categoryCode: true },
+      });
+
+      if (!request) throw ApiException.notFound('That request could not be found.');
+
+      const [category] = await this.taxonomy.list(TaxonomyKind.COMMUNITY_CATEGORY, false).then(
+        terms => [terms.find(term => term.code === request.categoryCode)?.label ?? 'Request'],
+      );
+
+      return {
+        // A request has many helpers, so the subject cannot say who this thread is with. The
+        // caller supplies that, and `open` checks the pair belongs to this request.
+        ownerId: null,
+        requestAuthorId: request.authorId,
+        contextType,
+        contextId,
+        snapshot: {
+          title: request.title,
+          subtitle: `Request · ${category}`,
+          trailing: statusLabel(request.status),
+          route: `/community/request/${request.id}`,
         },
       };
     }
