@@ -24,6 +24,22 @@ import { ReputationService } from '../../trust/services/reputation.service';
 import { BrowseProfessionalsDto } from '../dtos/browse.dto';
 import { ListingService } from './listing.service';
 
+const LISTING_INCLUDE = {
+  user: { select: authorSelect },
+  city: { select: { id: true, name: true, region: true, latitude: true, longitude: true } },
+  categories: true,
+} satisfies Prisma.ProfessionalListingInclude;
+
+type ListingRow = Prisma.ProfessionalListingGetPayload<{ include: typeof LISTING_INCLUDE }>;
+
+/** Paging across two blocks only holds if the rows inside each come back in the same order twice. */
+const LISTING_ORDER: Prisma.ProfessionalListingOrderByWithRelationInput[] = [
+  { createdAt: 'desc' },
+  { id: 'asc' },
+];
+
+const NOWHERE = { latitude: null, longitude: null };
+
 @Injectable()
 export class BrowseService {
   constructor(
@@ -49,7 +65,7 @@ export class BrowseService {
 
     const [listings, offers] = await Promise.all([
       listingType === 'COMMUNITY_OFFER'
-        ? { rows: [], total: 0 }
+        ? { rows: [], total: 0, inCityTotal: 0 }
         : this.queryListings(query, viewerCityId, blockedIds, origin),
       listingType === 'PROFESSIONAL'
         ? { rows: [], total: 0 }
@@ -58,7 +74,8 @@ export class BrowseService {
 
     const items = [...listings.rows, ...offers.rows];
 
-    // With both types in play the two result sets are merged and re-paged in memory over one window, which is what keeps the page boundaries honest.
+    // With both types in play the two sets are merged and re-paged in memory over one window,
+    // which is what keeps the page boundaries honest.
     const sorted = this.applySort(items, query.sort);
     const paged =
       listingType === 'BOTH' ? sorted.slice(query.skip, query.skip + query.take) : sorted;
@@ -66,7 +83,10 @@ export class BrowseService {
     const total = listings.total + offers.total;
     const meta: PageMeta = buildPageMeta(query, total);
 
-    // An empty professional category is a demand signal, and the member still needs their answer — so the widen action is not guesswork (2.3).
+    // Where the searched city ends, so the list can carry a "nearby" divider without counting rows.
+    meta.inCityCount = listings.inCityTotal + offers.total;
+
+    // An empty category is a demand signal, and the member still needs an answer (2.3).
     if (total === 0) {
       meta.nearbyCityMatches = await this.nearbyCityMatches(query, viewerCityId);
     }
@@ -91,9 +111,8 @@ export class BrowseService {
 
     if (category) where.categories = { some: { code: category } };
 
-    const cityId = query.cityId ?? (query.nearMe ? null : viewerCityId);
-
-    if (cityId && cityId !== 'ANYWHERE') where.cityId = cityId;
+    const requested = query.cityId ?? (query.nearMe ? null : viewerCityId);
+    const anchorCityId = requested && requested !== 'ANYWHERE' ? requested : null;
 
     if (query.availability) where.isAcceptingWork = true;
     if (query.freeConsultation) where.freeConsultation = true;
@@ -119,7 +138,7 @@ export class BrowseService {
       where.AND = [...(Array.isArray(where.AND) ? where.AND : []), { OR: search }];
     }
 
-    // Rating and immigrant-friendly filter against the maintained summary rather than aggregating reviews per listing.
+    // Against the maintained summary, rather than aggregating reviews per listing.
     if (query.minRating !== undefined || query.immigrantFriendly) {
       where.user = {
         ...(where.user as Prisma.UserWhereInput),
@@ -130,28 +149,170 @@ export class BrowseService {
       };
     }
 
-    // `verification` is accepted and deliberately not applied this version (D13): nothing carries a check other than EMAIL, so applying it would empty the screen.
+    // `verification` is accepted and not applied (D13): nothing carries a check other than EMAIL,
+    // so applying it would empty the screen.
 
-    // With BOTH, a wide window is pulled and re-paged in memory after the merge; otherwise the database does the paging.
+    // BOTH pulls a wide window and re-pages after the merge; otherwise the database pages.
     const window: { skip: number; take: number } =
       query.listingType === 'BOTH'
         ? { skip: 0, take: 200 }
         : { skip: query.skip, take: query.take };
 
-    const [total, rows] = await this.database.$transaction([
-      this.database.professionalListing.count({ where }),
-      this.database.professionalListing.findMany({
-        where,
-        include: {
-          user: { select: authorSelect },
-          city: { select: { id: true, name: true, region: true, latitude: true, longitude: true } },
-          categories: true,
-        },
-        skip: window.skip,
-        take: window.take,
+    if (!anchorCityId) {
+      const [total, rows] = await this.database.$transaction([
+        this.database.professionalListing.count({ where }),
+        this.database.professionalListing.findMany({
+          where,
+          include: LISTING_INCLUDE,
+          orderBy: LISTING_ORDER,
+          skip: window.skip,
+          take: window.take,
+        }),
+      ]);
+
+      // Nothing was searched for, so nothing is "nearby" and the whole list is the first block.
+      return this.hydrate(rows, query, origin, null, total, total);
+    }
+
+    return this.pagedFromCityOutwards(where, anchorCityId, window, query, origin);
+  }
+
+  /**
+   * The searched city first, then the nearest cities that have anybody. One list and one count, so
+   * page two continues page one rather than reshuffling it.
+   */
+  private async pagedFromCityOutwards(
+    where: Prisma.ProfessionalListingWhereInput,
+    anchorCityId: string,
+    window: { skip: number; take: number },
+    query: BrowseProfessionalsDto,
+    origin: { latitude: number; longitude: number } | null,
+  ) {
+    const inCityWhere: Prisma.ProfessionalListingWhereInput = { ...where, cityId: anchorCityId };
+    const elsewhereWhere: Prisma.ProfessionalListingWhereInput = {
+      ...where,
+      cityId: { not: anchorCityId },
+    };
+
+    const [inCityTotal, grouped] = await Promise.all([
+      this.database.professionalListing.count({ where: inCityWhere }),
+      this.database.professionalListing.groupBy({
+        by: ['cityId'],
+        where: elsewhereWhere,
+        _count: { _all: true },
       }),
     ]);
 
+    const ranked = await this.citiesByDistance(
+      anchorCityId,
+      grouped.map(row => ({ cityId: row.cityId, count: row._count._all })),
+    );
+    const elsewhereTotal = ranked.reduce((sum, city) => sum + city.count, 0);
+
+    const inCityRows =
+      window.skip < inCityTotal
+        ? await this.database.professionalListing.findMany({
+            where: inCityWhere,
+            include: LISTING_INCLUDE,
+            orderBy: LISTING_ORDER,
+            skip: window.skip,
+            take: window.take,
+          })
+        : [];
+
+    const shortfall = window.take - inCityRows.length;
+    const elsewhereRows = shortfall
+      ? await this.rowsFromNearestCities(
+          elsewhereWhere,
+          ranked,
+          Math.max(0, window.skip - inCityTotal),
+          shortfall,
+        )
+      : [];
+
+    const milesByCity = new Map(ranked.map(city => [city.cityId, city.miles] as const));
+
+    return this.hydrate(
+      [...inCityRows, ...elsewhereRows],
+      query,
+      origin,
+      { anchorCityId, milesByCity },
+      inCityTotal + elsewhereTotal,
+      inCityTotal,
+    );
+  }
+
+  /** Nearest first. A city without coordinates goes last rather than first, ordered by id. */
+  private async citiesByDistance(
+    anchorCityId: string,
+    cities: { cityId: string; count: number }[],
+  ): Promise<{ cityId: string; count: number; miles: number | null }[]> {
+    if (!cities.length) return [];
+
+    const rows = await this.database.city.findMany({
+      where: { id: { in: [anchorCityId, ...cities.map(city => city.cityId)] } },
+      select: { id: true, latitude: true, longitude: true },
+    });
+    const coordinates = new Map(rows.map(row => [row.id, row] as const));
+    const anchor = coordinates.get(anchorCityId);
+    const from =
+      anchor?.latitude !== null && anchor?.latitude !== undefined && anchor.longitude !== null
+        ? { latitude: anchor.latitude, longitude: anchor.longitude }
+        : null;
+
+    return cities
+      .map(city => ({
+        ...city,
+        miles: from ? distanceMiles(from, coordinates.get(city.cityId) ?? NOWHERE) : null,
+      }))
+      .sort((a, b) => {
+        if (a.miles === b.miles) return a.cityId.localeCompare(b.cityId);
+
+        return a.miles === null ? 1 : b.miles === null ? -1 : a.miles - b.miles;
+      });
+  }
+
+  /** Walks outwards until the page is full, skipping whole cities by their counts. */
+  private async rowsFromNearestCities(
+    where: Prisma.ProfessionalListingWhereInput,
+    ranked: { cityId: string; count: number }[],
+    skip: number,
+    take: number,
+  ) {
+    const rows: ListingRow[] = [];
+    let remaining = skip;
+
+    for (const city of ranked) {
+      if (rows.length >= take) break;
+
+      if (remaining >= city.count) {
+        remaining -= city.count;
+        continue;
+      }
+
+      const page = await this.database.professionalListing.findMany({
+        where: { ...where, cityId: city.cityId },
+        include: LISTING_INCLUDE,
+        orderBy: LISTING_ORDER,
+        skip: remaining,
+        take: take - rows.length,
+      });
+
+      rows.push(...page);
+      remaining = 0;
+    }
+
+    return rows;
+  }
+
+  private async hydrate(
+    rows: ListingRow[],
+    query: BrowseProfessionalsDto,
+    origin: { latitude: number; longitude: number } | null,
+    nearby: { anchorCityId: string; milesByCity: Map<string, number | null> } | null,
+    total: number,
+    inCityTotal: number,
+  ) {
     const [professionLabels, summaries] = await Promise.all([
       this.taxonomy.labels(TaxonomyKind.PROFESSION),
       this.reputation.summariesFor(rows.map(row => row.userId)),
@@ -163,6 +324,7 @@ export class BrowseService {
         const categories = row.categories.map(category =>
           toTermView(category.code, professionLabels),
         );
+        const isNearbyCity = nearby !== null && row.cityId !== nearby.anchorCityId;
 
         return {
           type: 'PROFESSIONAL' as const,
@@ -174,6 +336,11 @@ export class BrowseService {
           city: toCityView(row.city),
           // Null unless nearMe was set with real coordinates (D25).
           distanceMiles: origin && row.city ? distanceMiles(origin, row.city) : null,
+          // True when the searched city ran out and this one was pulled in to fill the page.
+          isNearbyCity,
+          milesFromSearchedCity: isNearbyCity
+            ? (nearby.milesByCity.get(row.cityId ?? '') ?? null)
+            : null,
           rating: {
             average: summary.average,
             count: summary.countedTotal,
@@ -191,7 +358,7 @@ export class BrowseService {
       }),
     );
 
-    // Radius is applied after the distance is computed, because the distance itself needs the city's coordinates.
+    // After the distance is computed, which needs the city's coordinates.
     const filtered =
       origin && query.radiusMiles
         ? mapped.filter(
@@ -199,9 +366,12 @@ export class BrowseService {
           )
         : mapped;
 
-    return { rows: filtered, total: origin && query.radiusMiles ? filtered.length : total };
+    return {
+      rows: filtered,
+      total: origin && query.radiusMiles ? filtered.length : total,
+      inCityTotal,
+    };
   }
-
   private async queryOffers(
     query: BrowseProfessionalsDto,
     viewerCityId: string | null,
@@ -210,7 +380,7 @@ export class BrowseService {
     const where: Prisma.CommunityOfferWhereInput = {
       deletedAt: null,
       ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
-      // Same rule as the community list: an offer promoted into a verified listing has become that listing.
+      // As in the community list: an offer promoted into a verified listing has become it.
       OR: [
         { promotedToListingId: null },
         {
@@ -286,6 +456,7 @@ export class BrowseService {
     T extends {
       rating: { average: number; count: number };
       distanceMiles: number | null;
+      isNearbyCity?: boolean;
       priceFrom: { amount: number } | null;
       medianResponseMinutes: number | null;
     },
@@ -293,27 +464,38 @@ export class BrowseService {
     const byNullsLast = (a: number | null, b: number | null) =>
       a === null ? 1 : b === null ? -1 : a - b;
 
+    // The searched city first, whatever the sort: a five-star professional a county away is still
+    // the wrong answer above a good one down the road.
+    const byCityFirst = (rows: T[]) =>
+      [...rows].sort((a, b) => Number(a.isNearbyCity ?? false) - Number(b.isNearbyCity ?? false));
+
     switch (sort) {
       case 'RATING':
-        return [...items].sort((a, b) => b.rating.average - a.rating.average);
+        return byCityFirst([...items].sort((a, b) => b.rating.average - a.rating.average));
       case 'REVIEWS':
-        return [...items].sort((a, b) => b.rating.count - a.rating.count);
+        return byCityFirst([...items].sort((a, b) => b.rating.count - a.rating.count));
       case 'NEAREST':
-        return [...items].sort((a, b) => byNullsLast(a.distanceMiles, b.distanceMiles));
+        return byCityFirst(
+          [...items].sort((a, b) => byNullsLast(a.distanceMiles, b.distanceMiles)),
+        );
       case 'PRICE':
-        return [...items].sort((a, b) =>
-          byNullsLast(a.priceFrom?.amount ?? null, b.priceFrom?.amount ?? null),
+        return byCityFirst(
+          [...items].sort((a, b) =>
+            byNullsLast(a.priceFrom?.amount ?? null, b.priceFrom?.amount ?? null),
+          ),
         );
       case 'RESPONSE':
-        return [...items].sort((a, b) =>
-          byNullsLast(a.medianResponseMinutes, b.medianResponseMinutes),
+        return byCityFirst(
+          [...items].sort((a, b) => byNullsLast(a.medianResponseMinutes, b.medianResponseMinutes)),
         );
       default:
         // RECOMMENDED: rated highly, by enough people to mean it.
-        return [...items].sort(
-          (a, b) =>
-            b.rating.average * Math.min(1, Math.log1p(b.rating.count) / Math.log(10)) -
-            a.rating.average * Math.min(1, Math.log1p(a.rating.count) / Math.log(10)),
+        return byCityFirst(
+          [...items].sort(
+            (a, b) =>
+              b.rating.average * Math.min(1, Math.log1p(b.rating.count) / Math.log(10)) -
+              a.rating.average * Math.min(1, Math.log1p(a.rating.count) / Math.log(10)),
+          ),
         );
     }
   }

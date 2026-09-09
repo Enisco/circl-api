@@ -122,11 +122,37 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   const both = new Set(r.body?.data?.map(p => p.type));
   check('listingType=BOTH returns both discriminated types (D14)', both.has('PROFESSIONAL') && both.has('COMMUNITY_OFFER'), [...both]);
 
-  // A city neither the seed nor anybody's real account has a listing in. LONDON used to be that
-  // city and stopped being one, which failed this check on data rather than on behaviour.
-  r = await api(client.token, 'GET', '/professionals?cityId=TRURO&category=IMMIGRATION');
-  check('empty result carries nearbyCityMatches', r.body?.meta?.totalCount === 0 && Array.isArray(r.body?.meta?.nearbyCityMatches), r.body?.meta);
-  check('nearbyCityMatches names a real alternative', r.body?.meta?.nearbyCityMatches?.[0]?.cityId === 'MANCHESTER', r.body?.meta?.nearbyCityMatches);
+  console.log('\n── 2.3 The searched city first, then outwards ───────────────');
+
+  r = await api(client.token, 'GET', '/professionals?cityId=TRURO&limit=20');
+  const outward = r.body?.data ?? [];
+  check('a city with nobody in it still fills the page', outward.length > 0, r.body?.meta);
+  check('every row of it is flagged as a nearby city', outward.every(p => p.isNearbyCity === true), outward.map(p => p.isNearbyCity));
+  check('and carries the distance from the city searched', outward.every(p => typeof p.milesFromSearchedCity === 'number'), outward.map(p => p.milesFromSearchedCity));
+  check('nearest first', outward.every((p, i) => i === 0 || p.milesFromSearchedCity >= outward[i - 1].milesFromSearchedCity), outward.map(p => p.milesFromSearchedCity));
+  check('meta.inCityCount says where the divider goes', r.body?.meta?.inCityCount === 0, r.body?.meta?.inCityCount);
+
+  r = await api(client.token, 'GET', '/professionals?cityId=MANCHESTER&limit=20');
+  const mixed = r.body?.data ?? [];
+  const firstNearby = mixed.findIndex(p => p.isNearbyCity === true);
+  check('the searched city comes first', firstNearby === -1 || mixed.slice(0, firstNearby).every(p => !p.isNearbyCity), mixed.map(p => p.isNearbyCity));
+  check('in-city rows carry no nearby distance', mixed.filter(p => !p.isNearbyCity).every(p => p.milesFromSearchedCity === null), 'expected null');
+  check('meta.inCityCount counts only the searched city', r.body?.meta?.inCityCount > 0 && r.body?.meta?.inCityCount <= r.body?.meta?.totalCount, r.body?.meta);
+
+  const page1 = await api(client.token, 'GET', '/professionals?cityId=MANCHESTER&limit=2&page=1');
+  const page2 = await api(client.token, 'GET', '/professionals?cityId=MANCHESTER&limit=2&page=2');
+  const ids1 = (page1.body?.data ?? []).map(p => p.id);
+  const ids2 = (page2.body?.data ?? []).map(p => p.id);
+  check('page two does not repeat page one', ids2.every(id => !ids1.includes(id)), { ids1, ids2 });
+
+  r = await api(client.token, 'GET', '/professionals?cityId=ANYWHERE&limit=20');
+  check('ANYWHERE flags nothing as nearby, since nothing was searched for', (r.body?.data ?? []).every(p => p.isNearbyCity === false), r.body?.data?.map(p => p.isNearbyCity));
+
+  // The empty state is now the case where nobody anywhere matches, because a city with nobody in
+  // it fills from the cities around it. LOGISTICS is a profession the seed gives to no one.
+  r = await api(client.token, 'GET', '/professionals?cityId=TRURO&category=LOGISTICS');
+  check('nobody anywhere is still an empty page', r.body?.meta?.totalCount === 0 && (r.body?.data ?? []).length === 0, r.body?.meta);
+  check('and carries the widen hint, empty because there is nothing to widen to', Array.isArray(r.body?.meta?.nearbyCityMatches) && r.body.meta.nearbyCityMatches.length === 0, r.body?.meta?.nearbyCityMatches);
 
   r = await api(client.token, 'GET', `/professionals/${listingId}`);
   check('profile by LISTING id → 200', r.status === 200, r.body?.error);

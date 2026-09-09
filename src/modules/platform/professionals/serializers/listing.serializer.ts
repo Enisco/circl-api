@@ -19,6 +19,10 @@ export interface ProfessionalSummaryView {
   city: CityView | null;
   /** Null unless `nearMe` was set. Never a city-centre estimate (D25). */
   distanceMiles: number | null;
+  /** True when the searched city ran out and this row was pulled in to fill the page. */
+  isNearbyCity?: boolean;
+  /** City centre to city centre, for the "12 miles away" line. Null for an in-city row. */
+  milesFromSearchedCity?: number | null;
   rating: { average: number; count: number; excludedCount: number };
   medianResponseMinutes: number | null;
   priceFrom: { amount: number; currency: string } | null;
