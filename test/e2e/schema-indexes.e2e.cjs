@@ -65,6 +65,17 @@ const PARTIAL_UNIQUE = [
     }),
     PARTIAL_UNIQUE.map(name => byName.get(name)));
 
+  // The predicate is the rule. This one was restored once as `WHERE booking_id IS NULL`, which is
+  // "one review per pair for anything that is not a booking" — a different rule under the same
+  // name, enforced for a fortnight, and invisible to a check that only asked whether WHERE existed.
+  check('the prior-work index restricts by CONTEXT, not by booking',
+    /context = 'PRIOR_WORK'/i.test(byName.get('reviews_one_prior_work_per_pair_idx') ?? ''),
+    byName.get('reviews_one_prior_work_per_pair_idx'));
+
+  check('the one-offer-per-author index restricts to help offers',
+    /is_help_offer/i.test(byName.get('request_responses_one_offer_per_author_idx') ?? ''),
+    byName.get('request_responses_one_offer_per_author_idx'));
+
   console.log('\n── The extension they depend on ─────────────────────────────');
   const ext = await prisma.$queryRaw`SELECT extname FROM pg_extension WHERE extname = 'pg_trgm'`;
   check('pg_trgm is installed', ext.length === 1, ext);

@@ -33,7 +33,8 @@ const PARTIAL_UNIQUE: Array<[index: string, statement: string]> = [
   [
     'reviews_one_prior_work_per_pair_idx',
     'CREATE UNIQUE INDEX IF NOT EXISTS "reviews_one_prior_work_per_pair_idx" ' +
-      'ON "reviews" ("reviewer_id", "subject_user_id") WHERE "booking_id" IS NULL',
+      'ON "reviews" ("reviewer_id", "subject_user_id") ' +
+      'WHERE "context" = \'PRIOR_WORK\' AND "deleted_at" IS NULL',
   ],
 ];
 
