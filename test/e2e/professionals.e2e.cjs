@@ -122,7 +122,9 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   const both = new Set(r.body?.data?.map(p => p.type));
   check('listingType=BOTH returns both discriminated types (D14)', both.has('PROFESSIONAL') && both.has('COMMUNITY_OFFER'), [...both]);
 
-  r = await api(client.token, 'GET', '/professionals?cityId=LONDON&category=IMMIGRATION');
+  // A city neither the seed nor anybody's real account has a listing in. LONDON used to be that
+  // city and stopped being one, which failed this check on data rather than on behaviour.
+  r = await api(client.token, 'GET', '/professionals?cityId=TRURO&category=IMMIGRATION');
   check('empty result carries nearbyCityMatches', r.body?.meta?.totalCount === 0 && Array.isArray(r.body?.meta?.nearbyCityMatches), r.body?.meta);
   check('nearbyCityMatches names a real alternative', r.body?.meta?.nearbyCityMatches?.[0]?.cityId === 'MANCHESTER', r.body?.meta?.nearbyCityMatches);
 

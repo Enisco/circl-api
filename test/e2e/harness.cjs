@@ -10,7 +10,8 @@ const { PrismaClient } = require('@prisma/client');
 const { PrismaPg } = require('@prisma/adapter-pg');
 const { Pool } = require('pg');
 
-const BASE = 'http://localhost:4000/api/v1';
+// Overridable so a sweep can run against a second instance while the usual one keeps port 4000.
+const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:4000/api/v1';
 const E2E_PREFIX = 'e2e-';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });

@@ -2,7 +2,7 @@
 const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness.cjs');
 const { io } = require('socket.io-client');
 
-const WS = 'http://localhost:4000/ws/chat';
+const WS = (process.env.E2E_BASE_URL ?? 'http://localhost:4000/api/v1').replace(/\/api\/v1$/, '') + '/ws/chat';
 
 /** Opens a socket and resolves once it is connected, or rejects on refusal. */
 const connect = (token, buffer = ['unread.total']) =>
