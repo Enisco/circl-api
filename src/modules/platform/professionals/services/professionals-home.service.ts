@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { JobState, ListingVerificationStatus, TaxonomyKind } from '@prisma/client';
+import {
+  JobState,
+  ListingVerificationStatus,
+  TaxonomyKind,
+  ThreadContextType,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { daysAgo, money } from '@/common';
 import {
@@ -86,7 +91,10 @@ export class ProfessionalsHomeService {
         this.trustCounts(),
       ]);
 
-    const summaries = await this.reputation.summariesFor(nearYou.map(row => row.userId));
+    const [summaries, myWork] = await Promise.all([
+      this.reputation.summariesFor(nearYou.map(row => row.userId)),
+      this.myWork(userId, myListing?.id ?? null),
+    ]);
 
     return {
       // Real counts, so an empty category can be handled honestly rather than rendering a tile that leads nowhere.
@@ -128,6 +136,8 @@ export class ProfessionalsHomeService {
             verificationStatus: myListing.verificationStatus,
           }
         : null,
+      // Omitted entirely for a member with no listing, who has no work to be waiting on (5.1).
+      ...(myWork ? { myWork } : {}),
       activeBookings: activeBookings.map(booking => ({
         id: booking.id,
         serviceName: booking.serviceName,
@@ -138,6 +148,69 @@ export class ProfessionalsHomeService {
         state: booking.state,
       })),
       trust,
+    };
+  }
+
+  /**
+   * The work waiting on a professional, counted over every thread about their listing rather than
+   * over the page the client happens to hold. "2 waiting" to somebody with nine is worse than no
+   * number at all.
+   */
+  private async myWork(userId: string, listingId: string | null) {
+    if (!listingId) return null;
+
+    // A thread about one of their services counts as their work too, and most now are: the client
+    // asks which service before it opens one.
+    const services = await this.database.professionalService.findMany({
+      where: { listingId },
+      select: { id: true },
+    });
+
+    const threads = await this.database.conversationParticipant.findMany({
+      where: {
+        userId,
+        conversation: {
+          OR: [
+            { contextType: ThreadContextType.PROFESSIONAL, contextId: listingId },
+            ...(services.length
+              ? [
+                  {
+                    contextType: ThreadContextType.SERVICE,
+                    contextId: { in: services.map(service => service.id) },
+                  },
+                ]
+              : []),
+          ],
+        },
+      },
+      select: {
+        unreadCount: true,
+        isArchived: true,
+        conversation: {
+          select: {
+            messages: {
+              where: { deletedAt: null },
+              orderBy: { sentAt: 'desc' },
+              take: 1,
+              select: { senderId: true },
+            },
+          },
+        },
+      },
+    });
+
+    const open = threads.filter(row => !row.isArchived);
+
+    return {
+      // Unread, or the last word was theirs: either way the next move is this member's.
+      awaitingReply: open.filter(
+        row => row.unreadCount > 0 || (row.conversation.messages[0]?.senderId ?? userId) !== userId,
+      ).length,
+      // "Open" can only mean not archived: nothing finishes an enquiry, because nothing completes it.
+      openThreads: open.length,
+      // Their own record of finished work. Per participant, so the other side archiving does not
+      // move it, and read back through `GET /messages?archived=true`.
+      done: threads.length - open.length,
     };
   }
 

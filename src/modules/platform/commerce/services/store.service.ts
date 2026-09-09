@@ -396,10 +396,13 @@ export class StoreService {
       viewerId
         ? this.database.conversation.findFirst({
             where: {
-              contextType: 'ITEM',
+              // The shop thread when there is one, an item thread with the same shop otherwise:
+              // either way the member is sent back to the conversation they already have.
+              contextType: { in: ['STORE', 'ITEM'] },
               participants: { some: { userId: viewerId } },
               AND: [{ participants: { some: { userId: store.ownerId } } }],
             },
+            orderBy: { contextType: 'desc' },
             select: { id: true },
           })
         : Promise.resolve(null),

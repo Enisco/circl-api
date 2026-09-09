@@ -34,6 +34,7 @@ model Conversation {
   guardThread     GuardThread?
   managedRequests ManagedRequest[]
   connectionRequests ConnectionRequest[]
+  reviews            Review[]
 
   @@unique([participantKey, contextType, contextId])
   @@index([kind, lastMessageAt])

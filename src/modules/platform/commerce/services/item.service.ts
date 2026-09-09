@@ -1,5 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { ActivitySubject, ActivityVerb, Media, Prisma, TaxonomyKind } from '@prisma/client';
+import {
+  ActivitySubject,
+  ActivityVerb,
+  Media,
+  Prisma,
+  TaxonomyKind,
+  ThreadContextType,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import {
   ActivityService,
@@ -198,13 +205,25 @@ export class ItemService {
       code: item.categoryCode,
     });
 
-    const [media, related, storeSummary] = await Promise.all([
+    const [media, related, storeSummary, conversation] = await Promise.all([
       this.media.forOwner(ITEM_MEDIA_OWNER, itemId),
       this.database.storeItem.findMany({
         where: { storeId: item.storeId, id: { not: itemId }, deletedAt: null },
         take: 6,
       }),
       this.stores.toSummary(item.store, null),
+      // The thread about this item, so "Ask the seller" opens the conversation they already have
+      // rather than a blank one.
+      viewerId
+        ? this.database.conversation.findFirst({
+            where: {
+              contextType: ThreadContextType.ITEM,
+              contextId: itemId,
+              participants: { some: { userId: viewerId } },
+            },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
     ]);
 
     const relatedMedia = await this.media.forOwners(
@@ -229,6 +248,10 @@ export class ItemService {
         // "Ask the seller" has no recipient without this, so the button was being hidden rather
         // than shown and broken. The same shared author object the shop detail returns (4.5.1).
         owner: toAuthorView(item.store.owner, { sign: this.media.sign }),
+      },
+      viewer: {
+        isOwner: viewerId === item.store.ownerId,
+        conversationId: conversation?.id ?? null,
       },
     };
   }

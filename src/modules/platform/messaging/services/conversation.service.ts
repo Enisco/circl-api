@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   Conversation,
+  JobState,
   MessageKind,
   Prisma,
   RequestStatus,
@@ -19,6 +20,7 @@ import {
   toAuthorView,
 } from '../../shared';
 import {
+  kindForContext,
   ListConversationsDto,
   START_THREAD_CONTEXTS,
   StartThreadDto,
@@ -73,6 +75,7 @@ export type ThreadLabel =
   | 'ABOUT_LISTING'
   | 'ABOUT_CONNECTION'
   | 'ABOUT_ORDER'
+  | 'ABOUT_SHOP'
   | 'CIRCL_TEAM'
   | null;
 
@@ -117,7 +120,13 @@ export class ConversationService {
       participants: {
         some: {
           userId,
-          ...(query.includeArchived ? {} : { isArchived: false }),
+          // Three states: done only, everything, or the inbox. Marking a thread done is the only
+          // ending a conversation has, so the set of them has to be readable back.
+          ...(query.archived
+            ? { isArchived: true }
+            : query.includeArchived
+              ? {}
+              : { isArchived: false }),
           ...(query.unreadOnly ? { unreadCount: { gt: 0 } } : {}),
         },
       },
@@ -186,10 +195,15 @@ export class ConversationService {
       where: { userId, isArchived: false, unreadCount: { gt: 0 } },
     });
 
-    const lastMessages = await this.lastMessages(rows.map(row => row.id));
+    const [lastMessages, reviewable] = await Promise.all([
+      this.lastMessages(rows.map(row => row.id)),
+      this.reviewableThreads(userId, rows),
+    ]);
 
     return {
-      data: rows.map(row => this.toRow(row, userId, lastMessages.get(row.id) ?? null)),
+      data: rows.map(row =>
+        this.toRow(row, userId, lastMessages.get(row.id) ?? null, reviewable.has(row.id)),
+      ),
       meta: buildPageMeta(query, total, {
         // The badge is in four section headers, so the totals ship with the list rather than being recomputed from a page of it (5.2.3).
         unreadTotal: totals._sum.unreadCount ?? 0,
@@ -203,9 +217,17 @@ export class ConversationService {
   /** Used on a deep link, when the inbox has not been loaded. */
   async findOne(userId: string, conversationId: string) {
     const conversation = await this.requireParticipant(userId, conversationId);
-    const lastMessages = await this.lastMessages([conversationId]);
+    const [lastMessages, reviewable] = await Promise.all([
+      this.lastMessages([conversationId]),
+      this.reviewableThreads(userId, [conversation]),
+    ]);
 
-    return this.toRow(conversation, userId, lastMessages.get(conversationId) ?? null);
+    return this.toRow(
+      conversation,
+      userId,
+      lastMessages.get(conversationId) ?? null,
+      reviewable.has(conversationId),
+    );
   }
 
   // ─── 5.3.5 Start a plain DM ────────────────────────────────────────────────
@@ -328,7 +350,9 @@ export class ConversationService {
 
     // Unique on (participants, contextType, contextId).
     const { conversation, created } = await this.factory.ensure({
-      kind: ThreadKind.DIRECT,
+      // The section it files under comes from the subject (5.0.1). Left at DIRECT, every thread
+      // landed under All and the section filters had nothing to filter on.
+      kind: kindForContext(subject?.contextType ?? null),
       participantIds: [userId, dto.recipientUserId],
       contextType: subject?.contextType ?? null,
       contextId: subject?.contextId ?? null,
@@ -461,6 +485,148 @@ export class ConversationService {
       };
     }
 
+    if (contextType === ThreadContextType.PROFESSIONAL) {
+      const listing = await this.database.professionalListing.findFirst({
+        where: { id: contextId, deletedAt: null },
+        select: {
+          id: true,
+          userId: true,
+          professionTitle: true,
+          priceFrom: true,
+          currency: true,
+          city: { select: { name: true } },
+          user: { select: { firstName: true, lastName: true } },
+        },
+      });
+
+      if (!listing) throw ApiException.notFound('That professional could not be found.');
+
+      const name = [listing.user.firstName, listing.user.lastName].filter(Boolean).join(' ');
+
+      return {
+        ownerId: listing.userId,
+        contextType,
+        contextId,
+        snapshot: {
+          title: listing.professionTitle,
+          subtitle: [name, listing.city?.name].filter(Boolean).join(' · ') || null,
+          trailing: priceLabel(listing.priceFrom, listing.currency),
+          route: `/professionals/profile/${listing.id}`,
+        },
+      };
+    }
+
+    if (contextType === ThreadContextType.SERVICE) {
+      const service = await this.database.professionalService.findFirst({
+        where: { id: contextId, listing: { deletedAt: null } },
+        select: {
+          id: true,
+          name: true,
+          price: true,
+          currency: true,
+          listing: {
+            select: {
+              id: true,
+              userId: true,
+              professionTitle: true,
+              user: { select: { firstName: true, lastName: true } },
+            },
+          },
+        },
+      });
+
+      if (!service) throw ApiException.notFound('That service could not be found.');
+
+      const name = [service.listing.user.firstName, service.listing.user.lastName]
+        .filter(Boolean)
+        .join(' ');
+
+      return {
+        ownerId: service.listing.userId,
+        contextType,
+        contextId,
+        snapshot: {
+          title: service.name,
+          subtitle: name || service.listing.professionTitle,
+          // The price as listed the day the thread opened. This one snapshot field is a record
+          // rather than a cache: what the strip says must not change because the price list was
+          // edited a fortnight later. `route` still resolves the live listing.
+          trailing: priceLabel(service.price, service.currency),
+          route: `/professionals/profile/${service.listing.id}`,
+        },
+      };
+    }
+
+    if (contextType === ThreadContextType.CONNECT_PROFILE) {
+      const profile = await this.database.connectProfile.findFirst({
+        where: { id: contextId },
+        select: {
+          id: true,
+          userId: true,
+          typeCode: true,
+          lookingFor: true,
+          city: { select: { name: true } },
+          user: {
+            select: {
+              isAnonymised: true,
+              profile: { select: { city: { select: { name: true } } } },
+            },
+          },
+        },
+      });
+
+      if (!profile || profile.user.isAnonymised) {
+        throw ApiException.notFound('That Connect profile could not be found.');
+      }
+
+      const typeLabels = await this.taxonomy.labels(TaxonomyKind.CONNECTION_TYPE);
+      const cityName = profile.city?.name ?? profile.user.profile?.city?.name ?? null;
+
+      return {
+        ownerId: profile.userId,
+        contextType,
+        contextId,
+        snapshot: {
+          title:
+            [typeLabels.get(profile.typeCode) ?? profile.typeCode, cityName]
+              .filter(Boolean)
+              .join(' · ') || 'Connect',
+          // One snapshot is shown to both of them, so it cannot say "you both want X", which is
+          // true of only one reader. Their own words are the honest thing to put here.
+          subtitle: profile.lookingFor || null,
+          route: `/connect/profile/${profile.id}`,
+        },
+      };
+    }
+
+    if (contextType === ThreadContextType.STORE) {
+      const store = await this.database.store.findFirst({
+        where: { id: contextId, deletedAt: null },
+        select: {
+          id: true,
+          ownerId: true,
+          name: true,
+          logoKey: true,
+          city: { select: { name: true } },
+        },
+      });
+
+      if (!store) throw ApiException.notFound('That shop could not be found.');
+
+      return {
+        ownerId: store.ownerId,
+        contextType,
+        contextId,
+        snapshot: {
+          title: store.name,
+          subtitle: store.city?.name ?? null,
+          // The strip leads with the logo, as an item thread leads with the item photo.
+          thumbnailKey: store.logoKey,
+          route: `/commerce/store/${store.id}`,
+        },
+      };
+    }
+
     const offer = await this.database.communityOffer.findFirst({
       where: { id: contextId, deletedAt: null },
       select: { id: true, title: true, authorId: true, priceFrom: true, currency: true },
@@ -565,6 +731,86 @@ export class ConversationService {
     return map;
   }
 
+  /**
+   * Which of these threads the caller may leave a review on, checked in bulk because the inbox
+   * asks about a page at a time. Every rule the review endpoint enforces is applied here, so the
+   * app never offers a review that comes back 422.
+   */
+  private async reviewableThreads(userId: string, rows: ConversationRow[]): Promise<Set<string>> {
+    const reviewable = new Set<string>();
+
+    // Only a thread about a professional's work can carry one, and only once both have written.
+    const candidates = rows.filter(
+      row =>
+        (row.contextType === ThreadContextType.PROFESSIONAL ||
+          row.contextType === ThreadContextType.SERVICE) &&
+        row.contextId !== null &&
+        row.participants.every(participant => participant.hasSentMessage) &&
+        row.participants.some(participant => participant.userId !== userId),
+    );
+
+    if (!candidates.length) return reviewable;
+
+    const listingIds = candidates
+      .filter(row => row.contextType === ThreadContextType.PROFESSIONAL)
+      .map(row => row.contextId!);
+    const serviceIds = candidates
+      .filter(row => row.contextType === ThreadContextType.SERVICE)
+      .map(row => row.contextId!);
+
+    const [listings, services, reviewed] = await Promise.all([
+      listingIds.length
+        ? this.database.professionalListing.findMany({
+            where: { id: { in: listingIds } },
+            select: { id: true, userId: true },
+          })
+        : [],
+      serviceIds.length
+        ? this.database.professionalService.findMany({
+            where: { id: { in: serviceIds } },
+            select: { id: true, listing: { select: { userId: true } } },
+          })
+        : [],
+      this.database.review.findMany({
+        where: { reviewerId: userId, conversationId: { in: candidates.map(row => row.id) } },
+        select: { conversationId: true },
+      }),
+    ]);
+
+    const ownerOf = new Map<string, string>([
+      ...listings.map(listing => [listing.id, listing.userId] as const),
+      ...services.map(service => [service.id, service.listing.userId] as const),
+    ]);
+    const alreadyReviewed = new Set(reviewed.map(review => review.conversationId));
+
+    // A completed booking is the better evidence and takes precedence, so the review endpoint
+    // refuses this one for a pair who have one.
+    const booked = new Set(
+      (
+        await this.database.booking.findMany({
+          where: {
+            state: JobState.COMPLETED,
+            OR: [{ clientId: userId }, { professionalId: userId }],
+          },
+          select: { clientId: true, professionalId: true },
+        })
+      ).flatMap(booking => [booking.clientId, booking.professionalId]),
+    );
+
+    for (const row of candidates) {
+      const ownerId = ownerOf.get(row.contextId!);
+
+      if (!ownerId || ownerId === userId) continue;
+      if (alreadyReviewed.has(row.id)) continue;
+      if (booked.has(ownerId)) continue;
+      if (!row.participants.some(participant => participant.userId === ownerId)) continue;
+
+      reviewable.add(row.id);
+    }
+
+    return reviewable;
+  }
+
   private toRow(
     conversation: ConversationRow,
     userId: string,
@@ -576,6 +822,7 @@ export class ConversationService {
       status: string;
       sentAt: Date;
     } | null,
+    canReview = false,
   ) {
     const me = conversation.participants.find(participant => participant.userId === userId);
     const others = conversation.participants.filter(participant => participant.userId !== userId);
@@ -616,6 +863,8 @@ export class ConversationService {
       isTyping: false,
       isMuted: me?.isMuted ?? false,
       isArchived: me?.isArchived ?? false,
+      // Archiving is per participant, so only the caller's own copy can answer either of these.
+      viewer: { isArchived: me?.isArchived ?? false, canReview },
       // 3.6: true until BOTH people have sent at least one message.
       safetyNoticeRequired:
         conversation.kind === ThreadKind.CONNECT &&
@@ -653,7 +902,7 @@ export class ConversationService {
       case ThreadContextType.OFFER:
         return `/community/offer/${conversation.contextId}`;
       case ThreadContextType.PROFESSIONAL:
-        return `/professionals/${conversation.contextId}`;
+        return `/professionals/profile/${conversation.contextId}`;
       case ThreadContextType.BOOKING:
         return `/bookings/${conversation.contextId}`;
       case ThreadContextType.CONNECT_PROFILE:
@@ -662,6 +911,8 @@ export class ConversationService {
         return `/commerce/item/${conversation.contextId}`;
       case ThreadContextType.ORDER:
         return `/commerce/orders/${conversation.contextId}`;
+      case ThreadContextType.STORE:
+        return `/commerce/store/${conversation.contextId}`;
       default:
         return null;
     }
@@ -679,6 +930,7 @@ export class ConversationService {
       case ThreadContextType.OFFER:
         return 'OFFERED_HELP';
       case ThreadContextType.PROFESSIONAL:
+      case ThreadContextType.SERVICE:
       case ThreadContextType.BOOKING:
         return 'ABOUT_LISTING';
       case ThreadContextType.CONNECT_PROFILE:
@@ -686,6 +938,8 @@ export class ConversationService {
       case ThreadContextType.ITEM:
       case ThreadContextType.ORDER:
         return 'ABOUT_ORDER';
+      case ThreadContextType.STORE:
+        return 'ABOUT_SHOP';
       default:
         return null;
     }

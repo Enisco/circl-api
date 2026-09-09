@@ -48,8 +48,8 @@ export class CreateReviewDto {
 
   @ApiPropertyOptional({
     description:
-      'Required for BOOKING (the booking id), ORDER (the enquiry id) and COMMUNITY (the request ' +
-      'id). Absent for PRIOR_WORK.',
+      'Required for BOOKING (the booking id), ORDER (the enquiry id), COMMUNITY (the request ' +
+      'id) and PROFESSIONAL (the conversation id). Absent for PRIOR_WORK.',
   })
   @Trim()
   @IsString()

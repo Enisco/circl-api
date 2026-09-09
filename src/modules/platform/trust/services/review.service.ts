@@ -7,6 +7,7 @@ import {
   Review,
   ReviewContext,
   TaxonomyKind,
+  ThreadContextType,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta, excerpt, toJsonOrUndefined } from '@/common';
@@ -48,7 +49,24 @@ const CONTEXT_LABELS: Record<ReviewContext, string> = {
   COMMUNITY: 'Helped in the community',
   BOOKING: 'Booked through Circl',
   ORDER: 'Bought through Circl',
+  PROFESSIONAL: 'Worked together on Circl',
   PRIOR_WORK: 'Worked together before Circl',
+};
+
+const REVIEW_CONVERSATION = { select: { contextType: true, contextSnapshot: true } } as const;
+
+/** "5 stars, Appeal support" is worth reading. "5 stars, Immigration Adviser" is barely worth it. */
+const contextLabelFor = (row: {
+  context: ReviewContext;
+  conversation?: { contextType: ThreadContextType | null; contextSnapshot: unknown } | null;
+}): string => {
+  const label = CONTEXT_LABELS[row.context];
+
+  if (row.conversation?.contextType !== ThreadContextType.SERVICE) return label;
+
+  const service = (row.conversation.contextSnapshot as { title?: string } | null)?.title;
+
+  return service ? `${label} · ${service}` : label;
 };
 
 @Injectable()
@@ -86,7 +104,7 @@ export class ReviewService {
       this.database.review.count({ where }),
       this.database.review.findMany({
         where,
-        include: { reviewer: { select: authorSelect } },
+        include: { reviewer: { select: authorSelect }, conversation: REVIEW_CONVERSATION },
         orderBy,
         skip: query.skip,
         take: query.take,
@@ -113,6 +131,7 @@ export class ReviewService {
             COMMUNITY: summary.communityCount,
             BOOKING: summary.bookingCount,
             ORDER: summary.orderCount,
+            PROFESSIONAL: summary.professionalCount,
             PRIOR_WORK: summary.priorWorkCount,
           },
         },
@@ -190,6 +209,7 @@ export class ReviewService {
           requestId: source.requestId,
           bookingId: source.bookingId,
           enquiryId: source.enquiryId,
+          conversationId: source.conversationId,
           editableUntil: new Date(Date.now() + EDIT_WINDOW_MS),
         },
       });
@@ -304,8 +324,13 @@ export class ReviewService {
   private async assertEligible(
     reviewerId: string,
     dto: CreateReviewDto,
-  ): Promise<{ requestId: string | null; bookingId: string | null; enquiryId: string | null }> {
-    const empty = { requestId: null, bookingId: null, enquiryId: null };
+  ): Promise<{
+    requestId: string | null;
+    bookingId: string | null;
+    enquiryId: string | null;
+    conversationId: string | null;
+  }> {
+    const empty = { requestId: null, bookingId: null, enquiryId: null, conversationId: null };
 
     switch (dto.context) {
       case ReviewContext.BOOKING: {
@@ -384,6 +409,80 @@ export class ReviewService {
         return { ...empty, enquiryId: enquiry.id };
       }
 
+      case ReviewContext.PROFESSIONAL: {
+        this.assertSourceId(dto);
+
+        const conversation = await this.database.conversation.findUnique({
+          where: { id: dto.sourceId },
+          select: {
+            id: true,
+            contextType: true,
+            contextId: true,
+            participants: { select: { userId: true } },
+          },
+        });
+
+        const listing = await this.listingBehind(conversation);
+
+        const partyIds = new Set(conversation?.participants.map(row => row.userId) ?? []);
+
+        // Both of them have spoken. One person writing into the void is not working together, and
+        // without it anybody could review anybody by messaging them once.
+        const spokenBoth = conversation
+          ? (
+              await this.database.message.groupBy({
+                by: ['senderId'],
+                where: { conversationId: conversation.id, deletedAt: null },
+              })
+            ).length >= 2
+          : false;
+
+        if (
+          !conversation ||
+          !listing ||
+          listing.userId !== dto.subjectUserId ||
+          !partyIds.has(reviewerId) ||
+          !partyIds.has(dto.subjectUserId) ||
+          !spokenBoth
+        ) {
+          throw ApiException.unprocessable(
+            ApiErrorCode.REVIEW_NOT_ELIGIBLE,
+            'You can review a professional once you have both spoken in a thread about their listing or one of their services.',
+            {
+              details: [
+                {
+                  field: 'sourceId',
+                  message: 'Not a thread about their work that you have both replied in.',
+                },
+              ],
+            },
+          );
+        }
+
+        // 4.3: once booking returns it is the better evidence, so it takes precedence for a pair
+        // who have one.
+        const booking = await this.database.booking.findFirst({
+          where: {
+            state: JobState.COMPLETED,
+            OR: [
+              { clientId: reviewerId, professionalId: dto.subjectUserId },
+              { clientId: dto.subjectUserId, professionalId: reviewerId },
+            ],
+          },
+          select: { id: true },
+        });
+
+        if (booking) {
+          throw ApiException.unprocessable(
+            ApiErrorCode.REVIEW_NOT_ELIGIBLE,
+            'You booked them through Circl, so review that booking instead.',
+            { details: [{ field: 'context', message: 'Use the booking review instead.' }] },
+          );
+        }
+
+        return { ...empty, conversationId: conversation.id };
+      }
+
       case ReviewContext.PRIOR_WORK: {
         // Reputation portability: past clients from outside Circl can vouch for a professional, so an established one does not arrive at zero.
         const booking = await this.database.booking.findFirst({
@@ -410,6 +509,34 @@ export class ReviewService {
       default:
         return empty;
     }
+  }
+
+  /**
+   * The listing a thread is about, whether it names the listing or one service off it. A service
+   * belongs to exactly one listing, so both arrive at the same owner.
+   */
+  private async listingBehind(
+    conversation: { contextType: ThreadContextType | null; contextId: string | null } | null,
+  ): Promise<{ userId: string } | null> {
+    if (!conversation?.contextId) return null;
+
+    if (conversation.contextType === ThreadContextType.PROFESSIONAL) {
+      return this.database.professionalListing.findUnique({
+        where: { id: conversation.contextId },
+        select: { userId: true },
+      });
+    }
+
+    if (conversation.contextType === ThreadContextType.SERVICE) {
+      const service = await this.database.professionalService.findUnique({
+        where: { id: conversation.contextId },
+        select: { listing: { select: { userId: true } } },
+      });
+
+      return service?.listing ?? null;
+    }
+
+    return null;
   }
 
   private assertSourceId(
@@ -442,12 +569,15 @@ export class ReviewService {
   private async withReviewer(id: string) {
     return this.database.review.findUniqueOrThrow({
       where: { id },
-      include: { reviewer: { select: authorSelect } },
+      include: { reviewer: { select: authorSelect }, conversation: REVIEW_CONVERSATION },
     });
   }
 
   private toView(
-    row: Review & { reviewer: Parameters<typeof toAuthorView>[0] },
+    row: Review & {
+      reviewer: Parameters<typeof toAuthorView>[0];
+      conversation?: { contextType: ThreadContextType | null; contextSnapshot: unknown } | null;
+    },
     viewerId: string | null,
     subjectUserId: string,
     tagLabels: Map<string, string>,
@@ -460,7 +590,7 @@ export class ReviewService {
       rating: row.rating,
       comment: row.comment,
       context: row.context,
-      contextLabel: CONTEXT_LABELS[row.context],
+      contextLabel: contextLabelFor(row),
       countsToAverage: row.countsToAverage,
       tags: Array.isArray(row.tags)
         ? (row.tags as string[]).map(tag => tagLabels.get(tag) ?? tag)

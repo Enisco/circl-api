@@ -17,10 +17,10 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { PageOptionsDto } from '@/common';
+import { PageOptionsDto, ToBoolean } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
-const Bool = () => Transform(({ value }) => value === true || value === 'true');
+const Bool = ToBoolean;
 
 export class ListConversationsDto extends PageOptionsDto {
   @ApiPropertyOptional({ enum: ThreadKind, description: 'Backs the filter tabs.' })
@@ -42,11 +42,23 @@ export class ListConversationsDto extends PageOptionsDto {
   @IsOptional()
   q?: string;
 
-  @ApiPropertyOptional({ default: false })
+  @ApiPropertyOptional({ default: false, description: 'Active and archived together.' })
   @Bool()
   @IsBoolean()
   @IsOptional()
   includeArchived?: boolean;
+
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      'The Done chip: `true` returns **only** archived threads. A third state rather than a ' +
+      'replacement for `includeArchived`, because "the ones I have finished with" is a different ' +
+      'question from "everything". Wins over `includeArchived` when both are sent.',
+  })
+  @Bool()
+  @IsBoolean()
+  @IsOptional()
+  archived?: boolean;
 }
 
 /** History is newest-first and cursor-paged. */
@@ -155,6 +167,10 @@ export const START_THREAD_CONTEXTS = {
   COMMERCE_ITEM: ThreadContextType.ITEM,
   COMMUNITY_OFFER: ThreadContextType.OFFER,
   COMMUNITY_REQUEST: ThreadContextType.REQUEST,
+  PROFESSIONAL: ThreadContextType.PROFESSIONAL,
+  SERVICE: ThreadContextType.SERVICE,
+  CONNECT_PROFILE: ThreadContextType.CONNECT_PROFILE,
+  STORE: ThreadContextType.STORE,
   // The enum's own names, accepted because half the spec writes them this way (5.0) and rejecting
   // a synonym helps nobody.
   ITEM: ThreadContextType.ITEM,
@@ -169,14 +185,43 @@ export const START_THREAD_CONTEXTS = {
 export const CONTEXTS_THAT_NAME_THE_RECIPIENT: readonly ThreadContextType[] = [
   ThreadContextType.ITEM,
   ThreadContextType.OFFER,
+  ThreadContextType.PROFESSIONAL,
+  ThreadContextType.SERVICE,
+  ThreadContextType.CONNECT_PROFILE,
+  ThreadContextType.STORE,
 ];
+
+/** The section a thread files under, which is the context's, not the participants' (5.0.1). */
+export const KIND_FOR_CONTEXT: Record<ThreadContextType, ThreadKind> = {
+  [ThreadContextType.REQUEST]: ThreadKind.COMMUNITY,
+  [ThreadContextType.OFFER]: ThreadKind.COMMUNITY,
+  [ThreadContextType.PROFESSIONAL]: ThreadKind.PROFESSIONAL,
+  [ThreadContextType.SERVICE]: ThreadKind.PROFESSIONAL,
+  [ThreadContextType.BOOKING]: ThreadKind.PROFESSIONAL,
+  [ThreadContextType.CONNECT_PROFILE]: ThreadKind.CONNECT,
+  [ThreadContextType.ITEM]: ThreadKind.COMMERCE,
+  [ThreadContextType.ORDER]: ThreadKind.COMMERCE,
+  [ThreadContextType.STORE]: ThreadKind.COMMERCE,
+  [ThreadContextType.SUPPORT]: ThreadKind.SUPPORT,
+  [ThreadContextType.BRIEF]: ThreadKind.SUPPORT,
+  [ThreadContextType.MANAGED_REQUEST]: ThreadKind.SUPPORT,
+  [ThreadContextType.DISPUTE]: ThreadKind.SUPPORT,
+};
+
+/** A thread about nothing in particular is the only DIRECT one. */
+export const kindForContext = (contextType: ThreadContextType | null): ThreadKind =>
+  contextType ? KIND_FOR_CONTEXT[contextType] : ThreadKind.DIRECT;
 
 export class ThreadContextDto {
   @ApiProperty({
     enum: Object.keys(START_THREAD_CONTEXTS),
     description:
       'What the thread is about. `COMMERCE_ITEM` and `COMMUNITY_OFFER` are the names 4.5.3 uses; ' +
-      '`ITEM` and `OFFER` are the same two under the enum names in 5.0.',
+      '`ITEM` and `OFFER` are the same two under the enum names in 5.0. `PROFESSIONAL` takes a ' +
+      'listing id, `SERVICE` one service off that listing, `CONNECT_PROFILE` a Connect profile id ' +
+      'and `STORE` a store id, each of which has one owner, so none of them needs ' +
+      '`recipientUserId`. Prefer `SERVICE` wherever the listing has services: two services with ' +
+      'the same professional are two threads, as two shop items are.',
     example: 'COMMERCE_ITEM',
   })
   @Trim()

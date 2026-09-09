@@ -69,6 +69,9 @@ model Review {
   booking   Booking?          @relation(fields: [bookingId], references: [id], onDelete: SetNull)
   enquiryId String?           @map("enquiry_id")
   enquiry   Enquiry?          @relation(fields: [enquiryId], references: [id], onDelete: SetNull)
+  // PROFESSIONAL hangs off the thread the two of them worked out of, which is the only record left once booking is gone.
+  conversationId String?       @map("conversation_id")
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
   // Editable for 48 hours, then frozen (2.5.2).
   editableUntil DateTime? @map("editable_until") @db.Timestamptz
@@ -102,10 +105,11 @@ model ReputationSummary {
   star2 Int @default(0) @map("star_2")
   star1 Int @default(0) @map("star_1")
 
-  communityCount Int @default(0) @map("community_count")
-  bookingCount   Int @default(0) @map("booking_count")
-  orderCount     Int @default(0) @map("order_count")
-  priorWorkCount Int @default(0) @map("prior_work_count")
+  communityCount    Int @default(0) @map("community_count")
+  bookingCount      Int @default(0) @map("booking_count")
+  orderCount        Int @default(0) @map("order_count")
+  professionalCount Int @default(0) @map("professional_count")
+  priorWorkCount    Int @default(0) @map("prior_work_count")
 
   // D11: reviewers whose countryOfOrigin is set and is not the United Kingdom.
   immigrantReviewCount   Int     @default(0) @map("immigrant_review_count")
