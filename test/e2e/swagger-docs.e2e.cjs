@@ -5,7 +5,8 @@
  * row with a path and nothing else. Neither breaks a test anywhere else. */
 const { check, finish } = require('./harness.cjs');
 
-const DOCS = 'http://localhost:4000/docs-json';
+const DOCS =
+  (process.env.E2E_BASE_URL ?? 'http://localhost:4000/api/v1').replace(/\/api\/v1$/, '') + '/docs-json';
 
 /** The endpoints the app team was told to look at, so these must read well specifically. */
 const GAP_ENDPOINTS = [

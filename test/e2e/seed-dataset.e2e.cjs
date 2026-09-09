@@ -8,7 +8,7 @@
 const jwt = require('jsonwebtoken');
 const { api, check, finish, prisma } = require('./harness.cjs');
 
-const BASE = 'http://localhost:4000/api/v1';
+const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:4000/api/v1';
 
 /** Signs in the way the app does: an email code, no password (B.6). */
 async function signIn(email) {

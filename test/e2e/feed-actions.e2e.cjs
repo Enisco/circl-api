@@ -4,7 +4,7 @@
  * built around never appeared. That is §1 and it is the reason this file exists. */
 const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness.cjs');
 
-const BASE = 'http://localhost:4000/api/v1';
+const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:4000/api/v1';
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const CITIES = [

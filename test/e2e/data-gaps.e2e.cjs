@@ -4,7 +4,7 @@
  * come from? Anything still answered by "a Dart constant" is a failure. */
 const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness.cjs');
 
-const BASE = 'http://localhost:4000/api/v1';
+const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:4000/api/v1';
 
 async function signIn(email) {
   const res = await fetch(`${BASE}/auth/verify/email`, {
