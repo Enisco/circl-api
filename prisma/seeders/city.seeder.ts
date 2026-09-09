@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import ukCities from './data/uk-cities.json';
 
+/** Coordinates are approximate city-centre points: they rank cities, they are not addresses. */
 export const seedCities = async (prisma: PrismaClient) => {
   console.info('Seeding UK cities...');
 
@@ -9,7 +10,11 @@ export const seedCities = async (prisma: PrismaClient) => {
       for (const city of ukCities) {
         await tx.city.upsert({
           where: { id: city.id },
-          update: { name: city.name },
+          update: {
+            name: city.name,
+            latitude: city.latitude,
+            longitude: city.longitude,
+          },
           create: city,
         });
       }

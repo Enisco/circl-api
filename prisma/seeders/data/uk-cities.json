@@ -1,108 +1,620 @@
 [
-  { "id": "BARNSLEY", "name": "Barnsley" },
-  { "id": "BASILDON", "name": "Basildon" },
-  { "id": "BATH", "name": "Bath" },
-  { "id": "BEDFORD", "name": "Bedford" },
-  { "id": "BIRKENHEAD", "name": "Birkenhead" },
-  { "id": "BIRMINGHAM", "name": "Birmingham" },
-  { "id": "BLACKBURN", "name": "Blackburn" },
-  { "id": "BLACKPOOL", "name": "Blackpool" },
-  { "id": "BOLTON", "name": "Bolton" },
-  { "id": "BOURNEMOUTH", "name": "Bournemouth" },
-  { "id": "BRADFORD", "name": "Bradford" },
-  { "id": "BRIGHTON", "name": "Brighton" },
-  { "id": "BRISTOL", "name": "Bristol" },
-  { "id": "BURNLEY", "name": "Burnley" },
-  { "id": "CAMBRIDGE", "name": "Cambridge" },
-  { "id": "CANTERBURY", "name": "Canterbury" },
-  { "id": "CARLISLE", "name": "Carlisle" },
-  { "id": "CHELMSFORD", "name": "Chelmsford" },
-  { "id": "CHELTENHAM", "name": "Cheltenham" },
-  { "id": "CHESTER", "name": "Chester" },
-  { "id": "CHICHESTER", "name": "Chichester" },
-  { "id": "COLCHESTER", "name": "Colchester" },
-  { "id": "COVENTRY", "name": "Coventry" },
-  { "id": "CRAWLEY", "name": "Crawley" },
-  { "id": "DERBY", "name": "Derby" },
-  { "id": "DONCASTER", "name": "Doncaster" },
-  { "id": "DURHAM", "name": "Durham" },
-  { "id": "EASTBOURNE", "name": "Eastbourne" },
-  { "id": "ELY", "name": "Ely" },
-  { "id": "EXETER", "name": "Exeter" },
-  { "id": "GLOUCESTER", "name": "Gloucester" },
-  { "id": "GRIMSBY", "name": "Grimsby" },
-  { "id": "GUILDFORD", "name": "Guildford" },
-  { "id": "HARROGATE", "name": "Harrogate" },
-  { "id": "HEREFORD", "name": "Hereford" },
-  { "id": "HUDDERSFIELD", "name": "Huddersfield" },
-  { "id": "HULL", "name": "Hull" },
-  { "id": "IPSWICH", "name": "Ipswich" },
-  { "id": "LANCASTER", "name": "Lancaster" },
-  { "id": "LEEDS", "name": "Leeds" },
-  { "id": "LEICESTER", "name": "Leicester" },
-  { "id": "LICHFIELD", "name": "Lichfield" },
-  { "id": "LINCOLN", "name": "Lincoln" },
-  { "id": "LIVERPOOL", "name": "Liverpool" },
-  { "id": "LONDON", "name": "London" },
-  { "id": "LUTON", "name": "Luton" },
-  { "id": "MAIDSTONE", "name": "Maidstone" },
-  { "id": "MANCHESTER", "name": "Manchester" },
-  { "id": "MIDDLESBROUGH", "name": "Middlesbrough" },
-  { "id": "MILTON_KEYNES", "name": "Milton Keynes" },
-  { "id": "NEWCASTLE", "name": "Newcastle upon Tyne" },
-  { "id": "NORTHAMPTON", "name": "Northampton" },
-  { "id": "NORWICH", "name": "Norwich" },
-  { "id": "NOTTINGHAM", "name": "Nottingham" },
-  { "id": "OLDHAM", "name": "Oldham" },
-  { "id": "OXFORD", "name": "Oxford" },
-  { "id": "PETERBOROUGH", "name": "Peterborough" },
-  { "id": "PLYMOUTH", "name": "Plymouth" },
-  { "id": "PORTSMOUTH", "name": "Portsmouth" },
-  { "id": "PRESTON", "name": "Preston" },
-  { "id": "READING", "name": "Reading" },
-  { "id": "RIPON", "name": "Ripon" },
-  { "id": "ROCHDALE", "name": "Rochdale" },
-  { "id": "ROTHERHAM", "name": "Rotherham" },
-  { "id": "SALFORD", "name": "Salford" },
-  { "id": "SALISBURY", "name": "Salisbury" },
-  { "id": "SHEFFIELD", "name": "Sheffield" },
-  { "id": "SLOUGH", "name": "Slough" },
-  { "id": "SOUTHAMPTON", "name": "Southampton" },
-  { "id": "SOUTHEND_ON_SEA", "name": "Southend-on-Sea" },
-  { "id": "ST_ALBANS", "name": "St Albans" },
-  { "id": "STOKE_ON_TRENT", "name": "Stoke-on-Trent" },
-  { "id": "SUNDERLAND", "name": "Sunderland" },
-  { "id": "SWINDON", "name": "Swindon" },
-  { "id": "TELFORD", "name": "Telford" },
-  { "id": "TRURO", "name": "Truro" },
-  { "id": "WAKEFIELD", "name": "Wakefield" },
-  { "id": "WARRINGTON", "name": "Warrington" },
-  { "id": "WATFORD", "name": "Watford" },
-  { "id": "WELLS", "name": "Wells" },
-  { "id": "WIGAN", "name": "Wigan" },
-  { "id": "WINCHESTER", "name": "Winchester" },
-  { "id": "WOLVERHAMPTON", "name": "Wolverhampton" },
-  { "id": "WORCESTER", "name": "Worcester" },
-  { "id": "WORTHING", "name": "Worthing" },
-  { "id": "YORK", "name": "York" },
-
-  { "id": "ABERDEEN", "name": "Aberdeen" },
-  { "id": "DUNDEE", "name": "Dundee" },
-  { "id": "EDINBURGH", "name": "Edinburgh" },
-  { "id": "GLASGOW", "name": "Glasgow" },
-  { "id": "INVERNESS", "name": "Inverness" },
-  { "id": "PERTH", "name": "Perth" },
-  { "id": "STIRLING", "name": "Stirling" },
-
-  { "id": "BANGOR", "name": "Bangor" },
-  { "id": "CARDIFF", "name": "Cardiff" },
-  { "id": "NEWPORT", "name": "Newport" },
-  { "id": "SWANSEA", "name": "Swansea" },
-  { "id": "WREXHAM", "name": "Wrexham" },
-
-  { "id": "ARMAGH", "name": "Armagh" },
-  { "id": "BELFAST", "name": "Belfast" },
-  { "id": "DERRY", "name": "Derry" },
-  { "id": "LISBURN", "name": "Lisburn" },
-  { "id": "NEWRY", "name": "Newry" }
+  {
+    "id": "BARNSLEY",
+    "name": "Barnsley",
+    "latitude": 53.5526,
+    "longitude": -1.4797
+  },
+  {
+    "id": "BASILDON",
+    "name": "Basildon",
+    "latitude": 51.5761,
+    "longitude": 0.4886
+  },
+  {
+    "id": "BATH",
+    "name": "Bath",
+    "latitude": 51.3811,
+    "longitude": -2.359
+  },
+  {
+    "id": "BEDFORD",
+    "name": "Bedford",
+    "latitude": 52.136,
+    "longitude": -0.4667
+  },
+  {
+    "id": "BIRKENHEAD",
+    "name": "Birkenhead",
+    "latitude": 53.3934,
+    "longitude": -3.0148
+  },
+  {
+    "id": "BIRMINGHAM",
+    "name": "Birmingham",
+    "latitude": 52.4862,
+    "longitude": -1.8904
+  },
+  {
+    "id": "BLACKBURN",
+    "name": "Blackburn",
+    "latitude": 53.7486,
+    "longitude": -2.487
+  },
+  {
+    "id": "BLACKPOOL",
+    "name": "Blackpool",
+    "latitude": 53.8175,
+    "longitude": -3.0357
+  },
+  {
+    "id": "BOLTON",
+    "name": "Bolton",
+    "latitude": 53.5769,
+    "longitude": -2.4282
+  },
+  {
+    "id": "BOURNEMOUTH",
+    "name": "Bournemouth",
+    "latitude": 50.7192,
+    "longitude": -1.8808
+  },
+  {
+    "id": "BRADFORD",
+    "name": "Bradford",
+    "latitude": 53.796,
+    "longitude": -1.7594
+  },
+  {
+    "id": "BRIGHTON",
+    "name": "Brighton",
+    "latitude": 50.8225,
+    "longitude": -0.1372
+  },
+  {
+    "id": "BRISTOL",
+    "name": "Bristol",
+    "latitude": 51.4545,
+    "longitude": -2.5879
+  },
+  {
+    "id": "BURNLEY",
+    "name": "Burnley",
+    "latitude": 53.789,
+    "longitude": -2.248
+  },
+  {
+    "id": "CAMBRIDGE",
+    "name": "Cambridge",
+    "latitude": 52.2053,
+    "longitude": 0.1218
+  },
+  {
+    "id": "CANTERBURY",
+    "name": "Canterbury",
+    "latitude": 51.2802,
+    "longitude": 1.0789
+  },
+  {
+    "id": "CARLISLE",
+    "name": "Carlisle",
+    "latitude": 54.8925,
+    "longitude": -2.9329
+  },
+  {
+    "id": "CHELMSFORD",
+    "name": "Chelmsford",
+    "latitude": 51.7356,
+    "longitude": 0.4685
+  },
+  {
+    "id": "CHELTENHAM",
+    "name": "Cheltenham",
+    "latitude": 51.8994,
+    "longitude": -2.0783
+  },
+  {
+    "id": "CHESTER",
+    "name": "Chester",
+    "latitude": 53.1934,
+    "longitude": -2.8931
+  },
+  {
+    "id": "CHICHESTER",
+    "name": "Chichester",
+    "latitude": 50.8365,
+    "longitude": -0.7792
+  },
+  {
+    "id": "COLCHESTER",
+    "name": "Colchester",
+    "latitude": 51.8959,
+    "longitude": 0.8919
+  },
+  {
+    "id": "COVENTRY",
+    "name": "Coventry",
+    "latitude": 52.4068,
+    "longitude": -1.5197
+  },
+  {
+    "id": "CRAWLEY",
+    "name": "Crawley",
+    "latitude": 51.1091,
+    "longitude": -0.1872
+  },
+  {
+    "id": "DERBY",
+    "name": "Derby",
+    "latitude": 52.9225,
+    "longitude": -1.4746
+  },
+  {
+    "id": "DONCASTER",
+    "name": "Doncaster",
+    "latitude": 53.5228,
+    "longitude": -1.1285
+  },
+  {
+    "id": "DURHAM",
+    "name": "Durham",
+    "latitude": 54.7761,
+    "longitude": -1.5733
+  },
+  {
+    "id": "EASTBOURNE",
+    "name": "Eastbourne",
+    "latitude": 50.7687,
+    "longitude": 0.2842
+  },
+  {
+    "id": "ELY",
+    "name": "Ely",
+    "latitude": 52.399,
+    "longitude": 0.262
+  },
+  {
+    "id": "EXETER",
+    "name": "Exeter",
+    "latitude": 50.7184,
+    "longitude": -3.5339
+  },
+  {
+    "id": "GLOUCESTER",
+    "name": "Gloucester",
+    "latitude": 51.8642,
+    "longitude": -2.238
+  },
+  {
+    "id": "GRIMSBY",
+    "name": "Grimsby",
+    "latitude": 53.5675,
+    "longitude": -0.08
+  },
+  {
+    "id": "GUILDFORD",
+    "name": "Guildford",
+    "latitude": 51.2362,
+    "longitude": -0.5704
+  },
+  {
+    "id": "HARROGATE",
+    "name": "Harrogate",
+    "latitude": 53.9921,
+    "longitude": -1.5418
+  },
+  {
+    "id": "HEREFORD",
+    "name": "Hereford",
+    "latitude": 52.0567,
+    "longitude": -2.716
+  },
+  {
+    "id": "HUDDERSFIELD",
+    "name": "Huddersfield",
+    "latitude": 53.6458,
+    "longitude": -1.785
+  },
+  {
+    "id": "HULL",
+    "name": "Hull",
+    "latitude": 53.7676,
+    "longitude": -0.3274
+  },
+  {
+    "id": "IPSWICH",
+    "name": "Ipswich",
+    "latitude": 52.0567,
+    "longitude": 1.1482
+  },
+  {
+    "id": "LANCASTER",
+    "name": "Lancaster",
+    "latitude": 54.0466,
+    "longitude": -2.7999
+  },
+  {
+    "id": "LEEDS",
+    "name": "Leeds",
+    "latitude": 53.8008,
+    "longitude": -1.5491
+  },
+  {
+    "id": "LEICESTER",
+    "name": "Leicester",
+    "latitude": 52.6369,
+    "longitude": -1.1398
+  },
+  {
+    "id": "LICHFIELD",
+    "name": "Lichfield",
+    "latitude": 52.6818,
+    "longitude": -1.8267
+  },
+  {
+    "id": "LINCOLN",
+    "name": "Lincoln",
+    "latitude": 53.2307,
+    "longitude": -0.5406
+  },
+  {
+    "id": "LIVERPOOL",
+    "name": "Liverpool",
+    "latitude": 53.4084,
+    "longitude": -2.9916
+  },
+  {
+    "id": "LONDON",
+    "name": "London",
+    "latitude": 51.5072,
+    "longitude": -0.1276
+  },
+  {
+    "id": "LUTON",
+    "name": "Luton",
+    "latitude": 51.8787,
+    "longitude": -0.42
+  },
+  {
+    "id": "MAIDSTONE",
+    "name": "Maidstone",
+    "latitude": 51.2704,
+    "longitude": 0.5227
+  },
+  {
+    "id": "MANCHESTER",
+    "name": "Manchester",
+    "latitude": 53.4808,
+    "longitude": -2.2426
+  },
+  {
+    "id": "MIDDLESBROUGH",
+    "name": "Middlesbrough",
+    "latitude": 54.5742,
+    "longitude": -1.2349
+  },
+  {
+    "id": "MILTON_KEYNES",
+    "name": "Milton Keynes",
+    "latitude": 52.0406,
+    "longitude": -0.7594
+  },
+  {
+    "id": "NEWCASTLE",
+    "name": "Newcastle upon Tyne",
+    "latitude": 54.9783,
+    "longitude": -1.6178
+  },
+  {
+    "id": "NORTHAMPTON",
+    "name": "Northampton",
+    "latitude": 52.2405,
+    "longitude": -0.9027
+  },
+  {
+    "id": "NORWICH",
+    "name": "Norwich",
+    "latitude": 52.6309,
+    "longitude": 1.2974
+  },
+  {
+    "id": "NOTTINGHAM",
+    "name": "Nottingham",
+    "latitude": 52.9548,
+    "longitude": -1.1581
+  },
+  {
+    "id": "OLDHAM",
+    "name": "Oldham",
+    "latitude": 53.5409,
+    "longitude": -2.1114
+  },
+  {
+    "id": "OXFORD",
+    "name": "Oxford",
+    "latitude": 51.752,
+    "longitude": -1.2577
+  },
+  {
+    "id": "PETERBOROUGH",
+    "name": "Peterborough",
+    "latitude": 52.5695,
+    "longitude": -0.2405
+  },
+  {
+    "id": "PLYMOUTH",
+    "name": "Plymouth",
+    "latitude": 50.3755,
+    "longitude": -4.1427
+  },
+  {
+    "id": "PORTSMOUTH",
+    "name": "Portsmouth",
+    "latitude": 50.8198,
+    "longitude": -1.088
+  },
+  {
+    "id": "PRESTON",
+    "name": "Preston",
+    "latitude": 53.7632,
+    "longitude": -2.7031
+  },
+  {
+    "id": "READING",
+    "name": "Reading",
+    "latitude": 51.4543,
+    "longitude": -0.9781
+  },
+  {
+    "id": "RIPON",
+    "name": "Ripon",
+    "latitude": 54.138,
+    "longitude": -1.524
+  },
+  {
+    "id": "ROCHDALE",
+    "name": "Rochdale",
+    "latitude": 53.6097,
+    "longitude": -2.1561
+  },
+  {
+    "id": "ROTHERHAM",
+    "name": "Rotherham",
+    "latitude": 53.4302,
+    "longitude": -1.3568
+  },
+  {
+    "id": "SALFORD",
+    "name": "Salford",
+    "latitude": 53.4875,
+    "longitude": -2.2901
+  },
+  {
+    "id": "SALISBURY",
+    "name": "Salisbury",
+    "latitude": 51.0688,
+    "longitude": -1.7945
+  },
+  {
+    "id": "SHEFFIELD",
+    "name": "Sheffield",
+    "latitude": 53.3811,
+    "longitude": -1.4701
+  },
+  {
+    "id": "SLOUGH",
+    "name": "Slough",
+    "latitude": 51.5105,
+    "longitude": -0.595
+  },
+  {
+    "id": "SOUTHAMPTON",
+    "name": "Southampton",
+    "latitude": 50.9097,
+    "longitude": -1.4044
+  },
+  {
+    "id": "SOUTHEND_ON_SEA",
+    "name": "Southend-on-Sea",
+    "latitude": 51.5459,
+    "longitude": 0.7077
+  },
+  {
+    "id": "ST_ALBANS",
+    "name": "St Albans",
+    "latitude": 51.752,
+    "longitude": -0.336
+  },
+  {
+    "id": "STOKE_ON_TRENT",
+    "name": "Stoke-on-Trent",
+    "latitude": 53.0027,
+    "longitude": -2.1794
+  },
+  {
+    "id": "SUNDERLAND",
+    "name": "Sunderland",
+    "latitude": 54.9069,
+    "longitude": -1.3838
+  },
+  {
+    "id": "SWINDON",
+    "name": "Swindon",
+    "latitude": 51.5558,
+    "longitude": -1.7797
+  },
+  {
+    "id": "TELFORD",
+    "name": "Telford",
+    "latitude": 52.6784,
+    "longitude": -2.4453
+  },
+  {
+    "id": "TRURO",
+    "name": "Truro",
+    "latitude": 50.2632,
+    "longitude": -5.051
+  },
+  {
+    "id": "WAKEFIELD",
+    "name": "Wakefield",
+    "latitude": 53.6833,
+    "longitude": -1.4977
+  },
+  {
+    "id": "WARRINGTON",
+    "name": "Warrington",
+    "latitude": 53.39,
+    "longitude": -2.597
+  },
+  {
+    "id": "WATFORD",
+    "name": "Watford",
+    "latitude": 51.6565,
+    "longitude": -0.3903
+  },
+  {
+    "id": "WELLS",
+    "name": "Wells",
+    "latitude": 51.2094,
+    "longitude": -2.647
+  },
+  {
+    "id": "WIGAN",
+    "name": "Wigan",
+    "latitude": 53.545,
+    "longitude": -2.6318
+  },
+  {
+    "id": "WINCHESTER",
+    "name": "Winchester",
+    "latitude": 51.0632,
+    "longitude": -1.308
+  },
+  {
+    "id": "WOLVERHAMPTON",
+    "name": "Wolverhampton",
+    "latitude": 52.587,
+    "longitude": -2.1288
+  },
+  {
+    "id": "WORCESTER",
+    "name": "Worcester",
+    "latitude": 52.1936,
+    "longitude": -2.2216
+  },
+  {
+    "id": "WORTHING",
+    "name": "Worthing",
+    "latitude": 50.8179,
+    "longitude": -0.3729
+  },
+  {
+    "id": "YORK",
+    "name": "York",
+    "latitude": 53.96,
+    "longitude": -1.0873
+  },
+  {
+    "id": "ABERDEEN",
+    "name": "Aberdeen",
+    "latitude": 57.1497,
+    "longitude": -2.0943
+  },
+  {
+    "id": "DUNDEE",
+    "name": "Dundee",
+    "latitude": 56.462,
+    "longitude": -2.9707
+  },
+  {
+    "id": "EDINBURGH",
+    "name": "Edinburgh",
+    "latitude": 55.9533,
+    "longitude": -3.1883
+  },
+  {
+    "id": "GLASGOW",
+    "name": "Glasgow",
+    "latitude": 55.8642,
+    "longitude": -4.2518
+  },
+  {
+    "id": "INVERNESS",
+    "name": "Inverness",
+    "latitude": 57.4778,
+    "longitude": -4.2247
+  },
+  {
+    "id": "PERTH",
+    "name": "Perth",
+    "latitude": 56.395,
+    "longitude": -3.4308
+  },
+  {
+    "id": "STIRLING",
+    "name": "Stirling",
+    "latitude": 56.1165,
+    "longitude": -3.9369
+  },
+  {
+    "id": "BANGOR",
+    "name": "Bangor",
+    "latitude": 53.2274,
+    "longitude": -4.1293
+  },
+  {
+    "id": "CARDIFF",
+    "name": "Cardiff",
+    "latitude": 51.4816,
+    "longitude": -3.1791
+  },
+  {
+    "id": "NEWPORT",
+    "name": "Newport",
+    "latitude": 51.5842,
+    "longitude": -2.9977
+  },
+  {
+    "id": "SWANSEA",
+    "name": "Swansea",
+    "latitude": 51.6214,
+    "longitude": -3.9436
+  },
+  {
+    "id": "WREXHAM",
+    "name": "Wrexham",
+    "latitude": 53.0466,
+    "longitude": -2.9925
+  },
+  {
+    "id": "ARMAGH",
+    "name": "Armagh",
+    "latitude": 54.3503,
+    "longitude": -6.6528
+  },
+  {
+    "id": "BELFAST",
+    "name": "Belfast",
+    "latitude": 54.5973,
+    "longitude": -5.9301
+  },
+  {
+    "id": "DERRY",
+    "name": "Derry",
+    "latitude": 54.9966,
+    "longitude": -7.3086
+  },
+  {
+    "id": "LISBURN",
+    "name": "Lisburn",
+    "latitude": 54.5162,
+    "longitude": -6.058
+  },
+  {
+    "id": "NEWRY",
+    "name": "Newry",
+    "latitude": 54.1753,
+    "longitude": -6.3402
+  }
 ]
