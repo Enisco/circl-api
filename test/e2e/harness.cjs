@@ -127,12 +127,49 @@ async function sweep(label = 'sweep') {
     where: { participants: { none: {} } },
   });
 
-  if (!ids.length && !orphaned.count && !emptyThreads.count) return 0;
+  // And again in the moderation queue, which holds ids rather than relations: sweeping the report
+  // or the guide leaves the row behind. Ninety-two of them had built up, and since the queue pages
+  // at fifty, a suite looking for the item it had just filed stopped finding it.
+  const [reported, autoGuides] = await Promise.all([
+    prisma.moderationQueueItem.findMany({
+      where: { reportId: { not: null } },
+      select: { id: true, reportId: true },
+    }),
+    prisma.moderationQueueItem.findMany({
+      where: { targetType: 'GUIDE' },
+      select: { id: true, targetId: true },
+    }),
+  ]);
+  const [liveReports, liveGuides] = await Promise.all([
+    prisma.report.findMany({
+      where: { id: { in: reported.map(item => item.reportId) } },
+      select: { id: true },
+    }),
+    prisma.guide.findMany({
+      where: { id: { in: autoGuides.map(item => item.targetId) } },
+      select: { id: true },
+    }),
+  ]);
+  const liveReportIds = new Set(liveReports.map(row => row.id));
+  const liveGuideIds = new Set(liveGuides.map(row => row.id));
+  const staleQueue = await prisma.moderationQueueItem.deleteMany({
+    where: {
+      id: {
+        in: [
+          ...reported.filter(item => !liveReportIds.has(item.reportId)).map(item => item.id),
+          ...autoGuides.filter(item => !liveGuideIds.has(item.targetId)).map(item => item.id),
+        ],
+      },
+    },
+  });
+
+  if (!ids.length && !orphaned.count && !emptyThreads.count && !staleQueue.count) return 0;
 
   console.log(
     `  ${label}: removed ${ids.length} test users, their content` +
       `${orphaned.count ? ` and ${orphaned.count} authorless guides` : ''}` +
-      `${emptyThreads.count ? ` and ${emptyThreads.count} empty threads` : ''}`,
+      `${emptyThreads.count ? ` and ${emptyThreads.count} empty threads` : ''}` +
+      `${staleQueue.count ? ` and ${staleQueue.count} stale queue items` : ''}`,
   );
 
   return ids.length;
