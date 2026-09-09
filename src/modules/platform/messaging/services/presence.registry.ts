@@ -8,6 +8,9 @@ import { Injectable } from '@nestjs/common';
 export class PresenceRegistry {
   private readonly sockets = new Map<string, Set<string>>();
 
+  /** `userId -> socketId -> the conversation that socket has on screen`, when the client says so. */
+  private readonly viewing = new Map<string, Map<string, string>>();
+
   /** Returns true when this socket is the one that brought the member online. */
   add(userId: string, socketId: string): boolean {
     const existing = this.sockets.get(userId);
@@ -30,12 +33,43 @@ export class PresenceRegistry {
     if (!existing) return false;
 
     existing.delete(socketId);
+    this.closeThread(userId, socketId);
 
     if (existing.size) return false;
 
     this.sockets.delete(userId);
 
     return true;
+  }
+
+  /** The thread this socket has on screen, which is the one thing that suppresses a push (5.6). */
+  openThread(userId: string, socketId: string, conversationId: string): void {
+    const existing = this.viewing.get(userId);
+
+    if (existing) {
+      existing.set(socketId, conversationId);
+
+      return;
+    }
+
+    this.viewing.set(userId, new Map([[socketId, conversationId]]));
+  }
+
+  closeThread(userId: string, socketId: string): void {
+    const existing = this.viewing.get(userId);
+
+    if (!existing) return;
+
+    existing.delete(socketId);
+
+    if (!existing.size) this.viewing.delete(userId);
+  }
+
+  /** True only when one of the member's devices is on this thread right now. */
+  isViewing(userId: string, conversationId: string): boolean {
+    const open = this.viewing.get(userId);
+
+    return open ? [...open.values()].includes(conversationId) : false;
   }
 
   isOnline(userId: string): boolean {

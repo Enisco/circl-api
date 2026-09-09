@@ -111,7 +111,8 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
     const cameOnline = this.presence.add(userId, socket.id);
 
-    // The badge is in four section headers, so it is sent on connect rather than waiting for the first message to make it correct.
+    // The badge sits in four section headers, so it is sent on connect rather than waiting for
+    // the first message to make it correct.
     socket.emit('unread.total', await this.conversations.unreadTotal(userId));
 
     // Only the first socket is news. A second device connecting does not make them "more online".
@@ -124,7 +125,8 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     if (!userId) return;
 
     if (this.presence.remove(userId, socket.id)) {
-      // Send history goes with the last socket: it is a burst guard, not a durable quota, and holding it for every member who ever connected is an unbounded map on a long-running process.
+      // Send history goes with the last socket: it is a burst guard, not a durable quota, and
+      // keeping it for everyone who ever connected is an unbounded map.
       this.sendHistory.delete(userId);
       this.broadcastPresence(userId, false);
     }
@@ -214,6 +216,31 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     void this.pushUnread(userId);
   }
 
+  /**
+   * The client says which thread is on screen, and only that silences its pushes. Nothing is
+   * assumed when it says nothing: a client that never sends these still gets every push.
+   */
+  @SubscribeMessage('conversation.open')
+  onConversationOpen(
+    @ConnectedSocket() socket: AuthedSocket,
+    @MessageBody() payload: { conversationId: string },
+  ) {
+    const userId = socket.data.userId;
+
+    if (!userId || typeof payload?.conversationId !== 'string') return;
+
+    this.presence.openThread(userId, socket.id, payload.conversationId);
+  }
+
+  @SubscribeMessage('conversation.close')
+  onConversationClose(@ConnectedSocket() socket: AuthedSocket) {
+    const userId = socket.data.userId;
+
+    if (!userId) return;
+
+    this.presence.closeThread(userId, socket.id);
+  }
+
   @SubscribeMessage('typing.start')
   async onTypingStart(
     @ConnectedSocket() socket: AuthedSocket,
@@ -277,14 +304,18 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
     // Anyone with a live socket has it on their device, which is what DELIVERED means (5.4).
     const connected = recipients.filter(id => this.presence.isOnline(id));
-    const offline = recipients.filter(id => !this.presence.isOnline(id));
 
-    if (offline.length) {
+    // Only the thread being on screen suppresses a push (5.6). A live socket is not that: a
+    // backgrounded app keeps its socket for the ping timeout, and treating that as "they are
+    // looking at it" is why a member could send all day and see nothing on the lock screen.
+    const unattended = recipients.filter(id => !this.presence.isViewing(id, conversationId));
+
+    if (unattended.length) {
       this.push.notify({
         conversationId,
         messageId: message.id,
         senderId,
-        recipientIds: offline,
+        recipientIds: unattended,
       });
     }
 
