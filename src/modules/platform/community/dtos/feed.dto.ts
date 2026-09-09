@@ -48,7 +48,7 @@ export class FeedQueryDto {
     type: [String],
     description:
       'Selecting any category excludes UPDATE items, which have no category. A client-side product ' +
-      'rule the server honours so paging stays consistent (1.1).',
+      'rule the server honours so paging stays consistent (1.1). `All` means every category.',
   })
   @CsvArray()
   @IsArray()

@@ -27,7 +27,7 @@ const CsvArray = () =>
   );
 
 export class BrowseProfessionalsDto extends PageOptionsDto {
-  @ApiPropertyOptional({ description: 'A profession code. "All" omits the param.' })
+  @ApiPropertyOptional({ description: 'A profession code. `All` means every category.' })
   @Trim()
   @IsString()
   @IsOptional()
@@ -39,7 +39,9 @@ export class BrowseProfessionalsDto extends PageOptionsDto {
   @IsOptional()
   q?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description: "Defaults to the viewer's city. `ANYWHERE` returns every city.",
+  })
   @IsString()
   @IsOptional()
   cityId?: string;

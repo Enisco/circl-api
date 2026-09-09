@@ -2,7 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { ActivitySubject, ActivityVerb, Prisma, StoreStatus, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { buildPageMeta, daysAgo, distanceMiles, escapeLike } from '@/common';
-import { ActivityService, MediaService, TaxonomyService, toTermView } from '../../shared';
+import {
+  ActivityService,
+  MediaService,
+  TaxonomyService,
+  toTermView,
+  withoutAllCategories,
+} from '../../shared';
 import { BrowseCommerceDto } from '../dtos/store.dto';
 import { isOpenNow, toOpeningHours } from '../serializers/store.serializer';
 import { ItemService, ITEM_MEDIA_OWNER } from './item.service';
@@ -143,8 +149,10 @@ export class CommerceBrowseService {
     const where: Prisma.StoreItemWhereInput = { deletedAt: null, store: { deletedAt: null } };
     const and: Prisma.StoreItemWhereInput[] = [];
 
-    if (query.categories?.length) {
-      const known = await this.taxonomy.knownCodes(TaxonomyKind.ITEM_CATEGORY, query.categories);
+    const categories = withoutAllCategories(query.categories ?? []);
+
+    if (categories.length) {
+      const known = await this.taxonomy.knownCodes(TaxonomyKind.ITEM_CATEGORY, categories);
 
       where.categoryCode = { in: known.length ? known : ['__NONE__'] };
     }

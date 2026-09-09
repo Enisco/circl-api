@@ -30,6 +30,7 @@ import {
   RiskScannerService,
   TaxonomyService,
   authorSelect,
+  withoutAllCategories,
 } from '../../shared';
 import { NotificationFeedService } from '../../notifications';
 import {
@@ -128,11 +129,10 @@ export class RequestService {
       }
     }
 
-    if (query.categories?.length) {
-      const known = await this.taxonomy.knownCodes(
-        TaxonomyKind.COMMUNITY_CATEGORY,
-        query.categories,
-      );
+    const categories = withoutAllCategories(query.categories ?? []);
+
+    if (categories.length) {
+      const known = await this.taxonomy.knownCodes(TaxonomyKind.COMMUNITY_CATEGORY, categories);
 
       // An unknown code must narrow to nothing rather than being ignored: quietly returning everything would look like the filter did not apply.
       where.categoryCode = { in: known.length ? known : ['__NONE__'] };

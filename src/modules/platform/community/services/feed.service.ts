@@ -20,6 +20,7 @@ import {
   authorSelect,
   toAuthorView,
   toMediaViews,
+  withoutAllCategories,
 } from '../../shared';
 import {
   FeedRankerService,
@@ -80,7 +81,9 @@ export class FeedService {
     // Selecting any category excludes UPDATE items, which have no category.
     const requestedTypes = new Set(query.types?.length ? query.types : Object.values(FeedItemType));
 
-    if (query.categories?.length) requestedTypes.delete(FeedItemType.UPDATE);
+    if (withoutAllCategories(query.categories ?? []).length) {
+      requestedTypes.delete(FeedItemType.UPDATE);
+    }
 
     // Guides have their own tab (`GET /community/guides`). Dropped here rather than from
     // FeedItemType, so `types=GUIDE` stays valid and putting them back is one line.
@@ -198,13 +201,15 @@ export class FeedService {
     blockedIds: string[],
     ranking: 'PERSONALISED' | 'LATEST',
   ) {
+    const categories = withoutAllCategories(query.categories ?? []);
+
     const where: Prisma.CommunityRequestWhereInput = {
       deletedAt: null,
       visibility: { not: PostVisibility.PRIVATE_TO_CIRCL },
       // Applies to REQUEST items only, and defaults to OPEN.
       status: query.status ?? RequestStatus.OPEN,
       ...(cityId ? { cityId } : {}),
-      ...(query.categories?.length ? { categoryCode: { in: query.categories } } : {}),
+      ...(categories.length ? { categoryCode: { in: categories } } : {}),
       ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
       ...(ranking === 'PERSONALISED' ? { createdAt: { gte: daysAgo(CANDIDATE_DAYS) } } : {}),
     };
@@ -226,12 +231,14 @@ export class FeedService {
     blockedIds: string[],
     ranking: 'PERSONALISED' | 'LATEST',
   ) {
+    const categories = withoutAllCategories(query.categories ?? []);
+
     return this.database.communityOffer.findMany({
       where: {
         deletedAt: null,
         promotedToListingId: null,
         ...(cityId ? { cityId } : {}),
-        ...(query.categories?.length ? { categoryCode: { in: query.categories } } : {}),
+        ...(categories.length ? { categoryCode: { in: categories } } : {}),
         ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
         // Offers are evergreen, so LATEST would otherwise bury requests under months of them.
         ...(ranking === 'PERSONALISED' ? { createdAt: { gte: daysAgo(CANDIDATE_DAYS * 4) } } : {}),

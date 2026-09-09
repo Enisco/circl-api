@@ -17,6 +17,7 @@ import {
   MediaService,
   TaxonomyService,
   authorSelect,
+  withoutAllCategories,
 } from '../../shared';
 import { CreateOfferDto, ListOffersDto, UpdateOfferDto } from '../dtos/offer.dto';
 import {
@@ -203,11 +204,10 @@ export class OfferService {
 
     if (city) where.cityId = city.id;
 
-    if (query.categories?.length) {
-      const known = await this.taxonomy.knownCodes(
-        TaxonomyKind.COMMUNITY_CATEGORY,
-        query.categories,
-      );
+    const categories = withoutAllCategories(query.categories ?? []);
+
+    if (categories.length) {
+      const known = await this.taxonomy.knownCodes(TaxonomyKind.COMMUNITY_CATEGORY, categories);
 
       where.categoryCode = { in: known.length ? known : ['__NONE__'] };
     }

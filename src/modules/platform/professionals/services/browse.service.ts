@@ -18,6 +18,7 @@ import {
   toAuthorView,
   toCityView,
   toTermView,
+  isAllCategories,
 } from '../../shared';
 import { ReputationService } from '../../trust/services/reputation.service';
 import { BrowseProfessionalsDto } from '../dtos/browse.dto';
@@ -86,7 +87,9 @@ export class BrowseService {
       ...(blockedIds.length ? { userId: { notIn: blockedIds } } : {}),
     };
 
-    if (query.category) where.categories = { some: { code: query.category } };
+    const category = query.category && !isAllCategories(query.category) ? query.category : null;
+
+    if (category) where.categories = { some: { code: category } };
 
     const cityId = query.cityId ?? (query.nearMe ? null : viewerCityId);
 
@@ -321,13 +324,15 @@ export class BrowseService {
 
     if (!cityId) return [];
 
+    const category = query.category && !isAllCategories(query.category) ? query.category : null;
+
     const grouped = await this.database.professionalListing.groupBy({
       by: ['cityId'],
       where: {
         deletedAt: null,
         cityId: { not: cityId },
         verificationStatus: { not: ListingVerificationStatus.DRAFT },
-        ...(query.category ? { categories: { some: { code: query.category } } } : {}),
+        ...(category ? { categories: { some: { code: category } } } : {}),
       },
       _count: { _all: true },
       orderBy: { _count: { cityId: 'desc' } },

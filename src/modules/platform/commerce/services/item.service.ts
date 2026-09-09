@@ -8,6 +8,7 @@ import {
   toAuthorView,
   toMediaViews,
   toTermView,
+  isAllCategories,
 } from '../../shared';
 import { ApiException, buildPageMeta, escapeLike, money, Paginated } from '@/common';
 import { ItemDto, ListStoreItemsDto, UpdateItemDto } from '../dtos/store.dto';
@@ -142,7 +143,9 @@ export class ItemService {
     const where: Prisma.StoreItemWhereInput = {
       storeId,
       deletedAt: null,
-      ...(query.category ? { categoryCode: query.category } : {}),
+      ...(query.category && !isAllCategories(query.category)
+        ? { categoryCode: query.category }
+        : {}),
       ...(query.availableOnly ? { isAvailable: true } : {}),
       // `%` and `_` are ILIKE wildcards; unescaped, `%` matches the whole table (0.5).
       ...(query.q
