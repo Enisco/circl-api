@@ -12,7 +12,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { PageOptionsDto } from '@/common';
+import { PageOptionsDto, ToBoolean } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 
@@ -28,7 +28,7 @@ export class CreateResponseDto {
     default: false,
     description: 'The "I can help" mode. Only one per person per request (1.3.2).',
   })
-  @Transform(({ value }) => value === true || value === 'true')
+  @ToBoolean()
   @IsBoolean()
   @IsOptional()
   isHelpOffer?: boolean;
@@ -37,7 +37,7 @@ export class CreateResponseDto {
     default: false,
     description: 'Private responses are returned only to the request owner and their author.',
   })
-  @Transform(({ value }) => value === true || value === 'true')
+  @ToBoolean()
   @IsBoolean()
   @IsOptional()
   isPrivate?: boolean;

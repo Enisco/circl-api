@@ -1,9 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsEmail, IsOptional, IsString, Length } from 'class-validator';
+import { ToBoolean } from '@/common';
 
-const Bool = () =>
-  Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value));
+const Bool = ToBoolean;
 
 export class UpdatePrivacyDto {
   @ApiPropertyOptional()

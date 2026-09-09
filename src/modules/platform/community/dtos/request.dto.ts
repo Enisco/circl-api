@@ -16,7 +16,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { PageOptionsDto } from '@/common';
+import { PageOptionsDto, ToBoolean } from '@/common';
 
 /** All string fields are trimmed before validation, and a whitespace-only value counts as empty (1.11). */
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
@@ -176,7 +176,7 @@ export class ListRequestsDto extends PageOptionsDto {
   categories?: string[];
 
   @ApiPropertyOptional({ description: "Restricts to the viewer's city and sorts by proximity." })
-  @Transform(({ value }) => value === true || value === 'true')
+  @ToBoolean()
   @IsBoolean()
   @IsOptional()
   nearYou?: boolean;

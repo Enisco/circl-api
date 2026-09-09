@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ReportReason, ReportTargetType } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
-import { PageOptionsDto } from '@/common';
+import { PageOptionsDto, ToBoolean } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 
@@ -38,7 +38,7 @@ export class CreateReportDto {
     default: false,
     description: 'The report sheet offers "Also block this person" as one action.',
   })
-  @Transform(({ value }) => value === true || value === 'true')
+  @ToBoolean()
   @IsBoolean()
   @IsOptional()
   alsoBlock?: boolean;

@@ -15,9 +15,10 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { ToBoolean } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
-const Bool = () => Transform(({ value }) => value === true || value === 'true');
+const Bool = ToBoolean;
 
 /** Step 1 of registration (2.6.1). */
 export class CreateListingDto {

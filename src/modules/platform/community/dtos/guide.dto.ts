@@ -15,7 +15,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { PageOptionsDto } from '@/common';
+import { PageOptionsDto, ToBoolean } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 
@@ -114,7 +114,7 @@ export class ListGuidesDto extends PageOptionsDto {
       'Only guides this member has saved, for the Bookmarks row in the profile hub. Paged and ' +
       'sorted like any other guide list.',
   })
-  @Transform(({ value }) => value === true || value === 'true')
+  @ToBoolean()
   @IsBoolean()
   @IsOptional()
   bookmarked?: boolean;
@@ -135,7 +135,7 @@ export class GuideProgressDto {
 
 export class GuideFeedbackDto {
   @ApiProperty({ description: 'The "Was this useful?" Yes / No pair at the end of the guide.' })
-  @Transform(({ value }) => value === true || value === 'true')
+  @ToBoolean()
   @IsBoolean()
   useful: boolean;
 

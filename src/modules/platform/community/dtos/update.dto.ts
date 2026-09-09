@@ -11,10 +11,10 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { PageOptionsDto } from '@/common';
+import { PageOptionsDto, ToBoolean } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
-const Bool = () => Transform(({ value }) => value === true || value === 'true');
+const Bool = ToBoolean;
 
 export class CreateUpdateDto {
   @ApiProperty({ minLength: 1, maxLength: 2000 })
