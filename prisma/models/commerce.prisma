@@ -54,6 +54,8 @@ model Store {
 
   @@index([cityId, status])
   @@index([typeCode])
+  // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "stores_name_trgm_idx")
   @@map("stores")
 }
 
@@ -138,6 +140,8 @@ model StoreItem {
   // Never hard-deleted while an open enquiry references it, or the enquiry loses its own contents (4.8.3).
   @@index([storeId, isAvailable])
   @@index([categoryCode, price])
+  // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "store_items_name_trgm_idx")
   @@map("store_items")
 }
 

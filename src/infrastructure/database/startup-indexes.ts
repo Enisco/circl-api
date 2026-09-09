@@ -1,9 +1,12 @@
 import { PrismaClient } from '@prisma/client';
 
 /**
- * The indexes Prisma cannot express, re-asserted on every boot. `migrate dev` proposes DROPping
- * all seventeen on every migration and that has been accepted three times. Nothing fails when they
- * go: the trigram ones silently become sequential scans, the two unique ones stop being enforced.
+ * Re-asserted on every boot, because losing one of these fails silently: a trigram index becomes a
+ * sequential scan, a partial unique index stops enforcing its rule.
+ *
+ * The fifteen trigram indexes are now declared in the Prisma schema with `type: Gin`, so
+ * `migrate dev` no longer proposes dropping them. The three partial ones cannot be expressed at
+ * all, and are the only ones it still asks about.
  */
 const TRIGRAM: Array<[index: string, table: string, column: string]> = [
   ['community_requests_title_trgm_idx', 'community_requests', 'title'],

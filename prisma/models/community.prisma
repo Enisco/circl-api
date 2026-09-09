@@ -44,6 +44,9 @@ model CommunityRequest {
   @@index([categoryCode, status])
   @@index([authorId, createdAt])
   @@index([status, createdAt])
+  // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "community_requests_title_trgm_idx")
+  @@index([description(ops: raw("gin_trgm_ops"))], type: Gin, map: "community_requests_description_trgm_idx")
   @@map("community_requests")
 }
 
@@ -123,6 +126,8 @@ model CommunityOffer {
   @@index([cityId, createdAt])
   @@index([categoryCode])
   @@index([authorId, createdAt])
+  // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "community_offers_title_trgm_idx")
   @@map("community_offers")
 }
 
@@ -249,6 +254,9 @@ model Guide {
   @@index([topicCode, publishedAt])
   @@index([cityId, publishedAt])
   @@index([publishedAt])
+  // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "guides_title_trgm_idx")
+  @@index([intro(ops: raw("gin_trgm_ops"))], type: Gin, map: "guides_intro_trgm_idx")
   @@map("guides")
 }
 
@@ -374,6 +382,8 @@ model Group {
   @@unique([cityId, name])
   @@index([cityId, memberCount])
   @@index([createdAt])
+  // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "groups_name_trgm_idx")
   @@map("groups")
 }
 

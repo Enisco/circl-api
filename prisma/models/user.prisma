@@ -107,6 +107,10 @@ model User {
 
   @@index([email])
   @@index([username])
+  // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
+  @@index([firstName(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_first_name_trgm_idx")
+  @@index([lastName(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_last_name_trgm_idx")
+  @@index([username(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_username_trgm_idx")
   @@map("users")
 }
 
@@ -196,6 +200,9 @@ model UserProfile {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   @@index([cityId])
+  // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
+  @@index([bio(ops: raw("gin_trgm_ops"))], type: Gin, map: "user_profile_bio_trgm_idx")
+  @@index([canHelpWith(ops: raw("gin_trgm_ops"))], type: Gin, map: "user_profile_can_help_with_trgm_idx")
   @@map("user_profile")
 }
 

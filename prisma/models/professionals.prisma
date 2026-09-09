@@ -52,6 +52,8 @@ model ProfessionalListing {
   availability      ListingAvailability[]
   availabilityBlocks ListingAvailabilityBlock[]
 
+  // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
+  @@index([professionTitle(ops: raw("gin_trgm_ops"))], type: Gin, map: "professional_listings_title_trgm_idx")
   @@map("professional_listings")
 }
 
