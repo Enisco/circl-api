@@ -197,15 +197,24 @@ export class CreateStoreDto {
   @IsOptional()
   delivers?: boolean;
 
-  @ApiPropertyOptional({ description: 'Suggested from the avatar.' })
+  @ApiPropertyOptional({
+    description:
+      'Suggested from the avatar. **Omit to leave the current one alone**; send `null` to remove ' +
+      'it. Absent and null are deliberately different, so editing the opening hours cannot cost a ' +
+      'seller their logo.',
+    nullable: true,
+  })
   @IsString()
   @IsOptional()
-  logoKey?: string;
+  logoKey?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description: 'Omit to leave the current one alone; send `null` to remove it.',
+    nullable: true,
+  })
   @IsString()
   @IsOptional()
-  coverKey?: string;
+  coverKey?: string | null;
 }
 
 export class UpdateStoreDto extends CreateStoreDto {

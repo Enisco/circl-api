@@ -224,6 +224,11 @@ export class StoreService {
       if (logo) await this.media.attach(tx, [logo], STORE_LOGO_OWNER, id);
       if (cover) await this.media.attach(tx, [cover], STORE_COVER_OWNER, id);
 
+      // An explicit null is the remove action. Absent is not: a seller editing their opening hours
+      // sends neither key, and reading that as null would take their branding with it.
+      if (dto.logoKey === null) await this.media.releaseOwner(tx, STORE_LOGO_OWNER, id);
+      if (dto.coverKey === null) await this.media.releaseOwner(tx, STORE_COVER_OWNER, id);
+
       return tx.store.update({
         where: { id },
         data: {
@@ -245,6 +250,8 @@ export class StoreService {
           delivers: dto.delivers,
           ...(logo ? { logoKey: logo.storageKey } : {}),
           ...(cover ? { coverKey: cover.storageKey } : {}),
+          ...(dto.logoKey === null ? { logoKey: null } : {}),
+          ...(dto.coverKey === null ? { coverKey: null } : {}),
         },
         include: storeInclude,
       });
@@ -545,7 +552,7 @@ export class StoreService {
     }));
   }
 
-  private async singleImage(mediaId: string | undefined, userId: string) {
+  private async singleImage(mediaId: string | null | undefined, userId: string) {
     if (!mediaId) return null;
 
     const [media] = await this.media.validate([mediaId], userId, {
