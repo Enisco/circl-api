@@ -79,8 +79,14 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
   check('hidden: flagged as approximate', r.body?.data?.address?.isApproximate === true);
   check('hidden: the area still shows', r.body?.data?.address?.area === 'Moss Side');
 
+  // This used to assert the opposite: that hiding ERASED the columns. That was the stronger privacy
+  // guarantee, and it made the owner's own edit form reopen empty and lost the address for good if
+  // they ever unhid it. 4.5.1 says redact, so the row is kept and the serialiser withholds it.
   const rowAfterHide = await prisma.store.findUnique({ where: { id: storeId } });
-  check('turning the flag on erases the stored address, not just the response', rowAfterHide?.addressLine1 === null && rowAfterHide?.postcode === null, { line1: rowAfterHide?.addressLine1 });
+  check('the row is kept, and withheld on read rather than erased', rowAfterHide?.addressLine1 === '14 Claremont Road', { line1: rowAfterHide?.addressLine1 });
+
+  r = await api(seller.token, 'GET', '/commerce/stores/me');
+  check('so the owner can still edit what they wrote', r.body?.data?.address?.line1 === '14 Claremont Road', r.body?.data?.address);
 
   console.log('\n── 4.8.3 Items ──────────────────────────────────────────────');
 
@@ -112,6 +118,78 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
 
   r = await api(buyer.token, 'GET', `/commerce/stores/${storeId}/items`);
   check('catalogue → 200 with both items', r.body?.data?.length === 2, r.body?.data?.length);
+
+  console.log('\n── 4.4.2 Open now, and a shop that keeps no hours ───────────');
+
+  const noHours = await makeUser('nohours');
+  r = await api(noHours.token, 'POST', '/commerce/stores', { name: 'By Arrangement Only', area: 'Hulme' });
+  const quietId = r.body?.data?.id;
+  check('a shop can be created without opening hours', r.status === 201, r.body?.error);
+  check('and keeps none, rather than seven closed days', r.body?.data?.openingHours === null, r.body?.data?.openingHours);
+  check('the seller is taken at their word: it reads open', r.body?.data?.isOpenNow === true, { status: r.body?.data?.status, isOpenNow: r.body?.data?.isOpenNow });
+
+  r = await api(buyer.token, 'GET', `/commerce/stores/${quietId}`);
+  check('and reads open to a buyer too, not Closed', r.body?.data?.isOpenNow === true, r.body?.data?.isOpenNow);
+
+  r = await api(buyer.token, 'GET', '/commerce/stores?cityId=ANYWHERE&openNow=true&q=By%20Arrangement');
+  check('the Open now filter agrees with the badge', (r.body?.data ?? []).some(st => st.id === quietId), r.body?.data?.map(st => st.name));
+
+  await api(noHours.token, 'PATCH', `/commerce/stores/${quietId}/status`, { status: 'HOLIDAY' });
+  r = await api(buyer.token, 'GET', `/commerce/stores/${quietId}`);
+  check('the manual switch still wins over the seller being taken at their word', r.body?.data?.isOpenNow === false, r.body?.data?.isOpenNow);
+  await api(noHours.token, 'PATCH', `/commerce/stores/${quietId}/status`, { status: 'OPEN' });
+
+  const week = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+  r = await api(noHours.token, 'PATCH', `/commerce/stores/${quietId}`, {
+    openingHours: week.map(day => ({ day, openMinutes: day === 'SUNDAY' ? null : 480, closeMinutes: day === 'SUNDAY' ? null : 1080 })),
+  });
+  check('setting hours returns all seven, Monday first', (r.body?.data?.openingHours ?? []).length === 7 && r.body.data.openingHours[0].day === 'MONDAY', r.body?.data?.openingHours?.length);
+  check('and a closed day is null, not missing', r.body?.data?.openingHours?.[6]?.openMinutes === null, r.body?.data?.openingHours?.[6]);
+
+  r = await api(noHours.token, 'GET', '/commerce/stores/me');
+  check('the editor reopens on what was saved', (r.body?.data?.openingHours ?? []).length === 7, r.body?.data?.openingHours?.length);
+
+  r = await api(noHours.token, 'PATCH', `/commerce/stores/${quietId}`, { openingHours: null });
+  check('and null puts it back to keeping no set hours', r.body?.data?.openingHours === null, r.body?.data?.openingHours);
+  check('which reads open again', r.body?.data?.isOpenNow === true, r.body?.data?.isOpenNow);
+
+  r = await api(noHours.token, 'PATCH', `/commerce/stores/${quietId}`, { description: 'Open by arrangement, ring ahead.' });
+  check('an unrelated edit does not invent hours', r.body?.data?.openingHours === null, r.body?.data?.openingHours);
+
+  console.log('\n── 4.5.1 An address the owner can edit ──────────────────────');
+
+  r = await api(noHours.token, 'PATCH', `/commerce/stores/${quietId}`, {
+    addressLine1: '14 Boundary Lane', postcode: 'M15 5DL', hidesExactAddress: true,
+  });
+  check('a hidden address is still stored for its owner', r.body?.data?.address?.line1 === '14 Boundary Lane' && r.body?.data?.address?.postcode === 'M15 5DL', r.body?.data?.address);
+
+  r = await api(noHours.token, 'GET', '/commerce/stores/me');
+  check('and comes back on their own form', r.body?.data?.address?.line1 === '14 Boundary Lane', r.body?.data?.address);
+
+  r = await api(buyer.token, 'GET', `/commerce/stores/${quietId}`);
+  check('while a buyer gets neither line nor postcode', r.body?.data?.address?.line1 === null && r.body?.data?.address?.postcode === null, r.body?.data?.address);
+  check('and the coordinate they get is rounded, flagged approximate', r.body?.data?.address?.isApproximate === true, r.body?.data?.address);
+
+  // "Street address or landmark": a seller who would rather not publish their door writes something
+  // vague on purpose, and a maps app copes. Rejecting it would land on the careful ones.
+  r = await api(noHours.token, 'PATCH', `/commerce/stores/${quietId}`, {
+    addressLine1: 'opposite Peckham Rye station', postcode: '',
+  });
+  check('a landmark is a valid address line, not a malformed one', r.status === 200 && r.body?.data?.address?.line1 === 'opposite Peckham Rye station', { status: r.status, error: r.body?.error?.details });
+  check('and an empty postcode is accepted, because it is the optional half', r.status === 200, r.body?.error?.details);
+
+  r = await api(noHours.token, 'PATCH', `/commerce/stores/${quietId}`, { postcode: 'SE15' });
+  check('a partial postcode is not rejected either', r.status === 200 && r.body?.data?.address?.postcode === 'SE15', { status: r.status, error: r.body?.error?.details });
+
+  await api(noHours.token, 'PATCH', `/commerce/stores/${quietId}`, {
+    addressLine1: '14 Boundary Lane', postcode: 'M15 5DL',
+  });
+
+  r = await api(noHours.token, 'PATCH', `/commerce/stores/${quietId}`, { hidesExactAddress: false });
+  check('unhiding restores the address rather than asking them to retype it', r.body?.data?.address?.line1 === '14 Boundary Lane', r.body?.data?.address);
+
+  r = await api(buyer.token, 'GET', `/commerce/stores/${quietId}`);
+  check('and now the buyer sees it', r.body?.data?.address?.line1 === '14 Boundary Lane' && r.body?.data?.address?.postcode === 'M15 5DL', r.body?.data?.address);
 
   console.log('\n── 4.5 A shop with a face ───────────────────────────────────');
 
