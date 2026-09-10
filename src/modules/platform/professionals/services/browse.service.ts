@@ -460,12 +460,26 @@ export class BrowseService {
       rating: { average: number; count: number };
       distanceMiles: number | null;
       isNearbyCity?: boolean;
+      isAcceptingWork?: boolean;
       priceFrom: { amount: number } | null;
       medianResponseMinutes: number | null;
     },
   >(items: T[], sort: BrowseProfessionalsDto['sort']): T[] {
     const byNullsLast = (a: number | null, b: number | null) =>
       a === null ? 1 : b === null ? -1 : a - b;
+
+    /**
+     * Somebody who has said they are not taking work sorts below an equally good somebody who is,
+     * on RECOMMENDED only. RECOMMENDED is the order we choose; RATING or PRICE is an order the
+     * member asked for, and quietly reordering that would be answering a different question.
+     *
+     * Below, never hidden. Hiding them is the pull case: a member who already knows the name has
+     * to be able to find it, and the switch means "do not send me work", not "do not exist".
+     */
+    const byAvailableFirst = (rows: T[]) =>
+      [...rows].sort(
+        (a, b) => Number(b.isAcceptingWork ?? true) - Number(a.isAcceptingWork ?? true),
+      );
 
     // The searched city first, whatever the sort: a five-star professional a county away is still
     // the wrong answer above a good one down the road.
@@ -492,12 +506,14 @@ export class BrowseService {
           [...items].sort((a, b) => byNullsLast(a.medianResponseMinutes, b.medianResponseMinutes)),
         );
       default:
-        // RECOMMENDED: rated highly, by enough people to mean it.
+        // RECOMMENDED: rated highly, by enough people to mean it, and taking work.
         return byCityFirst(
-          [...items].sort(
-            (a, b) =>
-              b.rating.average * Math.min(1, Math.log1p(b.rating.count) / Math.log(10)) -
-              a.rating.average * Math.min(1, Math.log1p(a.rating.count) / Math.log(10)),
+          byAvailableFirst(
+            [...items].sort(
+              (a, b) =>
+                b.rating.average * Math.min(1, Math.log1p(b.rating.count) / Math.log(10)) -
+                a.rating.average * Math.min(1, Math.log1p(a.rating.count) / Math.log(10)),
+            ),
           ),
         );
     }
