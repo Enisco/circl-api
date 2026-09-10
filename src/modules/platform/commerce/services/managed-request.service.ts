@@ -30,7 +30,12 @@ export class ManagedRequestService {
       dto.subjectType === 'STOREFRONT'
         ? await this.database.store.findUnique({
             where: { ownerId: userId },
-            include: { contacts: true, _count: { select: { items: true } } },
+            include: {
+              contacts: true,
+              // Deleted items are not a catalogue. An unfiltered count told the Circl team a
+              // seller had more listings than the seller can see.
+              _count: { select: { items: { where: { deletedAt: null } } } },
+            },
           })
         : null;
 

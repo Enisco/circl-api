@@ -406,6 +406,18 @@ export class BrowseCommerceDto extends PageOptionsDto {
   @IsIn(['RECOMMENDED', 'NEAREST', 'RATING', 'NEWEST', 'PRICE_LOW', 'PRICE_HIGH'])
   @IsOptional()
   sort?: 'RECOMMENDED' | 'NEAREST' | 'RATING' | 'NEWEST' | 'PRICE_LOW' | 'PRICE_HIGH';
+
+  @ApiPropertyOptional({
+    description:
+      'For the products grid, which is an infinite scroll: send `meta.nextCursor` from the ' +
+      'previous page instead of `page`. A page number over a list that changes while somebody ' +
+      'reads it shows one product twice and hides another. Opaque — do not build one. A cursor ' +
+      'belongs to the query that produced it, so changing `sort` or a filter means dropping it.',
+  })
+  @Trim()
+  @IsString()
+  @IsOptional()
+  cursor?: string;
 }
 
 export class ListStoreItemsDto extends PageOptionsDto {

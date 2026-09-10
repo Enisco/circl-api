@@ -1,7 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { ActivitySubject, ActivityVerb, Prisma, StoreStatus, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { buildPageMeta, daysAgo, distanceMiles, escapeLike } from '@/common';
+import {
+  buildPageMeta,
+  daysAgo,
+  decodeCursor,
+  distanceMiles,
+  encodeCursor,
+  escapeLike,
+} from '@/common';
 import {
   ActivityService,
   MediaService,
@@ -13,6 +20,111 @@ import { BrowseCommerceDto } from '../dtos/store.dto';
 import { isOpenNow, toOpeningHours } from '../serializers/store.serializer';
 import { ItemService, ITEM_MEDIA_OWNER } from './item.service';
 import { StoreService } from './store.service';
+
+type ItemSort = NonNullable<BrowseCommerceDto['sort']>;
+
+/**
+ * Where the reader had got to: the values the sort actually ordered on, plus the id that breaks
+ * every tie. Keyed on values rather than on an offset, so a product added or sold while somebody
+ * scrolls moves nothing under them.
+ */
+interface ItemCursor extends Record<string, unknown> {
+  sort: ItemSort;
+  id: string;
+  isAvailable: boolean;
+  viewCount: number;
+  price: number;
+  createdAt: string;
+}
+
+/** The columns each sort orders on, in order, before `id` closes it. */
+const SORT_KEYS: Record<ItemSort, Array<{ field: keyof ItemCursor; desc: boolean }>> = {
+  RECOMMENDED: [
+    { field: 'isAvailable', desc: true },
+    { field: 'viewCount', desc: true },
+    { field: 'createdAt', desc: true },
+  ],
+  NEWEST: [{ field: 'createdAt', desc: true }],
+  PRICE_LOW: [{ field: 'price', desc: false }],
+  PRICE_HIGH: [{ field: 'price', desc: true }],
+  // Neither is applied to items, so both fall through to the default ordering.
+  NEAREST: [
+    { field: 'isAvailable', desc: true },
+    { field: 'viewCount', desc: true },
+    { field: 'createdAt', desc: true },
+  ],
+  RATING: [
+    { field: 'isAvailable', desc: true },
+    { field: 'viewCount', desc: true },
+    { field: 'createdAt', desc: true },
+  ],
+};
+
+const cursorFor = (
+  row: { id: string; isAvailable: boolean; viewCount: number; price: number; createdAt: Date },
+  query: BrowseCommerceDto,
+): ItemCursor => ({
+  sort: query.sort ?? 'RECOMMENDED',
+  id: row.id,
+  isAvailable: row.isAvailable,
+  viewCount: row.viewCount,
+  price: row.price,
+  createdAt: row.createdAt.toISOString(),
+});
+
+const valueOf = (cursor: ItemCursor, field: keyof ItemCursor) =>
+  field === 'createdAt' ? new Date(cursor.createdAt) : cursor[field];
+
+/**
+ * Strictly past the cursor on one key. A two-valued column has to be spelled out rather than
+ * compared: past `true` descending is `false`, and past `false` descending is nothing at all —
+ * null, so the clause is dropped instead of matching every row on that side.
+ */
+const beyond = (
+  field: keyof ItemCursor,
+  cursor: ItemCursor,
+  desc: boolean,
+): Record<string, unknown> | null => {
+  if (field === 'isAvailable') {
+    const value = cursor.isAvailable;
+
+    if (desc) return value ? { isAvailable: false } : null;
+
+    return value ? null : { isAvailable: true };
+  }
+
+  return { [field]: desc ? { lt: valueOf(cursor, field) } : { gt: valueOf(cursor, field) } };
+};
+
+/**
+ * Everything strictly after the cursor in the sort's own order: for each key, equal on everything
+ * before it and past it here. The last clause is `id`, which is unique, so no row can be both
+ * before and after the same cursor.
+ */
+const after = (cursor: ItemCursor): Prisma.StoreItemWhereInput => {
+  const keys = SORT_KEYS[cursor.sort];
+  const clauses: Prisma.StoreItemWhereInput[] = keys.flatMap((key, index) => {
+    const past = beyond(key.field, cursor, key.desc);
+
+    if (!past) return [];
+
+    return [
+      {
+        ...Object.fromEntries(
+          keys.slice(0, index).map(earlier => [earlier.field, valueOf(cursor, earlier.field)]),
+        ),
+        ...past,
+      },
+    ];
+  });
+
+  clauses.push({
+    ...Object.fromEntries(keys.map(key => [key.field, valueOf(cursor, key.field)])),
+    id: { gt: cursor.id },
+  });
+
+  return { OR: clauses };
+};
 
 @Injectable()
 export class CommerceBrowseService {
@@ -193,6 +305,15 @@ export class CommerceBrowseService {
       });
     }
 
+    // The grid is an infinite scroll, so it pages by cursor: a page number over a list that
+    // changes while somebody reads it shows one product twice and hides another (0.5).
+    const cursor = decodeCursor<ItemCursor>(query.cursor);
+    // A cursor belongs to the query that made it. A different sort means the client started a new
+    // list, so serve its first page rather than resuming somebody else's position.
+    const resuming = cursor && cursor.sort === (query.sort ?? 'RECOMMENDED') ? cursor : null;
+
+    if (resuming) and.push(after(resuming));
+
     if (and.length) where.AND = and;
 
     const [total, rows] = await this.database.$transaction([
@@ -201,10 +322,14 @@ export class CommerceBrowseService {
         where,
         include: { store: { include: this.stores.storeInclude } },
         orderBy: this.itemOrder(query),
-        skip: query.skip,
-        take: query.take,
+        // One more than asked, so "is there another page" is answered rather than guessed.
+        ...(resuming ? { take: query.take + 1 } : { skip: query.skip, take: query.take + 1 }),
       }),
     ]);
+
+    const hasMore = rows.length > query.take;
+
+    if (hasMore) rows.pop();
 
     const origin = this.originOf(query);
     const media = await this.media.forOwners(
@@ -224,19 +349,39 @@ export class CommerceBrowseService {
       }),
     );
 
-    return { data: views, meta: buildPageMeta(query, total) };
+    const last = rows[rows.length - 1];
+
+    return {
+      data: views,
+      meta: buildPageMeta(query, total, {
+        // Null at the end of the list, so the client never scrolls off it.
+        nextCursor: hasMore && last ? encodeCursor(cursorFor(last, query)) : null,
+        hasNextPage: hasMore,
+      }),
+    };
   }
 
+  /**
+   * `id` closes every ordering. The grid pages as the reader scrolls, and two rows the sort cannot
+   * separate are otherwise free to swap between requests, which shows one twice and the other not
+   * at all.
+   */
   private itemOrder(query: BrowseCommerceDto): Prisma.StoreItemOrderByWithRelationInput[] {
     switch (query.sort) {
       case 'PRICE_LOW':
-        return [{ price: 'asc' }];
+        return [{ price: 'asc' }, { id: 'asc' }];
       case 'PRICE_HIGH':
-        return [{ price: 'desc' }];
+        return [{ price: 'desc' }, { id: 'asc' }];
       case 'NEWEST':
-        return [{ createdAt: 'desc' }];
+        return [{ createdAt: 'desc' }, { id: 'asc' }];
       default:
-        return [{ isAvailable: 'desc' }, { viewCount: 'desc' }, { createdAt: 'desc' }];
+        // RECOMMENDED: in stock first, then what people actually open.
+        return [
+          { isAvailable: 'desc' },
+          { viewCount: 'desc' },
+          { createdAt: 'desc' },
+          { id: 'asc' },
+        ];
     }
   }
 
@@ -255,34 +400,57 @@ export class CommerceBrowseService {
       ...(type ? { typeCode: type } : {}),
     };
 
-    const [open, popular, newStores, categories, myStore, cityName] = await Promise.all([
-      this.database.store.findMany({
-        where: { ...base, status: StoreStatus.OPEN },
-        include: this.stores.storeInclude,
-        take: 40,
-      }),
-      this.database.store.findMany({
-        where: base,
-        include: this.stores.storeInclude,
-        orderBy: { enquiryCount: 'desc' },
-        take: 10,
-      }),
-      this.database.store.findMany({
-        where: { ...base, createdAt: { gte: daysAgo(30) } },
-        include: this.stores.storeInclude,
-        orderBy: { createdAt: 'desc' },
-        take: 10,
-      }),
-      this.database.storeCategory.groupBy({
-        by: ['code'],
-        where: { store: base },
-        _count: { _all: true },
-      }),
-      this.database.store.findUnique({
-        where: { ownerId: viewerId },
-        select: { id: true, name: true, status: true },
-      }),
-      city ? this.database.city.findUnique({ where: { id: city }, select: { name: true } }) : null,
+    // Items, not shops: the front of Commerce is a grid of things for sale, and these two rails are
+    // the same shape as `/commerce/items` so the screen needs no second round trip.
+    const itemBase: Prisma.StoreItemWhereInput = { deletedAt: null, store: base };
+
+    const [open, popular, newStores, categories, myStore, cityName, popularRows, newRows] =
+      await Promise.all([
+        this.database.store.findMany({
+          where: { ...base, status: StoreStatus.OPEN },
+          include: this.stores.storeInclude,
+          take: 40,
+        }),
+        this.database.store.findMany({
+          where: base,
+          include: this.stores.storeInclude,
+          orderBy: { enquiryCount: 'desc' },
+          take: 10,
+        }),
+        this.database.store.findMany({
+          where: { ...base, createdAt: { gte: daysAgo(30) } },
+          include: this.stores.storeInclude,
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+        }),
+        this.database.storeCategory.groupBy({
+          by: ['code'],
+          where: { store: base },
+          _count: { _all: true },
+        }),
+        this.database.store.findUnique({
+          where: { ownerId: viewerId },
+          select: { id: true, name: true, status: true },
+        }),
+        city
+          ? this.database.city.findUnique({ where: { id: city }, select: { name: true } })
+          : null,
+        this.database.storeItem.findMany({
+          where: { ...itemBase, isAvailable: true },
+          orderBy: [{ viewCount: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
+          take: 10,
+        }),
+        this.database.storeItem.findMany({
+          where: { ...itemBase, isAvailable: true, createdAt: { gte: daysAgo(30) } },
+          orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+          take: 10,
+        }),
+      ]);
+
+    const itemMedia = await this.items.mediaFor([...popularRows, ...newRows].map(row => row.id));
+    const [popularItems, newItems] = await Promise.all([
+      Promise.all(popularRows.map(row => this.items.toView(row, itemMedia.get(row.id) ?? []))),
+      Promise.all(newRows.map(row => this.items.toView(row, itemMedia.get(row.id) ?? []))),
     ]);
 
     const [categoryLabels, openSummaries, popularSummaries, newSummaries] = await Promise.all([
@@ -304,6 +472,9 @@ export class CommerceBrowseService {
         ? `Most enquiries in ${cityName.name} this week`
         : 'Most enquiries this week',
       newStores: newSummaries,
+      // Same shape as an item from `/commerce/items`, so one card renders both.
+      popularItems,
+      newItems,
       categories: categories
         .map(row => ({ ...toTermView(row.code, categoryLabels)!, storeCount: row._count._all }))
         .sort((a, b) => b.storeCount - a.storeCount),

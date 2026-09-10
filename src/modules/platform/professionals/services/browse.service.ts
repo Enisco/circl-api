@@ -11,14 +11,15 @@ import {
   PageMeta,
 } from '@/common';
 import {
+  authorSelect,
   BlockingService,
+  isAllCategories,
   MediaService,
   TaxonomyService,
-  authorSelect,
   toAuthorView,
   toCityView,
+  toPriceBasisLabel,
   toTermView,
-  isAllCategories,
 } from '../../shared';
 import { ReputationService } from '../../trust/services/reputation.service';
 import { BrowseProfessionalsDto } from '../dtos/browse.dto';
@@ -349,6 +350,7 @@ export class BrowseService {
           medianResponseMinutes: row.medianResponseMinutes,
           priceFrom: money(row.priceFrom, row.currency),
           priceBasis: row.priceBasis,
+          priceBasisLabel: toPriceBasisLabel(row.priceBasis),
           isAcceptingWork: row.isAcceptingWork,
           trustChecks: toAuthorView(row.user, { sign: this.media.sign }).trustChecks,
           isImmigrantFriendly: summary.isImmigrantFriendly,
@@ -441,6 +443,7 @@ export class BrowseService {
           medianResponseMinutes: null,
           priceFrom: money(row.priceFrom, row.currency),
           priceBasis: row.priceBasis,
+          priceBasisLabel: toPriceBasisLabel(row.priceBasis),
           isAcceptingWork: true,
           trustChecks: toAuthorView(row.author, { sign: this.media.sign }).trustChecks,
           isImmigrantFriendly: summary.isImmigrantFriendly,
@@ -611,6 +614,7 @@ export class BrowseService {
       },
       priceFrom: money(listing.priceFrom, listing.currency),
       priceBasis: listing.priceBasis,
+      priceBasisLabel: toPriceBasisLabel(listing.priceBasis),
       isAcceptingWork: listing.isAcceptingWork,
       freeConsultation: listing.freeConsultation,
       services: listing.services.map(service => ({
@@ -619,6 +623,7 @@ export class BrowseService {
         description: service.description,
         price: money(service.price, service.currency),
         priceBasis: service.priceBasis,
+        priceBasisLabel: toPriceBasisLabel(service.priceBasis),
         isActive: service.isActive,
       })),
       trust,

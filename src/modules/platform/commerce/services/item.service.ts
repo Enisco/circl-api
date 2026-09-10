@@ -164,7 +164,9 @@ export class ItemService {
       this.database.storeItem.count({ where }),
       this.database.storeItem.findMany({
         where,
-        orderBy: [{ isAvailable: 'desc' }, { createdAt: 'desc' }],
+        // `id` last: two items created in the same second would otherwise be free to swap places
+        // between page one and page two, showing one twice and the other never.
+        orderBy: [{ isAvailable: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
         skip: query.skip,
         take: query.take,
       }),
@@ -256,6 +258,11 @@ export class ItemService {
     };
   }
 
+  /** The photos for a set of items, so a caller building a rail hydrates them in one query. */
+  async mediaFor(itemIds: string[]): Promise<Map<string, Media[]>> {
+    return this.media.forOwners(ITEM_MEDIA_OWNER, itemIds);
+  }
+
   async toView(
     item: {
       id: string;
@@ -300,6 +307,9 @@ export class ItemService {
       photos,
       // photos[0] promoted to the top level, because every list surface wants exactly one image and should not index into an array to find it (4.4.3).
       coverPhotoUrl: photos[0]?.url ?? null,
+      // The same photo as an object, so a square grid can letterbox a tall one instead of cropping
+      // the label off it. `width` and `height` are read out of the file itself (0.11.4).
+      coverPhoto: photos[0] ?? null,
       isAvailable: item.isAvailable,
     };
   }
