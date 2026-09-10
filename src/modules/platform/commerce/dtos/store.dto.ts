@@ -126,14 +126,26 @@ export class CreateStoreDto {
   @IsOptional()
   hidesExactAddress?: boolean;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description:
+      'One free-text line: "Street address or landmark". Not validated as an address and never ' +
+      'parsed into components, because a seller who would rather not publish their door is told ' +
+      'to write a landmark instead — "opposite Peckham Rye station" is a valid value and a maps ' +
+      'app handles it. Rejecting it would land on exactly the people being careful.',
+    maxLength: 200,
+  })
   @Trim()
   @IsString()
   @MaxLength(200)
   @IsOptional()
   addressLine1?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description:
+      'The precise half, and optional for the same reason. Length-checked only: no pattern, so a ' +
+      'partial postcode or an outward code is accepted.',
+    maxLength: 20,
+  })
   @Trim()
   @IsString()
   @MaxLength(20)
@@ -183,13 +195,21 @@ export class CreateStoreDto {
   contact?: StoreContactDto[];
 
   @ApiPropertyOptional({ type: [OpeningHoursDto], description: 'Exactly 7 entries when sent.' })
+  @ApiPropertyOptional({
+    type: [OpeningHoursDto],
+    nullable: true,
+    description:
+      'Seven entries, Monday first, `{ openMinutes: null, closeMinutes: null }` for a closed day. ' +
+      'Send `null` for a shop that keeps no set hours: it is a different thing from a week with ' +
+      'every day closed, and is not normalised into one. Omit to leave the hours untouched.',
+  })
   @IsArray()
   @ArrayMinSize(7)
   @ArrayMaxSize(7)
   @ValidateNested({ each: true })
   @Type(() => OpeningHoursDto)
   @IsOptional()
-  openingHours?: OpeningHoursDto[];
+  openingHours?: OpeningHoursDto[] | null;
 
   @ApiPropertyOptional({ default: false })
   @Bool()

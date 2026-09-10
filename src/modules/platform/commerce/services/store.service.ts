@@ -152,9 +152,11 @@ export class StoreService {
           area: dto.area,
           cityId,
           hidesExactAddress: dto.hidesExactAddress ?? false,
-          // Dropped rather than stored when the seller hides their address, so there is nothing to leak later through a query nobody thought about.
-          addressLine1: dto.hidesExactAddress ? null : (dto.addressLine1 ?? null),
-          postcode: dto.hidesExactAddress ? null : (dto.postcode ?? null),
+          // Stored either way and redacted on read (4.5.1). Erasing it instead meant a seller who
+          // hid their address and later unhid it had to type it again, and their own edit form
+          // reopened empty in the meantime.
+          addressLine1: dto.addressLine1 ?? null,
+          postcode: dto.postcode ?? null,
           latitude: dto.latitude ?? city?.latitude ?? null,
           longitude: dto.longitude ?? city?.longitude ?? null,
           delivers: dto.delivers ?? false,
@@ -179,7 +181,7 @@ export class StoreService {
   }
 
   async update(userId: string, id: string, dto: UpdateStoreDto) {
-    const store = await this.assertOwned(userId, id);
+    await this.assertOwned(userId, id);
 
     const city = dto.cityId ? await this.cities.assertValid(dto.cityId) : null;
 
@@ -190,7 +192,6 @@ export class StoreService {
       this.singleImage(dto.logoKey, userId),
       this.singleImage(dto.coverKey, userId),
     ]);
-    const hidesExactAddress = dto.hidesExactAddress ?? store.hidesExactAddress;
 
     const updated = await this.database.$transaction(async tx => {
       if (contacts) {
@@ -212,6 +213,12 @@ export class StoreService {
         await tx.storeCategory.createMany({
           data: dto.categories.map(code => ({ storeId: id, code })),
         });
+      }
+
+      // An explicit null is "we keep no set hours", which means removing the rows rather than
+      // writing seven closed ones. Absent leaves whatever is stored alone.
+      if (dto.openingHours === null) {
+        await tx.storeOpeningHours.deleteMany({ where: { storeId: id } });
       }
 
       if (dto.openingHours) {
@@ -238,13 +245,8 @@ export class StoreService {
           area: dto.area,
           cityId: city?.id,
           hidesExactAddress: dto.hidesExactAddress,
-          // Turning the flag on erases what was already stored, rather than leaving it in a column that some future query might select.
-          ...(hidesExactAddress
-            ? { addressLine1: null, postcode: null }
-            : {
-                ...(dto.addressLine1 !== undefined ? { addressLine1: dto.addressLine1 } : {}),
-                ...(dto.postcode !== undefined ? { postcode: dto.postcode } : {}),
-              }),
+          ...(dto.addressLine1 !== undefined ? { addressLine1: dto.addressLine1 } : {}),
+          ...(dto.postcode !== undefined ? { postcode: dto.postcode } : {}),
           ...(dto.latitude !== undefined ? { latitude: dto.latitude } : {}),
           ...(dto.longitude !== undefined ? { longitude: dto.longitude } : {}),
           delivers: dto.delivers,
@@ -423,7 +425,7 @@ export class StoreService {
       ...summary,
       contact: store.contacts.map(toContactView),
       // Redacted here rather than in the client (4.5.1).
-      address: toAddressView(store),
+      address: toAddressView(store, viewerId === store.ownerId),
       owner: toAuthorView(store.owner, { sign: this.media.sign }),
       catalogue: {
         categories: catalogue.map(row => ({
