@@ -188,6 +188,25 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
     JSON.stringify((again.body?.data ?? []).map(i => i.id)) === JSON.stringify(p1.map(i => i.id)),
     { first: p1.map(i => i.id), second: again.body?.data?.map(i => i.id) });
 
+  console.log('\n── 4.4 A seller does not shop at their own shop ─────────────');
+
+  r = await api(seller.token, 'GET', '/commerce/items?cityId=ANYWHERE&limit=50');
+  check('their own products are not in the grid they browse', !(r.body?.data ?? []).some(i => i.storeId === storeId), (r.body?.data ?? []).filter(i => i.storeId === storeId).map(i => i.name));
+
+  r = await api(seller.token, 'GET', '/commerce/stores?cityId=ANYWHERE&q=Mama%20Nkechi');
+  check('nor is their own shop', !(r.body?.data ?? []).some(st => st.id === storeId), r.body?.data?.map(st => st.name));
+
+  r = await api(seller.token, 'GET', '/commerce/home?cityId=MANCHESTER');
+  check('nor in any rail on the home', ![...(r.body?.data?.openNearYou ?? []), ...(r.body?.data?.popular ?? []), ...(r.body?.data?.newStores ?? [])].some(st => st.id === storeId), r.body?.data?.openNearYou?.map(st => st.name));
+  check('nor among the product rails', ![...(r.body?.data?.popularItems ?? []), ...(r.body?.data?.newItems ?? [])].some(i => i.storeId === storeId), r.body?.data?.popularItems?.map(i => i.name));
+  check('but it is still their myStore, which is where it belongs', r.body?.data?.myStore?.id === storeId, r.body?.data?.myStore);
+
+  r = await api(buyer.token, 'GET', '/commerce/items?cityId=ANYWHERE&limit=50');
+  check('a buyer still sees every one of them', (r.body?.data ?? []).some(i => i.storeId === storeId), (r.body?.data ?? []).length);
+
+  r = await api(seller.token, 'GET', `/commerce/stores/${storeId}/items`);
+  check('and the seller still manages them from their own catalogue', (r.body?.data ?? []).length > 0, r.body?.meta);
+
   console.log('\n── 4.4.3 The grid scrolls by cursor ─────────────────────────');
 
   // Walked to the end with a small page size, which is what an infinite scroll does.

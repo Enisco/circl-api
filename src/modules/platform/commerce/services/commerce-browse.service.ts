@@ -235,7 +235,9 @@ export class CommerceBrowseService {
       });
     }
 
-    void viewerId;
+    // Your own shop is not a discovery: it has its own screen, and enquiring on it is refused as
+    // CANNOT_ENQUIRE_OWN_STORE, so listing it here offers a card whose action cannot work.
+    where.ownerId = { not: viewerId };
 
     if (and.length) where.AND = and;
 
@@ -278,7 +280,7 @@ export class CommerceBrowseService {
     }
 
     // Every store-level filter reads through to the item's store (4.4.1).
-    const storeFilter: Prisma.StoreWhereInput = { deletedAt: null };
+    const storeFilter: Prisma.StoreWhereInput = { deletedAt: null, ownerId: { not: viewerId } };
 
     if (query.cityId && query.cityId !== 'ANYWHERE') storeFilter.cityId = query.cityId;
     if (query.type) storeFilter.typeCode = query.type;
@@ -396,6 +398,10 @@ export class CommerceBrowseService {
     const city = cityId ?? profile?.cityId ?? null;
     const base: Prisma.StoreWhereInput = {
       deletedAt: null,
+      // Their own shop comes back as `myStore`, so every rail and every count here is about
+      // somebody else's. A category counting one shop and opening on an empty grid is worse than
+      // no tile at all.
+      ownerId: { not: viewerId },
       ...(city ? { cityId: city } : {}),
       ...(type ? { typeCode: type } : {}),
     };
