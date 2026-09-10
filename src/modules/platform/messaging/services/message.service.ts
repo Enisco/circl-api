@@ -188,14 +188,20 @@ export class MessageService {
       });
 
       // unreadCount is held per participant rather than derived at read time: counting messages after lastReadAt on every inbox load is the query that gets slow first (5.4).
+      //
+      // `isArchived` is cleared with it. A thread somebody filed away as done, written into again,
+      // is not done: it returns to their inbox unread. Left archived the message lands where
+      // nobody is looking and no badge counts it, because the account-wide unread totals only
+      // read active rows.
       await tx.conversationParticipant.updateMany({
         where: { conversationId, userId: { in: others } },
-        data: { unreadCount: { increment: 1 } },
+        data: { unreadCount: { increment: 1 }, isArchived: false },
       });
 
+      // Writing into a thread is the opposite of being finished with it.
       await tx.conversationParticipant.update({
         where: { conversationId_userId: { conversationId, userId } },
-        data: { hasSentMessage: true, lastReadAt: created.sentAt },
+        data: { hasSentMessage: true, lastReadAt: created.sentAt, isArchived: false },
       });
 
       return created;
