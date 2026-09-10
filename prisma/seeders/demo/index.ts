@@ -146,7 +146,9 @@ export const seedDemo = async (prisma: PrismaClient) => {
 
   // Ordered: people, then content, then the things that hang off content, then notifications, which reference all of it (B.7).
   const people = await seedDemoPeople(ctx);
-  console.info(`  ✅ ${people} members (${PEOPLE.length} full, ${connectExtras().length} Connect-only)`);
+  console.info(
+    `  ✅ ${people} members (${PEOPLE.length} full, ${connectExtras().length} Connect-only)`,
+  );
 
   const community = await seedCommunity(ctx);
   console.info(
@@ -159,7 +161,9 @@ export const seedDemo = async (prisma: PrismaClient) => {
   );
 
   const commerce = await seedCommerce(ctx);
-  console.info(`  ✅ ${commerce.stores} stores, ${commerce.enquiries} enquiries`);
+  console.info(
+    `  ✅ ${commerce.stores} stores, ${commerce.items} items, ${commerce.enquiries} enquiries`,
+  );
 
   const social = await seedSocial(ctx);
   console.info(`  ✅ ${social.connect} Connect profiles, ${social.threads} conversations`);
