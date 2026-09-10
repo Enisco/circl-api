@@ -133,6 +133,33 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   check('the display words are refused on the way in, naming the four codes',
     r.status === 400 && /PER_HOUR/.test(JSON.stringify(r.body?.error?.details ?? '')), r.body?.error?.details);
 
+  console.log('\n── 2.6.4 Availability governs push, not pull ────────────────');
+
+  await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/availability`, { isAcceptingWork: false });
+
+  r = await api(client.token, 'GET', `/professionals/${listingId}`);
+  check('the profile opens and the Message button has something to sit under', r.status === 200 && r.body?.data?.isAcceptingWork === false, r.body?.data?.isAcceptingWork);
+
+  // Asked for by the title the listing actually carries by now, rather than the one it was created
+  // with: this suite renames it twice before here.
+  const offTitle = r.body?.data?.professionTitle;
+
+  r = await api(client.token, 'GET', `/professionals?cityId=MANCHESTER&q=${encodeURIComponent(offTitle)}`);
+  const offRow = (r.body?.data ?? []).find(p => p.id === listingId);
+  check('turning work off does not hide the listing: a member who knows the name can still find it', !!offRow, { looked_for: offTitle, got: r.body?.data?.map(p => p.professionTitle) });
+  check('and the card says so, so the app can draw the state', offRow?.isAcceptingWork === false, offRow?.isAcceptingWork);
+
+  r = await api(client.token, 'GET', '/professionals?cityId=MANCHESTER&availability=ACCEPTING_BOOKINGS');
+  check('but the availability filter excludes them', !(r.body?.data ?? []).some(p => p.id === listingId), r.body?.data?.map(p => p.id));
+
+  r = await api(client.token, 'GET', '/professionals/home?cityId=MANCHESTER');
+  check('and Circl stops recommending them in nearYou, which is push', !(r.body?.data?.nearYou ?? []).some(p => p.id === listingId), r.body?.data?.nearYou?.map(p => p.id));
+
+  r = await api(client.token, 'POST', '/bookings', { listingId, serviceId });
+  check('booking is where it is refused, by name', r.status === 422 && r.body?.error?.code === 'NOT_ACCEPTING_WORK', r.body?.error?.code);
+
+  await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/availability`, { isAcceptingWork: true });
+
   console.log('\n── 2.3 The searched city first, then outwards ───────────────');
 
   r = await api(client.token, 'GET', '/professionals?cityId=TRURO&limit=20');

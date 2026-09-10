@@ -565,14 +565,17 @@ async function signIn(email) {
   );
 
   console.log('\n── G14 15.2 conversations look alive ───────────────────────');
-  // Seeded threads only. "Any thread a seeded member is in" also catches one another suite made
-  // moments ago and has not swept yet, and then this fails on somebody else's fixture rather than
-  // on the dataset. The seed backdates everything it writes, so age is what separates the two.
+  // Seeded threads are the ones where EVERY participant is seeded. "Any thread a seeded member is
+  // in" also catches a real person messaging a seeded shop from the app, or another suite's
+  // fixture mid-run, and then this fails on somebody's genuine two-line conversation rather than
+  // on the dataset it is about.
   const threads = await prisma.conversation.findMany({
     where: {
       kind: { not: 'SUPPORT' },
-      createdAt: { lt: new Date(Date.now() - 60 * 60 * 1000) },
-      participants: { some: { user: { email: { endsWith: '@circl.test' } } } },
+      participants: {
+        some: {},
+        every: { user: { email: { endsWith: '@circl.test' } } },
+      },
     },
     select: { messageCount: true, messages: { select: { sentAt: true } } },
   });

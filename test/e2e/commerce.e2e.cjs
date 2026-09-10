@@ -113,6 +113,41 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
   r = await api(buyer.token, 'GET', `/commerce/stores/${storeId}/items`);
   check('catalogue → 200 with both items', r.body?.data?.length === 2, r.body?.data?.length);
 
+  console.log('\n── 4.5 A shop with a face ───────────────────────────────────');
+
+  const logoKey = await uploadPng(seller.token, 'COMMERCE', 300, 300);
+  const coverKey = await uploadPng(seller.token, 'COMMERCE', 1200, 600);
+
+  r = await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { logoKey, coverKey });
+  check('a shop takes a logo and a cover', r.status === 200 && !!r.body?.data?.logoUrl && !!r.body?.data?.coverUrl, { logo: r.body?.data?.logoUrl, cover: r.body?.data?.coverUrl });
+  check('and they come back as URLs, not keys', /^https?:\/\//.test(r.body?.data?.logoUrl ?? ''), r.body?.data?.logoUrl);
+
+  // The one that matters: a seller editing anything else must not lose their branding.
+  r = await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { description: 'West African groceries, frozen fish and fresh produce, edited again.' });
+  check('editing something else leaves the pictures alone', !!r.body?.data?.logoUrl && !!r.body?.data?.coverUrl, { logo: r.body?.data?.logoUrl, cover: r.body?.data?.coverUrl });
+
+  r = await api(buyer.token, 'GET', `/commerce/stores/${storeId}`);
+  check('the shop page header has its cover', !!r.body?.data?.coverUrl && !!r.body?.data?.logoUrl, { logo: r.body?.data?.logoUrl, cover: r.body?.data?.coverUrl });
+
+  r = await api(seller.token, 'GET', '/commerce/stores/me');
+  check('setup prefills from the pictures already saved', !!r.body?.data?.logoUrl && !!r.body?.data?.coverUrl, { logo: r.body?.data?.logoUrl, cover: r.body?.data?.coverUrl });
+
+  r = await api(buyer.token, 'GET', '/commerce/stores?cityId=MANCHESTER&q=Mama%20Nkechi');
+  const branded = (r.body?.data ?? []).find(s => s.id === storeId);
+  check('and so does the card in browse', !!branded?.logoUrl, branded?.logoUrl);
+
+  r = await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { logoKey: null });
+  check('an explicit null removes one, which absent never does', r.body?.data?.logoUrl === null && !!r.body?.data?.coverUrl, { logo: r.body?.data?.logoUrl, cover: r.body?.data?.coverUrl });
+
+  r = await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { logoKey: 'media/not/a/real/key.jpg' });
+  check('an unusable key is a validation error naming the field, not a 500', r.status === 422 || (r.status === 400 && /logo/i.test(JSON.stringify(r.body?.error ?? ''))), { status: r.status, error: r.body?.error?.code });
+
+  r = await api(buyer.token, 'GET', `/commerce/stores/${storeId}/items`);
+  const listed = r.body?.data ?? [];
+  check('every product in the catalogue carries its cover photo field', listed.length > 0 && listed.every(i => 'coverPhotoUrl' in i && 'photos' in i), listed.map(i => i.name));
+  check('and the one with a photo has dimensions for the grid to fit rather than crop',
+    listed.filter(i => i.coverPhoto).every(i => typeof i.coverPhoto.width === 'number'), listed.map(i => i.coverPhoto?.width));
+
   console.log('\n── 4.4 Browse ───────────────────────────────────────────────');
 
   // Narrowed by name, not scanned: Manchester has seeded shops in it and a page holds twenty.
