@@ -122,6 +122,17 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   const both = new Set(r.body?.data?.map(p => p.type));
   check('listingType=BOTH returns both discriminated types (D14)', both.has('PROFESSIONAL') && both.has('COMMUNITY_OFFER'), [...both]);
 
+  r = await api(client.token, 'GET', `/professionals/${listingId}`);
+  check('priceBasis is a code, as it always was', r.body?.data?.priceBasis === 'PER_JOB' || r.body?.data?.priceBasis === 'NEGOTIABLE', r.body?.data?.priceBasis);
+  check('and now carries its words beside it, so no client keeps a map',
+    typeof r.body?.data?.priceBasisLabel === 'string' && r.body.data.priceBasisLabel.length > 0, r.body?.data?.priceBasisLabel);
+  const svcRow = (r.body?.data?.services ?? [])[0];
+  check('a service carries it too', !svcRow || typeof svcRow.priceBasisLabel === 'string', svcRow);
+
+  r = await api(client.token, 'POST', '/professionals/listings', { categoryCodes: ['LEGAL'], professionTitle: 'X', experienceLevel: 'EXPERT', about: 'Long enough to pass the minimum length rule here.', consentAccepted: true, priceBasis: 'per hour' });
+  check('the display words are refused on the way in, naming the four codes',
+    r.status === 400 && /PER_HOUR/.test(JSON.stringify(r.body?.error?.details ?? '')), r.body?.error?.details);
+
   console.log('\n── 2.3 The searched city first, then outwards ───────────────');
 
   r = await api(client.token, 'GET', '/professionals?cityId=TRURO&limit=20');

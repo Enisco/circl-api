@@ -197,4 +197,108 @@ const dobFor = years => {
   return date.toISOString().slice(0, 10);
 };
 
-module.exports = { api, check, dobFor, fail, finish, makeUser, prisma, sweep };
+/**
+ * The seeded members sign in with an email code and no password (B.6). The route is throttled at
+ * ten a minute keyed on the IP, and a whole sweep shares one IP, so a suite late in the run can be
+ * refused for something no member would ever hit. Waits out the window the API itself names.
+ */
+async function verifyEmailCode(email, code = '1111', attempt = 0) {
+  const res = await fetch(`${BASE}/auth/verify/email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, code }),
+  });
+  const body = await res.json().catch(() => ({}));
+
+  if (res.status === 429 && attempt < 2) {
+    const wait = (body?.data?.retryAfterSeconds ?? 30) + 1;
+
+    console.log(`  … throttled signing in as ${email}, waiting ${wait}s`);
+    await new Promise(resolve => setTimeout(resolve, wait * 1000));
+
+    return verifyEmailCode(email, code, attempt + 1);
+  }
+
+  const cookies = res.headers.getSetCookie?.() ?? [];
+
+  return {
+    status: res.status,
+    ok: res.status === 200 || res.status === 201,
+    body: body?.data ?? {},
+    cookieToken:
+      cookies
+        .find(c => c.startsWith('accessToken='))
+        ?.split(';')[0]
+        .split('=')[1] ?? null,
+  };
+}
+
+/** A real PNG of the given size, so a header read on S3 has genuine bytes to find. */
+function realPng(width, height) {
+  const zlib = require('zlib');
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+
+    len.writeUInt32BE(data.length);
+
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const crc = Buffer.alloc(4);
+    let c = ~0;
+
+    for (const byte of body) {
+      c ^= byte;
+      for (let k = 0; k < 8; k += 1) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+    }
+
+    crc.writeUInt32BE(~c >>> 0);
+
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(Buffer.alloc(height * (1 + width * 3)))),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+/** Mints an upload slot, PUTs the bytes, and hands back the key an attach expects. */
+async function uploadPng(token, purpose, width, height) {
+  const bytes = realPng(width, height);
+  const minted = await api(token, 'POST', '/media/uploads', {
+    purpose,
+    files: [{ mimeType: 'image/png', byteSize: bytes.length }],
+  });
+  const slot = minted.body?.data?.[0];
+
+  if (!slot) return null;
+
+  await fetch(slot.uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'image/png' },
+    body: bytes,
+  });
+
+  return slot.key;
+}
+
+module.exports = {
+  api,
+  check,
+  dobFor,
+  fail,
+  finish,
+  makeUser,
+  prisma,
+  realPng,
+  sweep,
+  uploadPng,
+  verifyEmailCode,
+};

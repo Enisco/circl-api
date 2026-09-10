@@ -282,12 +282,16 @@ function shape(label, obj, required) {
   check('4.5.1 exactly 7 opening-hours entries, Monday first', r.body?.data?.openingHours?.length === 7 && r.body.data.openingHours[0].day === 'MONDAY', r.body?.data?.openingHours?.length);
   shape('4.5.1 contact row', r.body?.data?.contact?.[0], ['channel', 'value', 'display']);
 
+  // Named uniquely and asked for by name. The browse list is global, the demo dataset is in it and
+  // is several pages deep, so scanning page one for this run's own item finds nothing (B.7).
+  const itemName = `Egusi (ground melon seed) ${Date.now()}`;
+
   await api(seller.token, 'POST', `/commerce/stores/${storeId}/items`, {
-    name: 'Egusi (ground melon seed)', price: 650, unitCode: 'PER_500G', categoryCode: 'FOOD_GROCERIES',
+    name: itemName, price: 650, unitCode: 'PER_500G', categoryCode: 'FOOD_GROCERIES',
   });
-  r = await api(b.token, 'GET', '/commerce/items');
-  // This run's own item, not whatever happens to be first: the browse list is global and the demo dataset is in it too (B.7).
+  r = await api(b.token, 'GET', `/commerce/items?q=${encodeURIComponent(itemName)}`);
   const ownItem = r.body?.data?.find(item => item.storeId === storeId);
+  check('4.4.3 this run\'s own item is findable in the grid', !!ownItem, r.body?.data?.map(i => i.name));
 
   shape('4.4.3 item', ownItem, [
     'id', 'storeId', 'storeName', 'name', 'price.amount', 'price.currency',

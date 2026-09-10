@@ -255,6 +255,39 @@ const { api, check, dobFor, finish, makeUser, prisma, sweep } = require('./harne
   r = await api(client.token, 'GET', '/messages?archived=true');
   check('and it leaves the Done list', !(r.body?.data ?? []).some(c => c.id === appealThreadId), r.body?.data?.map(c => c.id));
 
+  console.log('\n── A done thread that gets a new message ───────────────────');
+
+  await api(client.token, 'POST', `/messages/${appealThreadId}/archive`, {});
+  await api(pro.token, 'POST', `/messages/${appealThreadId}/messages`, { clientId: 'sw-revive-1', body: 'One more thing about the appeal.' });
+
+  r = await api(client.token, 'GET', `/messages/${appealThreadId}`);
+  check('the other side writing brings it back', r.body?.data?.viewer?.isArchived === false, r.body?.data?.viewer);
+  check('and it comes back unread, so there is something to notice', r.body?.data?.unreadCount > 0, r.body?.data?.unreadCount);
+
+  r = await api(client.token, 'GET', '/messages');
+  check('it is in the active inbox again', (r.body?.data ?? []).some(c => c.id === appealThreadId), r.body?.meta);
+  check('and the account badge counts it once more', (r.body?.meta?.unreadThreads ?? 0) > 0, r.body?.meta);
+
+  r = await api(client.token, 'GET', '/messages?archived=true');
+  check('and out of the Done list', !(r.body?.data ?? []).some(c => c.id === appealThreadId), r.body?.data?.map(c => c.id));
+
+  r = await api(pro.token, 'GET', `/messages/${appealThreadId}`);
+  check('the writer\'s own copy is untouched, because they never archived it', r.body?.data?.viewer?.isArchived === false, r.body?.data?.viewer);
+
+  // The archiver writing into it counts too: finishing and then replying is not finished.
+  await api(client.token, 'POST', `/messages/${appealThreadId}/archive`, {});
+  await api(client.token, 'POST', `/messages/${appealThreadId}/messages`, { clientId: 'sw-revive-2', body: 'Actually, one question.' });
+
+  r = await api(client.token, 'GET', `/messages/${appealThreadId}`);
+  check('writing into your own done thread revives it', r.body?.data?.viewer?.isArchived === false, r.body?.data?.viewer);
+
+  r = await api(pro.token, 'GET', '/professionals/home');
+  check('and the professional\'s done count follows the thread back out', r.body?.data?.myWork?.done === 0, r.body?.data?.myWork);
+
+  // Answered, so the block below starts where it expects to: nothing waiting on the professional
+  // except the messages they have not read yet.
+  await api(pro.token, 'POST', `/messages/${appealThreadId}/messages`, { clientId: 'sw-revive-3', body: 'Ask away.' });
+
   console.log('\n── 5.1 The work waiting on a professional ───────────────────');
 
   r = await api(pro.token, 'GET', '/professionals/home');

@@ -1,5 +1,5 @@
 /* Section 4 end-to-end check. */
-const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness.cjs');
+const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require('./harness.cjs');
 
 
 
@@ -115,7 +115,8 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
 
   console.log('\n── 4.4 Browse ───────────────────────────────────────────────');
 
-  r = await api(buyer.token, 'GET', '/commerce/stores?cityId=MANCHESTER');
+  // Narrowed by name, not scanned: Manchester has seeded shops in it and a page holds twenty.
+  r = await api(buyer.token, 'GET', '/commerce/stores?cityId=MANCHESTER&q=Mama%20Nkechi');
   check('browse stores → finds it', r.body?.data?.some(s => s.id === storeId), r.body?.data?.length);
   check('isOpenNow computed server-side', r.body?.data?.find(s => s.id === storeId)?.isOpenNow === true, r.body?.data?.[0]?.isOpenNow);
   check('distanceMiles is null without coordinates (D25)', r.body?.data?.[0]?.distanceMiles === null);
@@ -128,13 +129,120 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
   r = await api(buyer.token, 'GET', '/commerce/stores?heritage=WEST_AFRICAN');
   check('heritage filter uses the SHARED taxonomy', r.body?.data?.some(s => s.id === storeId));
 
-  r = await api(buyer.token, 'GET', '/commerce/items?categories=FRESH_FROZEN');
+  r = await api(buyer.token, 'GET', '/commerce/items?categories=FRESH_FROZEN&q=Whiting');
   const whiting = r.body?.data?.find(i => i.id === whitingId);
   check('browse items by category', !!whiting, r.body?.data?.map(i => i.name));
   check('item carries storeIsOpenNow read through its store', whiting?.storeIsOpenNow === true, whiting);
 
   r = await api(buyer.token, 'GET', '/commerce/items?sort=PRICE_LOW');
   check('price sort works', r.body?.data?.[0]?.price?.amount <= r.body?.data?.[1]?.price?.amount, r.body?.data?.map(i => i.price?.amount));
+
+  console.log('\n── 4.4.3 The marketplace leads with products ────────────────');
+
+  r = await api(buyer.token, 'GET', '/commerce/items?limit=2&page=1');
+  const p1 = r.body?.data ?? [];
+  check('the grid pages', p1.length === 2 && r.body?.meta?.perPage === 2, r.body?.meta);
+  check('hasNextPage is what stops the scroll', typeof r.body?.meta?.hasNextPage === 'boolean', r.body?.meta);
+
+  r = await api(buyer.token, 'GET', '/commerce/items?limit=2&page=2');
+  const p2 = r.body?.data ?? [];
+  check('page two does not repeat page one', p2.every(i => !p1.some(j => j.id === i.id)), { p1: p1.map(i => i.id), p2: p2.map(i => i.id) });
+
+  const again = await api(buyer.token, 'GET', '/commerce/items?limit=2&page=1');
+  check('and page one is the same list twice, so nothing slips between pages',
+    JSON.stringify((again.body?.data ?? []).map(i => i.id)) === JSON.stringify(p1.map(i => i.id)),
+    { first: p1.map(i => i.id), second: again.body?.data?.map(i => i.id) });
+
+  console.log('\n── 4.4.3 The grid scrolls by cursor ─────────────────────────');
+
+  // Walked to the end with a small page size, which is what an infinite scroll does.
+  const walk = async (query, hops = 12) => {
+    const seen = [];
+    let cursor = null;
+
+    for (let i = 0; i < hops; i += 1) {
+      const page = await api(buyer.token, 'GET', `/commerce/items?${query}&limit=5${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+
+      seen.push(...(page.body?.data ?? []).map(item => item.id));
+      cursor = page.body?.meta?.nextCursor ?? null;
+
+      if (!cursor) break;
+    }
+
+    return { seen, cursor };
+  };
+
+  const first = await api(buyer.token, 'GET', '/commerce/items?limit=5');
+  check('the first page hands back a cursor', typeof first.body?.meta?.nextCursor === 'string', first.body?.meta);
+
+  const straight = await walk('sort=RECOMMENDED');
+  check('the walk reaches the end', straight.cursor === null, { seen: straight.seen.length, cursor: straight.cursor });
+  check('and never repeats an item', new Set(straight.seen).size === straight.seen.length, straight.seen.length - new Set(straight.seen).size);
+  check('and sees every item exactly once', straight.seen.length === first.body?.meta?.totalCount, { walked: straight.seen.length, total: first.body?.meta?.totalCount });
+
+  // The case page numbers get wrong: something is sold while the reader is halfway down.
+  const mid = await api(buyer.token, 'GET', '/commerce/items?sort=RECOMMENDED&limit=5');
+  const midCursor = mid.body?.meta?.nextCursor;
+  const soldOff = mid.body?.data?.[0]?.id;
+
+  await prisma.storeItem.update({ where: { id: soldOff }, data: { deletedAt: new Date() } });
+
+  const afterDelete = await api(buyer.token, 'GET', `/commerce/items?sort=RECOMMENDED&limit=5&cursor=${encodeURIComponent(midCursor)}`);
+  const overlap = (afterDelete.body?.data ?? []).filter(item => mid.body.data.some(seen => seen.id === item.id));
+  check('an item disappearing mid-scroll does not shift the next page onto one already read',
+    overlap.length === 0, overlap.map(i => i.name));
+
+  await prisma.storeItem.update({ where: { id: soldOff }, data: { deletedAt: null } });
+
+  const byPrice = await walk('sort=PRICE_LOW');
+  check('a price walk also reaches the end without repeating',
+    byPrice.cursor === null && new Set(byPrice.seen).size === byPrice.seen.length, byPrice.seen.length);
+
+  r = await api(buyer.token, 'GET', `/commerce/items?sort=PRICE_HIGH&limit=5&cursor=${encodeURIComponent(first.body.meta.nextCursor)}`);
+  check('a cursor from another sort is ignored rather than resumed into the wrong list',
+    r.status === 200 && (r.body?.data ?? []).length === 5, { status: r.status, rows: r.body?.data?.length });
+
+  r = await api(buyer.token, 'GET', '/commerce/items?limit=5&cursor=not-a-real-cursor');
+  check('a mangled cursor serves the first page rather than failing', r.status === 200 && (r.body?.data ?? []).length === 5, r.status);
+
+  r = await api(buyer.token, 'GET', '/commerce/items?sort=RECOMMENDED');
+  check('every card names its shop', (r.body?.data ?? []).every(i => !!i.storeId && !!i.storeName), r.body?.data?.map(i => i.storeName));
+
+  // Asked for by name: the seeded marketplace is several pages deep, so a fixture item is not
+  // going to be on page one of an unfiltered grid, and should not have to be.
+  r = await api(buyer.token, 'GET', '/commerce/items?q=Whiting%20fish');
+  const card = (r.body?.data ?? []).find(i => i.id === whitingId);
+  check('the fixture item is findable in the grid', !!card, r.body?.data?.map(i => i.name));
+  check('the cover photo comes as an object, not just a URL', card?.coverPhoto === null || typeof card?.coverPhoto === 'object', card?.coverPhoto);
+  check('and the URL stays where it was', card?.coverPhotoUrl === (card?.coverPhoto?.url ?? null), { url: card?.coverPhotoUrl, obj: card?.coverPhoto?.url });
+
+  // A real 1290x2796 photo: the shape a phone takes, and the shape a square grid would crop the
+  // label off. The client letterboxes it instead, which is what the dimensions are for.
+  const tallKey = await uploadPng(seller.token, 'COMMERCE', 1290, 2796);
+  r = await api(seller.token, 'POST', `/commerce/stores/${storeId}/items`, {
+    name: 'Tall bottle of palm oil', price: 900, unitCode: 'EACH', categoryCode: 'DRINKS',
+    photoKeys: tallKey ? [tallKey] : undefined,
+  });
+  const tallId = r.body?.data?.id;
+  check('an item takes a real photo', r.status === 201 && (r.body?.data?.photos ?? []).length === 1, r.body?.error ?? r.body?.data?.photos);
+
+  const { MediaDerivationService } = require('../../dist/src/modules/platform/media/derivation/media-derivation.service.js');
+  const { S3Storage } = require('../../dist/src/modules/platform/media/storage/s3.storage.js');
+  await new MediaDerivationService(prisma, new S3Storage({ get: k => process.env[k], getOrThrow: k => process.env[k] })).sweep(50);
+
+  r = await api(buyer.token, 'GET', `/commerce/items/${tallId}`);
+  const shot = r.body?.data?.photos?.[0];
+  check('a photo carries the dimensions a square grid needs', shot?.width === 1290 && shot?.height === 2796, shot);
+  check('and the card carries them without indexing into the array', r.body?.data?.coverPhoto?.height === 2796, r.body?.data?.coverPhoto);
+
+  r = await api(buyer.token, 'GET', '/commerce/home');
+  check('the home carries a rail of products, not only of shops', Array.isArray(r.body?.data?.popularItems) && Array.isArray(r.body?.data?.newItems), Object.keys(r.body?.data ?? {}));
+  check('and they are the same shape as a browse item', (r.body?.data?.popularItems ?? []).every(i => 'coverPhotoUrl' in i && 'storeName' in i), r.body?.data?.popularItems?.[0]);
+  check('the shop rails are still there, for now', Array.isArray(r.body?.data?.popular) && Array.isArray(r.body?.data?.newStores), Object.keys(r.body?.data ?? {}));
+
+  r = await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { description: 'West African groceries, frozen fish and fresh produce, updated.' });
+  check('a store saves with no type at all', r.status === 200, r.body?.error);
+  check('and keeps the type it had', r.body?.data?.type?.code === 'LOCAL', r.body?.data?.type);
 
   await api(seller.token, 'PATCH', `/commerce/stores/${storeId}/status`, { status: 'HOLIDAY' });
   r = await api(buyer.token, 'GET', '/commerce/stores?openNow=true');
@@ -277,6 +385,9 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
 
   console.log('\n── 4.10 Managed storefront ──────────────────────────────────');
 
+  // Counted here rather than hardcoded, so adding a fixture item above never fails this again.
+  const liveItemCount = await prisma.storeItem.count({ where: { storeId, deletedAt: null } });
+
   r = await api(seller.token, 'POST', '/managed-requests', {
     subjectType: 'STOREFRONT', helpAreas: ['LISTINGS', 'ADVERTISING'],
     notes: 'I do not have time to photograph everything.',
@@ -285,7 +396,7 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
   const managedMsg = await prisma.message.findFirst({
     where: { conversationId: r.body.data.conversationId, kind: 'SYSTEM' },
   });
-  check('store details attached server-side, not re-asked', managedMsg?.systemData?.storeName === 'Mama Nkechi Foods' && managedMsg?.systemData?.itemCount === 2, managedMsg?.systemData);
+  check('store details attached server-side, not re-asked', managedMsg?.systemData?.storeName === 'Mama Nkechi Foods' && managedMsg?.systemData?.itemCount === liveItemCount, { systemData: managedMsg?.systemData, liveItemCount });
 
   console.log('\n── 4.1.3 One dispute resource, shared with bookings ─────────');
 
