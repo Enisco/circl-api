@@ -18,9 +18,18 @@ export interface OpeningHoursView {
 }
 
 /** Exactly 7 entries, Monday first, whatever is stored (4.5.1). */
+/**
+ * Three states, and the middle one is the one that was being lost.
+ *
+ * No rows at all means the shop keeps no set hours — appointment-only, by arrangement — and comes
+ * back as null rather than as seven closed days. Seven closed days is a claim that the shop never
+ * opens, which nobody means on purpose, and rendering it says so on their page.
+ */
 export const toOpeningHours = (
   rows: Array<{ day: Weekday; openMinutes: number | null; closeMinutes: number | null }>,
-): OpeningHoursView[] => {
+): OpeningHoursView[] | null => {
+  if (!rows.length) return null;
+
   const byDay = new Map(rows.map(row => [row.day, row] as const));
 
   return WEEK.map(day => ({
@@ -30,14 +39,22 @@ export const toOpeningHours = (
   }));
 };
 
-/** Computed server-side, so the "Open now" filter and the badge always agree (4.4.2). */
+/**
+ * Computed server-side, so the "Open now" filter and the badge always agree (4.4.2).
+ *
+ * The manual switch is answered first: HOLIDAY or CLOSED is the seller saying so, whatever the
+ * clock reads. A shop that keeps no hours is taken at its word and counted open, because the
+ * alternative reads every one of them as shut every day — which is what was happening, and which
+ * is a claim they never made.
+ */
 export const isOpenNow = (
   status: StoreStatus,
   timezone: string,
-  hours: OpeningHoursView[],
+  hours: OpeningHoursView[] | null,
   at: Date = new Date(),
 ): boolean => {
   if (status !== StoreStatus.OPEN) return false;
+  if (!hours?.length) return true;
 
   const { weekday, minutes } = minutesOfDayIn(timezone, at);
   const todayIndex = WEEK.findIndex(day => day === weekday);
@@ -64,9 +81,15 @@ export const isOpenNow = (
   return withinToday || spilledFromYesterday;
 };
 
-/** The address, redacted in the serialiser rather than in the client (4.5.1). */
-export const toAddressView = (store: Store) => {
-  if (store.hidesExactAddress) {
+/**
+ * The address, redacted in the serialiser rather than in the client (4.5.1).
+ *
+ * The owner is the exception: they get their own back whatever the flag says, or the edit form
+ * reopens empty and they have to retype an address they already gave us. Hiding is about who else
+ * can see it, not about withholding it from the person who wrote it.
+ */
+export const toAddressView = (store: Store, isOwner = false) => {
+  if (store.hidesExactAddress && !isOwner) {
     return {
       area: store.area,
       line1: null,
