@@ -38,6 +38,10 @@ const PARTIAL_UNIQUE = [
   'reviews_one_prior_work_per_pair_idx',
 ];
 
+/* Not unique, but just as invisible to Prisma, and just as quiet when it goes: the media sweep
+ * reads it to find what it has not measured yet. It was dropped once and nothing noticed. */
+const PARTIAL_PLAIN = ['media_derived_at_idx'];
+
 (async () => {
   const rows = await prisma.$queryRaw`
     SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'public'
@@ -71,6 +75,10 @@ const PARTIAL_UNIQUE = [
   check('the prior-work index restricts by CONTEXT, not by booking',
     /context = 'PRIOR_WORK'/i.test(byName.get('reviews_one_prior_work_per_pair_idx') ?? ''),
     byName.get('reviews_one_prior_work_per_pair_idx'));
+
+  for (const name of PARTIAL_PLAIN) {
+    check(`${name} exists`, byName.has(name), 'missing — the media sweep now scans the table');
+  }
 
   check('the one-offer-per-author index restricts to help offers',
     /is_help_offer/i.test(byName.get('request_responses_one_offer_per_author_idx') ?? ''),

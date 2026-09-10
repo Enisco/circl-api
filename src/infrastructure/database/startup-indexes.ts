@@ -26,12 +26,22 @@ const TRIGRAM: Array<[index: string, table: string, column: string]> = [
   ['user_profile_can_help_with_trgm_idx', 'user_profile', 'can_help_with'],
 ];
 
-/** The two rules Postgres cannot be told any other way, because NULLs are distinct. */
-const PARTIAL_UNIQUE: Array<[index: string, statement: string]> = [
+/**
+ * The partial indexes, which have no representation in a Prisma schema at all: two rules Postgres
+ * cannot be told any other way, and one the media sweep reads.
+ */
+const PARTIAL: Array<[index: string, statement: string]> = [
   [
     'request_responses_one_offer_per_author_idx',
     'CREATE UNIQUE INDEX IF NOT EXISTS "request_responses_one_offer_per_author_idx" ' +
       'ON "request_responses" ("request_id", "author_id") WHERE "is_help_offer" = true',
+  ],
+  [
+    // Not unique, but every bit as invisible: the derivation sweep reads it to find the media it
+    // has not measured yet, and without it that becomes a scan of the whole table every hour.
+    'media_derived_at_idx',
+    'CREATE INDEX IF NOT EXISTS "media_derived_at_idx" ' +
+      'ON "media" ("derived_at") WHERE "derived_at" IS NULL',
   ],
   [
     'reviews_one_prior_work_per_pair_idx',
@@ -54,7 +64,7 @@ export const assertInvisibleIndexes = async (
       name,
       statement: `CREATE INDEX IF NOT EXISTS "${name}" ON "${table}" USING GIN ("${column}" gin_trgm_ops)`,
     })),
-    ...PARTIAL_UNIQUE.filter(([name]) => !present.has(name)).map(([name, statement]) => ({
+    ...PARTIAL.filter(([name]) => !present.has(name)).map(([name, statement]) => ({
       name,
       statement,
     })),
