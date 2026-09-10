@@ -6,7 +6,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { money } from '@/common';
-import { AuthorView, CityView, TermView } from '../../shared';
+import { AuthorView, CityView, TermView, toPriceBasisLabel } from '../../shared';
 
 export interface ProfessionalSummaryView {
   /** The discriminator that lets `listingType=BOTH` mix listings and offers (D14). */
@@ -27,6 +27,8 @@ export interface ProfessionalSummaryView {
   medianResponseMinutes: number | null;
   priceFrom: { amount: number; currency: string } | null;
   priceBasis: PriceBasis;
+  /** The same value in words, so the client renders one rather than keeping its own map. */
+  priceBasisLabel: string;
   isAcceptingWork: boolean;
   trustChecks: string[];
   isImmigrantFriendly: boolean;
@@ -41,6 +43,8 @@ export interface ProfessionalServiceView {
   description: string | null;
   price: { amount: number; currency: string } | null;
   priceBasis: PriceBasis;
+  /** The same value in words, so the client renders one rather than keeping its own map. */
+  priceBasisLabel: string;
   isActive: boolean;
 }
 
@@ -87,5 +91,6 @@ export const toServiceView = (service: {
   description: service.description,
   price: money(service.price, service.currency),
   priceBasis: service.priceBasis,
+  priceBasisLabel: toPriceBasisLabel(service.priceBasis),
   isActive: service.isActive,
 });

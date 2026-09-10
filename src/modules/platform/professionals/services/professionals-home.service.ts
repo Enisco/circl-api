@@ -8,11 +8,12 @@ import {
 import { PrismaService } from '@/infrastructure';
 import { daysAgo, money } from '@/common';
 import {
+  authorSelect,
   MediaService,
   TaxonomyService,
-  authorSelect,
   toAuthorView,
   toCityView,
+  toPriceBasisLabel,
   toTermView,
 } from '../../shared';
 import { ReputationService } from '../../trust/services/reputation.service';
@@ -121,6 +122,7 @@ export class ProfessionalsHomeService {
           },
           priceFrom: money(row.priceFrom, row.currency),
           priceBasis: row.priceBasis,
+          priceBasisLabel: toPriceBasisLabel(row.priceBasis),
           isAcceptingWork: row.isAcceptingWork,
           isImmigrantFriendly: summary.isImmigrantFriendly,
         };

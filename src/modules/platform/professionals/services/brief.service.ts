@@ -11,12 +11,13 @@ import {
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, money } from '@/common';
 import {
+  authorSelect,
   CityService,
   MediaService,
   TaxonomyService,
-  authorSelect,
   toAuthorView,
   toCityView,
+  toPriceBasisLabel,
   toTermView,
 } from '../../shared';
 import { SmartMatchService } from '../../intelligence/services/smart-match.service';
@@ -187,6 +188,7 @@ export class BriefService {
             medianResponseMinutes: listing.medianResponseMinutes,
             priceFrom: money(listing.priceFrom, listing.currency),
             priceBasis: listing.priceBasis,
+            priceBasisLabel: toPriceBasisLabel(listing.priceBasis),
             isAcceptingWork: listing.isAcceptingWork,
             trustChecks: toAuthorView(listing.user, { sign: this.media.sign }).trustChecks,
             isImmigrantFriendly: summary.isImmigrantFriendly,

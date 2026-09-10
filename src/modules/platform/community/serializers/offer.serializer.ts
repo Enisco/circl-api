@@ -6,11 +6,12 @@ import {
   CityView,
   MediaView,
   TermView,
-  UrlSigner,
   toAuthorView,
   toCityView,
   toMediaViews,
+  toPriceBasisLabel,
   toTermView,
+  UrlSigner,
 } from '../../shared';
 
 export interface OfferSummaryView {
@@ -23,6 +24,8 @@ export interface OfferSummaryView {
   deliveryMode: DeliveryMode;
   priceFrom: { amount: number; currency: string } | null;
   priceBasis: PriceBasis;
+  /** The same value in words, so the client renders one rather than keeping its own map. */
+  priceBasisLabel: string;
   /** `priceFrom == null`, sent explicitly so the client never has to decide what a missing price means (1.4.1). */
   isFree: boolean;
   media: MediaView[];
@@ -65,6 +68,7 @@ export const toOfferSummary = (offer: OfferRow, context: OfferViewContext): Offe
   deliveryMode: offer.deliveryMode,
   priceFrom: money(offer.priceFrom, offer.currency),
   priceBasis: offer.priceBasis,
+  priceBasisLabel: toPriceBasisLabel(offer.priceBasis),
   isFree: offer.priceFrom === null,
   media: toMediaViews(context.media?.get(offer.id), context.sign),
   provider: toAuthorView(offer.author, {
@@ -87,6 +91,7 @@ export const toOfferDetail = (offer: OfferRow, context: OfferViewContext): Offer
     deliveryMode: summary.deliveryMode,
     priceFrom: summary.priceFrom,
     priceBasis: summary.priceBasis,
+    priceBasisLabel: summary.priceBasisLabel,
     isFree: summary.isFree,
     media: summary.media,
     provider: summary.provider,
