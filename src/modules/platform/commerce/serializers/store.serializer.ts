@@ -17,13 +17,13 @@ export interface OpeningHoursView {
   closeMinutes: number | null;
 }
 
-/** Exactly 7 entries, Monday first, whatever is stored (4.5.1). */
 /**
- * Three states, and the middle one is the one that was being lost.
+ * Seven entries Monday first when the shop keeps hours, null when it keeps none (4.5.1). Every
+ * entry names its `day`, so a client never has to trust the order it arrived in.
  *
- * No rows at all means the shop keeps no set hours — appointment-only, by arrangement — and comes
- * back as null rather than as seven closed days. Seven closed days is a claim that the shop never
- * opens, which nobody means on purpose, and rendering it says so on their page.
+ * Three states, and the middle one is the one that was being lost. No rows at all means
+ * appointment-only and comes back as null, not as seven closed days: seven closed days is a claim
+ * that the shop never opens, which nobody means on purpose, and the page would print it.
  */
 export const toOpeningHours = (
   rows: Array<{ day: Weekday; openMinutes: number | null; closeMinutes: number | null }>,

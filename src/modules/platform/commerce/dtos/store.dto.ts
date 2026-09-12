@@ -199,9 +199,12 @@ export class CreateStoreDto {
     type: [OpeningHoursDto],
     nullable: true,
     description:
-      'Seven entries, Monday first, `{ openMinutes: null, closeMinutes: null }` for a closed day. ' +
-      'Send `null` for a shop that keeps no set hours: it is a different thing from a week with ' +
-      'every day closed, and is not normalised into one. Omit to leave the hours untouched.',
+      'Seven entries, Monday first, and **every entry must name its `day`** — the order is how ' +
+      'they are read back, but the day is what they are stored against. A closed day is ' +
+      '`{ "day": "SUNDAY", "openMinutes": null, "closeMinutes": null }`. ' +
+      'Send `null` for a shop that keeps no set hours: a different thing from a week with every ' +
+      'day closed, and not normalised into one. Omit to leave the hours untouched. ' +
+      '`closeMinutes <= openMinutes` is a day that ends after midnight and is accepted on purpose.',
   })
   @IsArray()
   @ArrayMinSize(7)
