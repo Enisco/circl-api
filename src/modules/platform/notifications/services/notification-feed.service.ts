@@ -24,6 +24,7 @@ export type NotificationTargetType =
   | 'BOOKING'
   | 'ORDER'
   | 'CONNECT_REQUEST'
+  | 'DEAL'
   | 'PROFILE'
   | 'VERIFICATION';
 

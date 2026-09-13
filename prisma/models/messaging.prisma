@@ -35,6 +35,7 @@ model Conversation {
   managedRequests ManagedRequest[]
   connectionRequests ConnectionRequest[]
   reviews            Review[]
+  deal               Deal?
 
   @@unique([participantKey, contextType, contextId])
   @@index([kind, lastMessageAt])

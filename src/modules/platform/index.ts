@@ -4,6 +4,7 @@
 import { AccountModule } from './account/account.module';
 import { AdminModule } from './admin/admin.module';
 import { CommerceModule } from './commerce/commerce.module';
+import { DealsModule } from './deals/deals.module';
 import { PlatformJobsModule } from './jobs/jobs.module';
 import { CommunityModule } from './community/community.module';
 import { ConnectModule } from './connect/connect.module';
@@ -32,6 +33,8 @@ export const PLATFORM_MODULES = [
   ProfessionalsModule,
   ConnectModule,
   CommerceModule,
+  // After both sections a deal can belong to.
+  DealsModule,
   // After the four sections it searches.
   SearchModule,
   ModerationModule,

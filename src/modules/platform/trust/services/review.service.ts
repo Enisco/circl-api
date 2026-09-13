@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  DealStage,
   JobState,
   NotificationKind,
   Prisma,
@@ -58,9 +59,15 @@ const REVIEW_CONVERSATION = { select: { contextType: true, contextSnapshot: true
 /** "5 stars, Appeal support" is worth reading. "5 stars, Immigration Adviser" is barely worth it. */
 const contextLabelFor = (row: {
   context: ReviewContext;
+  enquiryId?: string | null;
   conversation?: { contextType: ThreadContextType | null; contextSnapshot: unknown } | null;
 }): string => {
-  const label = CONTEXT_LABELS[row.context];
+  // A done deal reviews both ways, and "Bought through Circl" is the wrong way round on the
+  // seller's copy of it. No enquiry behind an ORDER review means it hangs off a deal.
+  const label =
+    row.context === ReviewContext.ORDER && !row.enquiryId
+      ? 'Agreed through Circl'
+      : CONTEXT_LABELS[row.context];
 
   if (row.conversation?.contextType !== ThreadContextType.SERVICE) return label;
 
@@ -395,22 +402,47 @@ export class ReviewService {
 
         const enquiry = await this.database.enquiry.findUnique({ where: { id: dto.sourceId } });
 
-        const isBuyer = enquiry?.buyerId === reviewerId && enquiry?.sellerId === dto.subjectUserId;
+        if (enquiry) {
+          const isBuyer = enquiry.buyerId === reviewerId && enquiry.sellerId === dto.subjectUserId;
 
-        // D24: an expired enquiry cannot be reviewed, because nothing was ever confirmed as received and a review of an unconfirmed order is a review of nothing.
-        if (!enquiry || !isBuyer || enquiry.state !== JobState.COMPLETED) {
+          // D24: an expired enquiry cannot be reviewed, because nothing was ever confirmed as received and a review of an unconfirmed order is a review of nothing.
+          if (!isBuyer || enquiry.state !== JobState.COMPLETED) {
+            throw ApiException.unprocessable(
+              ApiErrorCode.REVIEW_NOT_ELIGIBLE,
+              'You can review a seller once you have confirmed you received your order.',
+              { details: [{ field: 'sourceId', message: 'Not a completed order of yours.' }] },
+            );
+          }
+
+          return { ...empty, enquiryId: enquiry.id };
+        }
+
+        // Otherwise the source is the thread, and a deal in it that reached DONE is the completed
+        // record — the same condition in the language the two of them actually used (6).
+        const done = await this.doneDealBetween(dto.sourceId, reviewerId, dto.subjectUserId);
+
+        if (!done) {
           throw ApiException.unprocessable(
             ApiErrorCode.REVIEW_NOT_ELIGIBLE,
-            'You can review a seller once you have confirmed you received your order.',
-            { details: [{ field: 'sourceId', message: 'Not a completed order of yours.' }] },
+            'You can review once you have confirmed you received your order, or once a deal in that thread is done.',
+            { details: [{ field: 'sourceId', message: 'Not a completed order or a done deal.' }] },
           );
         }
 
-        return { ...empty, enquiryId: enquiry.id };
+        return { ...empty, conversationId: dto.sourceId };
       }
 
       case ReviewContext.PROFESSIONAL: {
         this.assertSourceId(dto);
+
+        // A done deal is the stronger record and it reads both ways: a professional's experience
+        // of a client is worth the same as the other way round (6). It stands in for the listing
+        // ownership and both-spoken checks below, which are the weaker evidence.
+        if (await this.doneDealBetween(dto.sourceId, reviewerId, dto.subjectUserId)) {
+          await this.assertNoBookingInstead(reviewerId, dto.subjectUserId);
+
+          return { ...empty, conversationId: dto.sourceId };
+        }
 
         const conversation = await this.database.conversation.findUnique({
           where: { id: dto.sourceId },
@@ -459,26 +491,7 @@ export class ReviewService {
           );
         }
 
-        // 4.3: once booking returns it is the better evidence, so it takes precedence for a pair
-        // who have one.
-        const booking = await this.database.booking.findFirst({
-          where: {
-            state: JobState.COMPLETED,
-            OR: [
-              { clientId: reviewerId, professionalId: dto.subjectUserId },
-              { clientId: dto.subjectUserId, professionalId: reviewerId },
-            ],
-          },
-          select: { id: true },
-        });
-
-        if (booking) {
-          throw ApiException.unprocessable(
-            ApiErrorCode.REVIEW_NOT_ELIGIBLE,
-            'You booked them through Circl, so review that booking instead.',
-            { details: [{ field: 'context', message: 'Use the booking review instead.' }] },
-          );
-        }
+        await this.assertNoBookingInstead(reviewerId, dto.subjectUserId);
 
         return { ...empty, conversationId: conversation.id };
       }
@@ -508,6 +521,49 @@ export class ReviewService {
 
       default:
         return empty;
+    }
+  }
+
+  /** A deal in this thread, between these two, that reached DONE. */
+  private async doneDealBetween(
+    conversationId: string,
+    reviewerId: string,
+    subjectUserId: string,
+  ): Promise<boolean> {
+    const deal = await this.database.deal.findFirst({
+      where: {
+        conversationId,
+        steps: { some: { stage: DealStage.DONE } },
+        OR: [
+          { payerId: reviewerId, providerId: subjectUserId },
+          { payerId: subjectUserId, providerId: reviewerId },
+        ],
+      },
+      select: { id: true },
+    });
+
+    return deal !== null;
+  }
+
+  /** 4.3: once booking returns it is the better evidence, so it takes precedence for a pair who have one. */
+  private async assertNoBookingInstead(reviewerId: string, subjectUserId: string): Promise<void> {
+    const booking = await this.database.booking.findFirst({
+      where: {
+        state: JobState.COMPLETED,
+        OR: [
+          { clientId: reviewerId, professionalId: subjectUserId },
+          { clientId: subjectUserId, professionalId: reviewerId },
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (booking) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.REVIEW_NOT_ELIGIBLE,
+        'You booked them through Circl, so review that booking instead.',
+        { details: [{ field: 'context', message: 'Use the booking review instead.' }] },
+      );
     }
   }
 

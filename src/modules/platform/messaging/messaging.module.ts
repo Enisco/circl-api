@@ -11,6 +11,7 @@ import { MessagePushService } from './services/message-push.service';
 import { MessageService } from './services/message.service';
 import { PresenceRegistry } from './services/presence.registry';
 import { PresenceService } from './services/presence.service';
+import { ThreadWorkService } from './services/thread-work.service';
 
 /** Section 5, plus the conversation core every other section depends on. */
 @Global()
@@ -34,6 +35,7 @@ import { PresenceService } from './services/presence.service';
     MessagePushService,
     PresenceRegistry,
     PresenceService,
+    ThreadWorkService,
     ChatGateway,
   ],
   exports: [
@@ -42,6 +44,7 @@ import { PresenceService } from './services/presence.service';
     MessageService,
     PresenceRegistry,
     PresenceService,
+    ThreadWorkService,
     ChatGateway,
   ],
 })

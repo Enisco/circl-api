@@ -1,0 +1,71 @@
+// ═══════════════════════════════════════════════════════════════════════════════ Deals
+//
+// A short list of steps two people tick off inside one conversation, with the amount recorded when
+// it is paid. Circl holds no money and cannot verify a payment: the value is that neither party can
+// revise the record alone once the other has confirmed their half of it.
+
+model Deal {
+  id String @id @default(uuid())
+
+  // One deal per thread. A second negotiation is a second thread.
+  conversationId String       @unique @map("conversation_id")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  /// Follows the thread's context: goods on one track, work on the other.
+  track DealTrack @map("track")
+
+  payerId String @map("payer_id")
+  payer   User   @relation("DealPayer", fields: [payerId], references: [id], onDelete: Cascade)
+
+  providerId String @map("provider_id")
+  provider   User   @relation("DealProvider", fields: [providerId], references: [id], onDelete: Cascade)
+
+  /// Fixed for the life of the deal: it decides who is allowed to accept it (3.3).
+  proposedByRole DealRole @map("proposed_by_role")
+
+  // ── Terms. The spine is computed from these rather than stored, so it cannot drift from them.
+  amount        Int        @map("amount") // pence
+  currency      String     @default("GBP") @map("currency")
+  timing        DealTiming @map("timing")
+  depositAmount Int?       @map("deposit_amount") // pence, and always less than the total (3.6)
+  collects      Boolean    @default(false) @map("collects")
+  summary       String?    @map("summary")
+
+  /// Nothing but AGREED may be marked until this is true (3.3).
+  isAgreedByBoth Boolean @default(false) @map("is_agreed_by_both")
+
+  /// A flag and a notification. It reverses nothing and decides nothing (7).
+  hasProblem  Boolean   @default(false) @map("has_problem")
+  problemNote String?   @map("problem_note")
+  problemAt   DateTime? @map("problem_at") @db.Timestamptz
+
+  steps DealStep[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([payerId])
+  @@index([providerId])
+  @@map("deals")
+}
+
+model DealStep {
+  id String @id @default(uuid())
+
+  dealId String @map("deal_id")
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  stage  DealStage @map("stage")
+  byRole DealRole  @map("by_role")
+
+  /// Carried by DEPOSIT_PAID and PAID, and immutable once the matching confirmation lands (3.4).
+  amount   Int?    @map("amount")
+  currency String? @map("currency")
+
+  reachedAt DateTime @default(now()) @map("reached_at") @db.Timestamptz
+
+  // A stage happens once. A second PAID is a 400, not a silent overwrite (3.2).
+  @@unique([dealId, stage])
+  @@index([dealId, reachedAt])
+  @@map("deal_steps")
+}

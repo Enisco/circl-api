@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import {
   Conversation,
+  DealStage,
+  DealTrack,
   JobState,
   MessageKind,
   Prisma,
@@ -739,12 +741,60 @@ export class ConversationService {
   private async reviewableThreads(userId: string, rows: ConversationRow[]): Promise<Set<string>> {
     const reviewable = new Set<string>();
 
-    // Only a thread about a professional's work can carry one, and only once both have written.
+    if (!rows.length) return reviewable;
+
+    const [reviewed, booked] = await Promise.all([
+      this.database.review.findMany({
+        where: { reviewerId: userId, conversationId: { in: rows.map(row => row.id) } },
+        select: { conversationId: true },
+      }),
+      // A completed booking is the better evidence and takes precedence, so the review endpoint
+      // refuses a thread review for a pair who have one.
+      this.database.booking
+        .findMany({
+          where: {
+            state: JobState.COMPLETED,
+            OR: [{ clientId: userId }, { professionalId: userId }],
+          },
+          select: { clientId: true, professionalId: true },
+        })
+        .then(
+          bookings =>
+            new Set(bookings.flatMap(booking => [booking.clientId, booking.professionalId])),
+        ),
+    ]);
+
+    const alreadyReviewed = new Set(reviewed.map(review => review.conversationId));
+
+    // A deal that reached DONE is a completed record on either track, and it reads both ways: a
+    // seller's experience of a customer is worth the same as the other way round (6).
+    const doneDeals = await this.database.deal.findMany({
+      where: {
+        conversationId: { in: rows.map(row => row.id) },
+        steps: { some: { stage: DealStage.DONE } },
+        OR: [{ payerId: userId }, { providerId: userId }],
+      },
+      select: { conversationId: true, payerId: true, providerId: true, track: true },
+    });
+
+    for (const deal of doneDeals) {
+      if (alreadyReviewed.has(deal.conversationId)) continue;
+
+      const otherId = deal.payerId === userId ? deal.providerId : deal.payerId;
+
+      if (deal.track === DealTrack.PROFESSIONAL && booked.has(otherId)) continue;
+
+      reviewable.add(deal.conversationId);
+    }
+
+    // Without a deal, only a thread about a professional's work can carry one, and only once both
+    // have written.
     const candidates = rows.filter(
       row =>
         (row.contextType === ThreadContextType.PROFESSIONAL ||
           row.contextType === ThreadContextType.SERVICE) &&
         row.contextId !== null &&
+        !reviewable.has(row.id) &&
         row.participants.every(participant => participant.hasSentMessage) &&
         row.participants.some(participant => participant.userId !== userId),
     );
@@ -758,7 +808,7 @@ export class ConversationService {
       .filter(row => row.contextType === ThreadContextType.SERVICE)
       .map(row => row.contextId!);
 
-    const [listings, services, reviewed] = await Promise.all([
+    const [listings, services] = await Promise.all([
       listingIds.length
         ? this.database.professionalListing.findMany({
             where: { id: { in: listingIds } },
@@ -771,31 +821,12 @@ export class ConversationService {
             select: { id: true, listing: { select: { userId: true } } },
           })
         : [],
-      this.database.review.findMany({
-        where: { reviewerId: userId, conversationId: { in: candidates.map(row => row.id) } },
-        select: { conversationId: true },
-      }),
     ]);
 
     const ownerOf = new Map<string, string>([
       ...listings.map(listing => [listing.id, listing.userId] as const),
       ...services.map(service => [service.id, service.listing.userId] as const),
     ]);
-    const alreadyReviewed = new Set(reviewed.map(review => review.conversationId));
-
-    // A completed booking is the better evidence and takes precedence, so the review endpoint
-    // refuses this one for a pair who have one.
-    const booked = new Set(
-      (
-        await this.database.booking.findMany({
-          where: {
-            state: JobState.COMPLETED,
-            OR: [{ clientId: userId }, { professionalId: userId }],
-          },
-          select: { clientId: true, professionalId: true },
-        })
-      ).flatMap(booking => [booking.clientId, booking.professionalId]),
-    );
 
     for (const row of candidates) {
       const ownerId = ownerOf.get(row.contextId!);

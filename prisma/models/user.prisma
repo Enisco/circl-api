@@ -69,6 +69,8 @@ model User {
   trustChecks       TrustCheck[]
   reviewsReceived   Review[]           @relation("ReviewSubject")
   reviewsWritten    Review[]           @relation("ReviewAuthor")
+  dealsAsPayer      Deal[]             @relation("DealPayer")
+  dealsAsProvider   Deal[]             @relation("DealProvider")
   reputationSummary ReputationSummary?
 
   // ── Professionals ─────────────────────────────────────────────────────────

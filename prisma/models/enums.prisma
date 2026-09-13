@@ -571,6 +571,44 @@ enum SystemMessageType {
   PARTICIPANT_LEFT
   ACCOUNT_DELETED
   BRIEF_ATTACHED
+  DEAL_PROPOSED
+  DEAL_STEP_MARKED
+  DEAL_PROBLEM_FLAGGED
+}
+
+// ─── Deals ───────────────────────────────────────────────────────────────────
+//
+// A shared record between two people. Circl takes no payment and cannot verify that any money
+// moved, so every rule here exists to keep the record honest rather than to move funds.
+
+enum DealTrack {
+  COMMERCE
+  PROFESSIONAL
+}
+
+/// Identical on both tracks, which is why one flow serves buying a bag of rice and hiring a lawyer.
+enum DealRole {
+  PAYER
+  PROVIDER
+}
+
+enum DealTiming {
+  UPFRONT
+  ON_COMPLETION
+}
+
+enum DealStage {
+  AGREED
+  DEPOSIT_PAID
+  DEPOSIT_CONFIRMED
+  PAID
+  PAYMENT_CONFIRMED
+  STARTED
+  WORK_DELIVERED
+  DISPATCHED
+  GOODS_RECEIVED
+  ACCEPTED
+  DONE
 }
 
 // ─── Notifications (Section 6.1) ─────────────────────────────────────────────
@@ -590,6 +628,8 @@ enum NotificationKind {
   // Bookings and shop orders, which share the `BOOKINGS` preference row. One kind rather than two:
   // the icon is the same and the route already says which of the two it is.
   BOOKING
+  /// A step somebody ticked on a deal. Shares the BOOKINGS row: it is the same kind of business.
+  DEAL
 }
 
 /**

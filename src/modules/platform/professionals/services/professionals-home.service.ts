@@ -16,6 +16,7 @@ import {
   toPriceBasisLabel,
   toTermView,
 } from '../../shared';
+import { ThreadWorkService } from '../../messaging/services/thread-work.service';
 import { ReputationService } from '../../trust/services/reputation.service';
 
 /** `GET /professionals/home` (2.2) and `GET /professionals/me/dashboard` (2.11). */
@@ -26,6 +27,7 @@ export class ProfessionalsHomeService {
     private readonly taxonomy: TaxonomyService,
     private readonly reputation: ReputationService,
     private readonly media: MediaService,
+    private readonly threadWork: ThreadWorkService,
   ) {}
 
   async home(userId: string, cityId?: string) {
@@ -154,9 +156,8 @@ export class ProfessionalsHomeService {
   }
 
   /**
-   * The work waiting on a professional, counted over every thread about their listing rather than
-   * over the page the client happens to hold. "2 waiting" to somebody with nine is worse than no
-   * number at all.
+   * The work waiting on a professional: their listing and every service off it. Shared with
+   * `GET /deals/work`, so the two sources can never disagree about the same three numbers.
    */
   private async myWork(userId: string, listingId: string | null) {
     if (!listingId) return null;
@@ -168,52 +169,10 @@ export class ProfessionalsHomeService {
       select: { id: true },
     });
 
-    const threads = await this.database.conversationParticipant.findMany({
-      where: {
-        userId,
-        conversation: {
-          OR: [
-            { contextType: ThreadContextType.PROFESSIONAL, contextId: listingId },
-            ...(services.length
-              ? [
-                  {
-                    contextType: ThreadContextType.SERVICE,
-                    contextId: { in: services.map(service => service.id) },
-                  },
-                ]
-              : []),
-          ],
-        },
-      },
-      select: {
-        unreadCount: true,
-        isArchived: true,
-        conversation: {
-          select: {
-            messages: {
-              where: { deletedAt: null },
-              orderBy: { sentAt: 'desc' },
-              take: 1,
-              select: { senderId: true },
-            },
-          },
-        },
-      },
-    });
-
-    const open = threads.filter(row => !row.isArchived);
-
-    return {
-      // Unread, or the last word was theirs: either way the next move is this member's.
-      awaitingReply: open.filter(
-        row => row.unreadCount > 0 || (row.conversation.messages[0]?.senderId ?? userId) !== userId,
-      ).length,
-      // "Open" can only mean not archived: nothing finishes an enquiry, because nothing completes it.
-      openThreads: open.length,
-      // Their own record of finished work. Per participant, so the other side archiving does not
-      // move it, and read back through `GET /messages?archived=true`.
-      done: threads.length - open.length,
-    };
+    return this.threadWork.of(userId, [
+      { type: ThreadContextType.PROFESSIONAL, ids: [listingId] },
+      { type: ThreadContextType.SERVICE, ids: services.map(service => service.id) },
+    ]);
   }
 
   /** The trust strip. */

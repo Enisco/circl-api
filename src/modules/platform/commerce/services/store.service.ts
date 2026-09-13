@@ -1,5 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, Store, TaxonomyKind, Weekday } from '@prisma/client';
+import {
+  DealStage,
+  DealTrack,
+  Prisma,
+  Store,
+  TaxonomyKind,
+  ThreadContextType,
+  Weekday,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, daysAgo } from '@/common';
 import {
@@ -27,6 +35,9 @@ export const STORE_COVER_OWNER = 'STORE_COVER';
 
 /** `isNew` is a server rule so it is defined once (4.4.2). */
 const NEW_STORE_DAYS = 30;
+
+/** Below this, `responseRate` is null: one missed message should not read as a bad record. */
+const MIN_ENQUIRIES_FOR_RATE = 3;
 
 const storeInclude = {
   owner: { select: authorSelect },
@@ -395,7 +406,8 @@ export class StoreService {
     const summary = await this.toSummary(store, origin);
     const categoryLabels = await this.taxonomy.labels(TaxonomyKind.ITEM_CATEGORY);
 
-    const [catalogue, canReview, conversation] = await Promise.all([
+    const isOwner = viewerId === store.ownerId;
+    const [catalogue, canReview, conversation, ownerStats] = await Promise.all([
       this.database.storeItem.groupBy({
         by: ['categoryCode'],
         where: { storeId: store.id, deletedAt: null },
@@ -415,6 +427,7 @@ export class StoreService {
             select: { id: true },
           })
         : Promise.resolve(null),
+      isOwner ? this.ownerStats(store) : Promise.resolve(null),
     ]);
 
     // Built on the first read that needs it, so a store never waits on a map provider to render
@@ -433,8 +446,10 @@ export class StoreService {
           itemCount: row._count._all,
         })),
       },
+      // The seller's own two counters, and nobody else's business (5).
+      ...(ownerStats ?? {}),
       viewer: {
-        isOwner: viewerId === store.ownerId,
+        isOwner,
         canReview,
         conversationId: conversation?.id ?? null,
       },
@@ -443,23 +458,108 @@ export class StoreService {
 
   // ─── Internals ─────────────────────────────────────────────────────────────
 
-  /** True only when this buyer has a COMPLETED enquiry here and has not reviewed it. */
+  /**
+   * A completed record with this shop that the viewer has not already reviewed. Either a confirmed
+   * enquiry, or a deal in a thread with this shop that reached `DONE` — a done deal is the same
+   * condition stated in the language the two of them actually used (6).
+   */
   private async canReview(viewerId: string, store: Store): Promise<boolean> {
     if (viewerId === store.ownerId) return false;
 
-    const completed = await this.database.enquiry.findFirst({
-      where: { storeId: store.id, buyerId: viewerId, state: 'COMPLETED' },
-      select: { id: true },
+    const [completed, doneDeal] = await Promise.all([
+      this.database.enquiry.findFirst({
+        where: { storeId: store.id, buyerId: viewerId, state: 'COMPLETED' },
+        select: { id: true },
+      }),
+      this.database.deal.findFirst({
+        where: {
+          track: DealTrack.COMMERCE,
+          payerId: viewerId,
+          providerId: store.ownerId,
+          steps: { some: { stage: DealStage.DONE } },
+        },
+        select: { conversationId: true },
+      }),
+    ]);
+
+    const sourceIds = [completed?.id, doneDeal?.conversationId].filter(
+      (id): id is string => id !== undefined && id !== null,
+    );
+
+    if (!sourceIds.length) return false;
+
+    const reviewed = await this.database.review.count({
+      where: {
+        reviewerId: viewerId,
+        context: 'ORDER',
+        sourceId: { in: sourceIds },
+        deletedAt: null,
+      },
     });
 
-    if (!completed) return false;
+    // Unreviewed while any one of their completed records still has a review left in it.
+    return reviewed < sourceIds.length;
+  }
 
-    const reviewed = await this.database.review.findFirst({
-      where: { reviewerId: viewerId, context: 'ORDER', sourceId: completed.id, deletedAt: null },
-      select: { id: true },
+  /**
+   * The seller's own two counters (5). `views` is the store page's own count; `responseRate` is
+   * the share of members they ever replied to, null until three of them, so one missed message
+   * does not read as a bad record — the same rule the professional's listing uses.
+   */
+  private async ownerStats(store: Store): Promise<{ views: number; responseRate: number | null }> {
+    const [items, enquiries] = await Promise.all([
+      this.database.storeItem.findMany({ where: { storeId: store.id }, select: { id: true } }),
+      this.database.enquiry.findMany({ where: { storeId: store.id }, select: { id: true } }),
+    ]);
+
+    const threads = await this.database.conversation.findMany({
+      where: {
+        OR: [
+          { contextType: ThreadContextType.STORE, contextId: store.id },
+          ...(items.length
+            ? [{ contextType: ThreadContextType.ITEM, contextId: { in: items.map(row => row.id) } }]
+            : []),
+          ...(enquiries.length
+            ? [
+                {
+                  contextType: ThreadContextType.ORDER,
+                  contextId: { in: enquiries.map(row => row.id) },
+                },
+              ]
+            : []),
+        ],
+      },
+      select: {
+        participants: { select: { userId: true } },
+        messages: { where: { senderId: store.ownerId }, select: { id: true }, take: 1 },
+      },
     });
 
-    return reviewed === null;
+    // Answered wins over unanswered where the same person did both: the question is whether the
+    // seller ever replied to that member at all, not whether every thread got an answer.
+    const answeredBy = new Map<string, boolean>();
+
+    for (const thread of threads) {
+      const replied = thread.messages.length > 0;
+
+      for (const participant of thread.participants) {
+        if (participant.userId === store.ownerId) continue;
+
+        answeredBy.set(
+          participant.userId,
+          (answeredBy.get(participant.userId) ?? false) || replied,
+        );
+      }
+    }
+
+    const total = answeredBy.size;
+    const answered = [...answeredBy.values()].filter(Boolean).length;
+
+    return {
+      views: store.viewCount,
+      // Integer percent, and null below three.
+      responseRate: total < MIN_ENQUIRIES_FOR_RATE ? null : Math.round((answered / total) * 100),
+    };
   }
 
   private async validateCodes(dto: CreateStoreDto | UpdateStoreDto): Promise<void> {

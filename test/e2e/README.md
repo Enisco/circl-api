@@ -33,6 +33,7 @@ container without further plumbing.
 | `response-shapes.e2e.cjs` | Every field the spec's JSON examples show, checked present on a live payload |
 | `spec-conformance.e2e.cjs` | The defects the spec audit found, so they cannot come back |
 | `rate-limits.e2e.cjs` | 0.14 limits are per member, not per IP |
+| `deals.e2e.cjs` | Deal progress: the spine, who may mark what, confirmed-only earnings, and the review gate |
 
 Run them all:
 
