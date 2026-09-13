@@ -288,6 +288,24 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   const twoAtOnce = dealRows.filter(row => /Received and Payment sent|Payment sent and Received/.test(row.title ?? ''));
   check('two steps in one call is one notification, not two', twoAtOnce.length === 1, dealRows.map(row => row.title));
 
+  // The title says who did what. The body says which deal, so somebody running two at once can
+  // tell them apart on a lock screen without opening either thread.
+  check('the body names the deal and its figure',
+    twoAtOnce[0]?.body === '£40.00 · Two yams, a bag of rice and palm oil', twoAtOnce[0]?.body);
+
+  const corrected = dealRows.find(row => /corrected payment sent/.test(row.title ?? ''));
+  check('and follows a correction', corrected?.body === '£38.00 · Two yams, a bag of rice and palm oil', corrected?.body);
+
+  const proBox = (await inbox(pro.token)).filter(row => row.kind === 'DEAL');
+  const balance = proBox.find(row => /Work accepted and Payment sent/.test(row.title ?? ''));
+  check('a balance reads as the balance, not as the whole job',
+    balance?.body === '£1400.00 · Kitchen fit, 4 weeks', balance?.body);
+
+  const buyerBox = (await inbox(buyer.token)).filter(row => row.kind === 'DEAL');
+  check('a step that is not about money falls back to the total',
+    buyerBox.some(row => /marked: Terms agreed/.test(row.title ?? '') && row.body === '£40.00 · Two yams, a bag of rice and palm oil'),
+    buyerBox.filter(row => /Terms agreed/.test(row.title ?? '')).map(row => row.body));
+
   const ownRows = (await inbox(buyer.token)).filter(row => row.kind === 'DEAL' && row.actor?.id === buyer.id);
   check('nobody is notified about their own tap', ownRows.length === 0, ownRows.map(row => row.title));
 
@@ -435,6 +453,8 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
 
   const sellerTold = (await inbox(seller.token)).filter(row => /flagged a problem/.test(row.title ?? ''));
   check('the other party is told too', sellerTold.length === 1, sellerTold.map(row => row.title));
+  check('and the body is what they wrote, not the terms they already know',
+    sellerTold[0]?.body === 'I paid on Saturday and the yams were never put aside.', sellerTold[0]?.body);
 
   r = await api(client.token, 'POST', `/deals/${itemDeal.id}/problem`, { note: 'Not my deal.' });
   check('somebody outside the thread cannot flag it', r.status === 403 || r.status === 404, r.status);
@@ -473,6 +493,10 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   r = await api(bare.token, 'POST', `/deals/conversation/${bareThread}`, { amount: 500, timing: 'UPFRONT' });
   check('while the buyer in the same thread still can', r.status === 201, r.body?.error);
   check('with the buyer as payer, not the staff account', r.body?.data?.viewerRole === 'PAYER', r.body?.data);
+
+  const bareTold = (await inbox(seller.token)).find(row => row.route === `/messages/${bareThread}`);
+  check('a deal with nothing written about it still says what it is worth',
+    bareTold?.body === '£5.00', bareTold?.body);
 
   console.log('\n── Access ─────────────────────────────────────────────────');
 

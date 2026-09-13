@@ -14,7 +14,7 @@ import {
   ThreadKind,
 } from '@prisma/client';
 import { PrismaError, PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException, money } from '@/common';
+import { ApiErrorCode, ApiException, excerpt, money } from '@/common';
 import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
 import { ThreadWorkService } from '../../messaging/services/thread-work.service';
 import { displayNameOf } from '../../shared';
@@ -255,6 +255,9 @@ export class DealService {
       fresh,
       userId,
       `marked: ${asked.map(stage => labelFor(stage, deal)).join(' and ')}`,
+      {
+        amount,
+      },
     );
 
     return this.toView(fresh, userId);
@@ -307,7 +310,9 @@ export class DealService {
 
     const fresh = await this.load(dealId);
 
-    await this.notify(fresh, userId, `corrected ${labelFor(stage, deal).toLowerCase()}`);
+    await this.notify(fresh, userId, `corrected ${labelFor(stage, deal).toLowerCase()}`, {
+      amount: dto.amount,
+    });
 
     return this.toView(fresh, userId);
   }
@@ -334,7 +339,7 @@ export class DealService {
     const fresh = await this.load(dealId);
 
     await Promise.all([
-      this.notify(fresh, userId, 'flagged a problem with this deal'),
+      this.notify(fresh, userId, 'flagged a problem with this deal', { note: dto.note }),
       this.tellSupport(fresh, userId, dto.note ?? null),
     ]);
 
@@ -688,8 +693,16 @@ export class DealService {
   /**
    * One per call, to the other party only. A seller who does not know the buyer has paid will not
    * dispatch, which is what makes the feature work at all.
+   *
+   * The title says who did what; the body says which deal, because somebody running two at once
+   * cannot tell "Ola marked: Payment received" from the other one without opening the thread.
    */
-  private async notify(deal: Deal, actorId: string, phrase: string): Promise<void> {
+  private async notify(
+    deal: Deal,
+    actorId: string,
+    phrase: string,
+    options: { amount?: number | null; note?: string | null } = {},
+  ): Promise<void> {
     const otherId = actorId === deal.payerId ? deal.providerId : deal.payerId;
 
     this.notifications.raise({
@@ -698,11 +711,29 @@ export class DealService {
       kind: NotificationKind.DEAL,
       categoryCode: 'BOOKINGS',
       title: `${await this.nameOf(actorId)} ${phrase}`,
+      body: this.bodyFor(deal, options),
       route: `/messages/${deal.conversationId}`,
       // A deal has no screen of its own: it lives in its thread, so the target is the thread.
       target: { type: 'DEAL', id: deal.conversationId },
       metadata: { dealId: deal.id },
     });
+  }
+
+  /**
+   * What the deal is about, on one line. The figure leads because it is short and never truncates
+   * on a lock screen, and it is the figure this notification is about rather than the total: a
+   * balance of £140 on an £1,800 job should not read as £1,800 changing hands.
+   */
+  private bodyFor(deal: Deal, options: { amount?: number | null; note?: string | null }): string {
+    // A flagged problem says what the person wrote. That is the new information; the terms are not.
+    if (options.note?.trim()) return excerpt(options.note, 160);
+
+    return [
+      priced(options.amount ?? deal.amount, deal.currency),
+      deal.summary ? excerpt(deal.summary, 120) : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
   }
 
   private toView(deal: DealWithSteps, userId: string) {
