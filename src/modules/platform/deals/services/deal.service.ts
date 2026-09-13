@@ -7,11 +7,13 @@ import {
   DealTiming,
   DealTrack,
   NotificationKind,
+  ParticipantRole,
+  Prisma,
   SystemMessageType,
   ThreadContextType,
   ThreadKind,
 } from '@prisma/client';
-import { PrismaService } from '@/infrastructure';
+import { PrismaError, PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, money } from '@/common';
 import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
 import { ThreadWorkService } from '../../messaging/services/thread-work.service';
@@ -57,6 +59,8 @@ export class DealService {
 
     if (!deal) throw ApiException.notFound('No deal has been started in this conversation.');
 
+    this.roleOf(deal, userId);
+
     return this.toView(deal, userId);
   }
 
@@ -91,13 +95,27 @@ export class DealService {
     }
 
     const providerId = await this.providerOf(conversation);
-    const participantIds = conversation.participants.map(row => row.userId);
-    const payerId = participantIds.find(id => id !== providerId);
+    // Circl's team can be sitting in a thread — a dispute puts them there — and they are not a
+    // side of the deal. Taking the first participant who is not the provider would have made a
+    // staff account the payer.
+    const memberIds = conversation.participants
+      .filter(row => row.role === ParticipantRole.MEMBER)
+      .map(row => row.userId);
+    const payers = memberIds.filter(id => id !== providerId);
 
-    if (!payerId || !participantIds.includes(providerId)) {
+    if (!memberIds.includes(providerId) || payers.length !== 1) {
       throw ApiException.unprocessable(
         ApiErrorCode.VALIDATION_FAILED,
         'This thread does not have both sides of a deal in it.',
+      );
+    }
+
+    const payerId = payers[0];
+
+    if (userId !== payerId && userId !== providerId) {
+      throw ApiException.forbidden(
+        ApiErrorCode.FORBIDDEN,
+        'A deal is between the two people in the thread.',
       );
     }
 
@@ -160,7 +178,7 @@ export class DealService {
 
     await this.requireParticipant(userId, deal.conversationId);
 
-    const role = userId === deal.payerId ? DealRole.PAYER : DealRole.PROVIDER;
+    const role = this.roleOf(deal, userId);
     const spine = spineFor(deal);
     const already = new Set(deal.steps.map(step => step.stage));
     const asked = [...new Set(dto.stages)].sort((a, b) => spine.indexOf(a) - spine.indexOf(b));
@@ -184,24 +202,41 @@ export class DealService {
 
     const amount = paying.length ? (dto.amount ?? this.expectedAmount(deal, paying[0])) : null;
 
-    await this.database.$transaction(async tx => {
-      for (const stage of asked) {
-        await tx.dealStep.create({
-          data: {
-            dealId: deal.id,
-            stage,
-            byRole: role,
-            ...(CARRIES_AMOUNT.includes(stage)
-              ? { amount, currency: dto.currency ?? deal.currency }
-              : {}),
-          },
-        });
+    try {
+      await this.database.$transaction(async tx => {
+        for (const stage of asked) {
+          await tx.dealStep.create({
+            data: {
+              dealId: deal.id,
+              stage,
+              byRole: role,
+              ...(CARRIES_AMOUNT.includes(stage)
+                ? { amount, currency: dto.currency ?? deal.currency }
+                : {}),
+            },
+          });
+        }
+
+        if (asked.includes(DealStage.AGREED)) {
+          await tx.deal.update({ where: { id: deal.id }, data: { isAgreedByBoth: true } });
+        }
+      });
+    } catch (error) {
+      // A double tap on a slow connection sends the same stage twice and both pass the checks
+      // above. The unique index is what actually decides; this turns losing that race into the
+      // same refusal a second mark gets, rather than a 500.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === PrismaError.UniqueConstraintViolation
+      ) {
+        throw ApiException.unprocessable(
+          ApiErrorCode.INVALID_TRANSITION,
+          `${STAGE_LABELS[asked[0]]} has already been marked.`,
+        );
       }
 
-      if (asked.includes(DealStage.AGREED)) {
-        await tx.deal.update({ where: { id: deal.id }, data: { isAgreedByBoth: true } });
-      }
-    });
+      throw error;
+    }
 
     // Per step, so the transcript alone tells the story without the panel. The notification is per
     // call, below: two taps at a counter are one event, not two pushes.
@@ -235,7 +270,7 @@ export class DealService {
 
     await this.requireParticipant(userId, deal.conversationId);
 
-    if (userId !== deal.payerId) {
+    if (this.roleOf(deal, userId) !== DealRole.PAYER) {
       throw ApiException.forbidden(
         ApiErrorCode.FORBIDDEN,
         'Only the paying side can correct what they said they paid.',
@@ -282,6 +317,7 @@ export class DealService {
     const deal = await this.load(dealId);
 
     await this.requireParticipant(userId, deal.conversationId);
+    this.roleOf(deal, userId);
 
     await this.database.deal.update({
       where: { id: deal.id },
@@ -539,6 +575,19 @@ export class DealService {
     return deal.amount - (deal.depositAmount ?? 0);
   }
 
+  /**
+   * Which side of the deal this member is, and a refusal if they are neither. A thread can hold a
+   * third person — a dispute puts Circl's team in one — and being in the room is not being a party
+   * to the deal: without this, a staff account would read as the PROVIDER and could tick the
+   * professional's boxes.
+   */
+  private roleOf(deal: Deal, userId: string): DealRole {
+    if (userId === deal.payerId) return DealRole.PAYER;
+    if (userId === deal.providerId) return DealRole.PROVIDER;
+
+    throw ApiException.forbidden(ApiErrorCode.FORBIDDEN, 'This is not your deal.');
+  }
+
   private async load(dealId: string): Promise<DealWithSteps> {
     const deal = await this.database.deal.findUnique({
       where: { id: dealId },
@@ -553,7 +602,7 @@ export class DealService {
   private async requireParticipant(userId: string, conversationId: string) {
     const conversation = await this.database.conversation.findUnique({
       where: { id: conversationId },
-      include: { participants: { select: { userId: true } } },
+      include: { participants: { select: { userId: true, role: true } } },
     });
 
     if (!conversation) throw ApiException.notFound('That conversation could not be found.');
@@ -655,7 +704,7 @@ export class DealService {
   }
 
   private toView(deal: DealWithSteps, userId: string) {
-    const role = userId === deal.payerId ? DealRole.PAYER : DealRole.PROVIDER;
+    const role = this.roleOf(deal, userId);
 
     return {
       id: deal.id,

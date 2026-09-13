@@ -4,7 +4,7 @@
  * record between two people. Every check below is about keeping that record honest: nobody ticks
  * the other side's box, nothing moves out of order, and a figure the other side has confirmed
  * cannot be quietly revised. A client rule is a courtesy — anybody can call the API. */
-const { api, check, finish, makeUser, sweep } = require('./harness.cjs');
+const { api, check, finish, makeUser, prisma, sweep } = require('./harness.cjs');
 
 const stages = deal => (deal?.steps ?? []).map(step => step.stage);
 
@@ -389,6 +389,41 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
 
   r = await api(client.token, 'POST', `/deals/${itemDeal.id}/problem`, { note: 'Not my deal.' });
   check('somebody outside the thread cannot flag it', r.status === 403 || r.status === 404, r.status);
+
+  console.log('\n── Circl\'s team in the room is not a side of the deal ─────');
+
+  // What a dispute does: it puts staff into the thread the two of them were already using.
+  const staff = await makeUser('dealstaff');
+
+  await prisma.conversationParticipant.create({
+    data: { conversationId: itemThread, userId: staff.id, role: 'STAFF' },
+  });
+
+  r = await api(staff.token, 'GET', `/deals/conversation/${itemThread}`);
+  check('staff in the thread cannot read the deal as one of its sides', r.status === 403, { status: r.status, error: r.body?.error?.code });
+
+  r = await api(staff.token, 'POST', `/deals/${itemDeal.id}/steps`, { stages: ['DISPATCHED'] });
+  check('and cannot tick the seller\'s box', r.status === 403, { status: r.status, error: r.body?.error?.code });
+
+  r = await api(staff.token, 'PATCH', `/deals/${itemDeal.id}/amount`, { amount: 1 });
+  check('nor revise the buyer\'s figure', r.status === 403, r.status);
+
+  r = await api(staff.token, 'POST', `/deals/${itemDeal.id}/problem`, { note: 'Looking into this.' });
+  check('nor flag it on their behalf', r.status === 403, r.status);
+
+  const bare = await makeUser('dealbare');
+  const bareThread = await thread(bare.token, 'STORE', storeId);
+
+  await prisma.conversationParticipant.create({
+    data: { conversationId: bareThread, userId: staff.id, role: 'STAFF' },
+  });
+
+  r = await api(staff.token, 'POST', `/deals/conversation/${bareThread}`, { amount: 500, timing: 'UPFRONT' });
+  check('and cannot open one between themselves and the seller', r.status === 403, { status: r.status, error: r.body?.error?.code });
+
+  r = await api(bare.token, 'POST', `/deals/conversation/${bareThread}`, { amount: 500, timing: 'UPFRONT' });
+  check('while the buyer in the same thread still can', r.status === 201, r.body?.error);
+  check('with the buyer as payer, not the staff account', r.body?.data?.viewerRole === 'PAYER', r.body?.data);
 
   console.log('\n── Access ─────────────────────────────────────────────────');
 

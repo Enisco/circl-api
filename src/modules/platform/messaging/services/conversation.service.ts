@@ -102,6 +102,16 @@ const conversationInclude = {
 
 type ConversationRow = Prisma.ConversationGetPayload<{ include: typeof conversationInclude }>;
 
+/** The thread contexts a deal can belong to, so a page of DMs asks nothing about deals. */
+const DEAL_CONTEXTS = new Set<ThreadContextType>([
+  ThreadContextType.ITEM,
+  ThreadContextType.STORE,
+  ThreadContextType.ORDER,
+  ThreadContextType.PROFESSIONAL,
+  ThreadContextType.SERVICE,
+  ThreadContextType.BOOKING,
+]);
+
 @Injectable()
 export class ConversationService {
   constructor(
@@ -741,11 +751,42 @@ export class ConversationService {
   private async reviewableThreads(userId: string, rows: ConversationRow[]): Promise<Set<string>> {
     const reviewable = new Set<string>();
 
-    if (!rows.length) return reviewable;
+    // Only a thread about a professional's work can carry one without a deal, and only once both
+    // have written.
+    const candidates = rows.filter(
+      row =>
+        (row.contextType === ThreadContextType.PROFESSIONAL ||
+          row.contextType === ThreadContextType.SERVICE) &&
+        row.contextId !== null &&
+        row.participants.every(participant => participant.hasSentMessage) &&
+        row.participants.some(participant => participant.userId !== userId),
+    );
+
+    // A deal that reached DONE is a completed record on either track, and it reads both ways: a
+    // seller's experience of a customer is worth the same as the other way round (6). Asked only
+    // of the threads that can hold one, so a page of community DMs costs nothing.
+    const dealRows = rows.filter(row => row.contextType && DEAL_CONTEXTS.has(row.contextType));
+    const doneDeals = dealRows.length
+      ? await this.database.deal.findMany({
+          where: {
+            conversationId: { in: dealRows.map(row => row.id) },
+            steps: { some: { stage: DealStage.DONE } },
+            OR: [{ payerId: userId }, { providerId: userId }],
+          },
+          select: { conversationId: true, payerId: true, providerId: true, track: true },
+        })
+      : [];
+
+    if (!candidates.length && !doneDeals.length) return reviewable;
 
     const [reviewed, booked] = await Promise.all([
       this.database.review.findMany({
-        where: { reviewerId: userId, conversationId: { in: rows.map(row => row.id) } },
+        where: {
+          reviewerId: userId,
+          conversationId: {
+            in: [...candidates.map(row => row.id), ...doneDeals.map(deal => deal.conversationId)],
+          },
+        },
         select: { conversationId: true },
       }),
       // A completed booking is the better evidence and takes precedence, so the review endpoint
@@ -766,17 +807,6 @@ export class ConversationService {
 
     const alreadyReviewed = new Set(reviewed.map(review => review.conversationId));
 
-    // A deal that reached DONE is a completed record on either track, and it reads both ways: a
-    // seller's experience of a customer is worth the same as the other way round (6).
-    const doneDeals = await this.database.deal.findMany({
-      where: {
-        conversationId: { in: rows.map(row => row.id) },
-        steps: { some: { stage: DealStage.DONE } },
-        OR: [{ payerId: userId }, { providerId: userId }],
-      },
-      select: { conversationId: true, payerId: true, providerId: true, track: true },
-    });
-
     for (const deal of doneDeals) {
       if (alreadyReviewed.has(deal.conversationId)) continue;
 
@@ -786,18 +816,6 @@ export class ConversationService {
 
       reviewable.add(deal.conversationId);
     }
-
-    // Without a deal, only a thread about a professional's work can carry one, and only once both
-    // have written.
-    const candidates = rows.filter(
-      row =>
-        (row.contextType === ThreadContextType.PROFESSIONAL ||
-          row.contextType === ThreadContextType.SERVICE) &&
-        row.contextId !== null &&
-        !reviewable.has(row.id) &&
-        row.participants.every(participant => participant.hasSentMessage) &&
-        row.participants.some(participant => participant.userId !== userId),
-    );
 
     if (!candidates.length) return reviewable;
 
@@ -829,6 +847,8 @@ export class ConversationService {
     ]);
 
     for (const row of candidates) {
+      if (reviewable.has(row.id)) continue;
+
       const ownerId = ownerOf.get(row.contextId!);
 
       if (!ownerId || ownerId === userId) continue;
