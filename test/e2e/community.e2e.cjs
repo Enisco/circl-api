@@ -35,6 +35,16 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   }, { 'Idempotency-Key': 'e2e-req-1' });
   check('idempotent replay returns same id', r.body?.data?.id === reqId, { got: r.body?.data?.id });
 
+  // The replay above only proves it usually works. The record itself has to be there by the time
+  // the caller can act on the response; the ordering that guarantees it is unit-tested, since a
+  // race cannot be provoked reliably from out here.
+  const record = await prisma.idempotencyRecord.findFirst({
+    where: { userId: alice.id, key: 'e2e-req-1' },
+    select: { responseBody: true },
+  });
+  check('and the key is on record by the time the caller holds the response',
+    record?.responseBody?.data?.id === reqId, record?.responseBody?.data?.id ?? record ?? null);
+
   r = await api(alice.token, 'POST', '/community/requests', {
     categoryCode: 'VISA_DOCS', title: 'Short', cityId: 'MANCHESTER',
   });
