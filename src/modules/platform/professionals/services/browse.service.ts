@@ -587,23 +587,27 @@ export class BrowseService {
       });
     }
 
-    const [professionLabels, summary, trust, booking, conversation] = await Promise.all([
-      this.taxonomy.labels(TaxonomyKind.PROFESSION),
-      this.reputation.summaryFor(listing.userId),
-      this.trustBlock(listing.userId),
-      this.database.booking.findFirst({
-        where: { clientId: viewerId, professionalId: listing.userId },
-        select: { id: true },
-      }),
-      this.database.conversation.findFirst({
-        where: {
-          contextType: ThreadContextType.PROFESSIONAL,
-          contextId: listing.id,
-          participants: { some: { userId: viewerId } },
-        },
-        select: { id: true },
-      }),
-    ]);
+    const [professionLabels, summary, trust, booking, conversation, ownerStats] = await Promise.all(
+      [
+        this.taxonomy.labels(TaxonomyKind.PROFESSION),
+        this.reputation.summaryFor(listing.userId),
+        this.trustBlock(listing.userId),
+        this.database.booking.findFirst({
+          where: { clientId: viewerId, professionalId: listing.userId },
+          select: { id: true },
+        }),
+        this.database.conversation.findFirst({
+          where: {
+            contextType: ThreadContextType.PROFESSIONAL,
+            contextId: listing.id,
+            participants: { some: { userId: viewerId } },
+          },
+          select: { id: true },
+        }),
+        // Their own two figures, and nobody else's business: not fetched at all for a visitor.
+        isOwner ? this.listings.ownerStats(listing.id, listing.userId) : Promise.resolve(null),
+      ],
+    );
 
     const categories = listing.categories.map(category =>
       toTermView(category.code, professionLabels),
@@ -627,6 +631,8 @@ export class BrowseService {
         // One definition, three surfaces: the profile, the dashboard, and the maxResponseHours filter all read this number (2.11).
         medianResponseMinutes: listing.medianResponseMinutes,
         profileViews: listing.profileViews,
+        // Owner's copy only, the same two fields `GET /professionals/me` carries (2.4).
+        ...(ownerStats ?? {}),
       },
       priceFrom: money(listing.priceFrom, listing.currency),
       priceBasis: listing.priceBasis,

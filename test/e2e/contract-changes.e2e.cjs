@@ -81,6 +81,11 @@ const { api, check, finish, makeUser, prisma, sweep } = require('./harness.cjs')
   check('and still never reaches a visitor',
     !('responseRate' in visitorAgain.body.data.stats), visitorAgain.body.data.stats);
 
+  const own = await api(pro.token, 'GET', `/professionals/${listingId}`);
+  check('but the profile a professional opens of themselves carries it, like their own shop page',
+    own.body?.data?.stats?.responseRate === 33 && own.body?.data?.stats?.enquiries === 3,
+    own.body?.data?.stats);
+
   console.log('\n── 2.11 listingId on the dashboard ──────────────────────────');
   r = await api(pro.token, 'GET', '/professionals/me/dashboard');
   check('dashboard → 200', r.status === 200, r.status);

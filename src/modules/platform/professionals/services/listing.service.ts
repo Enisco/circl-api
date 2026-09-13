@@ -592,8 +592,12 @@ export class ListingService {
     };
   }
 
-  /** The two numbers the manage panel's summary row reads (2.4). */
-  private async ownerStats(
+  /**
+   * The two numbers the manage panel's summary row reads (2.4). Public because the profile a
+   * professional opens of themselves shows them too, the way a seller's own shop page does, and
+   * two copies of this counting would eventually count differently.
+   */
+  async ownerStats(
     listingId: string,
     professionalId: string,
   ): Promise<{ enquiries: number; responseRate: number | null }> {

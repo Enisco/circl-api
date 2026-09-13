@@ -103,6 +103,22 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   check('and keeps it un-agreed', r.body?.data?.isAgreedByBoth === false, r.body?.data?.isAgreedByBoth);
   check('on the same deal, not a second one', r.body?.data?.id === shopDeal.id, r.body?.data?.id);
 
+  // "Suggest different terms": the other side counters instead of only being able to refuse.
+  r = await api(seller.token, 'POST', `/deals/conversation/${shopThread}`, {
+    amount: 4200, timing: 'ON_COMPLETION', summary: 'Two yams, rice and palm oil — 42 for the lot',
+  });
+  check('the other side can suggest different terms rather than only refuse', r.status === 201 && r.body?.data?.terms?.amount?.amount === 4200, r.body?.data?.terms);
+  check('and acceptance moves to whoever did not propose last', r.body?.data?.proposedByRole === 'PROVIDER', r.body?.data?.proposedByRole);
+  check('still one deal, still un-agreed', r.body?.data?.id === shopDeal.id && r.body?.data?.isAgreedByBoth === false, r.body?.data);
+
+  r = await api(seller.token, 'POST', `/deals/${shopDeal.id}/steps`, { stages: ['AGREED'] });
+  check('so the side that suggested them cannot now accept their own', r.status === 422 && r.body?.error?.code === 'INVALID_TRANSITION', r.body?.error);
+
+  r = await api(buyer.token, 'POST', `/deals/conversation/${shopThread}`, {
+    amount: 4000, timing: 'ON_COMPLETION', summary: 'Two yams, a bag of rice and palm oil',
+  });
+  check('and it can go back the other way as often as they like', r.status === 201 && r.body?.data?.proposedByRole === 'PAYER', r.body?.data?.proposedByRole);
+
   r = await api(seller.token, 'POST', `/deals/${shopDeal.id}/steps`, { stages: ['AGREED'] });
   check('the other side agrees → 200', r.status === 200, r.body?.error);
   check('which sets isAgreedByBoth', r.body?.data?.isAgreedByBoth === true, r.body?.data);
@@ -197,6 +213,10 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   check('and an omitted amount falls back to what the terms say is due', (r.body?.data?.steps ?? []).find(s => s.stage === 'PAID')?.amount?.amount === 1800, r.body?.data?.steps);
 
   await api(seller.token, 'POST', `/deals/${itemDeal.id}/steps`, { stages: ['PAYMENT_CONFIRMED'] });
+
+  r = await api(buyer.token, 'POST', `/deals/${itemDeal.id}/steps`, { stages: ['DISPATCHED'] });
+  check('even the refusal is worded for a collection', r.status === 422 && /ready to collect/.test(r.body?.error?.message ?? ''), r.body?.error?.message);
+
   r = await api(seller.token, 'POST', `/deals/${itemDeal.id}/steps`, { stages: ['DISPATCHED'] });
   check('a buyer collecting is told the order is ready, not that it was sent',
     (r.body?.data?.steps ?? []).find(s => s.stage === 'DISPATCHED')?.label === 'Ready to collect',
@@ -206,6 +226,11 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   check('and the note in the thread reads the way the panel beside it does',
     (r.body?.data ?? []).some(m => /marked: Ready to collect/.test(m.body ?? '')),
     (r.body?.data ?? []).filter(m => m.kind === 'SYSTEM').map(m => m.body));
+
+  r = await api(buyer.token, 'GET', '/notifications?limit=40');
+  check('and so does the notification the buyer is sent',
+    (r.body?.data ?? []).some(row => /marked: Ready to collect/.test(row.title ?? '')),
+    (r.body?.data ?? []).filter(row => row.kind === 'DEAL').map(row => row.title));
 
   r = await api(client.token, 'POST', `/deals/conversation/${workThread}`, {
     amount: 180000, timing: 'UPFRONT', deposit: 40000, summary: 'Kitchen fit, 4 weeks',
