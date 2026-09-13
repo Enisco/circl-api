@@ -6,6 +6,7 @@ import {
   MAP_HEIGHT,
   MAP_WIDTH,
   MAP_ZOOM,
+  staticMapKeyName,
 } from '../../../src/modules/platform/commerce/services/static-map/static-map.service';
 import { renderTiles } from '../../../src/modules/platform/commerce/services/static-map/tiles';
 
@@ -649,7 +650,9 @@ export const seedCommerce = async (ctx: DemoSeedContext) => {
     // The map tile, rendered here so the demo shows one on first open rather than on the second
     // view. A store that hides its address gets none, which is the point of the flag (G12).
     if (!store.hidesExactAddress && store.latitude !== null && store.longitude !== null) {
-      const mapKey = `circl/maps/${id}/seed.png`;
+      // The key the service itself would compute. A key invented here is one it does not
+      // recognise, and the first real read would rebuild the tile it had just served.
+      const mapKey = staticMapKeyName(id, store.latitude, store.longitude);
 
       try {
         const png = await renderTiles({

@@ -43,7 +43,7 @@ export interface RegistrationStep {
   verifiedAt?: string;
 }
 
-/** Below this, `responseRate` is null (2.4). */
+/** Below this, `responseRate` is null (2.4): one missed message should not read as a bad record. */
 const MIN_ENQUIRIES_FOR_RATE = 3;
 
 @Injectable()
@@ -637,7 +637,8 @@ export class ListingService {
 
     const answered = [...answeredBy.values()].filter(Boolean).length;
 
-    return { enquiries, responseRate: Number((answered / enquiries).toFixed(2)) };
+    // Integer percent, the same shape the store's counter uses: one formatter for both tracks.
+    return { enquiries, responseRate: Math.round((answered / enquiries) * 100) };
   }
 
   /** D13: without credential checks, someone can list as an immigration adviser and nobody has verified it. */

@@ -196,6 +196,17 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   check('paying first is the whole point of UPFRONT', r.status === 200, r.body?.error);
   check('and an omitted amount falls back to what the terms say is due', (r.body?.data?.steps ?? []).find(s => s.stage === 'PAID')?.amount?.amount === 1800, r.body?.data?.steps);
 
+  await api(seller.token, 'POST', `/deals/${itemDeal.id}/steps`, { stages: ['PAYMENT_CONFIRMED'] });
+  r = await api(seller.token, 'POST', `/deals/${itemDeal.id}/steps`, { stages: ['DISPATCHED'] });
+  check('a buyer collecting is told the order is ready, not that it was sent',
+    (r.body?.data?.steps ?? []).find(s => s.stage === 'DISPATCHED')?.label === 'Ready to collect',
+    (r.body?.data?.steps ?? []).find(s => s.stage === 'DISPATCHED'));
+
+  r = await api(buyer.token, 'GET', `/messages/${itemThread}/messages?limit=20`);
+  check('and the note in the thread reads the way the panel beside it does',
+    (r.body?.data ?? []).some(m => /marked: Ready to collect/.test(m.body ?? '')),
+    (r.body?.data ?? []).filter(m => m.kind === 'SYSTEM').map(m => m.body));
+
   r = await api(client.token, 'POST', `/deals/conversation/${workThread}`, {
     amount: 180000, timing: 'UPFRONT', deposit: 40000, summary: 'Kitchen fit, 4 weeks',
   });
@@ -362,6 +373,19 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
     subjectUserId: seller.id, context: 'ORDER', sourceId: itemThread, rating: 5, comment: 'Nothing has finished here yet.',
   });
   check('a deal that is not DONE unlocks nothing', r.status === 422 && r.body?.error?.code === 'REVIEW_NOT_ELIGIBLE', r.body?.error);
+
+  // The track is half the check: a shop's custom must not land on the seller's professional record.
+  r = await api(buyer.token, 'POST', '/reviews', {
+    subjectUserId: seller.id, context: 'PROFESSIONAL', sourceId: shopThread, rating: 5,
+    comment: 'Filing a shop order against their professional reputation.',
+  });
+  check('a commerce deal cannot be filed as a professional review', r.status === 422 && r.body?.error?.code === 'REVIEW_NOT_ELIGIBLE', { status: r.status, error: r.body?.error?.code });
+
+  r = await api(client.token, 'POST', '/reviews', {
+    subjectUserId: pro.id, context: 'ORDER', sourceId: workThread, rating: 5,
+    comment: 'And a job of work is not an order.',
+  });
+  check('nor the other way round', r.status === 422 && r.body?.error?.code === 'REVIEW_NOT_ELIGIBLE', { status: r.status, error: r.body?.error?.code });
 
   console.log('\n── 3 and 7 Flagging a problem ─────────────────────────────');
 

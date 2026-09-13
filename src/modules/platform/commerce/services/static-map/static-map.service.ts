@@ -13,6 +13,22 @@ export const MAP_ZOOM = 15;
 
 const FETCH_TIMEOUT_MS = 8_000;
 
+/**
+ * The object key for one store's tile. The coordinates are in the stamp, so a store that moves
+ * gets a new key rather than serving the old neighbourhood out of a client's cache.
+ *
+ * Exported because the seeder renders these too, and a key it invents instead is a key the service
+ * will not recognise: every first read would then rebuild the tile it had just handed out a URL for.
+ */
+export const staticMapKeyName = (storeId: string, latitude: number, longitude: number): string => {
+  const stamp = createHash('sha256')
+    .update(`${latitude.toFixed(5)},${longitude.toFixed(5)},${MAP_ZOOM},${MAP_WIDTH}x${MAP_HEIGHT}`)
+    .digest('hex')
+    .slice(0, 12);
+
+  return `circl/maps/${storeId}/${stamp}.png`;
+};
+
 type Provider = 'osm' | 'mapbox' | 'google' | 'template' | 'none';
 
 /**
@@ -63,7 +79,7 @@ export class StaticMapService {
     if (store.latitude === null || store.longitude === null) return null;
     if (!this.isConfigured) return null;
 
-    const key = this.keyName(store.id, store.latitude, store.longitude);
+    const key = staticMapKeyName(store.id, store.latitude, store.longitude);
 
     // The key encodes the coordinates, so a store that moves gets a new one rather than serving
     // the old neighbourhood from cache.
@@ -76,9 +92,10 @@ export class StaticMapService {
     await this.storage.put(key, bytes, 'image/png');
     await this.database.store.update({ where: { id: store.id }, data: { staticMapKey: key } });
 
-    if (store.staticMapKey && store.staticMapKey !== key) {
-      await this.storage.delete(store.staticMapKey).catch(() => undefined);
-    }
+    // The tile this replaces is deliberately left where it is. `ensure` runs off the back of a
+    // read that has already signed a URL for the old key and a read URL is good for 48 hours, so
+    // deleting it here broke the image on the one read that triggered the rebuild. A stray tile
+    // per store that moves costs a few hundred kilobytes; a broken map costs the screen.
 
     return key;
   }
@@ -87,7 +104,7 @@ export class StaticMapService {
   ensure(store: Parameters<StaticMapService['keyFor']>[0]): void {
     if (store.hidesExactAddress || !this.isConfigured) return;
     if (store.latitude === null || store.longitude === null) return;
-    if (store.staticMapKey === this.keyName(store.id, store.latitude, store.longitude)) return;
+    if (store.staticMapKey === staticMapKeyName(store.id, store.latitude, store.longitude)) return;
 
     void this.keyFor(store).catch((error: unknown) =>
       // Name and stack too: an empty `message` on its own says nothing, which is exactly what
@@ -98,17 +115,6 @@ export class StaticMapService {
           `${(error as Error)?.stack ? ` | ${(error as Error).stack.split('\n')[1]?.trim()}` : ''}`,
       ),
     );
-  }
-
-  private keyName(storeId: string, latitude: number, longitude: number): string {
-    const stamp = createHash('sha256')
-      .update(
-        `${latitude.toFixed(5)},${longitude.toFixed(5)},${MAP_ZOOM},${MAP_WIDTH}x${MAP_HEIGHT}`,
-      )
-      .digest('hex')
-      .slice(0, 12);
-
-    return `circl/maps/${storeId}/${stamp}.png`;
   }
 
   private async render(latitude: number, longitude: number): Promise<Buffer | null> {

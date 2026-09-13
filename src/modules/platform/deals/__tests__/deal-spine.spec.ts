@@ -1,5 +1,5 @@
 import { DealRole, DealStage, DealTiming, DealTrack } from '@prisma/client';
-import { mayMark, spineFor } from '../deal-spine';
+import { labelFor, mayMark, spineFor } from '../deal-spine';
 
 describe('spineFor', () => {
   // The three worked examples from the spec, verbatim, because they are the contract.
@@ -106,6 +106,21 @@ describe('mayMark', () => {
     for (const role of [DealRole.PAYER, DealRole.PROVIDER]) {
       expect(mayMark(DealStage.DONE, role)).toBe(true);
       expect(mayMark(DealStage.AGREED, role)).toBe(true);
+    }
+  });
+});
+
+describe('labelFor', () => {
+  it('tells a buyer who is collecting that the order is ready, not that it was sent', () => {
+    expect(labelFor(DealStage.DISPATCHED, { collects: true })).toBe('Ready to collect');
+    expect(labelFor(DealStage.DISPATCHED, { collects: false })).toBe('Sent');
+  });
+
+  it('and leaves every other step alone, whichever way the goods move', () => {
+    for (const collects of [true, false]) {
+      expect(labelFor(DealStage.GOODS_RECEIVED, { collects })).toBe('Received');
+      expect(labelFor(DealStage.PAID, { collects })).toBe('Payment sent');
+      expect(labelFor(DealStage.DONE, { collects })).toBe('Done');
     }
   });
 });

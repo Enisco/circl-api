@@ -74,7 +74,8 @@ const { api, check, finish, makeUser, prisma, sweep } = require('./harness.cjs')
     { s: declined.status, b: declined.body });
 
   r = await api(pro.token, 'GET', '/professionals/me');
-  check('the rate reflects it', r.body?.data?.stats?.responseRate === 0.33, r.body?.data?.stats);
+  // An integer percent, the same shape and formatter as the store's counter.
+  check('the rate reflects it, one answered in three', r.body?.data?.stats?.responseRate === 33, r.body?.data?.stats);
 
   const visitorAgain = await api(client.token, 'GET', `/professionals/${listingId}`);
   check('and still never reaches a visitor',

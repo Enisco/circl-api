@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   DealStage,
+  DealTrack,
   JobState,
   NotificationKind,
   Prisma,
@@ -419,7 +420,12 @@ export class ReviewService {
 
         // Otherwise the source is the thread, and a deal in it that reached DONE is the completed
         // record — the same condition in the language the two of them actually used (6).
-        const done = await this.doneDealBetween(dto.sourceId, reviewerId, dto.subjectUserId);
+        const done = await this.doneDealBetween(
+          dto.sourceId,
+          reviewerId,
+          dto.subjectUserId,
+          DealTrack.COMMERCE,
+        );
 
         if (!done) {
           throw ApiException.unprocessable(
@@ -438,7 +444,14 @@ export class ReviewService {
         // A done deal is the stronger record and it reads both ways: a professional's experience
         // of a client is worth the same as the other way round (6). It stands in for the listing
         // ownership and both-spoken checks below, which are the weaker evidence.
-        if (await this.doneDealBetween(dto.sourceId, reviewerId, dto.subjectUserId)) {
+        if (
+          await this.doneDealBetween(
+            dto.sourceId,
+            reviewerId,
+            dto.subjectUserId,
+            DealTrack.PROFESSIONAL,
+          )
+        ) {
           await this.assertNoBookingInstead(reviewerId, dto.subjectUserId);
 
           return { ...empty, conversationId: dto.sourceId };
@@ -524,15 +537,22 @@ export class ReviewService {
     }
   }
 
-  /** A deal in this thread, between these two, that reached DONE. */
+  /**
+   * A deal in this thread, between these two, on this track, that reached DONE.
+   *
+   * The track is half the check. Without it an order review could be filed as `PROFESSIONAL` by
+   * passing a shop thread, and a shop's custom would land on the seller's professional reputation.
+   */
   private async doneDealBetween(
     conversationId: string,
     reviewerId: string,
     subjectUserId: string,
+    track: DealTrack,
   ): Promise<boolean> {
     const deal = await this.database.deal.findFirst({
       where: {
         conversationId,
+        track,
         steps: { some: { stage: DealStage.DONE } },
         OR: [
           { payerId: reviewerId, providerId: subjectUserId },

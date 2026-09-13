@@ -19,7 +19,7 @@ import { ConversationFactoryService } from '../../messaging/services/conversatio
 import { ThreadWorkService } from '../../messaging/services/thread-work.service';
 import { displayNameOf } from '../../shared';
 import { NotificationFeedService } from '../../notifications';
-import { CARRIES_AMOUNT, CONFIRMS, STAGE_LABELS, mayMark, spineFor } from '../deal-spine';
+import { CARRIES_AMOUNT, CONFIRMS, labelFor, mayMark, spineFor } from '../deal-spine';
 import { CorrectAmountDto, FlagProblemDto, MarkStepsDto, ProposeDealDto } from '../dtos/deal.dto';
 
 /** Which contexts can carry a deal. A favour and an introduction are not sales. */
@@ -231,7 +231,7 @@ export class DealService {
       ) {
         throw ApiException.unprocessable(
           ApiErrorCode.INVALID_TRANSITION,
-          `${STAGE_LABELS[asked[0]]} has already been marked.`,
+          `${labelFor(asked[0], deal)} has already been marked.`,
         );
       }
 
@@ -244,7 +244,7 @@ export class DealService {
       await this.conversations.postSystemMessage(
         deal.conversationId,
         SystemMessageType.DEAL_STEP_MARKED,
-        `${await this.nameOf(userId)} marked: ${STAGE_LABELS[stage]}`,
+        `${await this.nameOf(userId)} marked: ${labelFor(stage, deal)}`,
         { dealId: deal.id, stage },
       );
     }
@@ -254,7 +254,7 @@ export class DealService {
     await this.notify(
       fresh,
       userId,
-      `marked: ${asked.map(stage => STAGE_LABELS[stage]).join(' and ')}`,
+      `marked: ${asked.map(stage => labelFor(stage, deal)).join(' and ')}`,
     );
 
     return this.toView(fresh, userId);
@@ -307,7 +307,7 @@ export class DealService {
 
     const fresh = await this.load(dealId);
 
-    await this.notify(fresh, userId, `corrected ${STAGE_LABELS[stage].toLowerCase()}`);
+    await this.notify(fresh, userId, `corrected ${labelFor(stage, deal).toLowerCase()}`);
 
     return this.toView(fresh, userId);
   }
@@ -474,7 +474,9 @@ export class DealService {
       this.fullNameOf(deal.providerId),
     ]);
     const nameFor = (role: DealRole) => (role === DealRole.PAYER ? payer : provider);
-    const marked = deal.steps.map(step => `${STAGE_LABELS[step.stage]} (${nameFor(step.byRole)})`);
+    const marked = deal.steps.map(
+      step => `${labelFor(step.stage, deal)} (${nameFor(step.byRole)})`,
+    );
 
     await this.conversations.postSystemMessage(
       conversation.id,
@@ -516,7 +518,7 @@ export class DealService {
     if (index === -1) {
       throw ApiException.unprocessable(
         ApiErrorCode.INVALID_TRANSITION,
-        `${STAGE_LABELS[stage]} is not part of these terms.`,
+        `${labelFor(stage, deal)} is not part of these terms.`,
         { details: [{ field: 'stages', message: `${stage} is not in this deal's order.` }] },
       );
     }
@@ -525,7 +527,7 @@ export class DealService {
     if (reached.has(stage)) {
       throw ApiException.unprocessable(
         ApiErrorCode.INVALID_TRANSITION,
-        `${STAGE_LABELS[stage]} has already been marked.`,
+        `${labelFor(stage, deal)} has already been marked.`,
       );
     }
 
@@ -553,7 +555,7 @@ export class DealService {
     if (!mayMark(stage, role)) {
       throw ApiException.unprocessable(
         ApiErrorCode.INVALID_TRANSITION,
-        `Only the other side can mark ${STAGE_LABELS[stage].toLowerCase()}.`,
+        `Only the other side can mark ${labelFor(stage, deal).toLowerCase()}.`,
       );
     }
 
@@ -562,7 +564,7 @@ export class DealService {
     if (missing.length) {
       throw ApiException.unprocessable(
         ApiErrorCode.INVALID_TRANSITION,
-        `${STAGE_LABELS[missing[0]]} comes first.`,
+        `${labelFor(missing[0], deal)} comes first.`,
         { details: [{ field: 'stages', message: `${missing[0]} is not marked yet.` }] },
       );
     }
@@ -725,7 +727,7 @@ export class DealService {
       // Only what has happened. The client derives the rest of the spine from the terms.
       steps: deal.steps.map(step => ({
         stage: step.stage,
-        label: STAGE_LABELS[step.stage],
+        label: labelFor(step.stage, deal),
         reachedAt: step.reachedAt.toISOString(),
         byRole: step.byRole,
         amount: money(step.amount, step.currency ?? deal.currency),

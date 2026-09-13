@@ -74,3 +74,11 @@ export const STAGE_LABELS: Record<DealStage, string> = {
   [DealStage.ACCEPTED]: 'Work accepted',
   [DealStage.DONE]: 'Done',
 };
+
+/**
+ * The wording for one step of one deal. Only `collects` moves it: a buyer picking an order up is
+ * told it is ready, not that it was sent, and the note in the thread has to read the way the panel
+ * beside it reads.
+ */
+export const labelFor = (stage: DealStage, terms: { collects: boolean }): string =>
+  stage === DealStage.DISPATCHED && terms.collects ? 'Ready to collect' : STAGE_LABELS[stage];
