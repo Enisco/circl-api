@@ -456,6 +456,13 @@ async function signIn(email) {
   );
 
   console.log('\n── G12 the static map tile ─────────────────────────────────');
+  check(
+    'every browse row carries the field, so a card can show a map strip without a second call',
+    (stores.body?.data ?? []).length > 0 &&
+      (stores.body?.data ?? []).every(store => 'staticMapUrl' in store),
+    (stores.body?.data ?? []).map(store => store.name + '=' + ('staticMapUrl' in store)),
+  );
+
   r = await api(token, 'GET', `/commerce/stores/${stores.body?.data?.[0]?.id}`);
   const mapUrl = r.body?.data?.staticMapUrl;
   check(

@@ -89,7 +89,9 @@ export class CommerceController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'My store',
-    description: '404 when they have none, for the empty state.',
+    description:
+      '404 when they have none, for the empty state. The same payload as the public profile plus ' +
+      '`pendingEnquiryCount`, `itemCount`, and the owner-only `views` and `responseRate`.',
   })
   async myStore(@CurrentUserId() userId: string) {
     const data = await this.stores.findMine(userId);
@@ -117,7 +119,9 @@ export class CommerceController {
     summary: 'Browse stores',
     description:
       'A store passes the price-band filter if ANYTHING it sells falls in the band. `isOpenNow` is ' +
-      'computed server-side, so the badge and the filter always agree.',
+      'computed server-side, so the badge and the filter always agree.\n\n' +
+      'Every row is the same store summary the profile returns, `staticMapUrl` included, so a card ' +
+      'can show a map strip without a second call.',
   })
   async browseStores(@CurrentUserId() userId: string, @Query() query: BrowseCommerceDto) {
     const { data, meta } = await this.browse.browseStores(userId, query);
@@ -425,7 +429,17 @@ export class CommerceController {
     description:
       'When the seller hides their exact address, only the area and a coordinate rounded to roughly ' +
       'a kilometre are ever returned — line1, postcode and the precise point are never sent to ' +
-      'anyone, including through the map.',
+      'anyone, including through the map.\n\n' +
+      '**`staticMapUrl`** is a ready-to-render map of the shop, 640×220, rendered server-side so no ' +
+      'map provider key ever reaches an app binary. A signed URL, good for 48 hours and stable for ' +
+      'the whole day so it caches. `null` in three cases, all of which want the same placeholder: ' +
+      'the seller hides their exact address, the store has no coordinates, or the deployment has no ' +
+      'map provider configured.\n\n' +
+      '`address.line1` and `address.postcode` are nullable on a store that shows its address too — ' +
+      'a seller can give an area and nothing else — so anything that opens a maps app should fall ' +
+      'back to `address.latitude`/`longitude`, and respect `address.isApproximate` before calling ' +
+      'it a doorstep.\n\n' +
+      '`views` and `responseRate` are present only when the caller owns the store.',
   })
   async findStore(@CurrentUserId() userId: string, @Param('id') id: string) {
     const store = await this.stores.storeOrThrow(id);
