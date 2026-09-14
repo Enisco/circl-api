@@ -124,8 +124,9 @@ export class ConnectProfileService {
         journeyStage: user.profile?.journeyStage ?? null,
         isVerified: user.trustChecks.length > 0,
         // The visibility toggle's current state, so the setup screen renders it without a second
-        // call. False for a member with no profile: opting in is a deliberate act (3.1.2).
-        isVisible: profile?.isVisible ?? false,
+        // call. For a member with no profile yet this is what they will get if they never touch
+        // the toggle, so the switch starts where the server will actually leave them.
+        isVisible: profile?.isVisible ?? true,
       },
       asks,
       // Sent, not hardcoded, so the gate can change without a release.
@@ -266,7 +267,11 @@ export class ConnectProfileService {
           typeCode: dto.typeCode,
           lookingFor: dto.lookingFor,
           dmPolicy: dto.dmPolicy ?? DmPolicy.REQUEST_FIRST,
-          isVisible: dto.isVisible ?? false,
+          // Discoverable unless they say otherwise. Creating the profile IS the deliberate act:
+          // nobody picks a connection type and writes ten characters about what they are looking
+          // for in order not to be found. A profile that exists but cannot be seen is a member
+          // waiting for connections that can never arrive, with nothing on screen to say why.
+          isVisible: dto.isVisible ?? true,
           cityIdOverride: override?.id ?? null,
           datingConfirmedAt: dto.typeCode === 'DATING' ? new Date() : null,
         },

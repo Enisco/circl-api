@@ -25,8 +25,8 @@ const dobFor = years => {
   let r = await api(ada.token, 'GET', '/connect/setup/prefill');
   check('prefill → 200', r.status === 200, r.body?.error);
   check('profile null before setup', r.body?.data?.profile === null);
-  check('and the visibility toggle reads off, because opting in is a deliberate act',
-    r.body?.data?.prefill?.isVisible === false, r.body?.data?.prefill?.isVisible);
+  check('and the visibility toggle starts on, where the server will actually leave them',
+    r.body?.data?.prefill?.isVisible === true, r.body?.data?.prefill?.isVisible);
   check('name and city prefilled from the user', r.body?.data?.prefill?.displayName === 'E2E ada' && r.body?.data?.prefill?.cityId === 'MANCHESTER', r.body?.data?.prefill);
   check('interests prefilled from onboarding', r.body?.data?.prefill?.interests?.includes('FOOD_COOKING'), r.body?.data?.prefill?.interests);
   check('journeyStage read, never re-asked', r.body?.data?.prefill?.journeyStage === 'JUST_ARRIVED');
@@ -206,6 +206,37 @@ const dobFor = years => {
   r = await api(dave.token, 'POST', '/connect/requests', { toProfileId: ada.id });
   check('re-request within 30 days → 429 REQUEST_COOLDOWN', r.status === 429 && r.body?.error?.code === 'REQUEST_COOLDOWN', r.body?.error);
   check('retryAfterDays told to the client', r.body?.data?.retryAfterDays > 0 && r.body?.data?.retryAfterDays <= 30, r.body?.data);
+
+  console.log('\n── 3.3 A profile is discoverable unless they say otherwise ──');
+
+  const quiet = await makeUser('quiet');
+
+  r = await api(quiet.token, 'PUT', '/connect/me', {
+    typeCode: 'NETWORKING',
+    lookingFor: 'Other people working in software, without saying anything about being seen.',
+    dateOfBirth: dobFor(33),
+  });
+  check('a profile created without mentioning visibility → 200', r.status === 200, r.body?.error);
+  check('is visible: choosing a type and saying what you want IS the deliberate act',
+    r.body?.data?.isVisible === true, r.body?.data?.isVisible);
+
+  r = await api(ada.token, 'GET', '/connect/profiles');
+  check('and it is actually discoverable, not just flagged as such',
+    (r.body?.data ?? []).some(p => p.user?.id === quiet.id), (r.body?.data ?? []).map(p => p.user?.id));
+
+  r = await api(quiet.token, 'PUT', '/connect/me', {
+    typeCode: 'NETWORKING',
+    lookingFor: 'Other people working in software, without saying anything about being seen.',
+    isVisible: false,
+  });
+  check('and they can still take themselves out of it', r.body?.data?.isVisible === false, r.body?.data?.isVisible);
+
+  r = await api(quiet.token, 'PUT', '/connect/me', {
+    typeCode: 'NETWORKING',
+    lookingFor: 'Other people working in software, and now editing something unrelated.',
+  });
+  check('an edit that omits the toggle does not quietly put them back',
+    r.body?.data?.isVisible === false, r.body?.data?.isVisible);
 
   console.log('\n── 3.3.2 Hiding and leaving ─────────────────────────────────');
 
