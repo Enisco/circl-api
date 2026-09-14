@@ -393,7 +393,6 @@ async function objectExists(url) {
     languages: 'LANGUAGE',
     heritageTag: 'HERITAGE_TAG',
     journeyStage: 'JOURNEY_STAGE',
-    countryOfOrigin: 'COUNTRY_OF_ORIGIN',
   };
 
   const known = {};
@@ -431,6 +430,19 @@ async function objectExists(url) {
 
   check('no profile holds a code the picker no longer offers', strays.length === 0,
     [...new Set(strays)].slice(0, 8));
+
+  // Countries are not a vocabulary we keep, so the check is that ICU knows them.
+  const regions = new Intl.DisplayNames(['en'], { type: 'region' });
+  const countries = await prisma.userProfile.findMany({
+    where: { countryOfOrigin: { not: null } },
+    select: { countryOfOrigin: true },
+  });
+  const unknownCountries = [...new Set(countries.map(row => row.countryOfOrigin))].filter(
+    code => code !== 'OTHER' && regions.of(code) === code,
+  );
+
+  check('and every country of origin is a code ICU knows', unknownCountries.length === 0,
+    unknownCountries);
 
   await prisma.user.deleteMany({ where: { id: admin.id } });
   await finish();

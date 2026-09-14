@@ -52,7 +52,11 @@ async function makeAdmin(tag) {
   const lists = Object.entries(tax).filter(([, value]) => Array.isArray(value));
   check('every list carries terms', lists.every(([, value]) => value.length > 0),
     lists.filter(([, value]) => !value.length).map(([key]) => key));
-  check('and there are enough of them to be the whole vocabulary', lists.length >= 28, lists.length);
+  check('and there are enough of them to be the whole vocabulary', lists.length >= 27, lists.length);
+
+  // Countries are the one list deliberately absent: ICU knows every one of them, so a curated
+  // subset here could only ever be a shorter, staler answer than the app's own library.
+  check('countries are not among them', !('countriesOfOrigin' in tax), Object.keys(tax).filter(k => /countr/i.test(k)));
 
   const shaped = lists.filter(([key]) => key !== 'cities');
   check('every term is a code, a label, a sort and an active flag',

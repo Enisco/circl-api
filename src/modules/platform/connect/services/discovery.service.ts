@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, TaxonomyKind, ThreadContextType, TrustCheckType } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ageFromDateOfBirth, ApiException, buildPageMeta, escapeLike } from '@/common';
-import { BlockingService, TaxonomyService } from '../../shared';
+import { BlockingService, countryNameOf, TaxonomyService } from '../../shared';
 import { CONNECT_MINIMUM_AGE } from '../../taxonomy/services/taxonomy-catalogue.service';
 import { DiscoveryDto } from '../dtos/connect.dto';
 import { normaliseTerm, termVariants } from '../../search/services/search-terms';
@@ -322,7 +322,7 @@ export class DiscoveryService {
 
     if (!userIds.length || !viewer) return result;
 
-    const [profiles, viewerGroups, countryLabels, stageLabels] = await Promise.all([
+    const [profiles, viewerGroups, stageLabels] = await Promise.all([
       this.database.userProfile.findMany({
         where: { userId: { in: userIds } },
         select: { userId: true, countryOfOrigin: true, journeyStage: true },
@@ -331,7 +331,6 @@ export class DiscoveryService {
         where: { userId: viewerId, state: { in: ['MEMBER', 'ADMIN'] } },
         select: { groupId: true },
       }),
-      this.taxonomy.labels(TaxonomyKind.COUNTRY_OF_ORIGIN),
       this.taxonomy.labels(TaxonomyKind.JOURNEY_STAGE),
     ]);
 
@@ -356,7 +355,7 @@ export class DiscoveryService {
       const context: SharedContext = {};
 
       if (viewer.countryOfOrigin && profile.countryOfOrigin === viewer.countryOfOrigin) {
-        context.sameCountry = countryLabels.get(profile.countryOfOrigin) ?? profile.countryOfOrigin;
+        context.sameCountry = countryNameOf(profile.countryOfOrigin) ?? profile.countryOfOrigin;
       }
 
       if (viewer.journeyStage && profile.journeyStage === viewer.journeyStage) {

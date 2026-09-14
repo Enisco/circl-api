@@ -9,15 +9,16 @@ import {
   toJsonOrUndefined,
 } from '@/common';
 import {
+  authorSelect,
   AuthorView,
   CityService,
+  displayNameOf,
   MediaService,
   TaxonomyService,
   TermView,
-  authorSelect,
-  displayNameOf,
   toAuthorView,
   toCityView,
+  toCountryView,
   toTermView,
 } from '../../shared';
 import { CONNECT_MINIMUM_AGE } from '../../taxonomy/services/taxonomy-catalogue.service';
@@ -305,14 +306,13 @@ export class ConnectProfileService {
   // ─── Serialisation ─────────────────────────────────────────────────────────
 
   async toView(profile: ConnectProfileRow): Promise<ConnectProfileView> {
-    const [typeLabels, languageLabels, interestLabels, heritageLabels, stageLabels, countryLabels] =
+    const [typeLabels, languageLabels, interestLabels, heritageLabels, stageLabels] =
       await Promise.all([
         this.taxonomy.labels(TaxonomyKind.CONNECTION_TYPE),
         this.taxonomy.labels(TaxonomyKind.LANGUAGE),
         this.taxonomy.labels(TaxonomyKind.INTEREST),
         this.taxonomy.labels(TaxonomyKind.HERITAGE_TAG),
         this.taxonomy.labels(TaxonomyKind.JOURNEY_STAGE),
-        this.taxonomy.labels(TaxonomyKind.COUNTRY_OF_ORIGIN),
       ]);
 
     const userProfile = profile.user.profile;
@@ -334,7 +334,7 @@ export class ConnectProfileService {
       interests: interests.filter(Boolean) as TermView[],
       heritageTag: toTermView(userProfile?.heritageTag ?? null, heritageLabels),
       journeyStage: toTermView(userProfile?.journeyStage ?? null, stageLabels),
-      countryOfOrigin: toTermView(userProfile?.countryOfOrigin ?? null, countryLabels),
+      countryOfOrigin: toCountryView(userProfile?.countryOfOrigin ?? null),
       // The override reads as intent ("looking to connect in London") rather than a claim about where they are (D18).
       city: toCityView(profile.city ?? userProfile?.city ?? null),
       dmPolicy: profile.dmPolicy,

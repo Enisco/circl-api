@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { TaxonomyKind, ThreadKind, TrustCheckStatus } from '@prisma/client';
+import { ThreadKind, TrustCheckStatus } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException } from '@/common';
 import {
@@ -7,7 +7,7 @@ import {
   MediaService,
   TaxonomyService,
   toAuthorView,
-  toTermView,
+  toCountryView,
 } from '@/modules/platform/shared';
 import { ConversationFactoryService } from '@/modules/platform/messaging/services/conversation-factory.service';
 
@@ -62,7 +62,6 @@ export class UserPublicService {
     }
 
     const isOwner = subjectId === viewerId;
-    const countryLabels = await this.taxonomy.labels(TaxonomyKind.COUNTRY_OF_ORIGIN);
 
     return {
       data: {
@@ -70,7 +69,7 @@ export class UserPublicService {
         username: user.username,
         bio: user.profile?.bio ?? null,
         canHelpWith: splitHelpWith(user.profile?.canHelpWith),
-        countryOfOrigin: toTermView(user.profile?.countryOfOrigin, countryLabels),
+        countryOfOrigin: toCountryView(user.profile?.countryOfOrigin),
         // The same numbers as GET /reviews/{userId} (2.5.1), summarised.
         rating: {
           average: user.reputationSummary?.average ?? 0,

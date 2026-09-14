@@ -17,7 +17,6 @@ export interface TaxonomyCatalogue {
   communityCategories: CatalogueTerm[];
   professions: CatalogueTerm[];
   guideTopics: CatalogueTerm[];
-  countriesOfOrigin: CatalogueTerm[];
   heritageTags: CatalogueTerm[];
   journeyStages: CatalogueTerm[];
   interests: CatalogueTerm[];
@@ -102,7 +101,6 @@ export class TaxonomyCatalogueService {
       communityCategories,
       professions,
       guideTopics,
-      countriesOfOrigin,
       heritageTags,
       journeyStages,
       interests,
@@ -132,7 +130,6 @@ export class TaxonomyCatalogueService {
       this.taxonomy.list(TaxonomyKind.COMMUNITY_CATEGORY, false),
       this.taxonomy.list(TaxonomyKind.PROFESSION, false),
       this.taxonomy.list(TaxonomyKind.GUIDE_TOPIC, false),
-      this.taxonomy.list(TaxonomyKind.COUNTRY_OF_ORIGIN, false),
       this.taxonomy.list(TaxonomyKind.HERITAGE_TAG, false),
       this.taxonomy.list(TaxonomyKind.JOURNEY_STAGE, false),
       this.taxonomy.list(TaxonomyKind.INTEREST, false),
@@ -171,7 +168,6 @@ export class TaxonomyCatalogueService {
       communityCategories: communityCategories.map(flatten),
       professions: professions.map(flatten),
       guideTopics: guideTopics.map(flatten),
-      countriesOfOrigin: countriesOfOrigin.map(flatten),
       heritageTags: heritageTags.map(flatten),
       journeyStages: journeyStages.map(flatten),
       interests: interests.map(flatten),

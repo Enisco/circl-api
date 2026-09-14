@@ -1,6 +1,7 @@
 import { Injectable, Logger, NestMiddleware } from '@nestjs/common';
 import { TaxonomyKind } from '@prisma/client';
 import { NextFunction, Request, Response } from 'express';
+import { countryCodeFromName } from '../serializers/country.serializer';
 import { TaxonomyService } from '../services';
 
 /**
@@ -9,7 +10,6 @@ import { TaxonomyService } from '../services';
  * different vocabulary in Community and Commerce, are deliberately absent.
  */
 const FIELDS: Record<string, TaxonomyKind> = {
-  countryOfOrigin: TaxonomyKind.COUNTRY_OF_ORIGIN,
   heritageTag: TaxonomyKind.HERITAGE_TAG,
   journeyStage: TaxonomyKind.JOURNEY_STAGE,
   gender: TaxonomyKind.GENDER,
@@ -33,6 +33,16 @@ export class TaxonomyCompatMiddleware implements NestMiddleware {
       const body = req.body as Record<string, unknown> | undefined;
 
       if (body && typeof body === 'object' && !Array.isArray(body)) {
+        // Countries are not a vocabulary we keep, so they resolve against ICU rather than a kind.
+        if (typeof body.countryOfOrigin === 'string') {
+          const resolved = countryCodeFromName(body.countryOfOrigin);
+
+          if (resolved && resolved !== body.countryOfOrigin) {
+            this.logger.log(`Deprecated countryOfOrigin value: "${body.countryOfOrigin}" -> ${resolved}`);
+            body.countryOfOrigin = resolved;
+          }
+        }
+
         for (const [field, kind] of Object.entries(FIELDS)) {
           const value = body[field];
 

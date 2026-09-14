@@ -70,7 +70,6 @@ describe('taxonomy codes are the codes the API accepts', () => {
 
   it('every code is UPPER_SNAKE, because a label is never a code', () => {
     const wrong = taxonomySeeds
-      .filter(term => term.kind !== TaxonomyKind.COUNTRY_OF_ORIGIN)
       .filter(term => !/^[A-Z][A-Z0-9_]*$/.test(term.code))
       .map(term => `${term.kind}:${term.code}`);
 
@@ -82,6 +81,11 @@ describe('taxonomy codes are the codes the API accepts', () => {
     const empty = Object.values(TaxonomyKind).filter(kind => !seeded.has(kind));
 
     // PRIVATE_HELP_CATEGORY is served from GUARD_CATEGORY, whose codes 6.3.1 fixes.
-    expect(empty).toEqual([TaxonomyKind.PRIVATE_HELP_CATEGORY]);
+    // COUNTRY_OF_ORIGIN is not seeded at all: countries come from ICU, which knows every one of
+    // them, rather than from a list somebody has to remember to extend.
+    expect(empty).toEqual([
+      TaxonomyKind.COUNTRY_OF_ORIGIN,
+      TaxonomyKind.PRIVATE_HELP_CATEGORY,
+    ]);
   });
 });

@@ -1,6 +1,7 @@
 import { TrustCheckStatus, TrustCheckType } from '@prisma/client';
 import { CityView } from './city.serializer';
 import { UrlSigner } from './media.serializer';
+import { NO_COUNTRY } from './country.serializer';
 
 /** The shared `author` object (spec 0.9). */
 export interface AuthorView {
@@ -65,11 +66,8 @@ export const displayNameOf = (firstName: string, lastName?: string | null): stri
 const ANONYMOUS_NAME = 'Someone';
 const DELETED_NAME = 'Deleted account';
 
-/** The one country term with no flag, so it is nulled rather than sent as an unfindable code. */
-const NO_COUNTRY = 'OTHER';
-
-/** The taxonomy already stores alpha-2, so this filters rather than translates. Exported because
- * the profile endpoints carry the same field without going through the author object. */
+/** Stored as alpha-2 already, so this filters rather than translates. Exported because the profile
+ * endpoints carry the same field without going through the author object. */
 export const toCountryCode = (code: string | null | undefined): string | null =>
   code && code !== NO_COUNTRY ? code : null;
 

@@ -11,7 +11,9 @@ import { PrismaService } from '@/infrastructure';
 import {
   AVATAR_MEDIA_OWNER,
   CityService,
+  isCountryCode,
   MediaService,
+  NO_COUNTRY,
   SINGLE_IMAGE_RULES,
   TaxonomyService,
   toCountryCode,
@@ -243,12 +245,21 @@ export class ProfileService {
       await this.taxonomy.assertValid(TaxonomyKind.JOURNEY_STAGE, dto.journeyStage, 'journeyStage');
     }
 
-    if (dto.countryOfOrigin) {
-      await this.taxonomy.assertValid(
-        TaxonomyKind.COUNTRY_OF_ORIGIN,
-        dto.countryOfOrigin,
-        'countryOfOrigin',
-      );
+    // Countries come from ICU rather than a vocabulary we maintain, so this checks the code is a
+    // real one rather than that it is on a list somebody remembered to extend. `OTHER` is the
+    // member who would rather not say.
+    if (dto.countryOfOrigin && dto.countryOfOrigin !== NO_COUNTRY) {
+      if (!isCountryCode(dto.countryOfOrigin)) {
+        throw ApiException.unprocessable(
+          ApiErrorCode.VALIDATION_FAILED,
+          `"${dto.countryOfOrigin}" is not a country code. Send ISO 3166-1 alpha-2, or OTHER.`,
+          {
+            details: [
+              { field: 'countryOfOrigin', message: 'Expected an ISO 3166-1 alpha-2 code.' },
+            ],
+          },
+        );
+      }
     }
   }
 

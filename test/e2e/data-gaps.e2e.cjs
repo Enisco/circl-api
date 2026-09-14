@@ -49,14 +49,13 @@ async function signIn(email) {
     'journeyStages',
     'interests',
     'helpTags',
-    'countriesOfOrigin',
     'itemPriceBands',
     'storeTypes',
     'storeContactChannels',
     'filters',
   ];
   check(
-    'the fourteen keys the client parses are all present',
+    'the keys the client parses are all present',
     KEYS.every(key => tax[key] !== undefined),
     KEYS.filter(key => tax[key] === undefined),
   );
