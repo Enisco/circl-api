@@ -17,6 +17,26 @@ node test/e2e/community.e2e.cjs        # Section 1
 Exit code is non-zero if any check fails, so they can go in CI behind a service
 container without further plumbing.
 
+## Migrations
+
+`prisma migrate dev` is not the command here, and `pnpm db:migrate-dev` says so. Three of our
+indexes are partial, which a Prisma schema cannot describe, so it reads them as drift and offers to
+reset the schema — the whole database. It has offered four times.
+
+```bash
+pnpm db:migrate-new add_something   # writes the migration, touching nothing
+#   read the file it names
+pnpm db:migrate-deploy              # applies it
+```
+
+**In production, `prisma migrate deploy` and nothing else.** It applies pending migrations in order
+and does nothing else: no shadow database, no drift check, no prompt, and no path that drops or
+resets anything. `start:prod` already runs it before the server starts, and stops on a non-zero exit
+so the app never boots against a half-migrated database.
+
+The safety is in the file, not the command: `deploy` will run whatever a migration says, including a
+`DROP`. Which is why generating and applying are two steps with a read in between.
+
 ## The suites
 
 | Script | Covers |
