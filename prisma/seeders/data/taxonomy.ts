@@ -198,6 +198,8 @@ const languages: Array<[string, string, string]> = [
   ['LINGALA', 'Lingala', 'ln'],
 ];
 
+/** Why somebody is on Connect, and the sentence under each one on the setup screen (3.1). */
+const connectionTypes: Array<[string, string, string]> = [
   ['FRIENDSHIP', 'Friendship', 'Meet people and build a circle where you live.'],
   ['NETWORKING', 'Networking', 'Meet people in your field or industry.'],
   ['LANGUAGE_EXCHANGE', 'Language Exchange', 'Practise a language, help with yours.'],
