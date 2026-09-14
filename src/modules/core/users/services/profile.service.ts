@@ -117,7 +117,7 @@ export class ProfileService {
   async updateProfile(userId: string, dto: UpdateProfileDto) {
     const { firstName, lastName, avatarKey, username } = dto;
 
-    await this.assertValidCodes(dto);
+    await this.assertValidCodes(userId, dto);
     await this.assertDateOfBirthWritable(userId, dto);
 
     // Written straight into a foreign key, so an unknown city has to be caught here rather than surfacing as a constraint violation.
@@ -227,22 +227,70 @@ export class ProfileService {
     };
   }
 
+  /** The taxonomy codes this member already carries, per field. */
+  private async heldCodes(userId: string): Promise<{
+    interests: ReadonlySet<string>;
+    languages: ReadonlySet<string>;
+    heritageTag: ReadonlySet<string>;
+    journeyStage: ReadonlySet<string>;
+  }> {
+    const profile = await this.database.userProfile.findUnique({
+      where: { userId },
+      select: { interests: true, languages: true, heritageTag: true, journeyStage: true },
+    });
+
+    const list = (value: unknown): ReadonlySet<string> =>
+      new Set(Array.isArray(value) ? (value as string[]) : []);
+    const one = (value: string | null): ReadonlySet<string> => new Set(value ? [value] : []);
+
+    return {
+      interests: list(profile?.interests),
+      languages: list(profile?.languages),
+      heritageTag: one(profile?.heritageTag ?? null),
+      journeyStage: one(profile?.journeyStage ?? null),
+    };
+  }
+
   /** Every enumerated value is a code from the taxonomy, so an unknown one is rejected here rather than stored and rendered as a raw code later (0.7). */
-  private async assertValidCodes(dto: UpdateProfileDto): Promise<void> {
+  private async assertValidCodes(userId: string, dto: UpdateProfileDto): Promise<void> {
+    // What they hold now. A term retired since they chose it stays writable by them, so editing a
+    // bio is not refused over a picker that has moved on.
+    const held = await this.heldCodes(userId);
+
     if (dto.interests?.length) {
-      await this.taxonomy.assertAllValid(TaxonomyKind.INTEREST, dto.interests, 'interests');
+      await this.taxonomy.assertAllValid(
+        TaxonomyKind.INTEREST,
+        dto.interests,
+        'interests',
+        held.interests,
+      );
     }
 
     if (dto.languages?.length) {
-      await this.taxonomy.assertAllValid(TaxonomyKind.LANGUAGE, dto.languages, 'languages');
+      await this.taxonomy.assertAllValid(
+        TaxonomyKind.LANGUAGE,
+        dto.languages,
+        'languages',
+        held.languages,
+      );
     }
 
     if (dto.heritageTag) {
-      await this.taxonomy.assertValid(TaxonomyKind.HERITAGE_TAG, dto.heritageTag, 'heritageTag');
+      await this.taxonomy.assertValid(
+        TaxonomyKind.HERITAGE_TAG,
+        dto.heritageTag,
+        'heritageTag',
+        held.heritageTag,
+      );
     }
 
     if (dto.journeyStage) {
-      await this.taxonomy.assertValid(TaxonomyKind.JOURNEY_STAGE, dto.journeyStage, 'journeyStage');
+      await this.taxonomy.assertValid(
+        TaxonomyKind.JOURNEY_STAGE,
+        dto.journeyStage,
+        'journeyStage',
+        held.journeyStage,
+      );
     }
 
     // Countries come from ICU rather than a vocabulary we maintain, so this checks the code is a

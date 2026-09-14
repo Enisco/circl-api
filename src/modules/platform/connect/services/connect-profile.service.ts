@@ -164,16 +164,41 @@ export class ConnectProfileService {
   async upsert(userId: string, dto: UpsertConnectProfileDto) {
     await this.taxonomy.assertValid(TaxonomyKind.CONNECTION_TYPE, dto.typeCode, 'typeCode');
 
+    // These three write through to the user record, and the setup form resends every field. A term
+    // retired since the member chose it stays writable by them, or editing anything on this screen
+    // is refused over a value the screen itself handed back.
+    const held = await this.database.userProfile.findUnique({
+      where: { userId },
+      select: { interests: true, languages: true, heritageTag: true },
+    });
+    const heldList = (value: unknown): ReadonlySet<string> =>
+      new Set(Array.isArray(value) ? (value as string[]) : []);
+
     if (dto.languages?.length) {
-      await this.taxonomy.assertAllValid(TaxonomyKind.LANGUAGE, dto.languages, 'languages');
+      await this.taxonomy.assertAllValid(
+        TaxonomyKind.LANGUAGE,
+        dto.languages,
+        'languages',
+        heldList(held?.languages),
+      );
     }
 
     if (dto.interests?.length) {
-      await this.taxonomy.assertAllValid(TaxonomyKind.INTEREST, dto.interests, 'interests');
+      await this.taxonomy.assertAllValid(
+        TaxonomyKind.INTEREST,
+        dto.interests,
+        'interests',
+        heldList(held?.interests),
+      );
     }
 
     if (dto.heritageTag) {
-      await this.taxonomy.assertValid(TaxonomyKind.HERITAGE_TAG, dto.heritageTag, 'heritageTag');
+      await this.taxonomy.assertValid(
+        TaxonomyKind.HERITAGE_TAG,
+        dto.heritageTag,
+        'heritageTag',
+        new Set(held?.heritageTag ? [held.heritageTag] : []),
+      );
     }
 
     const override = dto.cityIdOverride

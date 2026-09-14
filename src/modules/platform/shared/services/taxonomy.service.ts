@@ -147,12 +147,32 @@ export class TaxonomyService {
     return null;
   }
 
-  /** Rejects an unknown or deactivated code on write. */
-  async assertValid(kind: TaxonomyKind, code: string, field: string): Promise<TermRecord> {
+  /**
+   * Rejects an unknown code, and a retired one the member does not already hold.
+   *
+   * `held` is what they have now. A retired term stays writable by whoever already carries it,
+   * because the alternative traps them: the form hands the value back, the member edits something
+   * else entirely, and the save is refused over a field they never touched and a term the picker
+   * no longer offers. Nobody new can pick it, which is the whole point of retiring it.
+   */
+  async assertValid(
+    kind: TaxonomyKind,
+    code: string,
+    field: string,
+    held?: ReadonlySet<string>,
+  ): Promise<TermRecord> {
     const term = await this.get(kind, code);
 
-    if (!term || !term.isActive) {
+    if (!term) {
       const message = `"${code}" is not a valid ${this.kindLabel(kind)}.${this.livesIn(kind, code)}`;
+
+      throw ApiException.unprocessable(ApiErrorCode.UNKNOWN_TAXONOMY_CODE, message, {
+        details: [{ field, message }],
+      });
+    }
+
+    if (!term.isActive && !held?.has(code)) {
+      const message = `"${code}" is no longer offered as a ${this.kindLabel(kind)}.`;
 
       throw ApiException.unprocessable(ApiErrorCode.UNKNOWN_TAXONOMY_CODE, message, {
         details: [{ field, message }],
@@ -178,11 +198,16 @@ export class TaxonomyService {
     return ` That is a ${homes.join(' and a ')} — the picker is reading the wrong list.`;
   }
 
-  async assertAllValid(kind: TaxonomyKind, codes: string[], field: string): Promise<TermRecord[]> {
+  async assertAllValid(
+    kind: TaxonomyKind,
+    codes: string[],
+    field: string,
+    held?: ReadonlySet<string>,
+  ): Promise<TermRecord[]> {
     const terms: TermRecord[] = [];
 
     for (const code of codes) {
-      terms.push(await this.assertValid(kind, code, field));
+      terms.push(await this.assertValid(kind, code, field, held));
     }
 
     return terms;

@@ -191,6 +191,54 @@ async function makeAdmin(tag) {
   check('each with a label, so content filed under it still reads',
     retired.every(t => typeof t.label === 'string' && t.label.length > 0), retired);
 
+  console.log('\n── A term you retire does not trap whoever has it ──────────');
+
+  // The rule: holdable, not newly pickable. Without it, retiring a term refuses the next save from
+  // every member carrying it — over a field they never touched, on a picker that no longer offers
+  // the value the form handed them.
+  const holder = await makeUser('taxhold');
+  const stranger = await makeUser('taxnew');
+  const doomed = (tax.interests ?? []).find(t => t.isActive && t.code !== 'TRAVEL');
+
+  r = await api(holder.token, 'PATCH', '/users/profile', { interests: [doomed.code, 'TRAVEL'] });
+  check('a member picks an interest while it is offered', r.status === 200, r.body?.error);
+
+  r = await api(admin.token, 'DELETE', `/admin/taxonomy/INTEREST/${doomed.code}`);
+  check('staff retire it', r.status === 200, r.body?.error);
+
+  r = await api(holder.token, 'GET', '/taxonomy');
+  const retiredTerm = (r.body?.data?.interests ?? []).find(t => t.code === doomed.code);
+  check('it is still sent, marked inactive', retiredTerm?.isActive === false, retiredTerm);
+
+  r = await api(holder.token, 'PATCH', '/users/profile', { bio: 'Editing something else entirely.' });
+  check('the holder can edit an unrelated field', r.status === 200, r.body?.error);
+
+  r = await api(holder.token, 'PATCH', '/users/profile', { interests: [doomed.code, 'TRAVEL'] });
+  check('and can resend what the form handed them, retired term included',
+    r.status === 200, { status: r.status, error: r.body?.error });
+
+  r = await api(holder.token, 'GET', '/users/profile');
+  check('so nothing they chose is silently dropped',
+    (r.body?.data?.profile?.interests ?? []).includes(doomed.code), r.body?.data?.profile?.interests);
+
+  r = await api(holder.token, 'PATCH', '/users/profile', { interests: ['TRAVEL'] });
+  check('taking it off works, and is their choice to make', r.status === 200, r.body?.error);
+
+  r = await api(holder.token, 'PATCH', '/users/profile', { interests: [doomed.code] });
+  check('after which they cannot put it back either', r.status === 422, r.status);
+
+  r = await api(stranger.token, 'PATCH', '/users/profile', { interests: [doomed.code] });
+  check('and nobody new can pick it', r.status === 422 && /no longer offered/.test(r.body?.error?.message ?? ''),
+    r.body?.error?.message);
+
+  r = await api(stranger.token, 'PATCH', '/users/profile', { interests: ['NOT_A_REAL_CODE'] });
+  check('which reads differently from a code that never existed',
+    r.status === 422 && /is not a valid interest/.test(r.body?.error?.message ?? ''), r.body?.error?.message);
+
+  await api(admin.token, 'POST', '/admin/taxonomy', {
+    kind: 'INTEREST', code: doomed.code, label: doomed.label, sort: doomed.sort, isActive: true,
+  });
+
   await sweep('taxonomy');
   await finish();
 })().catch(async error => {
