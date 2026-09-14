@@ -33,6 +33,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS "request_responses_one_offer_per_author_idx"
   ON "request_responses" ("request_id", "author_id")
   WHERE "is_help_offer" AND "deleted_at" IS NULL;
 
+-- What the derivation sweep reads to find the media it has not measured yet. Partial, because the
+-- rows it wants are the ones with no measurement, and without it that is a scan of the whole table
+-- every hour.
+CREATE INDEX IF NOT EXISTS "media_derived_at_idx"
+  ON "media" ("derived_at")
+  WHERE "derived_at" IS NULL;
+
 -- "One per pair, ever" for prior-work reviews (2.5.2). The table's own unique key
 -- is (reviewer_id, context, source_id), and prior-work carries no source —
 -- Postgres treats those NULLs as distinct, so it needs its own index.

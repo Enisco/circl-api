@@ -33,8 +33,12 @@ const TRIGRAM: Array<[index: string, table: string, column: string]> = [
 const PARTIAL: Array<[index: string, statement: string]> = [
   [
     'request_responses_one_offer_per_author_idx',
+    // `deleted_at IS NULL` so deleting an offer lets the member make another one. Without it the
+    // rule is "one offer ever", enforced by a constraint nobody can see, on a member looking at a
+    // request they have not offered on.
     'CREATE UNIQUE INDEX IF NOT EXISTS "request_responses_one_offer_per_author_idx" ' +
-      'ON "request_responses" ("request_id", "author_id") WHERE "is_help_offer" = true',
+      'ON "request_responses" ("request_id", "author_id") ' +
+      'WHERE "is_help_offer" AND "deleted_at" IS NULL',
   ],
   [
     // Not unique, but every bit as invisible: the derivation sweep reads it to find the media it
@@ -51,6 +55,19 @@ const PARTIAL: Array<[index: string, statement: string]> = [
   ],
 ];
 
+/**
+ * Every statement this file asserts, in one place, so `prisma/sql/extra-indexes.sql` can be checked
+ * against it. The two have come apart more than once, and neither failure shows until something is
+ * slow or a rule quietly stops holding.
+ */
+export const INVISIBLE_INDEX_STATEMENTS: string[] = [
+  ...TRIGRAM.map(
+    ([name, table, column]) =>
+      `CREATE INDEX IF NOT EXISTS "${name}" ON "${table}" USING GIN ("${column}" gin_trgm_ops)`,
+  ),
+  ...PARTIAL.map(([, statement]) => statement),
+];
+
 export const assertInvisibleIndexes = async (
   prisma: PrismaClient,
   log: { info: (message: string) => void; warn: (message: string) => void },
@@ -59,16 +76,10 @@ export const assertInvisibleIndexes = async (
     "SELECT indexname FROM pg_indexes WHERE schemaname = 'public'",
   );
   const present = new Set(rows.map(row => row.indexname));
-  const missing = [
-    ...TRIGRAM.filter(([name]) => !present.has(name)).map(([name, table, column]) => ({
-      name,
-      statement: `CREATE INDEX IF NOT EXISTS "${name}" ON "${table}" USING GIN ("${column}" gin_trgm_ops)`,
-    })),
-    ...PARTIAL.filter(([name]) => !present.has(name)).map(([name, statement]) => ({
-      name,
-      statement,
-    })),
-  ];
+  const missing = INVISIBLE_INDEX_STATEMENTS.map(statement => ({
+    name: /IF NOT EXISTS "([^"]+)"/.exec(statement)![1],
+    statement,
+  })).filter(({ name }) => !present.has(name));
 
   if (!missing.length) return;
 
