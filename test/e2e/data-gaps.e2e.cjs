@@ -276,12 +276,12 @@ async function signIn(email) {
   );
 
   const mine = await makeUser('gaps');
-  r = await api(mine.token, 'PATCH', '/users/profile', { interests: ['STUDY', 'TECH', 'MUSIC'] });
+  r = await api(mine.token, 'PATCH', '/users/profile', { interests: ['TRAVEL', 'TECH', 'MUSIC'] });
   check('PATCH accepts them', r.status === 200, { s: r.status, b: r.body?.error });
   r = await api(mine.token, 'GET', '/users/profile');
   check(
     'and they survive the round trip',
-    JSON.stringify(r.body?.data?.profile?.interests) === JSON.stringify(['STUDY', 'TECH', 'MUSIC']),
+    JSON.stringify(r.body?.data?.profile?.interests) === JSON.stringify(['TRAVEL', 'TECH', 'MUSIC']),
     r.body?.data?.profile?.interests,
   );
 

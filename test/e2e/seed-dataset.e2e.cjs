@@ -399,7 +399,12 @@ async function objectExists(url) {
   const known = {};
 
   for (const [field, kind] of Object.entries(vocabularies)) {
-    const terms = await prisma.taxonomyTerm.findMany({ where: { kind }, select: { code: true } });
+    // Active only. A retired term still resolves to a label, but the write refuses it, so a member
+    // holding one cannot save the form that just handed it back to them.
+    const terms = await prisma.taxonomyTerm.findMany({
+      where: { kind, isActive: true },
+      select: { code: true },
+    });
 
     known[field] = new Set(terms.map(term => term.code));
   }
@@ -424,7 +429,7 @@ async function objectExists(url) {
     }
   }
 
-  check('no profile holds a code from the wrong list', strays.length === 0,
+  check('no profile holds a code the picker no longer offers', strays.length === 0,
     [...new Set(strays)].slice(0, 8));
 
   await prisma.user.deleteMany({ where: { id: admin.id } });

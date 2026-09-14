@@ -109,25 +109,53 @@ const journeyStages: Array<[string, string, boolean]> = [
   ['CITIZEN_SETTLED', 'Settled or a citizen', false],
 ];
 
-const interests: Array<[string, string]> = [
-  ['JOB_SEARCH', 'Job Search'],
-  ['FOOD_COOKING', 'Food & Cooking'],
-  ['SPORT_FITNESS', 'Sport & Fitness'],
-  ['MUSIC', 'Music'],
-  ['FAITH_COMMUNITY', 'Faith & Community'],
-  ['TECH', 'Tech'],
-  ['STUDY', 'Study'],
-  ['TRAVEL', 'Travel'],
-  ['FASHION_BEAUTY', 'Fashion & Beauty'],
-  ['FILM_TV', 'Film & TV'],
-  ['ART_CULTURE', 'Art & Culture'],
-  ['VOLUNTEERING', 'Volunteering'],
-  ['BUSINESS', 'Business'],
-  ['PARENTING', 'Parenting'],
-  ['LANGUAGES', 'Languages'],
-  ['GAMING', 'Gaming'],
-  ['READING', 'Reading'],
-  ['OUTDOORS', 'Outdoors'],
+/**
+ * What a member picks in onboarding, and the only thing the feed ranker can act on: it scores an
+ * item when `viewer.interests` contains the item's `categoryCode`. So an interest that is not also
+ * a community category can never move the feed, which is why the first fifteen here share their
+ * codes with `communityCategories` exactly.
+ *
+ * The rest are the lifestyle topics, which have no category to match and earn their place in
+ * Connect instead, where interests are what two people have in common.
+ *
+ * The four deactivated ones each say the same thing as a category above it — Study against
+ * University / Study, Parenting against Children & Family — and one picker should not offer the
+ * same idea twice. Deactivated rather than removed, so a member who already holds one still reads
+ * a label rather than a raw code.
+ */
+const interests: Array<[string, string, boolean]> = [
+  ['UNIVERSITY_STUDY', 'University / Study', true],
+  ['AIRPORT_PICKUP', 'Airport Pickup', true],
+  ['NHS_HEALTHCARE', 'NHS / Healthcare', true],
+  ['BANK_ACCOUNT', 'Bank Account', true],
+  ['ACCOMMODATION', 'Accommodation', true],
+  ['VISA_DOCS', 'Visa / COS / Docs', true],
+  ['JOB_SEARCH', 'Job Search', true],
+  ['MAKE_FRIENDS', 'Make Friends', true],
+  ['LANGUAGE_HELP', 'Language Help', true],
+  ['TRANSPORT', 'Transport', true],
+  ['CHILDREN_FAMILY', 'Children & Family', true],
+  ['LEGAL_RIGHTS', 'Legal Rights', true],
+  ['BENEFITS_SUPPORT', 'Benefits & Support', true],
+  ['MENTAL_HEALTH', 'Mental Health', true],
+  ['BUSINESS_SETUP', 'Business Setup', true],
+  ['FOOD_COOKING', 'Food & Cooking', true],
+  ['SPORT_FITNESS', 'Sport & Fitness', true],
+  ['MUSIC', 'Music', true],
+  ['FAITH_COMMUNITY', 'Faith & Community', true],
+  ['TECH', 'Tech', true],
+  ['TRAVEL', 'Travel', true],
+  ['FASHION_BEAUTY', 'Fashion & Beauty', true],
+  ['FILM_TV', 'Film & TV', true],
+  ['ART_CULTURE', 'Art & Culture', true],
+  ['VOLUNTEERING', 'Volunteering', true],
+  ['GAMING', 'Gaming', true],
+  ['READING', 'Reading', true],
+  ['OUTDOORS', 'Outdoors', true],
+  ['STUDY', 'Study', false],
+  ['PARENTING', 'Parenting', false],
+  ['LANGUAGES', 'Languages', false],
+  ['BUSINESS', 'Business', false],
 ];
 
 /**
@@ -316,6 +344,9 @@ const storeHelpAreas: Array<[string, string]> = [
   ['SEO', 'Search and discovery'],
   ['DELIVERY', 'Delivery and collection'],
   ['PRICING', 'Pricing and stock'],
+  // The honest answer from a seller who does not know where to start, and the one the app already
+  // offered. Last, because it is the fallback rather than the first thing to reach for.
+  ['EVERYTHING', 'All of it — I do not know where to start'],
 ];
 
 // The tags a reviewer can attach (2.5.2, max 5).
@@ -328,7 +359,9 @@ const helpTags: Array<[string, string]> = [
   ['PAPERWORK', 'Paperwork'],
   ['MOVING', 'Moving'],
   ['CHILDCARE', 'Childcare'],
+  ['NHS_HELP', 'NHS and GP help'],
   ['LOCAL_KNOWLEDGE', 'Local knowledge'],
+  ['JUST_KIND', 'Just being kind'],
   ['WENT_ABOVE_AND_BEYOND', 'Went above and beyond'],
   ['QUICK_TO_REPLY', 'Quick to reply'],
   ['CLEAR_EXPLANATION', 'Clear explanation'],
@@ -486,7 +519,13 @@ export const taxonomySeeds: TaxonomySeed[] = [
     sort: index + 1,
     metadata: { isNewToUk },
   })),
-  ...pair(TaxonomyKind.INTEREST, interests),
+  ...interests.map(([code, label, isActive], index) => ({
+    kind: TaxonomyKind.INTEREST,
+    code,
+    label,
+    sort: index + 1,
+    isActive,
+  })),
   ...languages.map(([code, label, isoCode], index) => ({
     kind: TaxonomyKind.LANGUAGE,
     code,

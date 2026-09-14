@@ -57,6 +57,17 @@ describe('taxonomy codes are the codes the API accepts', () => {
     expect(taxonomySeeds.some(term => term.code === 'HOLIDAY')).toBe(false);
   });
 
+  it('an interest can actually match something in the feed', () => {
+    // The ranker scores an item when `viewer.interests` contains the item's `categoryCode`, which
+    // is a community category. An interest vocabulary sharing no codes with that one is a
+    // personalisation signal that can never fire, whatever the member picks.
+    const interests = new Set(codesOf(TaxonomyKind.INTEREST));
+    const categories = codesOf(TaxonomyKind.COMMUNITY_CATEGORY);
+    const matchable = categories.filter(code => interests.has(code));
+
+    expect(matchable.length).toBeGreaterThanOrEqual(15);
+  });
+
   it('every code is UPPER_SNAKE, because a label is never a code', () => {
     const wrong = taxonomySeeds
       .filter(term => term.kind !== TaxonomyKind.COUNTRY_OF_ORIGIN)
