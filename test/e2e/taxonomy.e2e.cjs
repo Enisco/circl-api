@@ -82,6 +82,20 @@ async function makeAdmin(tag) {
     check(`feed accepts ${code}`, r.status === 200, { status: r.status, error: r.body?.error });
   }
 
+  // Every chip has to be able to come back with something. GUIDE is a FeedItemType the feed drops
+  // whether or not it is asked for, so offering it as a filter would be offering an empty screen.
+  check('no chip is offered that the feed can never return',
+    !codes(tax.feedTypes).includes('GUIDE'), codes(tax.feedTypes));
+
+  r = await api(member.token, 'GET', '/community/feed?limit=50&cityId=ANYWHERE');
+  const everything = r.body?.data ?? [];
+  r = await api(member.token, 'GET', `/community/feed?limit=50&cityId=ANYWHERE&types=${codes(tax.feedTypes).join(',')}`);
+  const chips = r.body?.data ?? [];
+  check('and "All" as an absent parameter is the same feed as all three chips',
+    everything.length === chips.length && !everything.some(item => item.type === 'GUIDE'),
+    { absent: everything.length, explicit: chips.length,
+      guides: everything.filter(i => i.type === 'GUIDE').length });
+
   for (const code of codes(tax.requestStatuses)) {
     r = await api(member.token, 'GET', `/community/requests?status=${code}&limit=1`);
     check(`request list accepts ${code}`, r.status === 200, { status: r.status, error: r.body?.error });

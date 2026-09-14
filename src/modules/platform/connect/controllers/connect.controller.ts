@@ -72,7 +72,10 @@ export class ConnectController {
     description:
       'One idempotent upsert, because setup and edit are the same screen. Languages, interests and ' +
       'heritage write through to the USER record rather than to a Connect-only copy — these also ' +
-      'shape the feed. Does not accept name, age as a number, avatar, country or journey stage.',
+      'shape the feed. Does not accept name, age as a number, avatar, country or journey stage.\n\n' +
+      '**A full replace, not a patch.** `typeCode` and `lookingFor` are required on every call, so ' +
+      'flipping `isVisible` on its own means resending the profile. `GET /connect/setup/prefill` ' +
+      'returns `prefill.isVisible` so the toggle can render without a second call.',
   })
   async upsert(@CurrentUserId() userId: string, @Body() dto: UpsertConnectProfileDto) {
     const data = await this.profiles.upsert(userId, dto);

@@ -132,7 +132,11 @@ export class RequestService {
     const categories = withoutAllCategories(query.categories ?? []);
 
     if (categories.length) {
-      const known = await this.taxonomy.knownCodes(TaxonomyKind.COMMUNITY_CATEGORY, categories);
+      const known = await this.taxonomy.knownCodes(
+        TaxonomyKind.COMMUNITY_CATEGORY,
+        categories,
+        'GET /community/requests',
+      );
 
       // An unknown code must narrow to nothing rather than being ignored: quietly returning everything would look like the filter did not apply.
       where.categoryCode = { in: known.length ? known : ['__NONE__'] };

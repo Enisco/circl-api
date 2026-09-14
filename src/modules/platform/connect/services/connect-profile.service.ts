@@ -123,6 +123,9 @@ export class ConnectProfileService {
         heritageTag: user.profile?.heritageTag ?? null,
         journeyStage: user.profile?.journeyStage ?? null,
         isVerified: user.trustChecks.length > 0,
+        // The visibility toggle's current state, so the setup screen renders it without a second
+        // call. False for a member with no profile: opting in is a deliberate act (3.1.2).
+        isVisible: profile?.isVisible ?? false,
       },
       asks,
       // Sent, not hardcoded, so the gate can change without a release.

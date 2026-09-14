@@ -78,6 +78,12 @@ export class FeedService {
     const blockedIds = await this.blocking.blockedUserIds(viewerId);
     const cityId = this.resolveCity(query.cityId, profile.cityId);
 
+    await this.taxonomy.noteUnknownCodes(
+      TaxonomyKind.COMMUNITY_CATEGORY,
+      withoutAllCategories(query.categories ?? []),
+      'GET /community/feed',
+    );
+
     // Selecting any category excludes UPDATE items, which have no category.
     const requestedTypes = new Set(query.types?.length ? query.types : Object.values(FeedItemType));
 

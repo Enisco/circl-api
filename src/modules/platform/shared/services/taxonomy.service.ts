@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { TaxonomyKind, TaxonomyTerm } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException } from '@/common';
@@ -15,6 +15,7 @@ export interface TermRecord {
 /** Reads the taxonomy and validates codes against it. */
 @Injectable()
 export class TaxonomyService {
+  private readonly logger = new Logger(TaxonomyService.name);
   private cache = new Map<TaxonomyKind, Map<string, TermRecord>>();
   private cachedVersion: string | null = null;
   private cacheLoadedAt = 0;
@@ -168,12 +169,52 @@ export class TaxonomyService {
   }
 
   /** Filters a list of codes down to the ones that exist, for a lenient query filter. */
-  async knownCodes(kind: TaxonomyKind, codes: string[]): Promise<string[]> {
+  async knownCodes(kind: TaxonomyKind, codes: string[], source?: string): Promise<string[]> {
     await this.ensureLoaded();
 
     const known = this.cache.get(kind);
+    const recognised = codes.filter(code => known?.has(code));
 
-    return codes.filter(code => known?.has(code));
+    if (recognised.length !== codes.length) {
+      this.noteUnknown(
+        kind,
+        codes.filter(code => !known?.has(code)),
+        source,
+      );
+    }
+
+    return recognised;
+  }
+
+  /**
+   * Says so when a filter arrives carrying something that is not in the vocabulary, without
+   * refusing it.
+   *
+   * A browse filter takes an unknown code as a filter that matches nothing, so a client sending a
+   * display label where a code belongs gets an empty screen and no error — which is how the
+   * marketplace shipped for months with every category chip returning nothing. Refusing it outright
+   * is the eventual answer; until the client has moved every picker over, this is how both sides
+   * can see which screens are still sending labels rather than working through them from memory.
+   */
+  async noteUnknownCodes(kind: TaxonomyKind, codes: string[], source: string): Promise<void> {
+    if (!codes.length) return;
+
+    await this.ensureLoaded();
+
+    const known = this.cache.get(kind);
+    const unknown = codes.filter(code => !known?.has(code));
+
+    this.noteUnknown(kind, unknown, source);
+  }
+
+  private noteUnknown(kind: TaxonomyKind, unknown: string[], source?: string): void {
+    if (!unknown.length) return;
+
+    this.logger.warn(
+      `Unknown ${kind} code${unknown.length > 1 ? 's' : ''} on ${source ?? 'a filter'}: ` +
+        unknown.map(code => JSON.stringify(code)).join(', ') +
+        ' — the filter matched nothing and said nothing.',
+    );
   }
 
   private kindLabel(kind: TaxonomyKind): string {

@@ -153,7 +153,11 @@ export class DiscoveryService {
     let nameFilters: Prisma.ConnectProfileWhereInput[] = [];
 
     if (query.languages?.length) {
-      const known = await this.taxonomy.knownCodes(TaxonomyKind.LANGUAGE, query.languages);
+      const known = await this.taxonomy.knownCodes(
+        TaxonomyKind.LANGUAGE,
+        query.languages,
+        'GET /connect/discover',
+      );
 
       // Matches if the profile speaks ANY of them.
       if (known.length) {
@@ -191,7 +195,11 @@ export class DiscoveryService {
     }
 
     if (query.heritage?.length) {
-      const known = await this.taxonomy.knownCodes(TaxonomyKind.HERITAGE_TAG, query.heritage);
+      const known = await this.taxonomy.knownCodes(
+        TaxonomyKind.HERITAGE_TAG,
+        query.heritage,
+        'GET /connect/discover',
+      );
 
       profileFilters.heritageTag = { in: known.length ? known : ['__NONE__'] };
     }

@@ -25,7 +25,6 @@ const sorted = (values: readonly string[]) => [...values].sort();
  */
 describe('taxonomy codes are the codes the API accepts', () => {
   it.each([
-    ['FEED_TYPE', TaxonomyKind.FEED_TYPE, Object.values(FeedItemType)],
     ['EXPERIENCE_LEVEL', TaxonomyKind.EXPERIENCE_LEVEL, Object.values(ExperienceLevel)],
     ['GENDER', TaxonomyKind.GENDER, Object.values(Gender)],
     ['URGENCY', TaxonomyKind.URGENCY, Object.values(BriefUrgency)],
@@ -33,6 +32,17 @@ describe('taxonomy codes are the codes the API accepts', () => {
     ['COMMERCE_SORT_OPTION', TaxonomyKind.COMMERCE_SORT_OPTION, COMMERCE_SORTS],
   ])('%s matches the values the server validates', (_name, kind, values) => {
     expect(codesOf(kind)).toEqual(sorted(values));
+  });
+
+  it('feed types are the three the feed can actually return', () => {
+    // GUIDE is a real FeedItemType and is deliberately not a chip: the feed drops guides whether
+    // or not they are asked for, because they have their own tab, so the chip could only ever come
+    // back empty. Every code here is still a FeedItemType.
+    const codes = codesOf(TaxonomyKind.FEED_TYPE);
+
+    expect(codes).toEqual(['OFFER', 'REQUEST', 'UPDATE']);
+    expect(codes.every(code => (Object.values(FeedItemType) as string[]).includes(code))).toBe(true);
+    expect(codes).not.toContain(FeedItemType.GUIDE);
   });
 
   it('request statuses are the three the endpoint takes, not all five states', () => {

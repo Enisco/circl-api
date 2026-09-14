@@ -110,7 +110,14 @@ export class BrowseService {
 
     const category = query.category && !isAllCategories(query.category) ? query.category : null;
 
-    if (category) where.categories = { some: { code: category } };
+    if (category) {
+      where.categories = { some: { code: category } };
+      await this.taxonomy.noteUnknownCodes(
+        TaxonomyKind.PROFESSION,
+        [category],
+        'GET /professionals',
+      );
+    }
 
     const requested = query.cityId ?? (query.nearMe ? null : viewerCityId);
     const anchorCityId = requested && requested !== 'ANYWHERE' ? requested : null;

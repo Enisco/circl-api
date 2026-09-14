@@ -25,6 +25,8 @@ const dobFor = years => {
   let r = await api(ada.token, 'GET', '/connect/setup/prefill');
   check('prefill → 200', r.status === 200, r.body?.error);
   check('profile null before setup', r.body?.data?.profile === null);
+  check('and the visibility toggle reads off, because opting in is a deliberate act',
+    r.body?.data?.prefill?.isVisible === false, r.body?.data?.prefill?.isVisible);
   check('name and city prefilled from the user', r.body?.data?.prefill?.displayName === 'E2E ada' && r.body?.data?.prefill?.cityId === 'MANCHESTER', r.body?.data?.prefill);
   check('interests prefilled from onboarding', r.body?.data?.prefill?.interests?.includes('FOOD_COOKING'), r.body?.data?.prefill?.interests);
   check('journeyStage read, never re-asked', r.body?.data?.prefill?.journeyStage === 'JUST_ARRIVED');
@@ -52,6 +54,10 @@ const dobFor = years => {
     heritageTag: 'WEST_AFRICAN',
   });
   check('create profile → 200', r.status === 200, r.body?.error);
+
+  const prefilled = await api(ada.token, 'GET', '/connect/setup/prefill');
+  check('the setup screen reads the visibility toggle without a second call',
+    prefilled.body?.data?.prefill?.isVisible === true, prefilled.body?.data?.prefill?.isVisible);
   check('age derived from date of birth', r.body?.data?.age === 31, r.body?.data?.age);
   check('type is {code,label}', r.body?.data?.type?.code === 'LANGUAGE_EXCHANGE' && !!r.body?.data?.type?.label);
   check('languages rendered as terms', r.body?.data?.languages?.some(l => l.code === 'YORUBA' && l.label === 'Yoruba'), r.body?.data?.languages);

@@ -196,13 +196,21 @@ export class CommerceBrowseService {
     if (query.openNow) where.status = StoreStatus.OPEN;
 
     if (query.categories?.length) {
-      const known = await this.taxonomy.knownCodes(TaxonomyKind.ITEM_CATEGORY, query.categories);
+      const known = await this.taxonomy.knownCodes(
+        TaxonomyKind.ITEM_CATEGORY,
+        query.categories,
+        'GET /commerce/stores',
+      );
 
       and.push({ categories: { some: { code: { in: known.length ? known : ['__NONE__'] } } } });
     }
 
     if (query.heritage?.length) {
-      const known = await this.taxonomy.knownCodes(TaxonomyKind.HERITAGE_TAG, query.heritage);
+      const known = await this.taxonomy.knownCodes(
+        TaxonomyKind.HERITAGE_TAG,
+        query.heritage,
+        'GET /commerce/stores',
+      );
 
       and.push({ heritageTags: { some: { code: { in: known.length ? known : ['__NONE__'] } } } });
     }
@@ -265,8 +273,18 @@ export class CommerceBrowseService {
 
     const categories = withoutAllCategories(query.categories ?? []);
 
+    await this.taxonomy.noteUnknownCodes(
+      TaxonomyKind.ITEM_CATEGORY,
+      categories,
+      'GET /commerce/items',
+    );
+
     if (categories.length) {
-      const known = await this.taxonomy.knownCodes(TaxonomyKind.ITEM_CATEGORY, categories);
+      const known = await this.taxonomy.knownCodes(
+        TaxonomyKind.ITEM_CATEGORY,
+        categories,
+        'GET /commerce/items',
+      );
 
       where.categoryCode = { in: known.length ? known : ['__NONE__'] };
     }
@@ -288,7 +306,11 @@ export class CommerceBrowseService {
     if (query.openNow) storeFilter.status = StoreStatus.OPEN;
 
     if (query.heritage?.length) {
-      const known = await this.taxonomy.knownCodes(TaxonomyKind.HERITAGE_TAG, query.heritage);
+      const known = await this.taxonomy.knownCodes(
+        TaxonomyKind.HERITAGE_TAG,
+        query.heritage,
+        'GET /commerce/items',
+      );
 
       storeFilter.heritageTags = { some: { code: { in: known.length ? known : ['__NONE__'] } } };
     }

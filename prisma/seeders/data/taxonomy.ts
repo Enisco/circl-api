@@ -427,14 +427,17 @@ const professionalSortOptions: Array<[string, string]> = [
 
 /**
  * The feed filter row. The client used to pick these by array index, so a reorder filtered for
- * whatever happened to be third. `types` is omitted entirely for "All" — there is no ALL member of
+ * whatever happened to be third. "All" is the absence of `types`; there is no ALL member of
  * FeedItemType and sending one would be a 422.
+ *
+ * GUIDE is deliberately not here. It is a real FeedItemType, but the feed drops guides whether or
+ * not they are asked for — they have their own tab — so a Guides chip would be a filter that can
+ * only ever come back empty.
  */
 const feedTypes: Array<[string, string]> = [
   ['UPDATE', 'Posts'],
   ['REQUEST', 'Requests'],
   ['OFFER', 'Services'],
-  ['GUIDE', 'Guides'],
 ];
 
 /** What `GET /commerce/stores?sort=` and `GET /commerce/items?sort=` accept. */
