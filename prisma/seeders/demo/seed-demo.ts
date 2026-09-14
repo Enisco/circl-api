@@ -195,7 +195,10 @@ const seedConnectExtras = async (ctx: DemoSeedContext) => {
         dateOfBirth: new Date(`${extra.birthYear}-05-14T00:00:00.000Z`),
         dateOfBirthSetAt: joined,
         onboardingCompleted: true,
-        interests: ['MAKE_FRIENDS'] as Prisma.InputJsonValue,
+        // INTEREST codes, not community categories: MAKE_FRIENDS is a category, and a member
+        // carrying it here cannot save a Connect profile at all — the setup form hands the value
+        // back and the write refuses it, with nothing on screen they can change.
+        interests: ['FOOD_COOKING', 'TRAVEL'] as Prisma.InputJsonValue,
         languages: ['ENGLISH'] as Prisma.InputJsonValue,
       },
     });

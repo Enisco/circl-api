@@ -382,6 +382,51 @@ async function objectExists(url) {
     categories.find(c => c.code === 'COMPLIANCE'),
   );
 
+  console.log('\n── Every stored code belongs to its own vocabulary ─────────');
+
+  // A seeded member carrying a community category where an interest belongs cannot save a Connect
+  // profile at all: the setup form hands the value straight back and the write refuses it, with
+  // nothing on screen they can change. The seeder writes with Prisma, so it is the one path that
+  // skips the validation every endpoint applies.
+  const vocabularies = {
+    interests: 'INTEREST',
+    languages: 'LANGUAGE',
+    heritageTag: 'HERITAGE_TAG',
+    journeyStage: 'JOURNEY_STAGE',
+    countryOfOrigin: 'COUNTRY_OF_ORIGIN',
+  };
+
+  const known = {};
+
+  for (const [field, kind] of Object.entries(vocabularies)) {
+    const terms = await prisma.taxonomyTerm.findMany({ where: { kind }, select: { code: true } });
+
+    known[field] = new Set(terms.map(term => term.code));
+  }
+
+  const profiles = await prisma.userProfile.findMany({
+    select: {
+      userId: true, interests: true, languages: true,
+      heritageTag: true, journeyStage: true, countryOfOrigin: true,
+    },
+  });
+
+  const strays = [];
+
+  for (const profile of profiles) {
+    for (const field of Object.keys(vocabularies)) {
+      const value = profile[field];
+      const values = Array.isArray(value) ? value : value === null ? [] : [value];
+
+      for (const entry of values) {
+        if (!known[field].has(entry)) strays.push(`${field}=${entry}`);
+      }
+    }
+  }
+
+  check('no profile holds a code from the wrong list', strays.length === 0,
+    [...new Set(strays)].slice(0, 8));
+
   await prisma.user.deleteMany({ where: { id: admin.id } });
   await finish();
 })();

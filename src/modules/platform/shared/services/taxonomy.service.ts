@@ -13,6 +13,17 @@ export interface TermRecord {
 }
 
 /** Reads the taxonomy and validates codes against it. */
+/** Punctuation and case are not the difference between two codes: "Mid-level" and MID_LEVEL match. */
+const normalise = (input: string) =>
+  input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+
+/** Code or label, compared the way `resolveCode` compares them. */
+const matches = (term: TermRecord, value: string): boolean =>
+  normalise(term.code) === normalise(value) || normalise(term.label) === normalise(value);
+
 @Injectable()
 export class TaxonomyService {
   private readonly logger = new Logger(TaxonomyService.name);
@@ -129,15 +140,8 @@ export class TaxonomyService {
 
     if (terms.has(trimmed)) return trimmed;
 
-    const normalise = (input: string) =>
-      input
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '');
-    const needle = normalise(trimmed);
-
     for (const term of terms.values()) {
-      if (normalise(term.code) === needle || normalise(term.label) === needle) return term.code;
+      if (matches(term, trimmed)) return term.code;
     }
 
     return null;
@@ -148,14 +152,30 @@ export class TaxonomyService {
     const term = await this.get(kind, code);
 
     if (!term || !term.isActive) {
-      throw ApiException.unprocessable(
-        ApiErrorCode.UNKNOWN_TAXONOMY_CODE,
-        `"${code}" is not a valid ${this.kindLabel(kind)}.`,
-        { details: [{ field, message: `"${code}" is not a valid ${this.kindLabel(kind)}.` }] },
-      );
+      const message = `"${code}" is not a valid ${this.kindLabel(kind)}.${this.livesIn(kind, code)}`;
+
+      throw ApiException.unprocessable(ApiErrorCode.UNKNOWN_TAXONOMY_CODE, message, {
+        details: [{ field, message }],
+      });
     }
 
     return term;
+  }
+
+  /**
+   * Where the value actually belongs, when it belongs somewhere. A picker filled from the wrong
+   * list sends a perfectly real code and gets told only that it is not valid here, which is true
+   * and useless. Naming the vocabulary it came from turns the refusal into the fix.
+   */
+  private livesIn(kind: TaxonomyKind, code: string): string {
+    const homes = [...this.cache.entries()]
+      .filter(([other]) => other !== kind)
+      .filter(([, terms]) => [...terms.values()].some(term => matches(term, code)))
+      .map(([other]) => this.kindLabel(other));
+
+    if (!homes.length) return '';
+
+    return ` That is a ${homes.join(' and a ')} — the picker is reading the wrong list.`;
   }
 
   async assertAllValid(kind: TaxonomyKind, codes: string[], field: string): Promise<TermRecord[]> {
