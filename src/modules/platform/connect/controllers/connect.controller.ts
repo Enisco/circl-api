@@ -43,7 +43,13 @@ export class ConnectController {
     summary: 'Everything the setup form already knows',
     description:
       'Call before rendering the form. `asks` lists the fields it must collect — when the member ' +
-      'already has a date of birth, DATE_OF_BIRTH is absent and the form shows no age input at all.',
+      'already has a date of birth, DATE_OF_BIRTH is absent and the form shows no age input at ' +
+      'all.\n\n' +
+      '**`prefill.isVisible` is what the toggle should show**, which for a member with no profile ' +
+      'yet is what the server will do if they never touch it: `true`. Not the same question as ' +
+      '`GET /connect/me`\u2019s `isVisible`, which is a statement of fact about now and is `false` ' +
+      'for somebody with no profile, because they are not discoverable. Render the switch from ' +
+      'this one; a screen that hardcodes its own default agrees with the server only by luck.',
   })
   async setupPrefill(@CurrentUserId() userId: string) {
     const data = await this.profiles.setupPrefill(userId);
@@ -57,7 +63,11 @@ export class ConnectController {
     summary: 'My Connect profile',
     description:
       '`hasProfile: false` with `profile: null` is a normal response, not a 404 — it is what the ' +
-      'reciprocity gate renders against. `pendingRequestCount` backs the discovery banner.',
+      'reciprocity gate renders against. `pendingRequestCount` backs the discovery banner.\n\n' +
+      '**`isVisible` here is a statement of fact about now**, so it is `false` for a member with ' +
+      'no profile: they are not discoverable, because there is nothing to discover. The setup ' +
+      'form\u2019s toggle reads `prefill.isVisible` from `GET /connect/setup/prefill` instead, ' +
+      'which answers what the server will do if the member never touches it.',
   })
   async me(@CurrentUserId() userId: string) {
     const data = await this.profiles.me(userId);

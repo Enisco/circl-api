@@ -27,6 +27,13 @@ const dobFor = years => {
   check('profile null before setup', r.body?.data?.profile === null);
   check('and the visibility toggle starts on, where the server will actually leave them',
     r.body?.data?.prefill?.isVisible === true, r.body?.data?.prefill?.isVisible);
+
+  // Same name, different question. The prefill says what the toggle should show; this says whether
+  // they are discoverable right now, and somebody with no profile is not.
+  const before = await api(ada.token, 'GET', '/connect/me');
+  check('while GET /connect/me reports the fact, not the default',
+    before.body?.data?.hasProfile === false && before.body?.data?.isVisible === false,
+    { hasProfile: before.body?.data?.hasProfile, isVisible: before.body?.data?.isVisible });
   check('name and city prefilled from the user', r.body?.data?.prefill?.displayName === 'E2E ada' && r.body?.data?.prefill?.cityId === 'MANCHESTER', r.body?.data?.prefill);
   check('interests prefilled from onboarding', r.body?.data?.prefill?.interests?.includes('FOOD_COOKING'), r.body?.data?.prefill?.interests);
   check('journeyStage read, never re-asked', r.body?.data?.prefill?.journeyStage === 'JUST_ARRIVED');
