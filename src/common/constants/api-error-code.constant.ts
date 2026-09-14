@@ -12,6 +12,9 @@ export const ApiErrorCode = {
   /** A deleted post returns 404 with this rather than disappearing from a list silently, so the client can render a tombstone where the user tapped (0.4). */
   RESOURCE_DELETED: 'RESOURCE_DELETED',
 
+  /** The first call with this `Idempotency-Key` has not finished yet, so this one is a duplicate of something already in flight (0.12). Carries no result: there is not one yet. */
+  IDEMPOTENT_REQUEST_IN_PROGRESS: 'IDEMPOTENT_REQUEST_IN_PROGRESS',
+
   // ─── Account deletion (0.15) ───────────────────────────────────────────────
   ACCOUNT_ALREADY_DELETED: 'ACCOUNT_ALREADY_DELETED',
   INVALID_CODE: 'INVALID_CODE',

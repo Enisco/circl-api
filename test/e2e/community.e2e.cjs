@@ -45,6 +45,31 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   check('and the key is on record by the time the caller holds the response',
     record?.responseBody?.data?.id === reqId, record?.responseBody?.data?.id ?? record ?? null);
 
+  // Two genuinely in flight at once: a member tapping Post again while the first is still running.
+  const twice = { categoryCode: 'VISA_DOCS', cityId: 'MANCHESTER',
+    title: 'Two taps on the same post button',
+    description: 'Sent twice at the same instant from one device, which is what an impatient tap looks like.' };
+  const [first, second] = await Promise.all([
+    api(alice.token, 'POST', '/community/requests', twice, { 'Idempotency-Key': 'e2e-race-1' }),
+    api(alice.token, 'POST', '/community/requests', twice, { 'Idempotency-Key': 'e2e-race-1' }),
+  ]);
+  const won = [first, second].find(r => r.status === 201);
+  const refused = [first, second].find(r => r.status === 409);
+  check('one of two simultaneous attempts is refused, not doubled',
+    !!won && !!refused, [first.status, second.status]);
+  check('and says which refusal it is',
+    refused?.body?.error?.code === 'IDEMPOTENT_REQUEST_IN_PROGRESS', refused?.body?.error);
+  check('carrying no result, because there is not one yet', refused?.body?.data === null, refused?.body?.data);
+  check('only one request was made',
+    (await prisma.communityRequest.count({ where: { authorId: alice.id, title: twice.title } })) === 1);
+
+  const afterwards = await api(alice.token, 'POST', '/community/requests', twice, { 'Idempotency-Key': 'e2e-race-1' });
+  check('and a retry once it has finished replays rather than refusing',
+    afterwards.status === 201 && afterwards.body?.data?.id === won?.body?.data?.id,
+    { status: afterwards.status, id: afterwards.body?.data?.id });
+  check('still one request', (await prisma.communityRequest.count({ where: { authorId: alice.id, title: twice.title } })) === 1);
+  created.requests.push(won?.body?.data?.id);
+
   r = await api(alice.token, 'POST', '/community/requests', {
     categoryCode: 'VISA_DOCS', title: 'Short', cityId: 'MANCHESTER',
   });

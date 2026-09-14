@@ -64,11 +64,21 @@ model IdempotencyRecord {
   userId       String   @map("user_id")
   key          String   @map("key")
   endpoint     String   @map("endpoint")
-  requestHash  String   @map("request_hash")
-  statusCode   Int      @map("status_code")
-  responseBody Json     @map("response_body")
-  expiresAt    DateTime @map("expires_at") @db.Timestamptz
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  requestHash String @map("request_hash")
+
+  /// Null until the call finishes. A row with no status is a reservation: the key is taken and the
+  /// work is still running, which is how a duplicate arriving mid-flight is told apart from a
+  /// retry of something already answered (0.12).
+  statusCode   Int?  @map("status_code")
+  responseBody Json? @map("response_body")
+
+  /// When the attempt now holding this key began. A process that dies mid-request would otherwise
+  /// hold the key for the whole 24 hours; an unfinished reservation older than a few minutes is
+  /// taken over instead.
+  startedAt DateTime @default(now()) @map("started_at") @db.Timestamptz
+
+  expiresAt DateTime @map("expires_at") @db.Timestamptz
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   @@unique([userId, key, endpoint])
   @@index([expiresAt])
