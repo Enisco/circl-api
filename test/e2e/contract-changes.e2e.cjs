@@ -137,6 +137,51 @@ const { api, check, finish, makeUser, prisma, sweep } = require('./harness.cjs')
     return row && !('connectCountryOfOrigin' in profile);
   })(), Object.keys(profile));
 
+  console.log('\n── 0.12 A key on the two creates that already refuse a second ──');
+
+  // The argument the mobile team changed their mind on: a member whose save timed out and who taps
+  // again should get their shop back, not an error for something that worked.
+  const shopkeeper = await makeUser('cc-shop');
+  const shop = { name: 'Ada Retry Grocers', type: 'LOCAL', area: 'Longsight',
+    description: 'A shop created twice on purpose, to see which of the two answers comes back.' };
+
+  r = await api(shopkeeper.token, 'POST', '/commerce/stores', shop, { 'Idempotency-Key': 'cc-shop-1' });
+  const shopId = r.body?.data?.id;
+  check('store create → 201', r.status === 201 && !!shopId, r.body?.error);
+
+  r = await api(shopkeeper.token, 'POST', '/commerce/stores', shop, { 'Idempotency-Key': 'cc-shop-1' });
+  check('the same key replays the shop rather than refusing it',
+    r.status === 201 && r.body?.data?.id === shopId, { status: r.status, error: r.body?.error?.code });
+
+  r = await api(shopkeeper.token, 'POST', '/commerce/stores', shop, { 'Idempotency-Key': 'cc-shop-2' });
+  check('but a different key is a different intention, and one store per member still holds',
+    r.status === 409 && r.body?.error?.code === 'STORE_ALREADY_EXISTS', r.body?.error?.code);
+  check('so there is still one shop',
+    (await prisma.store.count({ where: { ownerId: shopkeeper.id } })) === 1);
+
+  const fitter = await makeUser('cc-fit', { bio: 'Eleven years fitting kitchens.' });
+  const fitting = { categoryCodes: ['TRADES_REPAIRS'], professionTitle: 'Kitchen Fitter',
+    experienceLevel: 'EXPERT', consentAccepted: true,
+    about: 'A listing created twice at once, to see whether both of them go through.' };
+  const idOf = row => row?.body?.data?.listing?.id ?? row?.body?.data?.id;
+
+  const [one, two] = await Promise.all([
+    api(fitter.token, 'POST', '/professionals/listings', fitting, { 'Idempotency-Key': 'cc-list-1' }),
+    api(fitter.token, 'POST', '/professionals/listings', fitting, { 'Idempotency-Key': 'cc-list-1' }),
+  ]);
+  const winner = [one, two].find(row => row.status === 201);
+  check('two listing creates at once give one listing and one refusal',
+    !!winner && [one, two].some(row => row.status === 409), [one.status, two.status]);
+  check('named, so it is not inferred from the status',
+    [one, two].find(row => row.status === 409)?.body?.error?.code === 'IDEMPOTENT_REQUEST_IN_PROGRESS',
+    [one, two].find(row => row.status === 409)?.body?.error);
+  check('only one was created',
+    (await prisma.professionalListing.count({ where: { userId: fitter.id } })) === 1);
+
+  r = await api(fitter.token, 'POST', '/professionals/listings', fitting, { 'Idempotency-Key': 'cc-list-1' });
+  check('and once it has finished, the same key replays it',
+    r.status === 201 && idOf(r) === idOf(winner), { status: r.status, error: r.body?.error?.code });
+
   await sweep();
   await finish();
 })();
