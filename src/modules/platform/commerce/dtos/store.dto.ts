@@ -32,6 +32,18 @@ const CsvArray = () =>
       : value,
   );
 
+/** The sort keys marketplace browse accepts, and the codes `taxonomy.commerceSortOptions` carries. */
+export const COMMERCE_SORTS = [
+  'RECOMMENDED',
+  'NEAREST',
+  'RATING',
+  'NEWEST',
+  'PRICE_LOW',
+  'PRICE_HIGH',
+] as const;
+
+export type CommerceSort = (typeof COMMERCE_SORTS)[number];
+
 export class OpeningHoursDto {
   @ApiProperty({ enum: Weekday })
   @IsEnum(Weekday)
@@ -432,12 +444,12 @@ export class BrowseCommerceDto extends PageOptionsDto {
   cityId?: string;
 
   @ApiPropertyOptional({
-    enum: ['RECOMMENDED', 'NEAREST', 'RATING', 'NEWEST', 'PRICE_LOW', 'PRICE_HIGH'],
+    enum: COMMERCE_SORTS,
     default: 'RECOMMENDED',
   })
-  @IsIn(['RECOMMENDED', 'NEAREST', 'RATING', 'NEWEST', 'PRICE_LOW', 'PRICE_HIGH'])
+  @IsIn(COMMERCE_SORTS)
   @IsOptional()
-  sort?: 'RECOMMENDED' | 'NEAREST' | 'RATING' | 'NEWEST' | 'PRICE_LOW' | 'PRICE_HIGH';
+  sort?: CommerceSort;
 
   @ApiPropertyOptional({
     description:

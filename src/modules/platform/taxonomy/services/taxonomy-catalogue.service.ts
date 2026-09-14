@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { TaxonomyKind } from '@prisma/client';
+import { createHash } from 'crypto';
 import { CityService, TaxonomyService, TermRecord } from '../../shared';
 
 export interface CatalogueTerm {
@@ -37,6 +38,9 @@ export interface TaxonomyCatalogue {
   spokenLanguages: CatalogueTerm[];
   connectAgeBands: CatalogueTerm[];
   professionalSortOptions: CatalogueTerm[];
+  feedTypes: CatalogueTerm[];
+  requestStatuses: CatalogueTerm[];
+  commerceSortOptions: CatalogueTerm[];
   limits: TaxonomyLimits;
   filters: {
     verification: { isActive: boolean };
@@ -80,6 +84,18 @@ export class TaxonomyCatalogueService {
   ) {}
 
   async build(): Promise<TaxonomyCatalogue> {
+    const catalogue = await this.assemble();
+
+    // A hash of everything served, rather than a stamp somebody has to remember to bump. The
+    // stamp only moved on an admin write, so a city added in a deploy, or a limit changed in this
+    // file, left every warm client holding an ETag that said nothing had changed.
+    return {
+      ...catalogue,
+      version: createHash('sha256').update(JSON.stringify(catalogue)).digest('hex').slice(0, 16),
+    };
+  }
+
+  private async assemble(): Promise<TaxonomyCatalogue> {
     const [
       version,
       cities,
@@ -106,6 +122,9 @@ export class TaxonomyCatalogueService {
       urgencyOptions,
       connectAgeBands,
       professionalSortOptions,
+      feedTypes,
+      requestStatuses,
+      commerceSortOptions,
     ] = await Promise.all([
       this.taxonomy.version(),
       this.cities.list(),
@@ -133,9 +152,14 @@ export class TaxonomyCatalogueService {
       this.taxonomy.list(TaxonomyKind.URGENCY, false),
       this.taxonomy.list(TaxonomyKind.CONNECT_AGE_BAND, false),
       this.taxonomy.list(TaxonomyKind.PROFESSIONAL_SORT_OPTION, false),
+      this.taxonomy.list(TaxonomyKind.FEED_TYPE, false),
+      this.taxonomy.list(TaxonomyKind.REQUEST_STATUS, false),
+      this.taxonomy.list(TaxonomyKind.COMMERCE_SORT_OPTION, false),
     ]);
 
     return {
+      // Replaced by the content hash in `build`. Kept in the payload so a change to the terms
+      // themselves still moves it even if the rest of the file were somehow identical.
       version: version.toISOString(),
       // `label` is what the client's CityRef parses; `name` stays for callers already reading it.
       cities: cities.map(city => ({
@@ -171,6 +195,10 @@ export class TaxonomyCatalogueService {
       privateHelpCategories: guardCategories.map(flatten),
       connectAgeBands: connectAgeBands.map(flatten),
       professionalSortOptions: professionalSortOptions.map(flatten),
+      // The filter row the client used to select by array index (§1).
+      feedTypes: feedTypes.map(flatten),
+      requestStatuses: requestStatuses.map(flatten),
+      commerceSortOptions: commerceSortOptions.map(flatten),
       limits: TAXONOMY_LIMITS,
       filters: {
         // D13: nothing carries a check other than EMAIL this version, so the client hides the filter row.

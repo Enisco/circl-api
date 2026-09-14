@@ -123,6 +123,11 @@ enum TaxonomyKind {
   PRIVATE_HELP_CATEGORY
   CONNECT_AGE_BAND
   PROFESSIONAL_SORT_OPTION
+  // The two the client was choosing by position in a hardcoded list, which filtered for whatever
+  // happened to be third after somebody reordered the row.
+  FEED_TYPE
+  REQUEST_STATUS
+  COMMERCE_SORT_OPTION
 }
 
 enum DataExportStatus {

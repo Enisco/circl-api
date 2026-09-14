@@ -26,6 +26,18 @@ const CsvArray = () =>
       : value,
   );
 
+/** The sort keys browse accepts, and the codes `taxonomy.professionalSortOptions` carries. One list, so a chip the app renders is always one the endpoint takes. */
+export const PROFESSIONAL_SORTS = [
+  'RECOMMENDED',
+  'RATING',
+  'REVIEWS',
+  'NEAREST',
+  'PRICE',
+  'RESPONSE',
+] as const;
+
+export type ProfessionalSort = (typeof PROFESSIONAL_SORTS)[number];
+
 export class BrowseProfessionalsDto extends PageOptionsDto {
   @ApiPropertyOptional({ description: 'A profession code. `All` means every category.' })
   @Trim()
@@ -140,13 +152,10 @@ export class BrowseProfessionalsDto extends PageOptionsDto {
   @IsOptional()
   freeConsultation?: boolean;
 
-  @ApiPropertyOptional({
-    enum: ['RECOMMENDED', 'RATING', 'REVIEWS', 'NEAREST', 'PRICE', 'RESPONSE'],
-    default: 'RECOMMENDED',
-  })
-  @IsIn(['RECOMMENDED', 'RATING', 'REVIEWS', 'NEAREST', 'PRICE', 'RESPONSE'])
+  @ApiPropertyOptional({ enum: PROFESSIONAL_SORTS, default: 'RECOMMENDED' })
+  @IsIn(PROFESSIONAL_SORTS)
   @IsOptional()
-  sort?: 'RECOMMENDED' | 'RATING' | 'REVIEWS' | 'NEAREST' | 'PRICE' | 'RESPONSE';
+  sort?: ProfessionalSort;
 }
 
 /** The window the slot picker asks for (G5). */

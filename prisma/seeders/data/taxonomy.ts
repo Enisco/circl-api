@@ -425,6 +425,35 @@ const professionalSortOptions: Array<[string, string]> = [
   ['RESPONSE', 'Fastest to reply'],
 ];
 
+/**
+ * The feed filter row. The client used to pick these by array index, so a reorder filtered for
+ * whatever happened to be third. `types` is omitted entirely for "All" — there is no ALL member of
+ * FeedItemType and sending one would be a 422.
+ */
+const feedTypes: Array<[string, string]> = [
+  ['UPDATE', 'Posts'],
+  ['REQUEST', 'Requests'],
+  ['OFFER', 'Services'],
+  ['GUIDE', 'Guides'],
+];
+
+/** What `GET /commerce/stores?sort=` and `GET /commerce/items?sort=` accept. */
+const commerceSortOptions: Array<[string, string]> = [
+  ['RECOMMENDED', 'Recommended'],
+  ['NEAREST', 'Nearest'],
+  ['RATING', 'Highest rated'],
+  ['NEWEST', 'Newest'],
+  ['PRICE_LOW', 'Price: low to high'],
+  ['PRICE_HIGH', 'Price: high to low'],
+];
+
+/** What `GET /community/requests?status=` accepts. CLOSED covers resolved, closed and expired. */
+const requestStatuses: Array<[string, string]> = [
+  ['ALL', 'All'],
+  ['OPEN', 'Open'],
+  ['CLOSED', 'Closed'],
+];
+
 const pair = (kind: TaxonomyKind, rows: Array<[string, string]>): TaxonomySeed[] =>
   rows.map(([code, label], index) => ({ kind, code, label, sort: index + 1 }));
 
@@ -515,4 +544,7 @@ export const taxonomySeeds: TaxonomySeed[] = [
     metadata: { minAge, maxAge },
   })),
   ...pair(TaxonomyKind.PROFESSIONAL_SORT_OPTION, professionalSortOptions),
+  ...pair(TaxonomyKind.FEED_TYPE, feedTypes),
+  ...pair(TaxonomyKind.REQUEST_STATUS, requestStatuses),
+  ...pair(TaxonomyKind.COMMERCE_SORT_OPTION, commerceSortOptions),
 ];
