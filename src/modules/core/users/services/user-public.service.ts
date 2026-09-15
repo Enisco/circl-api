@@ -110,7 +110,7 @@ export class UserPublicService {
     store?: { id: string; name: string };
     connect?: { id: string; type: string };
   }> {
-    const [listing, store, connect, viewerConnect] = await Promise.all([
+    const [listing, store, connect] = await Promise.all([
       this.database.professionalListing.findFirst({
         where: { userId: subjectId, deletedAt: null, verificationStatus: { not: 'DRAFT' } },
         select: { id: true, professionTitle: true },
@@ -123,23 +123,19 @@ export class UserPublicService {
         where: { userId: subjectId },
         select: { id: true, typeCode: true, isVisible: true, deletedAt: true },
       }),
-      isOwner
-        ? Promise.resolve(null)
-        : this.database.connectProfile.findUnique({
-            where: { userId: viewerId },
-            select: { deletedAt: true },
-          }),
     ]);
 
     // Their own profile is theirs to see whether or not they are in discovery: that is ownership,
     // not visibility.
+    //
+    // The two questions the rule needs about the viewer are asked only when there is something to
+    // ask them about. Most members are not on Connect, and this screen is opened from every author
+    // link in the feed, so the common case should not pay for a gate with nothing behind it.
     const showConnect = isOwner
       ? connect !== null && connect.deletedAt === null
-      : connectVisibility({
-          viewerHasProfile: viewerConnect !== null && viewerConnect.deletedAt === null,
-          target: connect,
-          isBlockedEitherWay: await this.blocking.isBlockedEitherWay(viewerId, subjectId),
-        }) === 'VISIBLE';
+      : connect !== null &&
+        connect.deletedAt === null &&
+        (await this.canSeeConnect(viewerId, subjectId, connect));
 
     return {
       // Both public by their nature and already reachable by search, so no rule beyond existing.
@@ -147,6 +143,29 @@ export class UserPublicService {
       ...(store ? { store: { id: store.id, name: store.name } } : {}),
       ...(showConnect && connect ? { connect: { id: connect.id, type: connect.typeCode } } : {}),
     };
+  }
+
+  /** Discovery's own question, asked only once the subject turns out to have a profile. */
+  private async canSeeConnect(
+    viewerId: string,
+    subjectId: string,
+    target: { isVisible: boolean; deletedAt: Date | null },
+  ): Promise<boolean> {
+    const [viewerConnect, isBlockedEitherWay] = await Promise.all([
+      this.database.connectProfile.findUnique({
+        where: { userId: viewerId },
+        select: { deletedAt: true },
+      }),
+      this.blocking.isBlockedEitherWay(viewerId, subjectId),
+    ]);
+
+    return (
+      connectVisibility({
+        viewerHasProfile: viewerConnect !== null && viewerConnect.deletedAt === null,
+        target,
+        isBlockedEitherWay,
+      }) === 'VISIBLE'
+    );
   }
 
   private async existingThread(viewerId: string, subjectId: string): Promise<string | null> {
