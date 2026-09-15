@@ -5,6 +5,7 @@ import { buildPageMeta, toJsonOrUndefined } from '@/common';
 import {
   authorSelect,
   BadgeService,
+  countryNameOf,
   displayNameOf,
   MediaService,
   toAuthorView,
@@ -110,6 +111,33 @@ export class NotificationFeedService {
     if (!actor || actor.isAnonymised) return 'Someone';
 
     return displayNameOf(actor.firstName, actor.lastName) || 'Someone';
+  }
+
+  /**
+   * Where somebody is, and where they are from: "Liverpool · From Somalia".
+   *
+   * The two things a member weighs before answering a stranger, and the two the card shows anyway —
+   * so a notification that names neither makes them open the app to learn what the row could have
+   * told them. Each half is dropped when it is not known, and `OTHER` is a member who would rather
+   * not say, which is an answer rather than a gap.
+   */
+  async actorPlace(userId: string): Promise<string | null> {
+    const actor = await this.database.user.findUnique({
+      where: { id: userId },
+      select: {
+        isAnonymised: true,
+        profile: { select: { countryOfOrigin: true, city: { select: { name: true } } } },
+      },
+    });
+
+    if (!actor || actor.isAnonymised) return null;
+
+    const country = countryNameOf(actor.profile?.countryOfOrigin);
+
+    return (
+      [actor.profile?.city?.name, country ? `From ${country}` : null].filter(Boolean).join(' · ') ||
+      null
+    );
   }
 
   /** Records a notification without blocking or failing the caller. */

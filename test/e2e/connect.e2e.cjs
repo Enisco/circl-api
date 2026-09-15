@@ -222,6 +222,21 @@ const dobFor = years => {
   r = await api(mei.token, 'GET', '/connect/me');
   check('pendingRequestCount matches the banner', r.body?.data?.pendingRequestCount === 1, r.body?.data);
 
+  // The row has to answer "who, and should I?" without being opened. "Someone wants to connect"
+  // with an empty body made the member open the app to learn what the card already knew.
+  await new Promise(resolve => setTimeout(resolve, 800));
+
+  r = await api(mei.token, 'GET', '/notifications?limit=10');
+  const connectRow = (r.body?.data ?? []).find(row => row.kind === 'CONNECTION');
+
+  check('the request names who sent it', connectRow?.title === 'E2E ada wants to connect',
+    connectRow?.title);
+  check('and the body is where they are and where they are from',
+    connectRow?.body === 'Manchester · From Nigeria', connectRow?.body);
+  check('routed to the requests screen, not a profile',
+    connectRow?.route === '/connect/requests' && connectRow?.target?.type === 'CONNECT_REQUEST',
+    { route: connectRow?.route, target: connectRow?.target });
+
   r = await api(mei.token, 'GET', '/connect/requests?direction=RECEIVED');
   check('received list carries the other profile', r.body?.data?.[0]?.profile?.user?.id === ada.id, r.body?.data?.[0]);
   r = await api(ada.token, 'GET', '/connect/requests?direction=SENT');
@@ -230,6 +245,16 @@ const dobFor = years => {
   r = await api(mei.token, 'POST', `/connect/requests/${requestId}/accept`);
   check('accept → 200 with a conversationId', r.status === 200 && typeof r.body?.data?.conversationId === 'string', r.body);
   const conversationId = r.body?.data?.conversationId;
+
+  await new Promise(resolve => setTimeout(resolve, 800));
+
+  r = await api(ada.token, 'GET', '/notifications?limit=10');
+  const acceptedRow = (r.body?.data ?? []).find(row => row.kind === 'CONNECTION');
+
+  check('the acceptance names them too', acceptedRow?.title === 'E2E mei accepted your connection request',
+    acceptedRow?.title);
+  check('with the same two facts underneath, because it is the same kind',
+    typeof acceptedRow?.body === 'string' && acceptedRow.body.includes('·'), acceptedRow?.body);
 
   r = await api(ada.token, 'GET', `/connect/profiles/${mei.id}`);
   check('requestState CONNECTED after accept', r.body?.data?.viewer?.requestState === 'CONNECTED');

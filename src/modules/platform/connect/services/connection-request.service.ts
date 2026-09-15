@@ -148,14 +148,21 @@ export class ConnectionRequestService {
       },
     });
 
-    // Notifies the recipient.
+    // Notifies the recipient. Named and placed: deciding whether to answer a stranger is the whole
+    // of what this row is for, and "Someone wants to connect" asked them to open the app to find
+    // out who. The sender's name and city are already on the card either way.
+    const [sender, place] = await Promise.all([
+      this.notifications.actorName(userId),
+      this.notifications.actorPlace(userId),
+    ]);
+
     this.notifications.raise({
       userId: target.userId,
       actorId: userId,
       kind: NotificationKind.CONNECTION,
       categoryCode: 'CONNECTIONS',
-      title: 'Someone wants to connect',
-      body: null,
+      title: `${sender} wants to connect`,
+      body: place,
       route: '/connect/requests',
       target: { type: 'CONNECT_REQUEST', id: request.id },
     });
@@ -262,7 +269,10 @@ export class ConnectionRequestService {
 
     // The sender is told, unlike a decline, which stays silent by design (3.5.3). Without this the
     // only signal that somebody accepted is a conversation appearing in the inbox unannounced.
-    const actor = await this.notifications.actorName(userId);
+    const [actor, place] = await Promise.all([
+      this.notifications.actorName(userId),
+      this.notifications.actorPlace(userId),
+    ]);
 
     this.notifications.raise({
       userId: request.fromUserId,
@@ -270,7 +280,8 @@ export class ConnectionRequestService {
       kind: NotificationKind.CONNECTION,
       categoryCode: 'CONNECTIONS',
       title: `${actor} accepted your connection request`,
-      body: null,
+      // The same line as the request, because it is the same kind and the same two facts.
+      body: place,
       // Straight into the thread, which is the only thing there is to do next.
       route: `/messages/${conversationId}`,
       target: { type: 'CONVERSATION', id: conversationId },
