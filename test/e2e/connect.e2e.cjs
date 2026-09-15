@@ -130,6 +130,59 @@ const dobFor = years => {
     r.body?.data?.length > 0 && r.body.data.every(p => p.type.code === 'NETWORKING'),
     r.body?.data?.map(p => p.type?.code));
 
+  console.log('\n── 3.4 The three rules the filter row rests on ──────────────');
+
+  // 2.2: the count on the button and the grid under it describe one set. Age used to be applied
+  // after the query, so the count ignored it and a page of twenty could return seven.
+  const counted = async qs => {
+    const res = await api(ada.token, 'GET', `/connect/profiles?limit=50&cityId=ANYWHERE${qs}`);
+
+    return { rows: (res.body?.data ?? []).length, total: res.body?.meta?.totalCount,
+      languages: res.body?.meta?.facets?.languages ?? [], ages: (res.body?.data ?? []).map(p => p.age) };
+  };
+
+  const everyone = await counted('');
+  const banded = await counted('&minAge=25&maxAge=34');
+
+  check('totalCount matches the page it came with, unfiltered',
+    everyone.total === everyone.rows, everyone);
+  check('and still matches once an age band is applied',
+    banded.total === banded.rows, banded);
+  check('which is a narrower set, not the same one', banded.total < everyone.total, {
+    everyone: everyone.total, banded: banded.total });
+  check('both ends of the band are inclusive',
+    banded.ages.every(age => age >= 25 && age <= 34), banded.ages);
+
+  // 2.3: a facet is narrowed by every filter except its own, or picking one language hides the rest.
+  const byLanguage = await counted('&languages=YORUBA');
+
+  check('picking a language does not collapse the language facet',
+    byLanguage.languages.length > 1 && byLanguage.languages.includes('YORUBA'), byLanguage.languages);
+  check('and the alternatives are still offered',
+    byLanguage.languages.some(code => code !== 'YORUBA'), byLanguage.languages);
+  check('while another dimension does narrow it',
+    banded.languages.length <= everyone.languages.length,
+    { everyone: everyone.languages.length, banded: banded.languages.length });
+
+  // 2.1: two languages means either, not both.
+  const yoruba = await counted('&languages=YORUBA');
+  const mandarin = await counted('&languages=MANDARIN');
+  const either = await counted('&languages=YORUBA,MANDARIN');
+
+  check('two languages is a union, not an intersection',
+    either.total >= Math.max(yoruba.total, mandarin.total),
+    { yoruba: yoruba.total, mandarin: mandarin.total, either: either.total });
+
+  // 3: the facets go straight back out as the filter, so they have to be codes.
+  check('facets are codes, not labels',
+    everyone.languages.every(code => /^[A-Z][A-Z0-9_]*$/.test(code)), everyone.languages);
+
+  // 5: an unsupported parameter is refused rather than ignored, which is louder than the warning
+  // the client asked for.
+  r = await api(ada.token, 'GET', '/connect/profiles?notARealFilter=true');
+  check('an unknown parameter is named, not silently dropped',
+    r.status === 400 && r.body?.error?.details?.[0]?.field === 'notARealFilter', r.body?.error);
+
   console.log('\n── 3.1.6 Shared context, derived not stored ─────────────────');
 
   r = await api(ada.token, 'GET', `/connect/profiles/${tunde.id}`);

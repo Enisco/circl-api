@@ -39,3 +39,34 @@ export const minutesOfDayIn = (timezone: string, at: Date = new Date()) => {
     minutes: Number(lookup('hour')) * 60 + Number(lookup('minute')),
   };
 };
+
+/**
+ * The window of birth dates that produces an age between these bounds, both inclusive.
+ *
+ * Age is derived rather than stored, which is deliberate — a stored age is wrong within a year and
+ * nobody notices. But deriving it does not mean filtering in memory: turning the bounds into a date
+ * range filters on the column itself, so a count, a page and a facet all see the same rows. Filtering
+ * afterwards made the count describe a different set from the grid.
+ *
+ * `latest` is the newest birth date still old enough; `earliest` the oldest one still young enough.
+ */
+export const birthDateRangeForAges = (
+  minAge: number | undefined,
+  maxAge: number | undefined,
+  now: Date = new Date(),
+): { earliest?: Date; latest?: Date } => {
+  const shiftYears = (years: number): Date => {
+    const shifted = new Date(now);
+
+    shifted.setUTCFullYear(shifted.getUTCFullYear() - years);
+
+    return shifted;
+  };
+
+  return {
+    // Turning maxAge today is still within maxAge, so the day itself is included: anyone born after
+    // this instant is younger than the bound allows.
+    ...(maxAge === undefined ? {} : { earliest: shiftYears(maxAge + 1) }),
+    ...(minAge === undefined ? {} : { latest: shiftYears(minAge) }),
+  };
+};

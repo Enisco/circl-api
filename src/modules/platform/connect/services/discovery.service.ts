@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, TaxonomyKind, ThreadContextType, TrustCheckType } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { ageFromDateOfBirth, ApiException, buildPageMeta, escapeLike } from '@/common';
+import { ApiException, birthDateRangeForAges, buildPageMeta, escapeLike } from '@/common';
 import { BlockingService, countryNameOf, TaxonomyService } from '../../shared';
 import { CONNECT_MINIMUM_AGE } from '../../taxonomy/services/taxonomy-catalogue.service';
 import { DiscoveryDto } from '../dtos/connect.dto';
@@ -73,37 +73,30 @@ export class DiscoveryService {
       }),
     ]);
 
-    // Age is derived, so it cannot be filtered in SQL without duplicating the date of birth as a number — which is exactly what 3.1.2 forbids.
-    const minAge = Math.max(query.minAge ?? CONNECT_MINIMUM_AGE, CONNECT_MINIMUM_AGE);
-    const withinAge = rows.filter(row => {
-      const age = ageFromDateOfBirth(row.user.profile?.dateOfBirth ?? null);
-
-      if (age === null || age < minAge) return false;
-
-      return query.maxAge === undefined || age <= query.maxAge;
-    });
-
     const [views, sharedContexts, conversationIds, connections] = await Promise.all([
-      Promise.all(withinAge.map(row => this.profiles.toView(row))),
+      Promise.all(rows.map(row => this.profiles.toView(row))),
       this.sharedContexts(
         viewerId,
-        withinAge.map(row => row.userId),
+        rows.map(row => row.userId),
         viewerProfile,
       ),
       this.conversationIds(
         viewerId,
-        withinAge.map(row => row.userId),
+        rows.map(row => row.userId),
       ),
       this.connectedUserIds(own.id),
     ]);
 
     // Search asks for three rows and shows no filter bar, so it opts out: facets read up to 500
     // profiles with two joins each, which is a filter bar's worth of work for nothing.
-    const facets = options.facets === false ? undefined : await this.facets(where);
+    const facets =
+      options.facets === false
+        ? undefined
+        : await this.facetsFor(viewerId, query, blockedIds, viewerProfile?.cityId ?? null);
 
     return {
       data: views.map((view, index) => {
-        const row = withinAge[index];
+        const row = rows[index];
         const isConnected = connections.has(row.userId);
 
         return {
@@ -120,11 +113,17 @@ export class DiscoveryService {
     };
   }
 
+  /**
+   * `omit` leaves one dimension out, which is how a facet describes the choice rather than the
+   * result: compute `facets.languages` with the language filter still applied and picking Yoruba
+   * collapses the list to Yoruba, so nobody can add a second language or see what else was there.
+   */
   private async buildWhere(
     viewerId: string,
     query: DiscoveryDto,
     blockedIds: string[],
     viewerCityId: string | null,
+    omit?: 'languages' | 'heritage',
   ): Promise<Prisma.ConnectProfileWhereInput> {
     const where: Prisma.ConnectProfileWhereInput = {
       deletedAt: null,
@@ -152,7 +151,7 @@ export class DiscoveryService {
     // second assignment to it would silently widen the city filter into "anywhere".
     let nameFilters: Prisma.ConnectProfileWhereInput[] = [];
 
-    if (query.languages?.length) {
+    if (query.languages?.length && omit !== 'languages') {
       const known = await this.taxonomy.knownCodes(
         TaxonomyKind.LANGUAGE,
         query.languages,
@@ -194,7 +193,7 @@ export class DiscoveryService {
       ]);
     }
 
-    if (query.heritage?.length) {
+    if (query.heritage?.length && omit !== 'heritage') {
       const known = await this.taxonomy.knownCodes(
         TaxonomyKind.HERITAGE_TAG,
         query.heritage,
@@ -203,6 +202,21 @@ export class DiscoveryService {
 
       profileFilters.heritageTag = { in: known.length ? known : ['__NONE__'] };
     }
+
+    // Age is derived from the date of birth rather than stored, and is filtered on that column: a
+    // range of birth dates selects exactly the people the derived age would. Filtering the page
+    // afterwards left `totalCount` counting a different set from the one in the grid, and a page of
+    // twenty returning seven.
+    const born = birthDateRangeForAges(
+      Math.max(query.minAge ?? CONNECT_MINIMUM_AGE, CONNECT_MINIMUM_AGE),
+      query.maxAge,
+    );
+
+    profileFilters.dateOfBirth = {
+      not: null,
+      ...(born.earliest ? { gt: born.earliest } : {}),
+      ...(born.latest ? { lte: born.latest } : {}),
+    };
 
     if (query.newToUk) {
       // Defined once here from the taxonomy's own flag, so the chip and the query cannot drift (3.4).
@@ -243,6 +257,31 @@ export class DiscoveryService {
       default:
         return [{ lastActiveAt: 'desc' }, { createdAt: 'desc' }];
     }
+  }
+
+  /**
+   * Each facet with every filter applied but its own, so the list describes what could still be
+   * chosen rather than what has been. Two queries, because the two dimensions exclude different
+   * things; the third possibility — one query with neither applied — would offer a language nobody
+   * left in the grid speaks.
+   */
+  private async facetsFor(
+    viewerId: string,
+    query: DiscoveryDto,
+    blockedIds: string[],
+    viewerCityId: string | null,
+  ): Promise<{ languages: string[]; heritage: string[] }> {
+    const [withoutLanguages, withoutHeritage] = await Promise.all([
+      this.buildWhere(viewerId, query, blockedIds, viewerCityId, 'languages'),
+      this.buildWhere(viewerId, query, blockedIds, viewerCityId, 'heritage'),
+    ]);
+
+    const [languages, heritage] = await Promise.all([
+      this.facets(withoutLanguages),
+      this.facets(withoutHeritage),
+    ]);
+
+    return { languages: languages.languages, heritage: heritage.heritage };
   }
 
   /** The language filter must come from the data, not the catalogue: the client builds it from the languages people in the grid actually speak, so a filter can never guarantee an empty result (3.4). */
