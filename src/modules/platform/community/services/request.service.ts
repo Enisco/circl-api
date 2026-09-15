@@ -391,12 +391,17 @@ export class RequestService {
     if (helperIds.length) {
       // Being credited is the whole reward for answering a stranger's question, and it showed up
       // nowhere: the helper had to revisit the request to find out it had been resolved at all.
-      const actor = await this.notifications.actorName(userId);
+      // A request posted anonymously stays anonymous when its author thanks somebody. Naming them
+      // here handed the helper the identity the whole post was written to withhold, and the actor
+      // object carried their id with it.
+      const isAnonymous = request.visibility === PostVisibility.ANONYMOUS;
+      const actor = isAnonymous ? 'Someone' : await this.notifications.actorName(userId);
 
       for (const helperUserId of helperIds) {
         this.notifications.raise({
           userId: helperUserId,
           actorId: userId,
+          isActorAnonymous: isAnonymous,
           kind: NotificationKind.HELP_OFFER,
           categoryCode: 'OFFERS',
           title: `${actor} credited you for helping`,
@@ -408,7 +413,14 @@ export class RequestService {
       }
     }
 
-    await this.tellTheRestItIsOver(id, userId, request.title, helperIds, dto.outcome);
+    await this.tellTheRestItIsOver(
+      id,
+      userId,
+      request.title,
+      helperIds,
+      dto.outcome,
+      request.visibility === PostVisibility.ANONYMOUS,
+    );
 
     return this.findOne(userId, id);
   }
@@ -423,6 +435,7 @@ export class RequestService {
     title: string,
     creditedIds: string[],
     outcome: string | undefined,
+    isAnonymous: boolean,
   ): Promise<void> {
     // Nothing was needed and nobody was thanked: there is no news here worth a notification.
     if (outcome === 'NO_LONGER_NEEDED' && !creditedIds.length) return;
@@ -440,6 +453,8 @@ export class RequestService {
       this.notifications.raise({
         userId: offer.authorId,
         actorId: ownerId,
+        // The title names nobody, but the actor object would have.
+        isActorAnonymous: isAnonymous,
         kind: NotificationKind.HELP_OFFER,
         categoryCode: 'OFFERS',
         title: 'A request you offered to help with has been resolved',

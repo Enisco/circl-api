@@ -398,7 +398,7 @@ async function signIn(email) {
   console.log('\n── Cleanup ──────────────────────────────────────────────────');
 
   // This suite acts AS seeded members on seeded content, so the sweep cannot see its leavings:
-  // the actor is a real member, not an `e2e-` one. Forty-four identical "New reply to your update"
+  // the actor is a real member, not an `e2e-` one. Forty-four identical reply
   // rows had built up on member 1 before anybody noticed, which is a bad demo and pushed the row
   // this file looks for off the end of the list.
   const strays = await prisma.updateReply.findMany({

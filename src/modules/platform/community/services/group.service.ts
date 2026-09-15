@@ -819,12 +819,14 @@ export class GroupService {
     });
 
     // The post's author, not the whole group.
+    const actor = await this.notifications.actorName(userId);
+
     this.notifications.raise({
       userId: post.authorId,
       actorId: userId,
       kind: NotificationKind.GROUP,
       categoryCode: 'GROUPS',
-      title: 'New reply in your group post',
+      title: `${actor} replied in your group post`,
       body: excerpt(dto.content, 80),
       // Both ids: replies live at `/community/groups/{groupId}/posts/{postId}/replies` and nothing
       // resolves a post id to its group, so a post id alone is unopenable.

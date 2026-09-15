@@ -380,6 +380,33 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   check('block anonymous author by reportToken → 201', r.status === 201, r.body?.error);
   await api(bob.token, 'DELETE', `/moderation/blocks/${alice.id}`);
 
+  // Anonymity has to hold at the moment the author speaks to somebody, which is the one moment it
+  // is easiest to forget. Crediting a helper named the author in the notification and handed over
+  // their id with it — to the one person who had been dealing with them anonymously throughout.
+  r = await api(bob.token, 'POST', `/community/requests/${anonId}/responses`, {
+    content: 'I had the same problem last year and got the deposit back in the end.',
+    isHelpOffer: true,
+  });
+  check('a helper can offer on an anonymous request', r.status === 201, r.body?.error);
+
+  r = await api(alice.token, 'POST', `/community/requests/${anonId}/resolve`, {
+    outcome: 'HELPED', helperUserIds: [bob.id],
+  });
+  check('and the author can credit them', r.status === 200, r.body?.error);
+
+  await new Promise(resolve => setTimeout(resolve, 800));
+
+  r = await api(bob.token, 'GET', '/notifications?limit=20');
+  const credit = (r.body?.data ?? []).find(row => /credited you for helping/.test(row.title ?? ''));
+
+  check('being credited notifies the helper', !!credit, (r.body?.data ?? []).map(row => row.title));
+  check('the title does not name an anonymous author',
+    credit?.title === 'Someone credited you for helping', credit?.title);
+  check('nor does the actor, which carried the id as well',
+    credit?.actor?.id === null && credit?.actor?.isAnonymous === true, credit?.actor);
+  check('and it reads exactly as the post does', /Manchester/.test(credit?.actor?.displayName ?? ''),
+    credit?.actor?.displayName);
+
   r = await api(alice.token, 'DELETE', `/community/requests/${created.requests[0]}`);
   check('delete request → 204', r.status === 204);
   r = await api(bob.token, 'GET', `/community/requests/${created.requests[0]}`);

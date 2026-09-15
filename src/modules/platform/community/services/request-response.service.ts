@@ -185,12 +185,16 @@ export class RequestResponseService {
     });
 
     // An offer of help and a reply are different notifications with different preference rows, because a member who silences chatter on their posts may still want to know somebody offered to drive them to the airport.
+    // Replies and offers are never anonymous — only a top-level post carries that — so the
+    // person who answered can be named, which is most of what the row is for.
+    const actor = await this.notifications.actorName(userId);
+
     this.notifications.raise({
       userId: request.authorId,
       actorId: userId,
       kind: isHelpOffer ? NotificationKind.HELP_OFFER : NotificationKind.REPLY,
       categoryCode: isHelpOffer ? 'OFFERS' : 'REPLIES',
-      title: isHelpOffer ? 'Someone offered to help' : 'New reply to your request',
+      title: isHelpOffer ? `${actor} offered to help` : `${actor} replied to your request`,
       body: excerpt(request.title, 80),
       route: `/community/request/${requestId}`,
       target: { type: 'REQUEST', id: requestId },

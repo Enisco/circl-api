@@ -232,7 +232,7 @@ export class ReviewService {
       actorId: reviewerId,
       kind: NotificationKind.REVIEW,
       categoryCode: 'BOOKINGS',
-      title: 'You have a new review',
+      title: `${await this.notifications.actorName(reviewerId)} left you a review`,
       body: dto.comment ? excerpt(dto.comment, 80) : `${dto.rating} stars`,
       route: `/reviews/${dto.subjectUserId}`,
       target: { type: 'PROFILE', id: dto.subjectUserId },

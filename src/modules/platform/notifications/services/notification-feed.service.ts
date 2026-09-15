@@ -63,6 +63,12 @@ export interface RaiseNotificationInput {
   collapsedTitle?: (count: number, actor: string | null) => string;
   /** The actor's display name, for `collapsedTitle`. */
   actorTitle?: string | null;
+  /**
+   * Set when the action was taken on something posted anonymously, so the row says "Someone in
+   * Manchester" exactly as the post does. Without it a member who asked a question anonymously and
+   * then thanked somebody for answering has their name — and their id — handed to that person.
+   */
+  isActorAnonymous?: boolean;
 }
 
 /** The bucket boundaries, in the member's own timezone (D32). */
@@ -182,6 +188,7 @@ export class NotificationFeedService {
             metadata: toJsonOrUndefined({
               ...input.metadata,
               ...(input.target ? { target: input.target } : {}),
+              ...(input.isActorAnonymous ? { isActorAnonymous: true } : {}),
               collapseKey: input.collapseKey,
               count,
             }),
@@ -204,6 +211,9 @@ export class NotificationFeedService {
         metadata: toJsonOrUndefined({
           ...input.metadata,
           ...(input.target ? { target: input.target } : {}),
+          // Stored rather than derived on read: what was anonymous when it happened stays
+          // anonymous, even if the post is later edited or the rule changes.
+          ...(input.isActorAnonymous ? { isActorAnonymous: true } : {}),
           ...(input.collapseKey ? { collapseKey: input.collapseKey, count: 1 } : {}),
         }),
       },
@@ -319,7 +329,12 @@ export class NotificationFeedService {
         // How many actions this row folded together: 1 unless it collapsed (6.1.2). The title
         // already says it in words; this is for a client that would rather draw it.
         count: countOf(row.metadata),
-        actor: row.actor ? toAuthorView(row.actor, { sign: this.media.sign }) : null,
+        actor: row.actor
+          ? toAuthorView(row.actor, {
+              sign: this.media.sign,
+              isAnonymous: anonymousActor(row.metadata),
+            })
+          : null,
         createdAt: row.createdAt.toISOString(),
       })),
       // Account-wide, and unaffected by `unreadOnly` or paging: it backs the header badge, the same rule as messaging's `unread.total` (5.3.1).
@@ -377,3 +392,7 @@ const targetOf = (metadata: unknown): NotificationTarget | null => {
 };
 
 const countOf = (metadata: unknown): number => (metadata as { count?: number } | null)?.count ?? 1;
+
+/** Whether the action was taken on something posted anonymously, so the actor renders as the post does. */
+const anonymousActor = (metadata: unknown): boolean =>
+  (metadata as { isActorAnonymous?: boolean } | null)?.isActorAnonymous === true;

@@ -65,7 +65,7 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
   });
   check('reply posted', r.status === 201, r.body?.error);
   check('a reply to your request notifies you',
-    has(await waitFor(owner.token, 'REPLY', 'reply to your request'), 'REPLY', 'reply to your request'),
+    has(await waitFor(owner.token, 'REPLY', 'replied to your request'), 'REPLY', 'replied to your request'),
     'no REPLY row');
 
   r = await api(owner.token, 'POST', '/community/updates', {
@@ -88,7 +88,7 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
     content: 'Congratulations, that first month is the hardest part of the whole thing.',
   });
   check('a comment on your post notifies you',
-    has(await waitFor(owner.token, 'REPLY', 'reply to your update'), 'REPLY', 'reply to your update'),
+    has(await waitFor(owner.token, 'REPLY', 'replied to your post'), 'REPLY', 'replied to your post'),
     'no REPLY row');
 
   console.log('\n── Community: guides ────────────────────────────────────────');

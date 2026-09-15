@@ -357,12 +357,14 @@ export class UpdateService {
       return created;
     });
 
+    const actor = await this.notifications.actorName(userId);
+
     this.notifications.raise({
       userId: update.authorId,
       actorId: userId,
       kind: NotificationKind.REPLY,
       categoryCode: 'REPLIES',
-      title: 'New reply to your update',
+      title: `${actor} replied to your post`,
       body: excerpt(dto.content, 80),
       route: `/community/update/${id}`,
       target: { type: 'UPDATE', id },
