@@ -147,6 +147,82 @@ const { api, check, finish, makeUser, prisma, sweep } = require('./harness.cjs')
   check('paging works across the union',
     paged.status === 200 && (paged.body?.data ?? []).length <= 2, paged.body?.meta);
 
+  console.log('\n── 0.16.3 A member\'s other corners ─────────────────────────');
+
+  const dobFor = years => {
+    const date = new Date();
+
+    date.setUTCFullYear(date.getUTCFullYear() - years);
+
+    return date.toISOString().slice(0, 10);
+  };
+
+  const subject = await makeUser('corners', { bio: 'In all three sections at once.' });
+  const member = await makeUser('cornerview');
+  const outsider = await makeUser('cornerout');
+
+  await api(subject.token, 'POST', '/professionals/listings', {
+    categoryCodes: ['LEGAL'], professionTitle: 'Immigration Lawyer', experienceLevel: 'EXPERT',
+    about: 'Nine years of immigration work, mostly appeals after a refusal.', consentAccepted: true,
+  });
+  await api(subject.token, 'POST', '/commerce/stores', {
+    name: "Mama T's Kitchen", type: 'LOCAL', area: 'Moss Side',
+    description: 'Home cooking, sold from the kitchen twice a week.',
+  });
+  await api(subject.token, 'PUT', '/connect/me', {
+    typeCode: 'LANGUAGE_EXCHANGE', dateOfBirth: dobFor(30), isVisible: true,
+    lookingFor: 'Practising English after work, happy to help with Yoruba in return.',
+  });
+  await api(member.token, 'PUT', '/connect/me', {
+    typeCode: 'FRIENDSHIP', dateOfBirth: dobFor(28), isVisible: true,
+    lookingFor: 'Meeting people who moved here in the last year or so.',
+  });
+
+  const cornersFor = async token =>
+    (await api(token, 'GET', `/users/${subject.id}/profile`)).body?.data?.alsoOn;
+
+  const seen = await cornersFor(member.token);
+
+  check('a link carries an id, not a flag', !!seen?.professional?.id && !!seen?.store?.id,
+    seen);
+  check('and enough to label it', seen?.professional?.title === 'Immigration Lawyer' &&
+    seen?.store?.name === "Mama T's Kitchen", seen);
+  check('Connect is there for a member of Connect',
+    seen?.connect?.id && seen?.connect?.type === 'LANGUAGE_EXCHANGE', seen?.connect);
+
+  // The rule: the same question discovery asks, answered in the same place.
+  const byOutsider = await cornersFor(outsider.token);
+
+  check('and absent for somebody who has not joined Connect',
+    byOutsider?.connect === undefined, byOutsider);
+  check('while the public corners are still theirs to see',
+    !!byOutsider?.professional?.id && !!byOutsider?.store?.id, byOutsider);
+
+  await api(subject.token, 'PUT', '/connect/me', {
+    typeCode: 'LANGUAGE_EXCHANGE', isVisible: false,
+    lookingFor: 'Practising English after work, happy to help with Yoruba in return.',
+  });
+
+  check('leaving discovery takes it off other people\'s view of you',
+    (await cornersFor(member.token))?.connect === undefined, await cornersFor(member.token));
+  check('but not off your own: that is ownership, not visibility',
+    (await cornersFor(subject.token))?.connect?.id !== undefined, await cornersFor(subject.token));
+
+  await api(subject.token, 'PUT', '/connect/me', {
+    typeCode: 'LANGUAGE_EXCHANGE', isVisible: true,
+    lookingFor: 'Practising English after work, happy to help with Yoruba in return.',
+  });
+  await api(subject.token, 'POST', '/moderation/blocks', { userId: member.id });
+
+  check('and a block hides it the same way, from the blocked side',
+    (await cornersFor(member.token))?.connect === undefined, await cornersFor(member.token));
+
+  const bare = await makeUser('cornerbare');
+
+  check('somebody in no other section has an empty object, not missing keys',
+    JSON.stringify((await api(member.token, 'GET', `/users/${bare.id}/profile`)).body?.data?.alsoOn) === '{}',
+    (await api(member.token, 'GET', `/users/${bare.id}/profile`)).body?.data?.alsoOn);
+
   await sweep();
   await finish();
 })();

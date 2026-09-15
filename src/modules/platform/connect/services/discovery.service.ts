@@ -2,7 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, TaxonomyKind, ThreadContextType, TrustCheckType } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiException, birthDateRangeForAges, buildPageMeta, escapeLike } from '@/common';
-import { BlockingService, countryNameOf, TaxonomyService } from '../../shared';
+import {
+  BlockingService,
+  connectVisibility,
+  countryNameOf,
+  TaxonomyService,
+} from '../../shared';
 import { CONNECT_MINIMUM_AGE } from '../../taxonomy/services/taxonomy-catalogue.service';
 import { DiscoveryDto } from '../dtos/connect.dto';
 import { normaliseTerm, termVariants } from '../../search/services/search-terms';
@@ -315,14 +320,18 @@ export class DiscoveryService {
 
     const profile = await this.profiles.findByIdOrUserId(idOrUserId);
 
-    // 404 when the profile is hidden, deleted, or the viewer is blocked by them — and the three cases are deliberately indistinguishable.
-    if (!profile || !profile.isVisible) {
-      throw ApiException.notFound('That profile could not be found.');
-    }
+    // 404 when the profile is hidden, deleted, or the viewer is blocked by them — and the three
+    // cases are deliberately indistinguishable. The same rule answers whether a community profile
+    // may mention Connect at all, so it is asked in one place rather than restated there.
+    const visibility = connectVisibility({
+      viewerHasProfile: true,
+      target: profile,
+      isBlockedEitherWay: profile
+        ? await this.blocking.isBlockedEitherWay(viewerId, profile.userId)
+        : false,
+    });
 
-    const isBlocked = await this.blocking.isBlockedEitherWay(viewerId, profile.userId);
-
-    if (isBlocked) throw ApiException.notFound('That profile could not be found.');
+    if (visibility !== 'VISIBLE') throw ApiException.notFound('That profile could not be found.');
 
     const viewerProfile = await this.database.userProfile.findUnique({
       where: { userId: viewerId },

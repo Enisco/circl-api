@@ -4,6 +4,8 @@ import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException } from '@/common';
 import {
   authorSelect,
+  BlockingService,
+  connectVisibility,
   MediaService,
   TaxonomyService,
   toAuthorView,
@@ -18,6 +20,7 @@ export class UserPublicService {
     private readonly database: PrismaService,
     private readonly media: MediaService,
     private readonly taxonomy: TaxonomyService,
+    private readonly blocking: BlockingService,
   ) {}
 
   /** Resolves the `me` alias to the caller. */
@@ -78,12 +81,71 @@ export class UserPublicService {
         // Swaps the sticky bar between "Message" and "Request to chat".
         isOpenToMessages: user.profile?.openInbox ?? true,
         memberSince: user.createdAt.toISOString(),
+        // The member's other corners, so a row of links opens theirs rather than the reader's.
+        alsoOn: await this.alsoOn(subjectId, viewerId, isOwner),
         viewer: {
           isOwner,
           // Non-null when a thread already exists, so Message reopens it rather than starting a second one (5.0).
           conversationId: isOwner ? null : await this.existingThread(viewerId, subjectId),
         },
       },
+    };
+  }
+
+  /**
+   * Which other sections this member is in, as ids rather than flags: a boolean says there is
+   * something there and leaves the client unable to open it, so the card either hides — and the
+   * boolean bought nothing — or goes nowhere.
+   *
+   * A key is absent when they are not in that section, and absent when the viewer should not be
+   * told. Connect is the second case: a member can leave discovery while keeping a profile, so this
+   * asks discovery's own question rather than a second one that could drift from it.
+   */
+  private async alsoOn(
+    subjectId: string,
+    viewerId: string,
+    isOwner: boolean,
+  ): Promise<{
+    professional?: { id: string; title: string };
+    store?: { id: string; name: string };
+    connect?: { id: string; type: string };
+  }> {
+    const [listing, store, connect, viewerConnect] = await Promise.all([
+      this.database.professionalListing.findFirst({
+        where: { userId: subjectId, deletedAt: null, verificationStatus: { not: 'DRAFT' } },
+        select: { id: true, professionTitle: true },
+      }),
+      this.database.store.findFirst({
+        where: { ownerId: subjectId, deletedAt: null },
+        select: { id: true, name: true },
+      }),
+      this.database.connectProfile.findUnique({
+        where: { userId: subjectId },
+        select: { id: true, typeCode: true, isVisible: true, deletedAt: true },
+      }),
+      isOwner
+        ? Promise.resolve(null)
+        : this.database.connectProfile.findUnique({
+            where: { userId: viewerId },
+            select: { deletedAt: true },
+          }),
+    ]);
+
+    // Their own profile is theirs to see whether or not they are in discovery: that is ownership,
+    // not visibility.
+    const showConnect = isOwner
+      ? connect !== null && connect.deletedAt === null
+      : connectVisibility({
+          viewerHasProfile: viewerConnect !== null && viewerConnect.deletedAt === null,
+          target: connect,
+          isBlockedEitherWay: await this.blocking.isBlockedEitherWay(viewerId, subjectId),
+        }) === 'VISIBLE';
+
+    return {
+      // Both public by their nature and already reachable by search, so no rule beyond existing.
+      ...(listing ? { professional: { id: listing.id, title: listing.professionTitle } } : {}),
+      ...(store ? { store: { id: store.id, name: store.name } } : {}),
+      ...(showConnect && connect ? { connect: { id: connect.id, type: connect.typeCode } } : {}),
     };
   }
 
