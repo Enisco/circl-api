@@ -122,6 +122,28 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   const both = new Set(r.body?.data?.map(p => p.type));
   check('listingType=BOTH returns both discriminated types (D14)', both.has('PROFESSIONAL') && both.has('COMMUNITY_OFFER'), [...both]);
 
+  // The three values, and the one that is easy to assume. A filter row with neither option chosen
+  // has to send BOTH: leaving the parameter off is the one filter on this endpoint that applies
+  // itself, and it shows professionals only while looking as though it filters nothing.
+  const kindsFor = async qs => {
+    const res = await api(client.token, 'GET', `/professionals?cityId=MANCHESTER&limit=50${qs}`);
+
+    return { status: res.status, kinds: new Set((res.body?.data ?? []).map(row => row.type)) };
+  };
+
+  const absent = await kindsFor('');
+  check('the parameter absent is PROFESSIONAL only, not both',
+    absent.status === 200 && absent.kinds.has('PROFESSIONAL') && !absent.kinds.has('COMMUNITY_OFFER'),
+    [...absent.kinds]);
+
+  const offersOnly = await kindsFor('&listingType=COMMUNITY_OFFER');
+  check('COMMUNITY_OFFER is the offers, and only those',
+    offersOnly.status === 200 && offersOnly.kinds.has('COMMUNITY_OFFER') && !offersOnly.kinds.has('PROFESSIONAL'),
+    [...offersOnly.kinds]);
+
+  const wrong = await kindsFor('&listingType=OFFER');
+  check('and a value outside the three is refused, not ignored', wrong.status === 400, wrong.status);
+
   r = await api(client.token, 'GET', `/professionals/${listingId}`);
   check('priceBasis is a code, as it always was', r.body?.data?.priceBasis === 'PER_JOB' || r.body?.data?.priceBasis === 'NEGOTIABLE', r.body?.data?.priceBasis);
   check('and now carries its words beside it, so no client keeps a map',

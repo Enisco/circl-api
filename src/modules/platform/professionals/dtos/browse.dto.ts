@@ -133,7 +133,11 @@ export class BrowseProfessionalsDto extends PageOptionsDto {
     description:
       'BOTH merges listings and community offers into one result set, each carrying its own ' +
       '`type` so the client renders the grey "Community offer" chip and swaps the action to ' +
-      'Message (D14).',
+      'Message (D14).\n\n' +
+      '**Omitting this is not the same as BOTH.** Absent means `PROFESSIONAL`, which is the one ' +
+      'filter on this endpoint that is applied when nothing is chosen. A row offering ' +
+      '"Professionals" and "Community offers" with neither selected must send `BOTH` explicitly, ' +
+      'or it shows professionals only while looking as though it filters nothing.',
   })
   @IsIn(['PROFESSIONAL', 'COMMUNITY_OFFER', 'BOTH'])
   @IsOptional()
