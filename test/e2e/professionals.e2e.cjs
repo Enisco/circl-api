@@ -144,6 +144,36 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   const wrong = await kindsFor('&listingType=OFFER');
   check('and a value outside the three is refused, not ignored', wrong.status === 400, wrong.status);
 
+  // BOTH merges the two kinds into one list, so the sort has to run across the merged set. Sorting
+  // each kind and concatenating would look identical whenever one kind happens to rank higher
+  // throughout — which it does in most data — so this is checked with a price that forces the
+  // orders apart: the cheap offer must come above the dearer listing, and the dear one below it.
+  const cheap = await api(pro.token, 'POST', '/community/offers', {
+    title: 'A cheap hour of help with forms',
+    description: 'Priced low on purpose, to prove the sort runs across both kinds rather than within each.',
+    categoryCode: 'VISA_DOCS', cityId: 'MANCHESTER', priceFrom: 100, priceBasis: 'PER_JOB',
+  });
+  const dear = await api(pro.token, 'POST', '/community/offers', {
+    title: 'An expensive hour of help with forms',
+    description: 'Priced high on purpose, so one offer sits either side of the listing in the order.',
+    categoryCode: 'VISA_DOCS', cityId: 'MANCHESTER', priceFrom: 900000, priceBasis: 'PER_JOB',
+  });
+  check('two offers priced either side of the listing', cheap.status === 201 && dear.status === 201,
+    { cheap: cheap.status, dear: dear.status });
+
+  r = await api(client.token, 'GET', '/professionals?listingType=BOTH&cityId=MANCHESTER&sort=PRICE&limit=50');
+  const order = (r.body?.data ?? []).map(row => row.id);
+  const at = id => order.indexOf(id);
+
+  check('the cheapest offer sorts above the listing', at(cheap.body?.data?.id) < at(listingId),
+    { cheap: at(cheap.body?.data?.id), listing: at(listingId) });
+  check('and the dearest below it, so the order spans both kinds',
+    at(listingId) < at(dear.body?.data?.id),
+    { listing: at(listingId), dear: at(dear.body?.data?.id) });
+  check('which concatenating the two kinds could not produce',
+    at(cheap.body?.data?.id) < at(listingId) && at(listingId) < at(dear.body?.data?.id),
+    (r.body?.data ?? []).map(row => `${row.type[0]}:${row.priceFrom?.amount ?? 'null'}`).slice(0, 8));
+
   r = await api(client.token, 'GET', `/professionals/${listingId}`);
   check('priceBasis is a code, as it always was', r.body?.data?.priceBasis === 'PER_JOB' || r.body?.data?.priceBasis === 'NEGOTIABLE', r.body?.data?.priceBasis);
   check('and now carries its words beside it, so no client keeps a map',
