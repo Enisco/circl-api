@@ -472,6 +472,26 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   r = await api(pro.token, 'GET', '/professionals/home');
   check('home → 200', r.status === 200, r.body?.error);
   check('myListing present for a professional', r.body?.data?.myListing?.id === listingId, r.body?.data?.myListing);
+
+  // The card above the fold draws its heading and subtitle from this object. It named the title
+  // differently from /professionals/me, so the card read professionTitle, found nothing, and drew
+  // a blank heading over a subtitle that was correct.
+  const mine = r.body?.data?.myListing;
+  const own = (await api(pro.token, 'GET', '/professionals/me')).body?.data;
+
+  check('the summary names the title the way the profile does',
+    mine?.professionTitle === own?.professionTitle && !!mine?.professionTitle,
+    { home: mine?.professionTitle, me: own?.professionTitle });
+  check('and the count the way the profile does',
+    mine?.serviceCount === own?.serviceCount && typeof mine?.serviceCount === 'number',
+    { home: mine?.serviceCount, me: own?.serviceCount });
+
+  // An absent array is not an empty one, and reading it as zero was what told a professional with
+  // a price list to add their first service.
+  check('the services array is absent rather than empty', mine?.services === undefined,
+    Object.keys(mine ?? {}));
+  check('title is still there for one release, saying the same thing',
+    mine?.title === mine?.professionTitle, { title: mine?.title });
   check('activeBookings capped at 3', (r.body?.data?.activeBookings?.length ?? 0) <= 3, r.body?.data?.activeBookings?.length);
   r = await api(client.token, 'GET', '/professionals/home');
   check('myListing null for a non-professional', r.body?.data?.myListing === null);

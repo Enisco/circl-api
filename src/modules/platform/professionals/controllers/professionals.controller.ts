@@ -48,7 +48,15 @@ export class ProfessionalsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'The Professionals home screen',
-    description: 'One call for six strips, because six round trips would show six spinners.',
+    description:
+      'One call for six strips, because six round trips would show six spinners.\n\n' +
+      '`myListing` is `null` for a member without one. Where there is one it carries ' +
+      '`professionTitle`, `category`, `serviceCount`, `isAcceptingWork` and ' +
+      '`verificationStatus` — the same names `GET /professionals/me` uses for the same things.\n\n' +
+      '**`serviceCount` is the number, and the array is deliberately absent.** Do not read ' +
+      '`services.length` here: an absent list is not an empty one, and reading it as zero tells a ' +
+      'professional with a full price list to add their first service.\n\n' +
+      '`title` is a deprecated alias of `professionTitle` and will be removed after one release.',
   })
   @ApiQuery({ name: 'cityId', required: false })
   async getHome(@CurrentUserId() userId: string, @Query('cityId') cityId?: string) {

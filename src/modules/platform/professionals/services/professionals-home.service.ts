@@ -133,6 +133,11 @@ export class ProfessionalsHomeService {
       myListing: myListing
         ? {
             id: myListing.id,
+            // The same string `GET /professionals/me` calls `professionTitle`. One endpoint naming
+            // it `title` meant the card read `professionTitle`, found nothing, and drew a blank
+            // heading.
+            professionTitle: myListing.professionTitle,
+            /** @deprecated Read `professionTitle`. Kept one release so a shipped build does not lose its heading (0.7.1). */
             title: myListing.professionTitle,
             category: toTermView(myListing.categories[0]?.code ?? null, professionLabels),
             serviceCount: myListing.services.length,
