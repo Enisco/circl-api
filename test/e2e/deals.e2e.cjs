@@ -596,7 +596,9 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   r = await api(both.token, 'PUT', `/deals/${lights}/terms`, { amount: 100, timing: 'UPFRONT', summary: 'x' });
   check('no counter', r.status === 422, r.status);
   r = await api(both.token, 'POST', `/deals/${lights}/problem`, { note: 'Nothing to report on a withdrawn proposal.' });
-  check('and no problem report', r.status === 422, r.status);
+  check('no problem report', r.status === 422, r.status);
+  r = await api(both.token, 'PATCH', `/deals/${lights}/amount`, { amount: 1 });
+  check('and no correcting a figure on it either', r.status === 422, r.status);
 
   r = await api(both.token, 'POST', `/deals/${tiling}/cancel`);
   check('and an agreed one is never withdrawn', r.status === 409, { status: r.status, error: r.body?.error?.code });

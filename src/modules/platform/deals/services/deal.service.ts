@@ -62,7 +62,9 @@ export class DealService {
 
     const deals = await this.database.deal.findMany({
       where: { conversationId },
-      orderBy: { createdAt: 'asc' },
+      // `id` breaks the tie: two proposals in the same millisecond would otherwise come back in
+      // whatever order the planner chose, and the app trusts this order rather than sorting.
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       include: { steps: { orderBy: { reachedAt: 'asc' } } },
     });
 
