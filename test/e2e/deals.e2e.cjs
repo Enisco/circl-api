@@ -599,6 +599,28 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   check('and hasReviewed is what tells the member why',
     r.body?.data?.viewer?.hasReviewed === true, r.body?.data?.viewer);
 
+  // The flag is about the person, not this thread, because the sentence under it is: "one review
+  // per person, not per job". A second thread with the same seller must carry it, even though the
+  // endpoint would accept a review there — the two answers are independent on purpose.
+  const secondThread = await thread(counter.token, 'ITEM', itemId);
+  r = await api(counter.token, 'POST', `/deals/conversation/${secondThread}`,
+    { amount: 2000, timing: 'UPFRONT', summary: 'Something else entirely' });
+  const elsewhere = r.body?.data?.id;
+  await api(seller.token, 'POST', `/deals/${elsewhere}/steps`, { stages: ['AGREED'] });
+  await api(counter.token, 'POST', `/deals/${elsewhere}/steps`, { stages: ['PAID'], amount: 2000 });
+  await api(seller.token, 'POST', `/deals/${elsewhere}/steps`, { stages: ['PAYMENT_CONFIRMED', 'DISPATCHED'] });
+  await api(counter.token, 'POST', `/deals/${elsewhere}/steps`, { stages: ['GOODS_RECEIVED', 'DONE'] });
+
+  r = await api(counter.token, 'GET', `/messages/${secondThread}`);
+  check('a different thread with the same person already reads as reviewed',
+    r.body?.data?.viewer?.hasReviewed === true, r.body?.data?.viewer);
+  check('while canReview stays per thread, because that is what the endpoint accepts',
+    r.body?.data?.viewer?.canReview === true, r.body?.data?.viewer);
+
+  r = await api(both.token, 'GET', `/messages/${bothThread}`);
+  check('and somebody who has reviewed nobody carries neither',
+    r.body?.data?.viewer?.hasReviewed === false, r.body?.data?.viewer);
+
   console.log('\n── Withdrawing a proposal nobody took ─────────────────────');
 
   r = await api(seller.token, 'POST', `/deals/${lights}/cancel`);

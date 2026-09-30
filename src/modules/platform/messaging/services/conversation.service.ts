@@ -7,6 +7,7 @@ import {
   MessageKind,
   Prisma,
   RequestStatus,
+  ReviewContext,
   TaxonomyKind,
   ThreadContextType,
   ThreadKind,
@@ -758,6 +759,11 @@ export class ConversationService {
    * The two answers are separate because `canReview: false` cannot tell the app which of them it
    * means: it is false for somebody who has already written one and for somebody who was never
    * eligible, and only the first should be told they have already reviewed this person.
+   *
+   * `reviewable` is per thread, because that is what the review endpoint accepts. `reviewed` is per
+   * person, because that is what the app says out loud — "one review per person, not per job" is
+   * silent in the one place it is most true if the flag only looks at this thread: a pair who
+   * reviewed each other off a booking and are now finishing an agreement in a chat.
    */
   private async reviewState(
     userId: string,
@@ -797,15 +803,39 @@ export class ConversationService {
       return { reviewable, reviewed: new Set<string>() };
     }
 
+    // Answered only for the threads that can carry a review, so a page of DMs still asks nothing.
+    // The person is the one the row names, by the same rule the row picks them.
+    const canCarryOne = new Set([
+      ...candidates.map(row => row.id),
+      ...doneDeals.map(deal => deal.conversationId),
+    ]);
+    const counterpartOf = new Map<string, string>();
+
+    for (const row of rows) {
+      if (!canCarryOne.has(row.id)) continue;
+
+      const other = this.counterpart(row, userId);
+
+      if (other) counterpartOf.set(row.id, other.userId);
+    }
+
+    const people = [...new Set(counterpartOf.values())];
+
     const [reviewed, booked] = await Promise.all([
       this.database.review.findMany({
         where: {
           reviewerId: userId,
-          conversationId: {
-            in: [...candidates.map(row => row.id), ...doneDeals.map(deal => deal.conversationId)],
-          },
+          // PRIOR_WORK is a vouch for work done before Circl. It is excluded from the average and
+          // it stops nobody leaving a real review, so it must not read as having reviewed them.
+          context: { not: ReviewContext.PRIOR_WORK },
+          OR: [
+            {
+              conversationId: { in: [...canCarryOne] },
+            },
+            ...(people.length ? [{ subjectUserId: { in: people } }] : []),
+          ],
         },
-        select: { conversationId: true },
+        select: { conversationId: true, subjectUserId: true },
       }),
       // A completed booking is the better evidence and takes precedence, so the review endpoint
       // refuses a thread review for a pair who have one.
@@ -823,7 +853,15 @@ export class ConversationService {
         ),
     ]);
 
+    // Thread-scoped, because that is what the endpoint refuses: the same two people may have one
+    // review off a shop thread and another off a thread about their listing.
     const alreadyReviewed = new Set(reviewed.map(review => review.conversationId));
+    const reviewedPeople = new Set(reviewed.map(review => review.subjectUserId));
+    const hasReviewed = new Set(
+      [...counterpartOf]
+        .filter(([id, personId]) => alreadyReviewed.has(id) || reviewedPeople.has(personId))
+        .map(([id]) => id),
+    );
 
     for (const deal of doneDeals) {
       if (alreadyReviewed.has(deal.conversationId)) continue;
@@ -835,7 +873,7 @@ export class ConversationService {
       reviewable.add(deal.conversationId);
     }
 
-    if (!candidates.length) return { reviewable, reviewed: alreadyReviewed };
+    if (!candidates.length) return { reviewable, reviewed: hasReviewed };
 
     const listingIds = candidates
       .filter(row => row.contextType === ThreadContextType.PROFESSIONAL)
@@ -877,7 +915,17 @@ export class ConversationService {
       reviewable.add(row.id);
     }
 
-    return { reviewable, reviewed: alreadyReviewed };
+    return { reviewable, reviewed: hasReviewed };
+  }
+
+  /**
+   * The person a thread is with, as the inbox row names them — so the flag the app puts a name
+   * against and the name itself are always the same person.
+   */
+  private counterpart(conversation: ConversationRow, userId: string) {
+    const others = conversation.participants.filter(participant => participant.userId !== userId);
+
+    return others.find(participant => participant.role === 'MEMBER') ?? others[0] ?? null;
   }
 
   private toRow(
@@ -895,8 +943,7 @@ export class ConversationService {
     hasReviewed = false,
   ) {
     const me = conversation.participants.find(participant => participant.userId === userId);
-    const others = conversation.participants.filter(participant => participant.userId !== userId);
-    const other = others.find(participant => participant.role === 'MEMBER') ?? others[0];
+    const other = this.counterpart(conversation, userId);
     const snapshot = (conversation.contextSnapshot as Record<string, unknown> | null) ?? null;
 
     const participantView: (AuthorView & { isOnline: boolean; lastSeenAt: string | null }) | null =
