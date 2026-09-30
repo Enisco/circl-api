@@ -35,7 +35,8 @@ model Conversation {
   managedRequests ManagedRequest[]
   connectionRequests ConnectionRequest[]
   reviews            Review[]
-  deal               Deal?
+  // As many agreements as the two of them need, not one (see deals.prisma).
+  deals              Deal[]
 
   @@unique([participantKey, contextType, contextId])
   @@index([kind, lastMessageAt])

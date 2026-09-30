@@ -7,8 +7,9 @@
 model Deal {
   id String @id @default(uuid())
 
-  // One deal per thread. A second negotiation is a second thread.
-  conversationId String       @unique @map("conversation_id")
+  // A thread runs as many agreements as the two of them need. It held one, so a second quote either
+  // overwrote the first or forced a new thread that lost the conversation the first was settled in.
+  conversationId String       @map("conversation_id")
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   /// Follows the thread's context: goods on one track, work on the other.
@@ -34,6 +35,12 @@ model Deal {
   /// Nothing but AGREED may be marked until this is true (3.3).
   isAgreedByBoth Boolean @default(false) @map("is_agreed_by_both")
 
+  /// Withdrawn before anybody agreed to it. The row stays: what the two of them discussed is part
+  /// of the record, and the app shows it greyed rather than pretending it never happened. An agreed
+  /// deal is never withdrawn — a disagreement after agreement is what `problem` is for.
+  isCancelled Boolean   @default(false) @map("is_cancelled")
+  cancelledAt DateTime? @map("cancelled_at") @db.Timestamptz
+
   /// A flag and a notification. It reverses nothing and decides nothing (7).
   hasProblem  Boolean   @default(false) @map("has_problem")
   problemNote String?   @map("problem_note")
@@ -44,6 +51,8 @@ model Deal {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
+  // The thread's own order is the one the app trusts, and it reads every agreement in a thread.
+  @@index([conversationId, createdAt])
   @@index([payerId])
   @@index([providerId])
   @@map("deals")

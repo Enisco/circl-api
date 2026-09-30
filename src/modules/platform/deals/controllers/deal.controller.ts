@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -20,7 +21,7 @@ import {
   ApiTags,
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
-import { CurrentUserId, JwtAuthGuard, SuccessMessage } from '@/common';
+import { CurrentUserId, Idempotent, JwtAuthGuard, SuccessMessage } from '@/common';
 import {
   CorrectAmountDto,
   DealTrackQueryDto,
@@ -87,15 +88,19 @@ export class DealController {
   @Get('conversation/:conversationId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'The deal in a conversation',
+    summary: 'Every agreement in a conversation',
     description:
-      '`404` where no deal has been started, which is the normal state of most threads.\n\n' +
+      '`{ "deals": [ … ] }`, **oldest first**, live and settled together. A thread with none ' +
+      'answers an empty list rather than a `404`: nothing agreed yet is an ordinary thread, not a ' +
+      'missing resource.\n\n' +
+      'The order is the server\u2019s and there is no sequence number — what distinguishes two ' +
+      'agreements to a member is the order they happened in and the `terms.summary` each ' +
+      'carries.\n\n' +
       '`viewerRole` is per-caller and decides every button on screen. `proposedByRole` is fixed ' +
       'for the life of the deal and decides who may accept it. `steps` carries only what has ' +
       'happened — the full order is derived from `terms`, and the rules that derive it are in the ' +
       '`POST /steps` description.',
   })
-  @ApiNotFoundResponse({ description: 'No deal in this conversation.' })
   @ApiForbiddenResponse({ description: 'Not a participant.' })
   async forConversation(
     @CurrentUserId() userId: string,
@@ -103,27 +108,30 @@ export class DealController {
   ) {
     const data = await this.deals.forConversation(userId, conversationId);
 
-    return { data, message: SuccessMessage.RESOURCE_FETCHED('Deal') };
+    return { data, message: SuccessMessage.RESOURCE_FETCHED('Deals') };
   }
 
   @Post('conversation/:conversationId')
+  @Idempotent()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    summary: 'Propose terms, creating the deal',
+    summary: 'Open another agreement in this conversation',
     description:
       'Money is **pence on the way in and a `Money` object on the way back**, as everywhere else ' +
       'in this API.\n\n' +
       'Creating a deal **does not mark `AGREED`**. It records `proposedByRole` and leaves the ' +
       'step for the other party: if the proposal marked it, the acceptor would have nothing to ' +
       'tap and the deal would be stuck before it began.\n\n' +
-      'Re-proposing on a deal that has not been agreed replaces the terms and keeps it un-agreed. ' +
-      'The proposer moves with the terms, so the other side is always the one who can accept. ' +
-      'Once both sides have agreed, terms are frozen — they set the order every later step is ' +
-      'validated against — and this returns `409`.\n\n' +
+      '**It never touches an agreement already in the thread**, whatever state that one is in: a ' +
+      'thread runs as many as the two of them need, and this always creates. Changing the terms ' +
+      'of one is `PUT /deals/{id}/terms`, which names the agreement it means.\n\n' +
+      '**Send an `Idempotency-Key`.** While a thread held one agreement a proposal delivered ' +
+      'twice was harmless; now it leaves two of the same thing running. A replay hands back the ' +
+      'agreement the first attempt created.\n\n' +
+      'No cap on how many can run at once.\n\n' +
       'Only a thread about something being sold or done can carry a deal: a favour and an ' +
       'introduction are not sales, and those contexts return `422`.',
   })
-  @ApiConflictResponse({ description: 'Already agreed by both sides.' })
   @ApiUnprocessableEntityResponse({
     description: 'Not a deal context, or the deposit is not less than the total.',
   })
@@ -135,6 +143,55 @@ export class DealController {
     const data = await this.deals.propose(userId, conversationId, dto);
 
     return { data, message: SuccessMessage.RESOURCE_CREATED('Deal') };
+  }
+
+  @Put(':id/terms')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Replace the terms of a proposal',
+    description:
+      'The counter, and the proposer\u2019s own correction. It used to be the same call as ' +
+      'proposing, which worked only while a thread held one agreement and the server could guess ' +
+      'which was meant. It cannot guess any more, so the agreement is named in the path.\n\n' +
+      '**Whoever sends it becomes `proposedByRole`**, so acceptance passes to the other side. That ' +
+      'is what makes a counter a counter rather than an edit.\n\n' +
+      'Allowed only while the proposal is unagreed and not withdrawn: once both have agreed, the ' +
+      'terms are a shared record and the way out of them is `POST /deals/{id}/problem`.',
+  })
+  @ApiConflictResponse({ description: 'Already agreed by both sides.' })
+  @ApiUnprocessableEntityResponse({
+    description: 'Withdrawn, or the deposit is not less than the total.',
+  })
+  async replaceTerms(
+    @CurrentUserId() userId: string,
+    @Param('id') id: string,
+    @Body() dto: ProposeDealDto,
+  ) {
+    const data = await this.deals.replaceTerms(userId, id, dto);
+
+    return { data, message: SuccessMessage.RESOURCE_UPDATED('Terms') };
+  }
+
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Withdraw a proposal',
+    description:
+      'For the side that proposed it, and only before anybody has agreed. Without it a proposal ' +
+      'nobody takes sits in the thread for ever.\n\n' +
+      '**The agreement stays in the list**, with `isCancelled: true`. It is not deleted: what the ' +
+      'two of them discussed is part of the record, and the thread\u2019s own notes would ' +
+      'otherwise describe an agreement with nothing behind it. A withdrawn one offers nothing ' +
+      'afterwards — no steps, no counter, no problem report — and counts towards no total.\n\n' +
+      'An agreed deal is never withdrawn; that is what `problem` is for. Sending this twice is the ' +
+      'same state twice, so it needs no key.',
+  })
+  @ApiForbiddenResponse({ description: 'Only the side that proposed it may withdraw it.' })
+  @ApiConflictResponse({ description: 'Already agreed by both sides.' })
+  async cancel(@CurrentUserId() userId: string, @Param('id') id: string) {
+    const data = await this.deals.cancel(userId, id);
+
+    return { data, message: SuccessMessage.ACTION_SUCCESSFUL('Proposal withdrawn') };
   }
 
   @Post(':id/steps')

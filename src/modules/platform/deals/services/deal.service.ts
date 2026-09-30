@@ -49,19 +49,28 @@ export class DealService {
     private readonly threadWork: ThreadWorkService,
   ) {}
 
+  /**
+   * Every agreement in the thread, oldest first, live and settled together.
+   *
+   * A list rather than one object, and an empty list rather than a 404: a thread with nothing
+   * agreed yet is an ordinary thread, not a missing resource. The order is the server's, because
+   * the only thing that distinguishes two agreements to a member is the order they happened in and
+   * the summary each carries.
+   */
   async forConversation(userId: string, conversationId: string) {
     await this.requireParticipant(userId, conversationId);
 
-    const deal = await this.database.deal.findUnique({
+    const deals = await this.database.deal.findMany({
       where: { conversationId },
+      orderBy: { createdAt: 'asc' },
       include: { steps: { orderBy: { reachedAt: 'asc' } } },
     });
 
-    if (!deal) throw ApiException.notFound('No deal has been started in this conversation.');
-
-    this.roleOf(deal, userId);
-
-    return this.toView(deal, userId);
+    return {
+      deals: deals
+        .filter(deal => userId === deal.payerId || userId === deal.providerId)
+        .map(deal => this.toView(deal, userId)),
+    };
   }
 
   /**
@@ -85,14 +94,7 @@ export class DealService {
 
     const deposit = dto.deposit ?? null;
 
-    // 3.6: otherwise there is no balance and the spine carries a payment step for nothing.
-    if (deposit !== null && deposit >= dto.amount) {
-      throw ApiException.unprocessable(
-        ApiErrorCode.VALIDATION_FAILED,
-        'A deposit has to be less than the total, or there is nothing left to pay.',
-        { details: [{ field: 'deposit', message: 'Must be less than the amount.' }] },
-      );
-    }
+    this.assertDepositLeavesABalance(deposit, dto.amount);
 
     const providerId = await this.providerOf(conversation);
     // Circl's team can be sitting in a thread — a dispute puts them there — and they are not a
@@ -119,19 +121,6 @@ export class DealService {
       );
     }
 
-    const existing = await this.database.deal.findUnique({
-      where: { conversationId },
-      include: { steps: true },
-    });
-
-    // Terms set the spine, so they cannot move once both sides have agreed to them.
-    if (existing?.isAgreedByBoth) {
-      throw ApiException.conflict(
-        ApiErrorCode.INVALID_TRANSITION,
-        'These terms have been agreed. Flag a problem instead of changing them.',
-      );
-    }
-
     const terms = {
       track,
       payerId,
@@ -146,25 +135,15 @@ export class DealService {
       isAgreedByBoth: false,
     };
 
-    const deal = await this.database.deal.upsert({
-      where: { conversationId },
-      // Re-proposing on an un-agreed deal replaces the terms and keeps it un-agreed. The proposer
-      // moves with it, so the other side is always the one who can accept.
-      update: terms,
-      create: { conversationId, ...terms },
+    // Always a new one. Proposing used to replace the terms of whatever was already in the thread,
+    // which is what made a second quote impossible; changing terms is `PUT /deals/{id}/terms` now,
+    // and it names the deal it means.
+    const deal = await this.database.deal.create({
+      data: { conversationId, ...terms },
       include: { steps: { orderBy: { reachedAt: 'asc' } } },
     });
 
-    const said = existing ? 'updated the terms' : 'proposed terms';
-
-    await this.conversations.postSystemMessage(
-      conversationId,
-      SystemMessageType.DEAL_PROPOSED,
-      `${await this.nameOf(userId)} ${said}`,
-      { dealId: deal.id, amount: deal.amount, currency: deal.currency },
-    );
-
-    await this.notify(deal, userId, said);
+    await this.announce(deal, userId, 'proposed a new agreement');
 
     return this.toView(deal, userId);
   }
@@ -179,6 +158,9 @@ export class DealService {
     await this.requireParticipant(userId, deal.conversationId);
 
     const role = this.roleOf(deal, userId);
+
+    this.assertOpen(deal);
+
     const spine = spineFor(deal);
     const already = new Set(deal.steps.map(step => step.stage));
     const asked = [...new Set(dto.stages)].sort((a, b) => spine.indexOf(a) - spine.indexOf(b));
@@ -273,6 +255,8 @@ export class DealService {
 
     await this.requireParticipant(userId, deal.conversationId);
 
+    this.assertOpen(deal);
+
     if (this.roleOf(deal, userId) !== DealRole.PAYER) {
       throw ApiException.forbidden(
         ApiErrorCode.FORBIDDEN,
@@ -323,6 +307,7 @@ export class DealService {
 
     await this.requireParticipant(userId, deal.conversationId);
     this.roleOf(deal, userId);
+    this.assertOpen(deal);
 
     await this.database.deal.update({
       where: { id: deal.id },
@@ -346,6 +331,90 @@ export class DealService {
     return this.toView(fresh, userId);
   }
 
+  /**
+   * Replaces the terms of a proposal nobody has agreed to yet, and hands acceptance to the other
+   * side — which is what makes a counter a counter rather than a correction.
+   *
+   * Named in the path because a thread holds several: the endpoint used to be the same call as
+   * proposing, which worked only while the server could guess which agreement was meant.
+   */
+  async replaceTerms(userId: string, dealId: string, dto: ProposeDealDto) {
+    const existing = await this.load(dealId);
+
+    await this.requireParticipant(userId, existing.conversationId);
+    this.roleOf(existing, userId);
+    this.assertOpen(existing);
+
+    if (existing.isAgreedByBoth) {
+      throw ApiException.conflict(
+        ApiErrorCode.INVALID_TRANSITION,
+        'These terms have been agreed. Flag a problem instead of changing them.',
+      );
+    }
+
+    const deposit = dto.deposit ?? null;
+
+    this.assertDepositLeavesABalance(deposit, dto.amount);
+
+    const deal = await this.database.deal.update({
+      where: { id: dealId },
+      data: {
+        amount: dto.amount,
+        currency: dto.currency ?? existing.currency,
+        timing: dto.timing,
+        depositAmount: deposit,
+        collects: dto.collects ?? false,
+        summary: dto.summary ?? null,
+        // Acceptance moves with the terms, so the other side is always the one who can take them.
+        proposedByRole: this.roleOf(existing, userId),
+      },
+      include: { steps: { orderBy: { reachedAt: 'asc' } } },
+    });
+
+    await this.announce(deal, userId, 'suggested different terms');
+
+    return this.toView(deal, userId);
+  }
+
+  /**
+   * Withdraws a proposal nobody agreed to. The row stays: what the two of them discussed is part of
+   * the record, and a proposal that simply vanished would leave the thread's own notes describing
+   * an agreement with nothing behind it.
+   */
+  async cancel(userId: string, dealId: string) {
+    const existing = await this.load(dealId);
+
+    await this.requireParticipant(userId, existing.conversationId);
+
+    const role = this.roleOf(existing, userId);
+
+    if (existing.isCancelled) return this.toView(existing, userId);
+
+    if (existing.isAgreedByBoth) {
+      throw ApiException.conflict(
+        ApiErrorCode.INVALID_TRANSITION,
+        'This has been agreed, so it cannot be withdrawn. Flag a problem instead.',
+      );
+    }
+
+    if (role !== existing.proposedByRole) {
+      throw ApiException.forbidden(
+        ApiErrorCode.FORBIDDEN,
+        'Only the side that proposed this can withdraw it.',
+      );
+    }
+
+    const deal = await this.database.deal.update({
+      where: { id: dealId },
+      data: { isCancelled: true, cancelledAt: new Date() },
+      include: { steps: { orderBy: { reachedAt: 'asc' } } },
+    });
+
+    await this.announce(deal, userId, 'withdrew a proposal');
+
+    return this.toView(deal, userId);
+  }
+
   // ─── 5 Analytics ───────────────────────────────────────────────────────────
 
   /**
@@ -357,7 +426,9 @@ export class DealService {
     await this.assertOwns(userId, track);
 
     const deals = await this.database.deal.findMany({
-      where: { providerId: userId, track },
+      // Every agreement, not one per thread: a thread with two finished jobs is two completions and
+      // the sum of both. A withdrawn one counts towards nothing.
+      where: { providerId: userId, track, isCancelled: false },
       include: { steps: true },
     });
 
@@ -583,6 +654,44 @@ export class DealService {
   }
 
   /**
+   * The note in the thread and the nudge to the other side, together, because with several
+   * agreements running the thread is the only place that says when each one started.
+   */
+  private async announce(deal: Deal, actorId: string, phrase: string): Promise<void> {
+    const named = deal.summary ? `${phrase}: ${deal.summary}` : phrase;
+
+    await this.conversations.postSystemMessage(
+      deal.conversationId,
+      SystemMessageType.DEAL_PROPOSED,
+      `${await this.nameOf(actorId)} ${named}, ${priced(deal.amount, deal.currency)}`,
+      { dealId: deal.id, amount: deal.amount, currency: deal.currency },
+    );
+
+    await this.notify(deal, actorId, named);
+  }
+
+  /** A withdrawn proposal offers nothing at all: no steps, no counter, no problem report. */
+  private assertOpen(deal: Deal): void {
+    if (!deal.isCancelled) return;
+
+    throw ApiException.unprocessable(
+      ApiErrorCode.INVALID_TRANSITION,
+      'This proposal was withdrawn. Propose a new agreement instead.',
+    );
+  }
+
+  /** 3.6: otherwise there is no balance and the spine carries a payment step for nothing. */
+  private assertDepositLeavesABalance(deposit: number | null, amount: number): void {
+    if (deposit === null || deposit < amount) return;
+
+    throw ApiException.unprocessable(
+      ApiErrorCode.VALIDATION_FAILED,
+      'A deposit has to be less than the total, or there is nothing left to pay.',
+      { details: [{ field: 'deposit', message: 'Must be less than the amount.' }] },
+    );
+  }
+
+  /**
    * Which side of the deal this member is, and a refusal if they are neither. A thread can hold a
    * third person — a dispute puts Circl's team in one — and being in the room is not being a party
    * to the deal: without this, a staff account would read as the PROVIDER and could tick the
@@ -746,6 +855,8 @@ export class DealService {
       viewerRole: role,
       proposedByRole: deal.proposedByRole,
       isAgreedByBoth: deal.isAgreedByBoth,
+      // Withdrawn before anybody agreed. It stays in the list, read-only.
+      isCancelled: deal.isCancelled,
       hasProblem: deal.hasProblem,
       problemNote: deal.problemNote,
       terms: {

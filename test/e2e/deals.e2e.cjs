@@ -56,7 +56,9 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   console.log('\n── 1 A deal belongs to a thread about something being sold ──');
 
   r = await api(buyer.token, 'GET', `/deals/conversation/${shopThread}`);
-  check('no deal is a 404, which is the normal state of a thread', r.status === 404, r.status);
+  check('a thread with nothing agreed is an empty list, not a 404',
+    r.status === 200 && Array.isArray(r.body?.data?.deals) && r.body.data.deals.length === 0,
+    { status: r.status, data: r.body?.data });
 
   r = await api(client.token, 'POST', `/deals/conversation/${plainThread}`, {
     amount: 2000, timing: 'UPFRONT',
@@ -78,13 +80,14 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   check('nothing is agreed yet', shopDeal?.isAgreedByBoth === false, shopDeal?.isAgreedByBoth);
 
   r = await api(seller.token, 'GET', `/deals/conversation/${shopThread}`);
-  check('viewerRole is per-caller: the seller is the provider', r.body?.data?.viewerRole === 'PROVIDER', r.body?.data?.viewerRole);
-  check('while proposedByRole is fixed for both of them', r.body?.data?.proposedByRole === 'PAYER', r.body?.data?.proposedByRole);
+  const asSeller = (r.body?.data?.deals ?? [])[0];
+  check('viewerRole is per-caller: the seller is the provider', asSeller?.viewerRole === 'PROVIDER', asSeller?.viewerRole);
+  check('while proposedByRole is fixed for both of them', asSeller?.proposedByRole === 'PAYER', asSeller?.proposedByRole);
 
   console.log('\n── 3.6 A deposit has to leave a balance ─────────────────────');
 
   r = await api(client.token, 'POST', `/deals/conversation/${workThread}`, {
-    amount: 180000, timing: 'ON_COMPLETION', deposit: 180000,
+    amount: 180000, timing: 'ON_COMPLETION', deposit: 180000, summary: 'A deposit with no balance',
   });
   check('a deposit equal to the total is refused: nothing left to pay', r.status === 422 && r.body?.error?.details?.[0]?.field === 'deposit', r.body?.error);
 
@@ -96,28 +99,28 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   r = await api(seller.token, 'POST', `/deals/${shopDeal.id}/steps`, { stages: ['DISPATCHED'] });
   check('and nothing moves before the terms are agreed', r.status === 422, r.body?.error);
 
-  r = await api(buyer.token, 'POST', `/deals/conversation/${shopThread}`, {
+  r = await api(buyer.token, 'PUT', `/deals/${shopDeal.id}/terms`, {
     amount: 4000, timing: 'ON_COMPLETION', summary: 'Two yams, a bag of rice and palm oil',
   });
-  check('re-proposing an un-agreed deal replaces the terms', r.status === 201 && r.body?.data?.terms?.amount?.amount === 4000, r.body?.data?.terms);
-  check('and keeps it un-agreed', r.body?.data?.isAgreedByBoth === false, r.body?.data?.isAgreedByBoth);
-  check('on the same deal, not a second one', r.body?.data?.id === shopDeal.id, r.body?.data?.id);
+  check('the proposer can correct their own terms', r.status === 200 && r.body?.data?.terms?.amount?.amount === 4000, r.body?.data?.terms);
+  check('and it keeps it un-agreed', r.body?.data?.isAgreedByBoth === false, r.body?.data?.isAgreedByBoth);
+  check('on the same agreement, not a second one', r.body?.data?.id === shopDeal.id, r.body?.data?.id);
 
   // "Suggest different terms": the other side counters instead of only being able to refuse.
-  r = await api(seller.token, 'POST', `/deals/conversation/${shopThread}`, {
+  r = await api(seller.token, 'PUT', `/deals/${shopDeal.id}/terms`, {
     amount: 4200, timing: 'ON_COMPLETION', summary: 'Two yams, rice and palm oil — 42 for the lot',
   });
-  check('the other side can suggest different terms rather than only refuse', r.status === 201 && r.body?.data?.terms?.amount?.amount === 4200, r.body?.data?.terms);
+  check('the other side can suggest different terms rather than only refuse', r.status === 200 && r.body?.data?.terms?.amount?.amount === 4200, r.body?.data?.terms);
   check('and acceptance moves to whoever did not propose last', r.body?.data?.proposedByRole === 'PROVIDER', r.body?.data?.proposedByRole);
   check('still one deal, still un-agreed', r.body?.data?.id === shopDeal.id && r.body?.data?.isAgreedByBoth === false, r.body?.data);
 
   r = await api(seller.token, 'POST', `/deals/${shopDeal.id}/steps`, { stages: ['AGREED'] });
   check('so the side that suggested them cannot now accept their own', r.status === 422 && r.body?.error?.code === 'INVALID_TRANSITION', r.body?.error);
 
-  r = await api(buyer.token, 'POST', `/deals/conversation/${shopThread}`, {
+  r = await api(buyer.token, 'PUT', `/deals/${shopDeal.id}/terms`, {
     amount: 4000, timing: 'ON_COMPLETION', summary: 'Two yams, a bag of rice and palm oil',
   });
-  check('and it can go back the other way as often as they like', r.status === 201 && r.body?.data?.proposedByRole === 'PAYER', r.body?.data?.proposedByRole);
+  check('and it can go back the other way as often as they like', r.status === 200 && r.body?.data?.proposedByRole === 'PAYER', r.body?.data?.proposedByRole);
 
   r = await api(seller.token, 'POST', `/deals/${shopDeal.id}/steps`, { stages: ['AGREED'] });
   check('the other side agrees → 200', r.status === 200, r.body?.error);
@@ -125,8 +128,8 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   check('marked by the role that took it', r.body?.data?.steps?.[0]?.byRole === 'PROVIDER', r.body?.data?.steps?.[0]);
   check('and the step carries a label the client does not have to invent', r.body?.data?.steps?.[0]?.label === 'Terms agreed', r.body?.data?.steps?.[0]);
 
-  r = await api(buyer.token, 'POST', `/deals/conversation/${shopThread}`, {
-    amount: 5000, timing: 'UPFRONT',
+  r = await api(buyer.token, 'PUT', `/deals/${shopDeal.id}/terms`, {
+    amount: 5000, timing: 'UPFRONT', summary: 'Trying to move terms that are already agreed',
   });
   check('terms are frozen once agreed: they set the order', r.status === 409 && r.body?.error?.code === 'INVALID_TRANSITION', r.body?.error);
 
@@ -313,7 +316,7 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   const notes = (r.body?.data ?? []).filter(m => m.kind === 'SYSTEM');
   check('every step left a note in the thread, so the transcript tells the story',
     notes.filter(m => /marked:/.test(m.body ?? '')).length >= 5, notes.map(m => m.body));
-  check('including the proposal itself', notes.some(m => /proposed terms/.test(m.body ?? '')), notes.map(m => m.body));
+  check('including the one that opened it', notes.some(m => /proposed a new agreement/.test(m.body ?? '')), notes.map(m => m.body));
 
   console.log('\n── 5 The three numbers, off one implementation ─────────────');
 
@@ -469,7 +472,9 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   });
 
   r = await api(staff.token, 'GET', `/deals/conversation/${itemThread}`);
-  check('staff in the thread cannot read the deal as one of its sides', r.status === 403, { status: r.status, error: r.body?.error?.code });
+  check('staff in the thread are handed no agreement of their own',
+    r.status === 200 && (r.body?.data?.deals ?? []).length === 0,
+    { status: r.status, deals: (r.body?.data?.deals ?? []).length });
 
   r = await api(staff.token, 'POST', `/deals/${itemDeal.id}/steps`, { stages: ['DISPATCHED'] });
   check('and cannot tick the seller\'s box', r.status === 403, { status: r.status, error: r.body?.error?.code });
@@ -497,6 +502,109 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
   const bareTold = (await inbox(seller.token)).find(row => row.route === `/messages/${bareThread}`);
   check('a deal with nothing written about it still says what it is worth',
     bareTold?.body === '£5.00', bareTold?.body);
+
+  console.log('\n── Several agreements in one thread ───────────────────────');
+
+  // Two people in one conversation settle more than one thing. A thread held exactly one, so the
+  // second quote either overwrote the first or forced a thread that lost the first conversation.
+  const both = await makeUser('maboth');
+  const bothThread = await thread(both.token, 'STORE', storeId);
+
+  const open = (summary, amount, key) =>
+    api(both.token, 'POST', `/deals/conversation/${bothThread}`,
+      { amount, timing: 'ON_COMPLETION', summary },
+      key ? { 'Idempotency-Key': key } : {});
+
+  r = await open('Two yams and a bag of rice', 3500, 'ma-1');
+  const tiling = r.body?.data?.id;
+  check('a first agreement', r.status === 201 && !!tiling, r.body?.error);
+
+  r = await open('Two yams and a bag of rice', 3500, 'ma-1');
+  check('a replayed proposal is the same agreement, not a second of the same thing',
+    r.body?.data?.id === tiling, { first: tiling, replay: r.body?.data?.id });
+
+  r = await open('Hallway lights', 18000, 'ma-2');
+  const lights = r.body?.data?.id;
+  check('a second agreement runs alongside it, untouched', r.status === 201 && lights !== tiling,
+    { first: tiling, second: lights });
+
+  r = await api(both.token, 'GET', `/deals/conversation/${bothThread}`);
+  const running = r.body?.data?.deals ?? [];
+  check('the thread carries both', running.length === 2, running.map(d => d.terms?.summary));
+  check('oldest first, which is the only order there is',
+    running[0]?.id === tiling && running[1]?.id === lights, running.map(d => d.id));
+  check('each with its own terms', running[0]?.terms?.amount?.amount === 3500 &&
+    running[1]?.terms?.amount?.amount === 18000, running.map(d => d.terms?.amount?.amount));
+
+  r = await api(seller.token, 'POST', `/deals/${tiling}/steps`, { stages: ['AGREED'] });
+  check('agreeing one leaves the other alone', r.status === 200, r.body?.error);
+
+  r = await api(both.token, 'GET', `/deals/conversation/${bothThread}`);
+  const after = r.body?.data?.deals ?? [];
+  check('one agreed, one still open',
+    after[0]?.isAgreedByBoth === true && after[1]?.isAgreedByBoth === false,
+    after.map(d => d.isAgreedByBoth));
+
+  // The number most likely to under-report once threads hold several: a thread with two finished
+  // jobs is two completions and the sum of both, not one of each.
+  const counter = await makeUser('macount');
+  const countThread = await thread(counter.token, 'STORE', storeId);
+
+  for (const [summary, amount] of [['A first job', 3000], ['A second job', 5000]]) {
+    r = await api(counter.token, 'POST', `/deals/conversation/${countThread}`,
+      { amount, timing: 'UPFRONT', summary });
+    const each = r.body?.data?.id;
+
+    await api(seller.token, 'POST', `/deals/${each}/steps`, { stages: ['AGREED'] });
+    await api(counter.token, 'POST', `/deals/${each}/steps`, { stages: ['PAID'], amount });
+    await api(seller.token, 'POST', `/deals/${each}/steps`, { stages: ['PAYMENT_CONFIRMED', 'DISPATCHED'] });
+    await api(counter.token, 'POST', `/deals/${each}/steps`, { stages: ['GOODS_RECEIVED', 'DONE'] });
+  }
+
+  r = await api(counter.token, 'POST', `/deals/conversation/${countThread}`,
+    { amount: 9900, timing: 'UPFRONT', summary: 'Withdrawn before anybody took it' });
+  await api(counter.token, 'POST', `/deals/${r.body?.data?.id}/cancel`);
+
+  const earned = (await api(seller.token, 'GET', '/deals/earnings?track=COMMERCE')).body?.data;
+  const worked = (await api(seller.token, 'GET', '/deals/work?track=COMMERCE')).body?.data;
+
+  check('two finished agreements in one thread are two completions',
+    earned?.completed >= 2, earned);
+  check('and the sum of both, with the withdrawn one counting nothing',
+    earned?.received?.amount >= 8000, earned?.received);
+  check('while the thread they are in is still one thread to answer',
+    typeof worked?.openThreads === 'number' && worked.openThreads >= 1, worked);
+
+  console.log('\n── Withdrawing a proposal nobody took ─────────────────────');
+
+  r = await api(seller.token, 'POST', `/deals/${lights}/cancel`);
+  check('the other side cannot withdraw it', r.status === 403, { status: r.status, error: r.body?.error?.code });
+
+  r = await api(both.token, 'POST', `/deals/${lights}/cancel`);
+  check('the side that proposed it can', r.status === 200 && r.body?.data?.isCancelled === true, r.body?.data?.isCancelled);
+
+  r = await api(both.token, 'POST', `/deals/${lights}/cancel`);
+  check('and twice is the same state, so it needs no key', r.status === 200, r.status);
+
+  r = await api(both.token, 'GET', `/deals/conversation/${bothThread}`);
+  const withdrawn = (r.body?.data?.deals ?? []).find(d => d.id === lights);
+  check('it stays in the list rather than vanishing', !!withdrawn, (r.body?.data?.deals ?? []).length);
+  check('marked, so the app can grey it', withdrawn?.isCancelled === true, withdrawn?.isCancelled);
+
+  r = await api(both.token, 'POST', `/deals/${lights}/steps`, { stages: ['AGREED'] });
+  check('a withdrawn proposal offers no steps', r.status === 422, r.status);
+  r = await api(both.token, 'PUT', `/deals/${lights}/terms`, { amount: 100, timing: 'UPFRONT', summary: 'x' });
+  check('no counter', r.status === 422, r.status);
+  r = await api(both.token, 'POST', `/deals/${lights}/problem`, { note: 'Nothing to report on a withdrawn proposal.' });
+  check('and no problem report', r.status === 422, r.status);
+
+  r = await api(both.token, 'POST', `/deals/${tiling}/cancel`);
+  check('and an agreed one is never withdrawn', r.status === 409, { status: r.status, error: r.body?.error?.code });
+
+  r = await api(both.token, 'GET', `/messages/${bothThread}/messages?limit=20`);
+  const opened = (r.body?.data ?? []).filter(m => /proposed a new agreement/.test(m.body ?? ''));
+  check('the thread says when each one started, and which',
+    opened.length === 2 && opened.some(m => /Hallway lights/.test(m.body)), opened.map(m => m.body));
 
   console.log('\n── Access ─────────────────────────────────────────────────');
 
