@@ -207,14 +207,20 @@ export class ConversationService {
       where: { userId, isArchived: false, unreadCount: { gt: 0 } },
     });
 
-    const [lastMessages, reviewable] = await Promise.all([
+    const [lastMessages, review] = await Promise.all([
       this.lastMessages(rows.map(row => row.id)),
-      this.reviewableThreads(userId, rows),
+      this.reviewState(userId, rows),
     ]);
 
     return {
       data: rows.map(row =>
-        this.toRow(row, userId, lastMessages.get(row.id) ?? null, reviewable.has(row.id)),
+        this.toRow(
+          row,
+          userId,
+          lastMessages.get(row.id) ?? null,
+          review.reviewable.has(row.id),
+          review.reviewed.has(row.id),
+        ),
       ),
       meta: buildPageMeta(query, total, {
         // The badge is in four section headers, so the totals ship with the list rather than being recomputed from a page of it (5.2.3).
@@ -229,16 +235,17 @@ export class ConversationService {
   /** Used on a deep link, when the inbox has not been loaded. */
   async findOne(userId: string, conversationId: string) {
     const conversation = await this.requireParticipant(userId, conversationId);
-    const [lastMessages, reviewable] = await Promise.all([
+    const [lastMessages, review] = await Promise.all([
       this.lastMessages([conversationId]),
-      this.reviewableThreads(userId, [conversation]),
+      this.reviewState(userId, [conversation]),
     ]);
 
     return this.toRow(
       conversation,
       userId,
       lastMessages.get(conversationId) ?? null,
-      reviewable.has(conversationId),
+      review.reviewable.has(conversationId),
+      review.reviewed.has(conversationId),
     );
   }
 
@@ -744,11 +751,18 @@ export class ConversationService {
   }
 
   /**
-   * Which of these threads the caller may leave a review on, checked in bulk because the inbox
-   * asks about a page at a time. Every rule the review endpoint enforces is applied here, so the
-   * app never offers a review that comes back 422.
+   * Which of these threads the caller may leave a review on, and which they already have, checked
+   * in bulk because the inbox asks about a page at a time. Every rule the review endpoint enforces
+   * is applied here, so the app never offers a review that comes back 422.
+   *
+   * The two answers are separate because `canReview: false` cannot tell the app which of them it
+   * means: it is false for somebody who has already written one and for somebody who was never
+   * eligible, and only the first should be told they have already reviewed this person.
    */
-  private async reviewableThreads(userId: string, rows: ConversationRow[]): Promise<Set<string>> {
+  private async reviewState(
+    userId: string,
+    rows: ConversationRow[],
+  ): Promise<{ reviewable: Set<string>; reviewed: Set<string> }> {
     const reviewable = new Set<string>();
 
     // Only a thread about a professional's work can carry one without a deal, and only once both
@@ -777,7 +791,11 @@ export class ConversationService {
         })
       : [];
 
-    if (!candidates.length && !doneDeals.length) return reviewable;
+    // A review's thread can only be one of these two sets, because a deal exists only under a
+    // context that maps to a track. Nothing else can hold one, so a page of DMs still asks nothing.
+    if (!candidates.length && !doneDeals.length) {
+      return { reviewable, reviewed: new Set<string>() };
+    }
 
     const [reviewed, booked] = await Promise.all([
       this.database.review.findMany({
@@ -817,7 +835,7 @@ export class ConversationService {
       reviewable.add(deal.conversationId);
     }
 
-    if (!candidates.length) return reviewable;
+    if (!candidates.length) return { reviewable, reviewed: alreadyReviewed };
 
     const listingIds = candidates
       .filter(row => row.contextType === ThreadContextType.PROFESSIONAL)
@@ -859,7 +877,7 @@ export class ConversationService {
       reviewable.add(row.id);
     }
 
-    return reviewable;
+    return { reviewable, reviewed: alreadyReviewed };
   }
 
   private toRow(
@@ -874,6 +892,7 @@ export class ConversationService {
       sentAt: Date;
     } | null,
     canReview = false,
+    hasReviewed = false,
   ) {
     const me = conversation.participants.find(participant => participant.userId === userId);
     const others = conversation.participants.filter(participant => participant.userId !== userId);
@@ -915,7 +934,7 @@ export class ConversationService {
       isMuted: me?.isMuted ?? false,
       isArchived: me?.isArchived ?? false,
       // Archiving is per participant, so only the caller's own copy can answer either of these.
-      viewer: { isArchived: me?.isArchived ?? false, canReview },
+      viewer: { isArchived: me?.isArchived ?? false, canReview, hasReviewed },
       // 3.6: true until BOTH people have sent at least one message.
       safetyNoticeRequired:
         conversation.kind === ThreadKind.CONNECT &&

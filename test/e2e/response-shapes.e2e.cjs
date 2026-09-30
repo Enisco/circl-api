@@ -321,6 +321,7 @@ function shape(label, obj, required) {
     'id', 'kind', 'isPinned', 'participant', 'context.type', 'context.id',
     'context.title', 'context.subtitle', 'context.thumbnailUrl', 'context.trailing',
     'context.route', 'label', 'lastMessage', 'unreadCount', 'isTyping', 'isMuted',
+    'viewer.isArchived', 'viewer.canReview', 'viewer.hasReviewed',
   ]);
   check('5.3.1 participant carries presence', has(row?.participant, 'isOnline') && has(row?.participant, 'lastSeenAt'), row?.participant);
   shape('5.3.1 lastMessage', row?.lastMessage, ['id', 'kind', 'body', 'senderId', 'isMine', 'status', 'sentAt']);

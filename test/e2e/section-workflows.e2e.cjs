@@ -191,9 +191,11 @@ const { api, check, dobFor, finish, makeUser, prisma, sweep } = require('./harne
   r = await api(client.token, 'GET', `/messages/${conversationId}`);
   check('viewer.isArchived says which way the menu should read', r.body?.data?.viewer?.isArchived === false, r.body?.data?.viewer);
   check('canReview is already false on the thread reviewed above', r.body?.data?.viewer?.canReview === false, r.body?.data?.viewer);
+  check('and hasReviewed says which of the two reasons it is', r.body?.data?.viewer?.hasReviewed === true, r.body?.data?.viewer);
 
   r = await api(client.token, 'GET', `/messages/${appealThreadId}`);
   check('a service thread with only one voice cannot be reviewed', r.body?.data?.viewer?.canReview === false, r.body?.data?.viewer);
+  check('and hasReviewed stays false, because never eligible is not already done', r.body?.data?.viewer?.hasReviewed === false, r.body?.data?.viewer);
 
   await api(client.token, 'POST', `/messages/${appealThreadId}/messages`, { clientId: 'sw-a1', body: 'Could you take the appeal on?' });
   await api(pro.token, 'POST', `/messages/${appealThreadId}/messages`, { clientId: 'sw-a2', body: 'Yes. Send me the refusal letter.' });
@@ -202,6 +204,7 @@ const { api, check, dobFor, finish, makeUser, prisma, sweep } = require('./harne
 
   r = await api(pro.token, 'GET', `/messages/${appealThreadId}`);
   check('the professional cannot review themselves off their own thread', r.body?.data?.viewer?.canReview === false, r.body?.data?.viewer);
+  check('with nothing written, so hasReviewed is false for them too', r.body?.data?.viewer?.hasReviewed === false, r.body?.data?.viewer);
 
   r = await api(client.token, 'POST', '/reviews', {
     subjectUserId: pro.id, context: 'PROFESSIONAL', sourceId: appealThreadId,
@@ -212,6 +215,7 @@ const { api, check, dobFor, finish, makeUser, prisma, sweep } = require('./harne
 
   r = await api(client.token, 'GET', `/messages/${appealThreadId}`);
   check('canReview turns off once a review has been left', r.body?.data?.viewer?.canReview === false, r.body?.data?.viewer);
+  check('and hasReviewed turns on in the same breath', r.body?.data?.viewer?.hasReviewed === true, r.body?.data?.viewer);
 
   await api(client.token, 'POST', `/messages/${appealThreadId}/archive`, {});
   r = await api(client.token, 'GET', `/messages/${appealThreadId}`);

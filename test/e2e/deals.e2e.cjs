@@ -402,6 +402,11 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
 
   r = await api(buyer.token, 'GET', `/messages/${shopThread}`);
   check('the offer goes away once taken', r.body?.data?.viewer?.canReview === false, r.body?.data?.viewer);
+  check('and hasReviewed says why, so the app can say it out loud', r.body?.data?.viewer?.hasReviewed === true, r.body?.data?.viewer);
+
+  r = await api(buyer.token, 'GET', '/messages');
+  const shopRow = (r.body?.data ?? []).find(row => row.id === shopThread);
+  check('the inbox row carries the same pair as the thread', shopRow?.viewer?.canReview === false && shopRow?.viewer?.hasReviewed === true, shopRow?.viewer);
 
   r = await api(client.token, 'POST', '/reviews', {
     subjectUserId: pro.id, context: 'PROFESSIONAL', sourceId: workThread, rating: 5,
@@ -574,6 +579,25 @@ const stages = deal => (deal?.steps ?? []).map(step => step.stage);
     earned?.received?.amount >= 8000, earned?.received);
   check('while the thread they are in is still one thread to answer',
     typeof worked?.openThreads === 'number' && worked.openThreads >= 1, worked);
+
+  // A review is of the person and its source is the thread, so two finished agreements still earn
+  // one. That was invisible while a thread held one agreement; hasReviewed is what lets the app say
+  // "you have already reviewed them" instead of a button quietly not being there.
+  r = await api(counter.token, 'GET', `/messages/${countThread}`);
+  check('two finished agreements offer a review', r.body?.data?.viewer?.canReview === true, r.body?.data?.viewer);
+  check('and none has been written yet', r.body?.data?.viewer?.hasReviewed === false, r.body?.data?.viewer);
+
+  r = await api(counter.token, 'POST', '/reviews', {
+    subjectUserId: seller.id, context: 'ORDER', sourceId: countThread, rating: 5,
+    comment: 'Both jobs were done when they said, and the second one was quicker.',
+  });
+  check('the first review is accepted', r.status === 201, r.body?.error);
+
+  r = await api(counter.token, 'GET', `/messages/${countThread}`);
+  check('the second finished agreement earns no second review',
+    r.body?.data?.viewer?.canReview === false, r.body?.data?.viewer);
+  check('and hasReviewed is what tells the member why',
+    r.body?.data?.viewer?.hasReviewed === true, r.body?.data?.viewer);
 
   console.log('\n── Withdrawing a proposal nobody took ─────────────────────');
 
