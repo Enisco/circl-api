@@ -168,7 +168,7 @@ function shape(label, obj, required) {
 
   r = await api(b.token, 'GET', `/professionals/${listingId}`);
   shape('2.4 professional profile', r.body?.data, [
-    'id', 'user', 'professionTitle', 'categories', 'experienceLevel', 'yearsExperience',
+    'id', 'user', 'professionTitle', 'photoUrl', 'coverUrl', 'categories', 'experienceLevel', 'yearsExperience',
     'about', 'city', 'deliveryMode', 'rating.average', 'rating.count',
     'rating.excludedCount', 'rating.distribution', 'stats.jobsCompleted',
     'stats.medianResponseMinutes', 'stats.profileViews', 'priceFrom', 'priceBasis',
@@ -182,7 +182,7 @@ function shape(label, obj, required) {
 
   r = await api(b.token, 'GET', '/professionals?cityId=MANCHESTER');
   shape('2.3 professional summary', r.body?.data?.[0], [
-    'type', 'id', 'user', 'professionTitle', 'category', 'categories', 'city',
+    'type', 'id', 'user', 'professionTitle', 'photoUrl', 'coverUrl', 'category', 'categories', 'city',
     'distanceMiles', 'rating.average', 'rating.count', 'rating.excludedCount',
     'medianResponseMinutes', 'priceFrom', 'priceBasis', 'isAcceptingWork',
     'trustChecks', 'isImmigrantFriendly',
@@ -192,6 +192,12 @@ function shape(label, obj, required) {
   shape('2.2 professionals home', r.body?.data, [
     'categories', 'nearYou', 'myListing', 'activeBookings', 'trust.verifiedCount',
     'trust.vouchedCount', 'trust.ratedCount',
+  ]);
+  // Every shape that renders a listing answers the picture question, or a card quietly shows the
+  // account photo on a listing that chose another one.
+  shape('2.2 my listing card', r.body?.data?.myListing, [
+    'id', 'professionTitle', 'photoUrl', 'coverUrl', 'category', 'serviceCount',
+    'isAcceptingWork', 'verificationStatus',
   ]);
   shape('2.2 myListing', r.body?.data?.myListing, ['id', 'title', 'category', 'serviceCount', 'isAcceptingWork', 'verificationStatus']);
   check('2.2 categories carry professionalCount', r.body?.data?.categories?.[0]?.professionalCount !== undefined, r.body?.data?.categories?.[0]);

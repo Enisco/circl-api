@@ -1,6 +1,6 @@
 /* Section 2 end-to-end check. Creates throwaway users, exercises listings,
    promotion, browse, reviews, bookings, briefs and disputes, then cleans up. */
-const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness.cjs');
+const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require('./harness.cjs');
 
 
 
@@ -101,6 +101,58 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
 
   r = await api(client.token, 'PATCH', `/professionals/listings/${listingId}`, { professionTitle: 'Hijacked' });
   check('non-owner patch → 403', r.status === 403, r.body?.error);
+
+  console.log('\n── A listing of its own: two pictures ─────────────────────');
+
+  // A personal photo is not always the right professional one, and a listing that is a small firm
+  // wants its logo, which an account photo can never be. Null is normal, not a gap: the client
+  // falls back to the avatar, so a member who touches nothing sees what they saw before.
+  r = await api(client.token, 'GET', `/professionals/${listingId}`);
+  check('a listing with no pictures of its own says so rather than omitting them',
+    r.body?.data?.photoUrl === null && r.body?.data?.coverUrl === null, r.body?.data);
+
+  const listingPhoto = await uploadPng(pro.token, 'PROFESSIONAL', 400, 400);
+  const listingCover = await uploadPng(pro.token, 'PROFESSIONAL', 1200, 400);
+
+  r = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}`, {
+    photoKey: listingPhoto, coverKey: listingCover,
+  });
+  check('a key sets the picture', !!r.body?.data?.photoUrl && !!r.body?.data?.coverUrl,
+    { photo: r.body?.data?.photoUrl, cover: r.body?.data?.coverUrl });
+
+  r = await api(client.token, 'GET', `/professionals/${listingId}`);
+  check('the profile header reads them', !!r.body?.data?.photoUrl && !!r.body?.data?.coverUrl,
+    { photo: r.body?.data?.photoUrl, cover: r.body?.data?.coverUrl });
+
+  // The card is the whole point: a list that omits the field shows the account photo on a listing
+  // that has chosen another one.
+  r = await api(client.token, 'GET', '/professionals?cityId=MANCHESTER&limit=50');
+  const card = (r.body?.data ?? []).find(row => row.id === listingId);
+  check('and so does the browse card', !!card?.photoUrl && !!card?.coverUrl,
+    { photo: card?.photoUrl, cover: card?.coverUrl });
+
+  r = await api(pro.token, 'GET', '/professionals/home');
+  check('and the manage card the member sees of their own', !!r.body?.data?.myListing?.photoUrl, r.body?.data?.myListing);
+
+  r = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}`, { professionTitle: 'Immigration Lawyer' });
+  check('editing something else leaves the pictures alone, because absent is not null',
+    !!r.body?.data?.photoUrl && !!r.body?.data?.coverUrl,
+    { photo: r.body?.data?.photoUrl, cover: r.body?.data?.coverUrl });
+
+  r = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}`, { photoKey: null });
+  check('an explicit null removes one and leaves the other',
+    r.body?.data?.photoUrl === null && !!r.body?.data?.coverUrl,
+    { photo: r.body?.data?.photoUrl, cover: r.body?.data?.coverUrl });
+  const photoRows = await prisma.media.count({ where: { ownerType: 'LISTING_PHOTO', ownerId: listingId } });
+  check('and releases the media rather than orphaning it', photoRows === 0, photoRows);
+
+  r = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}`, { photoKey: 'media/not/a/real/key.png' });
+  check('an unusable key is a validation error naming the field, not a 500',
+    r.status === 422 || (r.status === 400 && /photo/i.test(JSON.stringify(r.body?.error ?? ''))),
+    { status: r.status, error: r.body?.error?.code });
+
+  r = await api(client.token, 'GET', `/professionals/${listingId}`);
+  check('the account photo is untouched by any of it', !!r.body?.data?.user?.avatarUrl || r.body?.data?.user?.avatarUrl === null, r.body?.data?.user);
 
   r = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/availability`, { isAcceptingWork: false });
   check('availability off → 200', r.body?.data?.isAcceptingWork === false, r.body?.error);

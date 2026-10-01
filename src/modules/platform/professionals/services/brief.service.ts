@@ -20,6 +20,7 @@ import {
   toPriceBasisLabel,
   toTermView,
 } from '../../shared';
+import { toListingPictures } from '../serializers/listing.serializer';
 import { SmartMatchService } from '../../intelligence/services/smart-match.service';
 import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
 import { ReputationService } from '../../trust/services/reputation.service';
@@ -178,6 +179,7 @@ export class BriefService {
             id: listing.id,
             user: toAuthorView(listing.user, { sign: this.media.sign }),
             professionTitle: listing.professionTitle,
+            ...toListingPictures(listing, this.media.sign),
             category: toTermView(listing.categories[0]?.code ?? null, professionLabels),
             city: toCityView(listing.city),
             rating: {

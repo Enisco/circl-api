@@ -16,6 +16,7 @@ import {
   toPriceBasisLabel,
   toTermView,
 } from '../../shared';
+import { toListingPictures } from '../serializers/listing.serializer';
 import { ThreadWorkService } from '../../messaging/services/thread-work.service';
 import { ReputationService } from '../../trust/services/reputation.service';
 
@@ -115,6 +116,7 @@ export class ProfessionalsHomeService {
           id: row.id,
           user: toAuthorView(row.user, { sign: this.media.sign }),
           professionTitle: row.professionTitle,
+          ...toListingPictures(row, this.media.sign),
           category: toTermView(row.categories[0]?.code ?? null, professionLabels),
           city: toCityView(row.city),
           rating: {
@@ -139,6 +141,7 @@ export class ProfessionalsHomeService {
             professionTitle: myListing.professionTitle,
             /** @deprecated Read `professionTitle`. Kept one release so a shipped build does not lose its heading (0.7.1). */
             title: myListing.professionTitle,
+            ...toListingPictures(myListing, this.media.sign),
             category: toTermView(myListing.categories[0]?.code ?? null, professionLabels),
             serviceCount: myListing.services.length,
             isAcceptingWork: myListing.isAcceptingWork,

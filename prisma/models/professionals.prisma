@@ -20,6 +20,14 @@ model ProfessionalListing {
   priceBasis   PriceBasis   @default(NEGOTIABLE) @map("price_basis")
   currency     String       @default("GBP") @map("currency")
 
+  /// The listing's own two pictures, object keys signed on read like every other image (0.11.3).
+  /// Both optional: a listing with no photo falls back to the member's account avatar, which is
+  /// what every listing showed before these existed, and a listing with no cover keeps the
+  /// gradient. A personal photo is not always the right professional one, and a listing that is a
+  /// small firm wants its logo, which an account photo can never be.
+  photoKey String? @map("photo_key")
+  coverKey String? @map("cover_key")
+
   isAcceptingWork    Boolean                   @default(true) @map("is_accepting_work")
   freeConsultation   Boolean                   @default(false) @map("free_consultation")
   verificationStatus ListingVerificationStatus @default(UNVERIFIED) @map("verification_status")

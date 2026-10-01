@@ -14,6 +14,14 @@ export interface ProfessionalSummaryView {
   id: string;
   user: AuthorView;
   professionTitle: string;
+  /**
+   * The listing's own picture, null when it has none — which is normal rather than a gap: the
+   * client falls back to `user.avatarUrl`, so a member who touches nothing sees what they saw
+   * before the field existed.
+   */
+  photoUrl: string | null;
+  /** Null keeps the gradient the header has always had. */
+  coverUrl: string | null;
   category: TermView | null;
   categories: TermView[];
   city: CityView | null;
@@ -68,6 +76,19 @@ export interface ProfessionalProfileView extends Omit<
     conversationId: string | null;
   };
 }
+
+/**
+ * A listing's own two pictures, signed. One helper rather than six copies: a listing that shows its
+ * logo on the profile and the account photo on the card is worse than one that shows neither, so
+ * every shape that renders a listing has to answer this the same way.
+ */
+export const toListingPictures = (
+  listing: { photoKey: string | null; coverKey: string | null },
+  sign: (key: string) => string,
+): { photoUrl: string | null; coverUrl: string | null } => ({
+  photoUrl: listing.photoKey ? sign(listing.photoKey) : null,
+  coverUrl: listing.coverKey ? sign(listing.coverKey) : null,
+});
 
 export const listingInclude = {
   user: { select: { id: true } },

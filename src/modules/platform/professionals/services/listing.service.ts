@@ -31,10 +31,14 @@ import {
 } from '../dtos/listing.dto';
 import { ReputationService } from '../../trust/services/reputation.service';
 import { VerificationService } from '../../trust/services/verification.service';
-import { toServiceView } from '../serializers/listing.serializer';
+import { toListingPictures, toServiceView } from '../serializers/listing.serializer';
 
 /** The consent text version stored with a listing, so what was agreed is recoverable. */
 const CONSENT_VERSION = '2026-08-professional-listing-v1';
+
+/** The listing's own pictures, owned by the listing rather than by the member (2.1).  */
+export const LISTING_PHOTO_OWNER = 'LISTING_PHOTO';
+export const LISTING_COVER_OWNER = 'LISTING_COVER';
 
 export interface RegistrationStep {
   key: 'LISTING' | 'IDENTITY' | 'RIGHT_TO_WORK' | 'CREDENTIAL' | 'REVIEW';
@@ -204,6 +208,11 @@ export class ListingService {
 
     await this.cities.assertValid(cityId);
 
+    const [photo, cover] = await Promise.all([
+      this.singleImage(dto.photoKey, userId),
+      this.singleImage(dto.coverKey, userId),
+    ]);
+
     const listing = await this.database.$transaction(async tx => {
       const created = await tx.professionalListing.create({
         data: {
@@ -220,6 +229,8 @@ export class ListingService {
           consentAcceptedAt: new Date(),
           consentVersion: CONSENT_VERSION,
           sourceOfferId: dto.sourceOfferId ?? null,
+          photoKey: photo?.storageKey ?? null,
+          coverKey: cover?.storageKey ?? null,
           // D13: listings go live UNVERIFIED and are browsable, bookable and messageable immediately.
           verificationStatus: ListingVerificationStatus.UNVERIFIED,
           categories: {
@@ -228,6 +239,9 @@ export class ListingService {
         },
         include: { city: true, categories: true, services: true },
       });
+
+      if (photo) await this.media.attach(tx, [photo], LISTING_PHOTO_OWNER, created.id);
+      if (cover) await this.media.attach(tx, [cover], LISTING_COVER_OWNER, created.id);
 
       if (dto.sourceOfferId) {
         await tx.communityOffer.updateMany({
@@ -352,6 +366,10 @@ export class ListingService {
     }
 
     const city = dto.cityId ? await this.cities.assertValid(dto.cityId) : null;
+    const [photo, cover] = await Promise.all([
+      this.singleImage(dto.photoKey, userId),
+      this.singleImage(dto.coverKey, userId),
+    ]);
 
     const updated = await this.database.$transaction(async tx => {
       if (dto.categoryCodes?.length) {
@@ -363,6 +381,19 @@ export class ListingService {
             isPrimary: index === 0,
           })),
         });
+      }
+
+      if (photo) await this.media.attach(tx, [photo], LISTING_PHOTO_OWNER, listing.id);
+      if (cover) await this.media.attach(tx, [cover], LISTING_COVER_OWNER, listing.id);
+
+      // An explicit null is the remove action. Absent is not: a member editing their price sends
+      // neither key, and reading that as null would take their picture with it.
+      if (dto.photoKey === null) {
+        await this.media.releaseOwner(tx, LISTING_PHOTO_OWNER, listing.id);
+      }
+
+      if (dto.coverKey === null) {
+        await this.media.releaseOwner(tx, LISTING_COVER_OWNER, listing.id);
       }
 
       return tx.professionalListing.update({
@@ -377,6 +408,10 @@ export class ListingService {
           priceFrom: dto.priceFrom,
           priceBasis: dto.priceBasis,
           freeConsultation: dto.freeConsultation,
+          ...(photo ? { photoKey: photo.storageKey } : {}),
+          ...(cover ? { coverKey: cover.storageKey } : {}),
+          ...(dto.photoKey === null ? { photoKey: null } : {}),
+          ...(dto.coverKey === null ? { coverKey: null } : {}),
         },
         include: { city: true, categories: true, services: true },
       });
@@ -565,6 +600,7 @@ export class ListingService {
       id: listing.id,
       user: toAuthorView(user, { sign: this.media.sign }),
       professionTitle: listing.professionTitle,
+      ...toListingPictures(listing, this.media.sign),
       category: categories[0] ?? null,
       categories,
       city: toCityView(listing.city),
@@ -661,6 +697,19 @@ export class ListingService {
     const suggested = (term?.metadata?.suggestedProfessionCodes as string[] | undefined) ?? [];
 
     return suggested[0] ?? null;
+  }
+
+  /** One image, validated as the shop's logo and cover are: an image, owned by this member. */
+  private async singleImage(mediaId: string | null | undefined, userId: string) {
+    if (!mediaId) return null;
+
+    const [media] = await this.media.validate([mediaId], userId, {
+      maxImages: 1,
+      allowVideo: false,
+      allowAudio: false,
+    });
+
+    return media ?? null;
   }
 
   private async profileCityId(userId: string): Promise<string | null> {

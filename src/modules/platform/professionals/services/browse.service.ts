@@ -21,6 +21,7 @@ import {
   toPriceBasisLabel,
   toTermView,
 } from '../../shared';
+import { toListingPictures } from '../serializers/listing.serializer';
 import { ReputationService } from '../../trust/services/reputation.service';
 import { BrowseProfessionalsDto } from '../dtos/browse.dto';
 import { ListingService } from './listing.service';
@@ -339,6 +340,7 @@ export class BrowseService {
           id: row.id,
           user: toAuthorView(row.user, { sign: this.media.sign }),
           professionTitle: row.professionTitle,
+          ...toListingPictures(row, this.media.sign),
           category: categories[0] ?? null,
           categories,
           city: toCityView(row.city),
@@ -438,6 +440,10 @@ export class BrowseService {
           id: row.id,
           user: toAuthorView(row.author, { sign: this.media.sign }),
           professionTitle: row.title,
+          // An offer has no listing of its own to carry pictures. Sent as null rather than left
+          // off, because `listingType=BOTH` renders both kinds through one card.
+          photoUrl: null,
+          coverUrl: null,
           category: toTermView(row.categoryCode, categoryLabels),
           categories: [toTermView(row.categoryCode, categoryLabels)].filter(Boolean),
           city: toCityView(row.city),
@@ -624,6 +630,7 @@ export class BrowseService {
       id: listing.id,
       user: toAuthorView(listing.user, { sign: this.media.sign }),
       professionTitle: listing.professionTitle,
+      ...toListingPictures(listing, this.media.sign),
       categories,
       category: categories[0] ?? null,
       experienceLevel: listing.experienceLevel,

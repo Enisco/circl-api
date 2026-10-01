@@ -95,6 +95,28 @@ export class CreateListingDto {
   @IsString()
   @IsOptional()
   sourceOfferId?: string;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'A media key, upload purpose PROFESSIONAL. The listing\'s own photo, which is not the ' +
+      'account avatar: a personal photo is not always the right professional one, and a listing ' +
+      'that is a small firm wants its logo. **Omit to leave the current one alone**; send `null` ' +
+      'to remove it, after which the listing falls back to the member\'s avatar again.',
+  })
+  @IsString()
+  @IsOptional()
+  photoKey?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'A media key, upload purpose PROFESSIONAL. Absent leaves it alone, `null` removes it and ' +
+      'the header keeps the gradient it has always had.',
+  })
+  @IsString()
+  @IsOptional()
+  coverKey?: string | null;
 }
 
 export class UpdateListingDto {
@@ -162,6 +184,28 @@ export class UpdateListingDto {
   @IsBoolean()
   @IsOptional()
   freeConsultation?: boolean;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'A media key, upload purpose PROFESSIONAL. The listing\'s own photo, which is not the ' +
+      'account avatar: a personal photo is not always the right professional one, and a listing ' +
+      'that is a small firm wants its logo. **Omit to leave the current one alone**; send `null` ' +
+      'to remove it, after which the listing falls back to the member\'s avatar again.',
+  })
+  @IsString()
+  @IsOptional()
+  photoKey?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'A media key, upload purpose PROFESSIONAL. Absent leaves it alone, `null` removes it and ' +
+      'the header keeps the gradient it has always had.',
+  })
+  @IsString()
+  @IsOptional()
+  coverKey?: string | null;
 }
 
 /** All optional, each one overriding the offer's value (2.1.3). */
