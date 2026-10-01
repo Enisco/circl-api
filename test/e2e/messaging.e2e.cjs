@@ -135,6 +135,25 @@ const waitFor = (socket, event, ms = 4000) =>
   r = await api(ada.token, 'GET', `/messages/${conversationId}/messages?limit=10&after=${messageId}`);
   check('after= reads forwards, which is what sync needs', r.body?.data?.length === 5 && r.body.data[0].body === 'Reply 0', r.body?.data?.map(m => m.body));
 
+  console.log('\n── Formatting travels as markers in the body ────────────────');
+
+  // The app renders `*bold*` and a `- ` list in the bubble, so the body has to come back exactly as
+  // it was sent. Escaping a marker, collapsing the whitespace or rewrapping the lines would each
+  // break formatting a member watched working while they typed.
+  const formatted = 'Bring *ID* and _proof of address_.\n- a BRP\n- a bank letter\n> Branches vary.';
+
+  r = await api(tunde.token, 'POST', `/messages/${conversationId}/messages`, { clientId: 'fmt-1', body: formatted });
+  check('a formatted body is accepted, because unpaired markers are just text', r.status === 201, r.body?.error);
+  check('and the acknowledgement echoes it unchanged', r.body?.data?.body === formatted, JSON.stringify(r.body?.data?.body));
+
+  r = await api(ada.token, 'GET', `/messages/${conversationId}/messages?limit=1`);
+  check('history returns it byte for byte, newlines load-bearing',
+    r.body?.data?.[0]?.body === formatted, JSON.stringify(r.body?.data?.[0]?.body));
+
+  r = await api(ada.token, 'GET', `/messages/${conversationId}`);
+  check('and the inbox line carries the raw text for the client to strip',
+    r.body?.data?.lastMessage?.body === formatted, JSON.stringify(r.body?.data?.lastMessage?.body));
+
   console.log('\n── 5.3.6 Tombstones, mute, archive ──────────────────────────');
 
   r = await api(tunde.token, 'POST', `/messages/${conversationId}/messages`, { clientId: 'del-1', body: 'Sent this by mistake' });

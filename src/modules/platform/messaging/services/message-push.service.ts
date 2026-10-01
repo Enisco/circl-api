@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MessageKind, ThreadKind } from '@prisma/client';
+import { stripFormatting } from '@/common';
 import { PrismaService } from '@/infrastructure';
 import { BadgeService } from '../../shared';
 import { FcmService } from '@/modules/infrastructure/notification/providers/push/fcm.service';
@@ -135,7 +136,8 @@ export class MessagePushService {
       case MessageKind.AUDIO:
         return 'Voice note';
       default:
-        return (message.body ?? '').slice(0, 140) || 'New message';
+        // A lock screen renders nothing, so `bring *ID*` would show the member the markers.
+        return stripFormatting(message.body ?? '').slice(0, 140) || 'New message';
     }
   }
 }

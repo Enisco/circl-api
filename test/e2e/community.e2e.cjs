@@ -242,6 +242,53 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   r = await api(bob.token, 'POST', `/community/guides/${guideId}/feedback`, { useful: true });
   check('feedback accepted', r.body?.data?.useful === true);
 
+  // Formatting travels as markers in the text (2026-10-01). The server stores the string it was
+  // given — markers, newlines and all — because the app renders them and a member watched them work
+  // while typing. It takes the markers out only where it reads the text for something else.
+  const formattedIntro = 'A *quibberdine* is the part most people get stuck on.\nHere is the _whole_ route.';
+  const formattedStep = '- Ask for a *basic account*\n- Take your `BRP`\n1. Book online first\n> Branches vary.';
+
+  r = await api(alice.token, 'POST', '/community/guides', {
+    topicCode: 'FINANCE',
+    title: 'Renting with no UK credit history',
+    intro: formattedIntro,
+    steps: [formattedStep],
+  });
+  check('a formatted guide → 201, because there is no such thing as invalid markup', r.status === 201, r.body?.error);
+  const formattedGuideId = r.body?.data?.id;
+  created.guides.push(formattedGuideId);
+
+  r = await api(bob.token, 'GET', `/community/guides/${formattedGuideId}`);
+  check('the intro comes back byte for byte, newlines included',
+    r.body?.data?.intro === formattedIntro, JSON.stringify(r.body?.data?.intro));
+  check('and so does the body, so the lists stay lists',
+    r.body?.data?.steps?.[0] === formattedStep, JSON.stringify(r.body?.data?.steps?.[0]));
+
+  const plainCreate = await api(alice.token, 'POST', '/community/guides', {
+    topicCode: 'FINANCE',
+    title: 'Renting with no UK credit history, said plainly',
+    intro: 'A quibberdine is the part most people get stuck on.\nHere is the whole route.',
+    steps: ['Ask for a basic account\nTake your BRP\nBook online first\nBranches vary.'],
+  });
+  const plainGuideId = plainCreate.body?.data?.id;
+  created.guides.push(plainGuideId);
+  check('a read time counts the words, not the markers',
+    r.body?.data?.readTimeMinutes === plainCreate.body?.data?.readTimeMinutes,
+    { formatted: r.body?.data?.readTimeMinutes, plain: plainCreate.body?.data?.readTimeMinutes });
+
+  // Search matches a substring of title or intro, so a formatted word is still found: there is no
+  // token index to strip markers out of. What a marker does break is a phrase that straddles it.
+  r = await api(bob.token, 'GET', '/search?q=quibberdine&types=GUIDE&limit=25');
+  let found = (r.body?.data?.groups ?? []).flatMap(g => g.items ?? []);
+  check('a formatted term is still findable, because the match is a substring one',
+    found.some(item => item.id === formattedGuideId), found.map(item => item.title));
+
+  r = await api(bob.token, 'GET', '/search?q=a%20quibberdine%20is&types=GUIDE&limit=25');
+  found = (r.body?.data?.groups ?? []).flatMap(g => g.items ?? []);
+  check('but a phrase straddling a marker does not, which is the known edge',
+    !found.some(item => item.id === formattedGuideId) && found.some(item => item.id === plainGuideId),
+    found.map(item => item.title));
+
   r = await api(bob.token, 'POST', '/community/guides/match', {
     categoryCode: 'BANK_ACCOUNT', title: 'How do I open a bank account without proof of address?',
   });

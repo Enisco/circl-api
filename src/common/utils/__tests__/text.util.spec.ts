@@ -4,6 +4,7 @@ import {
   keywordCoverage,
   keywords,
   readTimeMinutes,
+  stripFormatting,
   toPlainText,
 } from '../text.util';
 
@@ -51,6 +52,45 @@ describe('text utilities', () => {
     it('rounds up and never returns zero', () => {
       expect(readTimeMinutes('one two three')).toBe(1);
       expect(readTimeMinutes(Array(400).fill('word').join(' '))).toBe(2);
+    });
+
+    it('does not count the markers as words', () => {
+      // A bulleted list would otherwise read as twice its length, because every `-` is a word.
+      expect(readTimeMinutes(Array(300).fill('- word').join('\n'))).toBe(
+        readTimeMinutes(Array(300).fill('word').join('\n')),
+      );
+      expect(readTimeMinutes('*one* _two_ ~three~')).toBe(readTimeMinutes('one two three'));
+    });
+  });
+
+  describe('stripFormatting', () => {
+    it('removes a marker that pairs on its own line', () => {
+      expect(stripFormatting('*bold* and _italic_ and ~gone~ and `mono`')).toBe(
+        'bold and italic and gone and mono',
+      );
+      expect(stripFormatting('Ada: bring *ID*')).toBe('Ada: bring ID');
+      expect(stripFormatting('*a* *b*')).toBe('a b');
+    });
+
+    it('leaves a marker that finds no pair as the character it is', () => {
+      expect(stripFormatting('2 * 3 * 4')).toBe('2 * 3 * 4');
+      expect(stripFormatting('my_file_name.txt')).toBe('my_file_name.txt');
+      expect(stripFormatting('unpaired * star')).toBe('unpaired * star');
+    });
+
+    it('drops a bullet, a number or a quote, and keeps the lines', () => {
+      expect(stripFormatting('- bring ID\n- proof of address')).toBe('bring ID\nproof of address');
+      expect(stripFormatting('1. first\n2. second')).toBe('first\nsecond');
+      expect(stripFormatting('> a quote')).toBe('a quote');
+      expect(stripFormatting('* a bullet starting with a star')).toBe(
+        'a bullet starting with a star',
+      );
+    });
+
+    it('never spans a line, so one stray character cannot reformat a page', () => {
+      expect(stripFormatting('an opening *marker\nand a closing* one')).toBe(
+        'an opening *marker\nand a closing* one',
+      );
     });
   });
 

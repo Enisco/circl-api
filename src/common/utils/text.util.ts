@@ -1,6 +1,6 @@
 /** Text helpers shared by every composer. */
 
-/** Strips tags and collapses whitespace. Applied to every free-text field on write. */
+/** Strips tags and collapses whitespace. Nothing calls it: write paths trim, they do not reshape. */
 export const toPlainText = (input: string): string =>
   input
     .replace(/<[^>]*>/g, '')
@@ -21,9 +21,47 @@ export const excerpt = (input: string | null | undefined, max = 200): string => 
   return `${(lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
 };
 
-/** Read time, computed server-side at write time so every client agrees (1.6.1). */
+/**
+ * The chat formatting markers, which members type into guides and messages and clients render.
+ * Each is removed only where it pairs with another on the same line, which is what makes
+ * `2 * 3 * 4` arithmetic and leaves `my_file_name.txt` its underscores: an opening marker has to
+ * follow a non-word character and be followed by a non-space, and a closing one has to be preceded
+ * by a non-space and not be followed by a word character. Nothing spans a line.
+ */
+const INLINE_MARKERS = ['\\*', '_', '~', '`'];
+
+/** A bullet, a numbered item or a quote, which are line-level and carry a space after the marker. */
+const LINE_MARKER = /^[ \t]*(?:[-*][ \t]+|\d+\.[ \t]+|>[ \t]?)/;
+
+/**
+ * The text without its formatting markers, for anywhere the server reads member text for something
+ * other than storing it: a read time, a push preview, a line quoted back. Rendering stays the
+ * client's job, and the stored string is never touched — markers have to arrive back as they were
+ * sent, newlines included, or a list stops being a list.
+ */
+export const stripFormatting = (input: string): string =>
+  input
+    .split('\n')
+    .map(line => {
+      let text = line.replace(LINE_MARKER, '');
+
+      for (const marker of INLINE_MARKERS) {
+        text = text.replace(
+          new RegExp(`(^|[^\\w])${marker}(\\S|\\S[^${marker}\\n]*\\S)${marker}(?![\\w])`, 'g'),
+          '$1$2',
+        );
+      }
+
+      return text;
+    })
+    .join('\n');
+
+/**
+ * Read time, computed server-side at write time so every client agrees (1.6.1). Markers come out
+ * first: `*` is not a word, and a bulleted list would otherwise read as twice its length.
+ */
 export const readTimeMinutes = (text: string): number => {
-  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  const words = stripFormatting(text).trim().split(/\s+/).filter(Boolean).length;
 
   return Math.max(1, Math.ceil(words / 200));
 };
