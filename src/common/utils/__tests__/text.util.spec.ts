@@ -5,7 +5,6 @@ import {
   keywords,
   readTimeMinutes,
   stripFormatting,
-  toPlainText,
 } from '../text.util';
 
 describe('text utilities', () => {
@@ -78,6 +77,21 @@ describe('text utilities', () => {
       expect(stripFormatting('unpaired * star')).toBe('unpaired * star');
     });
 
+    it('leaves a marker inside a word, because prices and dimensions are full of them', () => {
+      // The app's renderer was the looser of the two and now matches this, so the table is shared:
+      // a room is 3*4m and a rate is 10*2*3 far more often than anybody means intraword bold.
+      expect(stripFormatting('10*2*3')).toBe('10*2*3');
+      expect(stripFormatting('the room is 3*4m')).toBe('the room is 3*4m');
+      // The deliberate loss that comes with it, agreed with the app team.
+      expect(stripFormatting('say*this*now')).toBe('say*this*now');
+    });
+
+    it('still pairs next to punctuation, which is where a marker usually lands', () => {
+      expect(stripFormatting('(*bold*)')).toBe('(bold)');
+      expect(stripFormatting('"*bold*,"')).toBe('"bold,"');
+      expect(stripFormatting('ask for a *basic account*.')).toBe('ask for a basic account.');
+    });
+
     it('drops a bullet, a number or a quote, and keeps the lines', () => {
       expect(stripFormatting('- bring ID\n- proof of address')).toBe('bring ID\nproof of address');
       expect(stripFormatting('1. first\n2. second')).toBe('first\nsecond');
@@ -108,13 +122,6 @@ describe('text utilities', () => {
     });
   });
 
-  describe('toPlainText', () => {
-    it('strips markup, because the client renders text and will not interpret it', () => {
-      expect(toPlainText('<b>hello</b> <script>alert(1)</script>there')).toBe(
-        'hello alert(1)there',
-      );
-    });
-  });
 });
 
 describe('escapeLike', () => {

@@ -1,12 +1,5 @@
 /** Text helpers shared by every composer. */
 
-/** Strips tags and collapses whitespace. Nothing calls it: write paths trim, they do not reshape. */
-export const toPlainText = (input: string): string =>
-  input
-    .replace(/<[^>]*>/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
 /** A truncated description for feed and list cards, so the payload does not carry full bodies (1.1). */
 export const excerpt = (input: string | null | undefined, max = 200): string => {
   if (!input) return '';
@@ -38,6 +31,11 @@ const LINE_MARKER = /^[ \t]*(?:[-*][ \t]+|\d+\.[ \t]+|>[ \t]?)/;
  * other than storing it: a read time, a push preview, a line quoted back. Rendering stays the
  * client's job, and the stored string is never touched — markers have to arrive back as they were
  * sent, newlines included, or a list stops being a list.
+ *
+ * It does not nest, where the renderer does: inside `` ` `` the app treats the other markers as
+ * ordinary characters, so `` `*a*` `` reads as `*a*` in monospace and strips here to `a`. Agreed
+ * with the app team as not worth nesting rules in a function whose value is being simple — the cost
+ * is two characters in a push preview of a message teaching somebody the syntax.
  */
 export const stripFormatting = (input: string): string =>
   input
