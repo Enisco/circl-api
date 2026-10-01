@@ -70,6 +70,16 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
   r = await api(outsider.token, 'GET', `/community/groups/${open}`);
   check('an open group hands a non-member its thread facts', r.body?.data?.messageCount === 0 && typeof r.body?.data?.conversationId === 'string', r.body?.data);
 
+  // Reading is not taking part: an open group's wall is a forum people read before they commit.
+  r = await api(outsider.token, 'GET', `/community/groups/${open}/posts`);
+  check('a non-member previews an open group\'s wall', r.status === 200 && r.body?.meta?.preview === true, { status: r.status, meta: r.body?.meta });
+
+  r = await api(outsider.token, 'GET', `/community/groups/${closed}/posts`);
+  check('but a closed group\'s wall is refused, which is what visibility is for', r.status === 403 && r.body?.error?.code === 'NOT_A_MEMBER', { status: r.status, code: r.body?.error?.code });
+
+  r = await api(outsider.token, 'POST', `/community/groups/${open}/posts`, { content: 'Reading is not taking part.' });
+  check('and a non-member cannot write on either', r.status === 403 && r.body?.error?.code === 'NOT_A_MEMBER', r.body?.error);
+
   console.log('\n── 3 scope, categories and the one button ────────────────');
 
   r = await api(admin.token, 'GET', '/community/groups?scope=MINE&limit=50');
@@ -87,6 +97,13 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
 
   r = await api(outsider.token, 'GET', '/community/groups?categoryCodes=MAKE_FRIENDS&limit=50');
   check('categoryCodes narrows by category', (r.body?.data ?? []).every(g => g.category?.code === 'MAKE_FRIENDS'), (r.body?.data ?? []).map(g => g.category?.code));
+
+  // Two filters that both read the membership relation. Written to one slot, the second decided
+  // alone and the first was silently ignored.
+  r = await api(admin.token, 'GET', '/community/groups?scope=MINE&membership=JOINED&limit=50');
+  check('scope and membership narrow together', (r.body?.data ?? []).some(g => g.id === open), (r.body?.data ?? []).length);
+  r = await api(admin.token, 'GET', '/community/groups?scope=MINE&membership=NOT_JOINED&limit=50');
+  check('and contradicting each other answers nothing rather than ignoring one', (r.body?.data ?? []).length === 0, (r.body?.data ?? []).map(g => g.name));
 
   r = await api(outsider.token, 'GET', `/community/groups/${open}`);
   const flags = r.body?.data?.viewer;
@@ -107,6 +124,15 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
   r = await api(asker.token, 'GET', `/community/groups/${closed}`);
   check('hasRequested survives a reload, which is what keeps the button from flipping', r.body?.data?.viewer?.hasRequested === true, r.body?.data?.viewer);
 
+  // The card says "1 person is waiting", so the number is on the row and not only on the group.
+  r = await api(admin.token, 'GET', '/community/groups?scope=MINE&limit=50');
+  const waiting = (r.body?.data ?? []).find(g => g.id === closed);
+  check('pendingRequestCount is on the admin\'s own list row', waiting?.pendingRequestCount === 1, waiting?.pendingRequestCount);
+  check('and absent from a row the caller does not admin', (r.body?.data ?? []).every(g => g.viewer?.canModerate || g.pendingRequestCount === undefined), (r.body?.data ?? []).map(g => g.pendingRequestCount));
+
+  r = await api(asker.token, 'GET', '/community/groups?limit=50');
+  check('a non-admin never sees it on any row', (r.body?.data ?? []).every(g => g.pendingRequestCount === undefined), (r.body?.data ?? []).filter(g => g.pendingRequestCount !== undefined).length);
+
   r = await api(admin.token, 'GET', `/community/groups/${closed}/join-requests`);
   check('the admin sees the queue, oldest first', (r.body?.data ?? []).length === 1, r.body?.data);
   check('with whatever the asker typed', r.body?.data?.[0]?.message === 'Just moved to Manchester.', r.body?.data?.[0]);
@@ -123,9 +149,9 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
   check('and they may ask again afterwards', r.body?.data?.membership === 'PENDING', r.body?.data);
 
   r = await api(admin.token, 'POST', `/community/groups/${closed}/join-requests/${asker.id}`, { approve: true });
-  check('approve → the whole group comes back, because both numbers moved', !!r.body?.data?.group?.id, Object.keys(r.body?.data ?? {}));
-  check('memberCount moved', r.body?.data?.group?.memberCount === 2, r.body?.data?.group?.memberCount);
-  check('and pendingRequestCount with it', r.body?.data?.group?.pendingRequestCount === 0, r.body?.data?.group?.pendingRequestCount);
+  check('approve → the whole group comes back, because both numbers moved', r.body?.data?.id === closed, Object.keys(r.body?.data ?? {}));
+  check('memberCount moved', r.body?.data?.memberCount === 2, r.body?.data?.memberCount);
+  check('and pendingRequestCount with it', r.body?.data?.pendingRequestCount === 0, r.body?.data?.pendingRequestCount);
 
   r = await api(asker.token, 'GET', `/community/groups/${closed}`);
   check('the asker is in, and may take part', r.body?.data?.viewer?.membership === 'MEMBER' && r.body?.data?.viewer?.canPost === true, r.body?.data?.viewer);
@@ -145,7 +171,7 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
   check('an admin cannot remove themselves', r.status === 422, { status: r.status, code: r.body?.error?.code });
 
   r = await api(admin.token, 'DELETE', `/community/groups/${open}/members/${joiner.id}`);
-  check('remove a member → the whole group, count down', r.body?.data?.group?.memberCount === 1, r.body?.data?.group?.memberCount);
+  check('remove a member → the whole group, count down', r.body?.data?.id === open && r.body?.data?.memberCount === 1, r.body?.data?.memberCount);
 
   r = await api(joiner.token, 'GET', `/community/groups/${open}`);
   check('wasRemoved for ever after, so the client offers nothing', r.body?.data?.viewer?.wasRemoved === true, r.body?.data?.viewer);

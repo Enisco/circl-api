@@ -351,7 +351,12 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   r = await api(alice.token, 'GET', `/community/groups/${approvalGroupId}/join-requests`);
   check('admin sees the queue', r.body?.data?.length === 1, r.body?.data);
   r = await api(alice.token, 'POST', `/community/groups/${approvalGroupId}/join-requests/${bob.id}`, { decision: 'APPROVE' });
-  check('approve → MEMBER, count 2', r.body?.data?.membership === 'MEMBER' && r.body?.data?.memberCount === 2, r.body?.data);
+  // Answers the whole group now, not a pair: both memberCount and pendingRequestCount move and
+  // the screen reads both. The older `{ decision }` body is still accepted beside `{ approve }`.
+  check('approve → the group, count 2, queue empty',
+    r.body?.data?.memberCount === 2 && r.body?.data?.pendingRequestCount === 0, r.body?.data?.memberCount);
+  r = await api(bob.token, 'GET', `/community/groups/${approvalGroupId}`);
+  check('and the member is in', r.body?.data?.viewer?.membership === 'MEMBER', r.body?.data?.viewer);
 
   console.log('\n── 1.1 Feed ─────────────────────────────────────────────────');
 

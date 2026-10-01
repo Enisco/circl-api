@@ -67,6 +67,13 @@ export class MessagePushService {
     if (!conversation || !message) return;
 
     const isSupport = conversation.kind === ThreadKind.SUPPORT;
+    const isGroup = conversation.kind === ThreadKind.GROUP;
+    const senderName = `${sender?.firstName ?? 'Someone'} ${sender?.lastName?.charAt(0) ?? ''}`.trim();
+    // A group's push is from the group, with the member who spoke in the body. Titled with the
+    // sender alone it read as a direct message from somebody the member may not know, and three
+    // groups and a DM all looked the same on a lock screen.
+    const groupName =
+      (conversation.contextSnapshot as { title?: string } | null)?.title ?? 'A group';
     const tokensByUser = new Map<string, string[]>();
 
     for (const device of devices) {
@@ -93,11 +100,13 @@ export class MessagePushService {
 
       const { deadTokens } = await this.fcm.sendPushToMany(
         tokens,
-        isSupport
-          ? 'Circl'
-          : `${sender?.firstName ?? 'Someone'} ${sender?.lastName?.charAt(0) ?? ''}`.trim(),
+        isSupport ? 'Circl' : isGroup ? groupName : senderName,
         // Never the body on a support thread.
-        isSupport ? 'You have a new message from the Circl team.' : this.preview(message),
+        isSupport
+          ? 'You have a new message from the Circl team.'
+          : isGroup
+            ? `${sender?.firstName ?? 'Someone'}: ${this.preview(message)}`
+            : this.preview(message),
         {
           // The three keys the client reads out of message.data (G14 15.1). MESSAGE pulls the
           // thread and re-reads the unread totals.

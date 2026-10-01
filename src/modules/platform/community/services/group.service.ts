@@ -191,6 +191,10 @@ export class GroupService {
 
   async list(viewerId: string, query: ListGroupsDto): Promise<Paginated<GroupSummaryView>> {
     const where: Prisma.GroupWhereInput = { deletedAt: null };
+    // `scope` and `membership` are two filters that both read the membership relation, so they
+    // are ANDed rather than written to the same slot: assigning both left the second one silently
+    // deciding, and `?scope=MINE&membership=PENDING` answered as though scope had not been sent.
+    const and: Prisma.GroupWhereInput[] = [];
 
     if (query.cityId) where.cityId = query.cityId;
     if (query.categoryCodes?.length) where.categoryCode = { in: query.categoryCodes };
@@ -203,7 +207,7 @@ export class GroupService {
         state: { in: [GroupMembershipState.MEMBER, GroupMembershipState.ADMIN] },
       };
 
-      where.memberships = query.scope === 'MINE' ? { some: joined } : { none: joined };
+      and.push({ memberships: query.scope === 'MINE' ? { some: joined } : { none: joined } });
     }
 
     if (query.q) {
@@ -219,33 +223,41 @@ export class GroupService {
     // Membership filters are expressed as a relation predicate rather than a fetch-then-filter, so paging stays correct: filtering after the page is taken produces short pages and a totalCount nobody can trust.
     switch (query.membership) {
       case 'JOINED':
-        where.memberships = {
-          some: {
-            userId: viewerId,
-            state: { in: [GroupMembershipState.MEMBER, GroupMembershipState.ADMIN] },
-          },
-        };
-        break;
-      case 'PENDING':
-        where.memberships = { some: { userId: viewerId, state: GroupMembershipState.PENDING } };
-        break;
-      case 'NOT_JOINED':
-        where.memberships = {
-          none: {
-            userId: viewerId,
-            state: {
-              in: [
-                GroupMembershipState.MEMBER,
-                GroupMembershipState.ADMIN,
-                GroupMembershipState.PENDING,
-              ],
+        and.push({
+          memberships: {
+            some: {
+              userId: viewerId,
+              state: { in: [GroupMembershipState.MEMBER, GroupMembershipState.ADMIN] },
             },
           },
-        };
+        });
+        break;
+      case 'PENDING':
+        and.push({
+          memberships: { some: { userId: viewerId, state: GroupMembershipState.PENDING } },
+        });
+        break;
+      case 'NOT_JOINED':
+        and.push({
+          memberships: {
+            none: {
+              userId: viewerId,
+              state: {
+                in: [
+                  GroupMembershipState.MEMBER,
+                  GroupMembershipState.ADMIN,
+                  GroupMembershipState.PENDING,
+                ],
+              },
+            },
+          },
+        });
         break;
       default:
         break;
     }
+
+    if (and.length) where.AND = and;
 
     const [total, rows] = await this.database.$transaction([
       this.database.group.count({ where }),
@@ -264,17 +276,40 @@ export class GroupService {
       this.categoryLabels(),
     ]);
 
+    // The card says "3 people are waiting", so the number has to be on the row and not only on
+    // the group's own screen. Counted for the caller's own groups alone, in one grouped query.
+    const pending = await this.pendingCountsFor(
+      rows.filter(row => standing.get(row.id)?.membership === 'ADMIN').map(row => row.id),
+    );
+
     return {
-      data: rows.map(row =>
-        this.toSummary(
+      data: rows.map(row => {
+        const summary = this.toSummary(
           row,
           standing.get(row.id)!,
           labels,
           row.conversationId ? threads.get(row.conversationId) : undefined,
-        ),
-      ),
+        );
+
+        return summary.viewer.canModerate
+          ? { ...summary, pendingRequestCount: pending.get(row.id) ?? 0 }
+          : summary;
+      }),
       meta: buildPageMeta(query, total),
     };
+  }
+
+  /** How many are waiting on each of these groups, for the admin's cards. */
+  private async pendingCountsFor(groupIds: string[]): Promise<Map<string, number>> {
+    if (!groupIds.length) return new Map();
+
+    const rows = await this.database.groupMembership.groupBy({
+      by: ['groupId'],
+      where: { groupId: { in: groupIds }, state: GroupMembershipState.PENDING },
+      _count: { _all: true },
+    });
+
+    return new Map(rows.map(row => [row.groupId, row._count._all] as const));
   }
 
   private orderFor(sort: ListGroupsDto['sort']): Prisma.GroupOrderByWithRelationInput[] {
@@ -769,7 +804,7 @@ export class GroupService {
     id: string,
     subjectUserId: string,
     decision: 'APPROVE' | 'REJECT',
-  ): Promise<{ membership: MembershipView; memberCount: number; group: GroupDetailView }> {
+  ): Promise<GroupDetailView> {
     const group = await this.assertAdmin(adminId, id);
 
     const membership = await this.database.groupMembership.findUnique({
@@ -782,7 +817,7 @@ export class GroupService {
 
     const approve = decision === 'APPROVE';
 
-    const memberCount = await this.database.$transaction(async tx => {
+    await this.database.$transaction(async tx => {
       await tx.groupMembership.update({
         where: { groupId_userId: { groupId: id, userId: subjectUserId } },
         data: {
@@ -792,17 +827,10 @@ export class GroupService {
         },
       });
 
-      if (approve) await this.addToThread(tx, group.conversationId, [subjectUserId]);
+      if (!approve) return;
 
-      const counted = approve
-        ? await tx.group.update({
-            where: { id },
-            data: { memberCount: { increment: 1 } },
-            select: { memberCount: true },
-          })
-        : await tx.group.findUniqueOrThrow({ where: { id }, select: { memberCount: true } });
-
-      return counted.memberCount;
+      await this.addToThread(tx, group.conversationId, [subjectUserId]);
+      await tx.group.update({ where: { id }, data: { memberCount: { increment: 1 } } });
     });
 
     // Both outcomes, because a request that is silently declined is indistinguishable from one
@@ -826,20 +854,16 @@ export class GroupService {
       },
     });
 
-    // Both numbers moved and the screen reads both, so the whole group comes back rather than a
-    // pair the client has to merge.
-    return {
-      membership: approve ? 'MEMBER' : 'NONE',
-      memberCount,
-      group: await this.findOne(adminId, id),
-    };
+    // Both numbers moved and the screen reads both, so the whole group comes back — which already
+    // carries `memberCount` and `pendingRequestCount` — rather than a pair the client has to merge.
+    return this.findOne(adminId, id);
   }
 
   async removeMember(
     adminId: string,
     id: string,
     subjectUserId: string,
-  ): Promise<{ memberCount: number; group: GroupDetailView }> {
+  ): Promise<GroupDetailView> {
     const group = await this.assertAdmin(adminId, id);
 
     if (adminId === subjectUserId) {
@@ -859,7 +883,7 @@ export class GroupService {
       membership.state === GroupMembershipState.MEMBER ||
       membership.state === GroupMembershipState.ADMIN;
 
-    const memberCount = await this.database.$transaction(async tx => {
+    await this.database.$transaction(async tx => {
       await tx.groupMembership.update({
         where: { groupId_userId: { groupId: id, userId: subjectUserId } },
         data: { state: GroupMembershipState.REMOVED, isAdmin: false, decidedAt: new Date() },
@@ -868,24 +892,11 @@ export class GroupService {
       // An invitation is the only way back, so any outstanding one goes with the removal.
       await tx.groupInvitation.deleteMany({ where: { groupId: id, userId: subjectUserId } });
 
-      if (!wasCounted) {
-        const counted = await tx.group.findUniqueOrThrow({
-          where: { id },
-          select: { memberCount: true },
-        });
-
-        return counted.memberCount;
-      }
+      // Somebody who only asked was never counted, so removing them moves nothing.
+      if (!wasCounted) return;
 
       await this.removeFromThread(tx, group.conversationId, [subjectUserId]);
-
-      const counted = await tx.group.update({
-        where: { id },
-        data: { memberCount: { decrement: 1 } },
-        select: { memberCount: true },
-      });
-
-      return counted.memberCount;
+      await tx.group.update({ where: { id }, data: { memberCount: { decrement: 1 } } });
     });
 
     // Being removed from a group is something a member has to be told, or they come back to a
@@ -903,7 +914,7 @@ export class GroupService {
       metadata: { groupId: id, event: 'GROUP_REMOVED' },
     });
 
-    return { memberCount, group: await this.findOne(adminId, id) };
+    return this.findOne(adminId, id);
   }
 
   // ─── 1.7.6 Members, mute and invitations ───────────────────────────────────
@@ -1179,10 +1190,20 @@ export class GroupService {
     id: string,
     query: { skip: number; take: number; currentPage: number; perPage: number },
   ): Promise<Paginated<GroupPostView> & { meta: { preview?: boolean } }> {
-    await this.load(id);
+    const group = await this.load(id);
 
     const membership = await this.membershipOf(viewerId, id);
     const isMember = membership === 'MEMBER' || membership === 'ADMIN';
+
+    // The whole point of a closed group: its name and rules are public, what it has said is not.
+    // Without this the wall handed a non-member a preview of it and the full post count with it,
+    // which made `visibility` a label on the payload rather than a rule.
+    if (!isMember && group.visibility === GroupVisibility.CLOSED) {
+      throw ApiException.forbidden(
+        ApiErrorCode.NOT_A_MEMBER,
+        'This group is for members only. Ask to join to read it.',
+      );
+    }
 
     // A non-member gets a preview of the last 3 posts rather than an empty wall, because proof of life beats an empty invitation.
     const take = isMember ? query.take : 3;
@@ -1629,24 +1650,25 @@ export class GroupService {
       select: { groupId: true, lastReadAt: true },
     });
 
-    const counts = new Map<string, number>();
+    if (!rows.length) return new Map();
 
-    await Promise.all(
-      rows.map(async row => {
-        const count = await this.database.groupPost.count({
-          where: {
-            groupId: row.groupId,
-            deletedAt: null,
-            authorId: { not: userId },
-            ...(row.lastReadAt ? { createdAt: { gt: row.lastReadAt } } : {}),
-          },
-        });
+    // One grouped query rather than one count per group. Each group has its own threshold, which
+    // is why this is an OR of pairs instead of a single range: a page of twenty groups was twenty
+    // round trips on a list endpoint, for a number that is now the deprecated one of the two.
+    const counts = await this.database.groupPost.groupBy({
+      by: ['groupId'],
+      where: {
+        deletedAt: null,
+        authorId: { not: userId },
+        OR: rows.map(row => ({
+          groupId: row.groupId,
+          ...(row.lastReadAt ? { createdAt: { gt: row.lastReadAt } } : {}),
+        })),
+      },
+      _count: { _all: true },
+    });
 
-        counts.set(row.groupId, count);
-      }),
-    );
-
-    return counts;
+    return new Map(counts.map(row => [row.groupId, row._count._all] as const));
   }
 
   private async load(id: string): Promise<Group> {
