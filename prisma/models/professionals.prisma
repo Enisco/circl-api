@@ -20,8 +20,8 @@ model ProfessionalListing {
   priceBasis   PriceBasis   @default(NEGOTIABLE) @map("price_basis")
   currency     String       @default("GBP") @map("currency")
 
-  isAcceptingWork  Boolean                   @default(true) @map("is_accepting_work")
-  freeConsultation Boolean                   @default(false) @map("free_consultation")
+  isAcceptingWork    Boolean                   @default(true) @map("is_accepting_work")
+  freeConsultation   Boolean                   @default(false) @map("free_consultation")
   verificationStatus ListingVerificationStatus @default(UNVERIFIED) @map("verification_status")
 
   // D13 mitigation: with no credential checks, store what was agreed and when, so an unchecked claim is at least an unchecked claim that says so.
@@ -41,17 +41,16 @@ model ProfessionalListing {
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
 
-  categories     ProfessionalListingCategory[]
-  services       ProfessionalService[]
-  bookings       Booking[]
-  briefMatches   BriefMatch[]
-  promotedOffer  CommunityOffer? @relation("OfferPromotion")
+  categories         ProfessionalListingCategory[]
+  services           ProfessionalService[]
+  bookings           Booking[]
+  briefMatches       BriefMatch[]
+  promotedOffer      CommunityOffer?               @relation("OfferPromotion")
+  availability       ListingAvailability[]
+  availabilityBlocks ListingAvailabilityBlock[]
 
   @@index([cityId, isAcceptingWork])
   @@index([verificationStatus])
-  availability      ListingAvailability[]
-  availabilityBlocks ListingAvailabilityBlock[]
-
   // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
   @@index([professionTitle(ops: raw("gin_trgm_ops"))], type: Gin, map: "professional_listings_title_trgm_idx")
   @@map("professional_listings")
@@ -132,13 +131,13 @@ model BriefMatch {
   listingId String              @map("listing_id")
   listing   ProfessionalListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
-  rank            Int    @map("rank")
-  totalScore      Float  @map("total_score")
-  ratingScore     Float  @map("rating_score")
-  distanceScore   Float  @map("distance_score")
-  priceScore      Float  @map("price_score")
-  responseScore   Float  @map("response_score")
-  priceForBrief   Int?   @map("price_for_brief")
+  rank          Int   @map("rank")
+  totalScore    Float @map("total_score")
+  ratingScore   Float @map("rating_score")
+  distanceScore Float @map("distance_score")
+  priceScore    Float @map("price_score")
+  responseScore Float @map("response_score")
+  priceForBrief Int?  @map("price_for_brief")
 
   // A plain sentence, or null.
   rationale String? @map("rationale")
@@ -214,14 +213,14 @@ model Booking {
 
 // The timeline is data, not a client-side derivation, because each stage is timestamped and the client must not have to invent the order (2.9.1).
 model BookingEvent {
-  id        String   @id @default(uuid())
-  bookingId String   @map("booking_id")
-  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  id        String  @id @default(uuid())
+  bookingId String  @map("booking_id")
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
-  stage   JobStage @map("stage")
-  actorId String?  @map("actor_id")
-  note    String?  @map("note")
-  metadata Json?   @map("metadata")
+  stage    JobStage @map("stage")
+  actorId  String?  @map("actor_id")
+  note     String?  @map("note")
+  metadata Json?    @map("metadata")
 
   reachedAt DateTime @default(now()) @map("reached_at") @db.Timestamptz
 
@@ -312,9 +311,9 @@ model ManagedRequest {
 /// The working week behind the booking slot picker (G5). Without it the app offers the same six
 /// days and eight times for every professional, forever.
 model ListingAvailability {
-  listingId String             @map("listing_id")
+  listingId String              @map("listing_id")
   listing   ProfessionalListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
-  day       Weekday            @map("day")
+  day       Weekday             @map("day")
 
   /// Minutes from midnight, the same unit the store opening hours use.
   startMinutes Int @map("start_minutes")
@@ -328,8 +327,8 @@ model ListingAvailability {
 
 /// A single day the professional is not working: holiday, or a date they blocked out.
 model ListingAvailabilityBlock {
-  id        String             @id @default(uuid())
-  listingId String             @map("listing_id")
+  id        String              @id @default(uuid())
+  listingId String              @map("listing_id")
   listing   ProfessionalListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
   date   DateTime @map("date") @db.Date

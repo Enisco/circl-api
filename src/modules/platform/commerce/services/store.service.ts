@@ -4,12 +4,13 @@ import {
   DealTrack,
   Prisma,
   Store,
+  StoreFulfilment,
   TaxonomyKind,
   ThreadContextType,
   Weekday,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException, daysAgo } from '@/common';
+import { ApiErrorCode, ApiException, daysAgo, money } from '@/common';
 import {
   CityService,
   MediaService,
@@ -152,6 +153,7 @@ export class StoreService {
       this.singleImage(dto.coverKey, userId),
     ]);
     const city = await this.cities.find(cityId);
+    const fulfilment = this.fulfilmentFor(dto) ?? StoreFulfilment.COLLECTION;
 
     const store = await this.database.$transaction(async tx => {
       const created = await tx.store.create({
@@ -170,7 +172,11 @@ export class StoreService {
           postcode: dto.postcode ?? null,
           latitude: dto.latitude ?? city?.latitude ?? null,
           longitude: dto.longitude ?? city?.longitude ?? null,
-          delivers: dto.delivers ?? false,
+          fulfilment,
+          // The same answer in the words one app release still speaks, written in step so a client
+          // reading either field is never told something different.
+          delivers: fulfilment !== StoreFulfilment.COLLECTION,
+          minimumOrderPence: dto.minimumOrderPence ?? null,
           timezone: city?.timezone ?? 'Europe/London',
           logoKey: logo?.storageKey ?? null,
           coverKey: cover?.storageKey ?? null,
@@ -192,9 +198,17 @@ export class StoreService {
   }
 
   async update(userId: string, id: string, dto: UpdateStoreDto) {
-    await this.assertOwned(userId, id);
+    const current = await this.assertOwned(userId, id);
 
     const city = dto.cityId ? await this.cities.assertValid(dto.cityId) : null;
+    const fulfilment = this.fulfilmentFor(dto, current.fulfilment);
+
+    // A shop's city is its own and the seller now picks it, so the two things derived from it have
+    // to move with it. The timezone decides "closes 7pm", and a shop with no address of its own is
+    // pinned at its city's centre — left alone, a shop that moved city kept the old one's hours
+    // and the old one's distance.
+    const movedCity = Boolean(city && city.id !== current.cityId);
+    const hasOwnAddress = Boolean(current.addressLine1 || current.postcode);
 
     await this.validateCodes(dto);
 
@@ -255,12 +269,26 @@ export class StoreService {
           description: dto.description,
           area: dto.area,
           cityId: city?.id,
+          ...(movedCity ? { timezone: city!.timezone } : {}),
+          ...(movedCity && !hasOwnAddress && dto.latitude === undefined
+            ? { latitude: city!.latitude }
+            : {}),
+          ...(movedCity && !hasOwnAddress && dto.longitude === undefined
+            ? { longitude: city!.longitude }
+            : {}),
           hidesExactAddress: dto.hidesExactAddress,
           ...(dto.addressLine1 !== undefined ? { addressLine1: dto.addressLine1 } : {}),
           ...(dto.postcode !== undefined ? { postcode: dto.postcode } : {}),
           ...(dto.latitude !== undefined ? { latitude: dto.latitude } : {}),
           ...(dto.longitude !== undefined ? { longitude: dto.longitude } : {}),
-          delivers: dto.delivers,
+          ...(fulfilment
+            ? { fulfilment, delivers: fulfilment !== StoreFulfilment.COLLECTION }
+            : {}),
+          // Null is the seller clearing it, which is why the app always sends the key. Absent is a
+          // seller who edited their opening hours and should keep their minimum.
+          ...(dto.minimumOrderPence !== undefined
+            ? { minimumOrderPence: dto.minimumOrderPence }
+            : {}),
           ...(logo ? { logoKey: logo.storageKey } : {}),
           ...(cover ? { coverKey: cover.storageKey } : {}),
           ...(dto.logoKey === null ? { logoKey: null } : {}),
@@ -271,6 +299,31 @@ export class StoreService {
     });
 
     return this.toDetail(updated, userId, null);
+  }
+
+  /**
+   * What to store for "how do people get their order", from a body that may speak either language.
+   *
+   * `fulfilment` wins where it is sent. Where only the older `delivers` arrives it is read as the
+   * additive thing it always was — `true` is BOTH, not DELIVERY, because a shop that delivers was
+   * never a shop that refused collection, and reading it as DELIVERY would have every client still
+   * on the old field start turning collection orders away.
+   *
+   * It also cannot narrow what it cannot say: `delivers: true` against a stored DELIVERY leaves
+   * DELIVERY, because the answers already agree on the only question that flag asks.
+   *
+   * Returns undefined when the body said nothing, which on a patch means unchanged.
+   */
+  private fulfilmentFor(
+    dto: { fulfilment?: StoreFulfilment; delivers?: boolean },
+    current?: StoreFulfilment,
+  ): StoreFulfilment | undefined {
+    if (dto.fulfilment) return dto.fulfilment;
+    if (dto.delivers === undefined) return undefined;
+
+    if (current && dto.delivers === (current !== StoreFulfilment.COLLECTION)) return current;
+
+    return dto.delivers ? StoreFulfilment.BOTH : StoreFulfilment.COLLECTION;
   }
 
   /** Separate from the main patch because it is a one-tap action (4.8.2). */
@@ -391,7 +444,10 @@ export class StoreService {
       // Sent in full so the client can render "closes 8pm" without a round trip.
       openingHours,
       timezone: store.timezone,
-      delivers: store.delivers,
+      fulfilment: store.fulfilment,
+      /** @deprecated The same answer as `fulfilment`, derived so the two can never disagree. */
+      delivers: store.fulfilment !== StoreFulfilment.COLLECTION,
+      minimumOrder: money(store.minimumOrderPence),
       isNew: store.createdAt >= daysAgo(NEW_STORE_DAYS),
       itemPreview: itemPreview.map(item => ({ id: item.id, name: item.name, photoUrl: null })),
       status: store.status,

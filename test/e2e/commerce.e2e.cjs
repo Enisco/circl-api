@@ -226,6 +226,73 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
   check('and the one with a photo has dimensions for the grid to fit rather than crop',
     listed.filter(i => i.coverPhoto).every(i => typeof i.coverPhoto.width === 'number'), listed.map(i => i.coverPhoto?.width));
 
+  console.log('\n── A shop\'s own city, how it hands over, and its minimum ───');
+
+  // The shop was created with the older `delivers: true` and nothing else, which never meant "no
+  // collection" — so it reads as BOTH rather than DELIVERY, or every client still on that field
+  // would start turning collection orders away.
+  r = await api(buyer.token, 'GET', `/commerce/stores/${storeId}`);
+  check('a legacy delivers:true reads as BOTH, not DELIVERY', r.body?.data?.fulfilment === 'BOTH', r.body?.data?.fulfilment);
+  check('and delivers still answers the question it always asked', r.body?.data?.delivers === true, r.body?.data?.delivers);
+  check('no minimum until a seller sets one', r.body?.data?.minimumOrder === null, r.body?.data?.minimumOrder);
+
+  r = await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { fulfilment: 'COLLECTION', minimumOrderPence: 1500 });
+  check('a seller says how people get their order', r.body?.data?.fulfilment === 'COLLECTION', r.body?.data?.fulfilment);
+  check('and delivers moves with it, so the two can never disagree', r.body?.data?.delivers === false, r.body?.data?.delivers);
+  check('the minimum comes back as money', r.body?.data?.minimumOrder?.amount === 1500 && r.body?.data?.minimumOrder?.currency === 'GBP', r.body?.data?.minimumOrder);
+
+  r = await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { area: 'Rusholme' });
+  check('editing something else leaves the minimum alone, because absent is unchanged', r.body?.data?.minimumOrder?.amount === 1500, r.body?.data?.minimumOrder);
+
+  r = await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { minimumOrderPence: null });
+  check('an explicit null clears it, because that is a decision the seller made', r.body?.data?.minimumOrder === null, r.body?.data?.minimumOrder);
+
+  r = await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { minimumOrderPence: 0 });
+  check('zero is a minimum of nothing and is stored as sent, not read as null', r.body?.data?.minimumOrder?.amount === 0, r.body?.data?.minimumOrder);
+  await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { minimumOrderPence: null });
+
+  r = await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { fulfilment: 'BOTH' });
+  check('BOTH is sayable', r.body?.data?.fulfilment === 'BOTH', r.body?.data?.fulfilment);
+  r = await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { delivers: true });
+  check('and a release that cannot say BOTH cannot take it away', r.body?.data?.fulfilment === 'BOTH', r.body?.data?.fulfilment);
+  r = await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { fulfilment: 'BOTH', delivers: false });
+  check('fulfilment wins where both are sent', r.body?.data?.fulfilment === 'BOTH', r.body?.data?.fulfilment);
+
+  // No `q=` here: a search term is recorded as demand, and the insights check below counts them.
+  r = await api(buyer.token, 'GET', '/commerce/stores?cityId=MANCHESTER&delivers=true&limit=50');
+  check('the delivers filter reads fulfilment, so it finds a BOTH shop', r.body?.data?.some(st => st.id === storeId), r.body?.data?.length);
+  await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { fulfilment: 'COLLECTION' });
+  r = await api(buyer.token, 'GET', '/commerce/stores?cityId=MANCHESTER&delivers=true&limit=50');
+  check('and drops it once the shop says collection only', !r.body?.data?.some(st => st.id === storeId), r.body?.data?.length);
+  await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { fulfilment: 'BOTH' });
+
+  // The seller picks the shop's city now, so it is the shop's own and the two things derived from
+  // it have to move with it: the timezone decides "closes 7pm", and a shop with no address of its
+  // own is pinned at its city's centre.
+  r = await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { cityId: 'LONDON' });
+  check('a shop\'s city is its own, not its owner\'s', r.body?.data?.city?.id === 'LONDON', r.body?.data?.city);
+  r = await api(seller.token, 'GET', '/commerce/stores/me');
+  check('and nothing derives it back from the owner\'s profile', r.body?.data?.city?.id === 'LONDON', r.body?.data?.city);
+
+  const keptPin = await prisma.store.findUnique({ where: { id: storeId } });
+  check('a shop that typed its own address keeps its pin, which is not the city\'s to move',
+    Math.abs((keptPin?.latitude ?? 0) - 53.4512345) < 0.0001, keptPin?.latitude);
+  await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { cityId: 'MANCHESTER' });
+
+  // A shop with no address of its own was pinned at its city's centre, so moving city has to move
+  // the pin: left alone it would be measured from a city it is no longer in.
+  const mover = await makeUser('mover');
+  ids.push(mover.id);
+  r = await api(mover.token, 'POST', '/commerce/stores', {
+    name: 'Pin Follows City', area: 'Hulme', cityId: 'MANCHESTER', openingHours: allDay(),
+  });
+  const moverStore = r.body?.data?.id;
+  await api(mover.token, 'PATCH', `/commerce/stores/${moverStore}`, { cityId: 'LONDON' });
+  const movedPin = await prisma.store.findUnique({ where: { id: moverStore } });
+  // 51.5072 is London's centre, which is where a shop with no address of its own sits.
+  check('a shop with no address of its own is re-centred on the city it moved to',
+    Math.abs((movedPin?.latitude ?? 0) - 51.5072) < 0.001, movedPin?.latitude);
+
   console.log('\n── 4.4 Browse ───────────────────────────────────────────────');
 
   // Narrowed by name, not scanned: Manchester has seeded shops in it and a page holds twenty.
@@ -418,6 +485,22 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
     storeId, lines: [{ itemId: egusiId, quantity: 2 }], fulfilment: 'DELIVERY',
   });
   check('delivery without an address → 422', r.status === 422 && r.body?.error?.details?.some(d => d.field === 'deliveryAddress'), r.body?.error);
+
+  // Both halves of the question, now that a shop can answer only one of them. The delivery refusal
+  // existed; its sibling only became expressible when DELIVERY stopped implying collection too.
+  await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { fulfilment: 'COLLECTION' });
+  r = await api(buyer.token, 'POST', '/commerce/enquiries', {
+    storeId, lines: [{ itemId: egusiId, quantity: 1 }],
+    fulfilment: 'DELIVERY', deliveryAddress: '12 Wilmslow Road, Manchester',
+  });
+  check('a collection-only shop refuses a delivery order', r.status === 422 && r.body?.error?.code === 'DELIVERY_NOT_OFFERED', r.body?.error);
+
+  await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { fulfilment: 'DELIVERY' });
+  r = await api(buyer.token, 'POST', '/commerce/enquiries', {
+    storeId, lines: [{ itemId: egusiId, quantity: 1 }], fulfilment: 'COLLECTION',
+  });
+  check('and a delivery-only shop refuses a collection one', r.status === 422 && r.body?.error?.code === 'COLLECTION_NOT_OFFERED', r.body?.error);
+  await api(seller.token, 'PATCH', `/commerce/stores/${storeId}`, { fulfilment: 'BOTH' });
 
   r = await api(buyer.token, 'POST', '/commerce/enquiries', {
     storeId, lines: [{ itemId: egusiId, quantity: 2 }, { itemId: whitingId, quantity: 1 }],

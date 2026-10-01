@@ -26,13 +26,13 @@ model Conversation {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  participants    ConversationParticipant[]
-  messages        Message[]
-  bookings        Booking[]
-  enquiries       Enquiry[]
-  disputes        Dispute[]
-  guardThread     GuardThread?
-  managedRequests ManagedRequest[]
+  participants       ConversationParticipant[]
+  messages           Message[]
+  bookings           Booking[]
+  enquiries          Enquiry[]
+  disputes           Dispute[]
+  guardThread        GuardThread?
+  managedRequests    ManagedRequest[]
   connectionRequests ConnectionRequest[]
   reviews            Review[]
   // As many agreements as the two of them need, not one (see deals.prisma).
@@ -56,11 +56,11 @@ model ConversationParticipant {
   unreadCount       Int     @default(0) @map("unread_count")
   lastReadMessageId String? @map("last_read_message_id")
 
-  lastReadAt  DateTime? @map("last_read_at") @db.Timestamptz
-  mutedUntil  DateTime? @map("muted_until") @db.Timestamptz
-  isMuted     Boolean   @default(false) @map("is_muted")
-  isArchived  Boolean   @default(false) @map("is_archived")
-  hasSentMessage Boolean @default(false) @map("has_sent_message")
+  lastReadAt     DateTime? @map("last_read_at") @db.Timestamptz
+  mutedUntil     DateTime? @map("muted_until") @db.Timestamptz
+  isMuted        Boolean   @default(false) @map("is_muted")
+  isArchived     Boolean   @default(false) @map("is_archived")
+  hasSentMessage Boolean   @default(false) @map("has_sent_message")
 
   joinedAt DateTime  @default(now()) @map("joined_at") @db.Timestamptz
   leftAt   DateTime? @map("left_at") @db.Timestamptz

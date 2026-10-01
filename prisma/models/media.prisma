@@ -35,8 +35,8 @@ model Media {
   derivedAt DateTime? @map("derived_at") @db.Timestamptz
 
   // Audio only. The recording device is the only thing that knows these (5.5).
-  durationMs Int?   @map("duration_ms")
-  waveform   Json?  @map("waveform") // up to 40 floats, 0..1
+  durationMs Int?  @map("duration_ms")
+  waveform   Json? @map("waveform") // up to 40 floats, 0..1
 
   // Polymorphic attachment. Null until the media is used by a post.
   ownerType String? @map("owner_type")
@@ -60,10 +60,10 @@ model Media {
 
 // Spec 0.12: replaying an Idempotency-Key within 24 hours returns the original response rather than creating a duplicate.
 model IdempotencyRecord {
-  id           String   @id @default(uuid())
-  userId       String   @map("user_id")
-  key          String   @map("key")
-  endpoint     String   @map("endpoint")
+  id          String @id @default(uuid())
+  userId      String @map("user_id")
+  key         String @map("key")
+  endpoint    String @map("endpoint")
   requestHash String @map("request_hash")
 
   /// Null until the call finishes. A row with no status is a reservation: the key is taken and the

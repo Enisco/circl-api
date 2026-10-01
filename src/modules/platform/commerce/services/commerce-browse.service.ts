@@ -1,5 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { ActivitySubject, ActivityVerb, Prisma, StoreStatus, TaxonomyKind } from '@prisma/client';
+import {
+  ActivitySubject,
+  ActivityVerb,
+  Prisma,
+  StoreFulfilment,
+  StoreStatus,
+  TaxonomyKind,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import {
   buildPageMeta,
@@ -190,7 +197,11 @@ export class CommerceBrowseService {
 
     if (query.cityId && query.cityId !== 'ANYWHERE') where.cityId = query.cityId;
     if (query.type) where.typeCode = query.type;
-    if (query.delivers) where.delivers = true;
+    // The same question in older words: it has to read the column the seller's form now writes, or
+    // it silently drops every shop that only ever set `fulfilment`.
+    if (query.delivers) {
+      where.fulfilment = { in: [StoreFulfilment.DELIVERY, StoreFulfilment.BOTH] };
+    }
 
     // The "Open now" filter also excludes a store on holiday even before the hours are checked, because its manual status overrides them (4.4.2).
     if (query.openNow) where.status = StoreStatus.OPEN;
@@ -302,7 +313,9 @@ export class CommerceBrowseService {
 
     if (query.cityId && query.cityId !== 'ANYWHERE') storeFilter.cityId = query.cityId;
     if (query.type) storeFilter.typeCode = query.type;
-    if (query.delivers) storeFilter.delivers = true;
+    if (query.delivers) {
+      storeFilter.fulfilment = { in: [StoreFulfilment.DELIVERY, StoreFulfilment.BOTH] };
+    }
     if (query.openNow) storeFilter.status = StoreStatus.OPEN;
 
     if (query.heritage?.length) {

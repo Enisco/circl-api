@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Fulfilment, StoreStatus, Weekday } from '@prisma/client';
+import { Fulfilment, StoreFulfilment, StoreStatus, Weekday } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -22,6 +22,9 @@ import { PageOptionsDto, ToBoolean } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 const Bool = ToBoolean;
+/** Number(), except that it leaves null alone: `Number(null)` is 0, and here those differ. */
+const NullableNumber = () =>
+  Transform(({ value }) => (value === null || value === undefined ? value : Number(value)));
 const CsvArray = () =>
   Transform(({ value }) =>
     typeof value === 'string'
@@ -226,11 +229,38 @@ export class CreateStoreDto {
   @IsOptional()
   openingHours?: OpeningHoursDto[] | null;
 
-  @ApiPropertyOptional({ default: false })
+  @ApiPropertyOptional({
+    enum: StoreFulfilment,
+    default: StoreFulfilment.COLLECTION,
+    description:
+      'How people get their order. Supersedes `delivers`, which is still accepted: `fulfilment` ' +
+      'wins where both are sent, and where `delivers` arrives alone `true` reads as BOTH and ' +
+      '`false` as COLLECTION — a shop that delivered was never a shop that refused collection. ' +
+      'Absent on create means COLLECTION, which is the one thing every shop can do.',
+  })
+  @IsEnum(StoreFulfilment)
+  @IsOptional()
+  fulfilment?: StoreFulfilment;
+
+  @ApiPropertyOptional({ default: false, deprecated: true, description: 'Use `fulfilment`.' })
   @Bool()
   @IsBoolean()
   @IsOptional()
   delivers?: boolean;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Pence. **Null is no minimum at all and clears a stored one** — it is a decision the seller ' +
+      'made, not a field they left alone. Absent is unchanged. Zero is a minimum of nothing, ' +
+      'which is a different thing again and is stored as sent.',
+  })
+  @NullableNumber()
+  @IsInt()
+  @Min(0)
+  @Max(100_000_00, { message: 'minimumOrderPence must be £100,000 or less' })
+  @IsOptional()
+  minimumOrderPence?: number | null;
 
   @ApiPropertyOptional({
     description:
@@ -420,7 +450,11 @@ export class BrowseCommerceDto extends PageOptionsDto {
   @IsOptional()
   priceBand?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description:
+      'Shops that deliver, which now means `fulfilment` in (DELIVERY, BOTH). Kept under its older ' +
+      'name because it is the same question.',
+  })
   @Bool()
   @IsBoolean()
   @IsOptional()

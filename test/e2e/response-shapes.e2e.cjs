@@ -274,13 +274,23 @@ function shape(label, obj, required) {
     'id', 'name', 'type', 'description', 'area', 'city', 'distanceMiles',
     'hidesExactAddress', 'heritageTags', 'categories', 'logoUrl', 'coverUrl',
     'rating.average', 'rating.count', 'isOpenNow', 'openingHours', 'timezone',
-    'delivers', 'isNew', 'itemPreview', 'status', 'contact', 'address.area',
+    'fulfilment', 'minimumOrder', 'delivers', 'isNew', 'itemPreview', 'status', 'contact', 'address.area',
     'address.line1', 'address.postcode', 'address.latitude', 'address.longitude',
     'owner', 'catalogue.categories', 'viewer.isOwner', 'viewer.canReview', 'viewer.conversationId',
   ]);
   shape('4.5.1 opening hours row', r.body?.data?.openingHours?.[0], ['day', 'openMinutes', 'closeMinutes']);
   check('4.5.1 exactly 7 opening-hours entries, Monday first', r.body?.data?.openingHours?.length === 7 && r.body.data.openingHours[0].day === 'MONDAY', r.body?.data?.openingHours?.length);
   shape('4.5.1 contact row', r.body?.data?.contact?.[0], ['channel', 'value', 'display']);
+
+  // The shops list is a projection of the store, and the card reads name, description and place.
+  // A field on the detail and not here is a blank line on the row for the shops with the most to say.
+  r = await api(b.token, 'GET', '/commerce/stores?limit=5');
+  shape('4.4.2 shop row', r.body?.data?.[0], [
+    'id', 'name', 'type', 'description', 'area', 'city', 'distanceMiles',
+    'hidesExactAddress', 'heritageTags', 'categories', 'logoUrl', 'coverUrl',
+    'rating.average', 'rating.count', 'isOpenNow', 'openingHours', 'timezone',
+    'fulfilment', 'minimumOrder', 'delivers', 'isNew', 'itemPreview', 'status',
+  ]);
 
   // Named uniquely and asked for by name. The browse list is global, the demo dataset is in it and
   // is several pages deep, so scanning page one for this run's own item finds nothing (B.7).

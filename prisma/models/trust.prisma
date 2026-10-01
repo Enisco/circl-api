@@ -19,12 +19,12 @@ model TrustCheck {
   // CREDENTIAL is scoped to a profession code; verifying one never satisfies another (2.7.4).
   categoryCode String? @map("category_code")
 
-  documentType    String?   @map("document_type")
-  issuingBody     String?   @map("issuing_body")
-  reference       String?   @map("reference")
-  checkedBy       String?   @map("checked_by")
-  rejectionReason String?   @map("rejection_reason")
-  rejectedFields  Json?     @map("rejected_fields")
+  documentType    String? @map("document_type")
+  issuingBody     String? @map("issuing_body")
+  reference       String? @map("reference")
+  checkedBy       String? @map("checked_by")
+  rejectionReason String? @map("rejection_reason")
+  rejectedFields  Json?   @map("rejected_fields")
 
   submittedAt DateTime? @map("submitted_at") @db.Timestamptz
   verifiedAt  DateTime? @map("verified_at") @db.Timestamptz
@@ -63,15 +63,15 @@ model Review {
   // Denormalised at write time so the immigrant-friendly filter (D11) is an index scan rather than a join back through the reviewer's profile on every query.
   reviewerCountryOfOrigin String? @map("reviewer_country_of_origin")
 
-  requestId String?           @map("request_id")
-  request   CommunityRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
-  bookingId String?           @map("booking_id")
-  booking   Booking?          @relation(fields: [bookingId], references: [id], onDelete: SetNull)
-  enquiryId String?           @map("enquiry_id")
-  enquiry   Enquiry?          @relation(fields: [enquiryId], references: [id], onDelete: SetNull)
+  requestId      String?           @map("request_id")
+  request        CommunityRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  bookingId      String?           @map("booking_id")
+  booking        Booking?          @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  enquiryId      String?           @map("enquiry_id")
+  enquiry        Enquiry?          @relation(fields: [enquiryId], references: [id], onDelete: SetNull)
   // PROFESSIONAL hangs off the thread the two of them worked out of, which is the only record left once booking is gone.
-  conversationId String?       @map("conversation_id")
-  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  conversationId String?           @map("conversation_id")
+  conversation   Conversation?     @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
   // Editable for 48 hours, then frozen (2.5.2).
   editableUntil DateTime? @map("editable_until") @db.Timestamptz

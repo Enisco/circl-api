@@ -4,7 +4,7 @@ model Role {
   code            String           @unique @map("code")
   description     String?          @map("description")
   isSystem        Boolean          @default(false) @map("is_system")
-  isAdmin         Boolean          @default(false)  @map("is_admin")
+  isAdmin         Boolean          @default(false) @map("is_admin")
   userRoles       UserRole[]
   rolePermissions RolePermission[]
   createdAt       DateTime         @default(now()) @map("created_at")

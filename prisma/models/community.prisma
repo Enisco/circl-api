@@ -9,26 +9,26 @@ model CommunityRequest {
   authorId String @map("author_id")
   author   User   @relation("RequestAuthor", fields: [authorId], references: [id], onDelete: Cascade)
 
-  categoryCode String @map("category_code") // TaxonomyKind.COMMUNITY_CATEGORY
-  title        String @map("title")
+  categoryCode String  @map("category_code") // TaxonomyKind.COMMUNITY_CATEGORY
+  title        String  @map("title")
   description  String? @map("description")
 
   cityId String @map("city_id")
   city   City   @relation(fields: [cityId], references: [id])
 
-  neededOn        DateTime?      @map("needed_on") @db.Date
-  thankYouAmount  Int?           @map("thank_you_amount") // pence, display only (D4)
-  currency        String         @default("GBP") @map("currency")
-  visibility      PostVisibility @default(PUBLIC) @map("visibility")
-  status          RequestStatus  @default(OPEN) @map("status")
-  outcome         RequestOutcome? @map("outcome")
+  neededOn       DateTime?       @map("needed_on") @db.Date
+  thankYouAmount Int?            @map("thank_you_amount") // pence, display only (D4)
+  currency       String          @default("GBP") @map("currency")
+  visibility     PostVisibility  @default(PUBLIC) @map("visibility")
+  status         RequestStatus   @default(OPEN) @map("status")
+  outcome        RequestOutcome? @map("outcome")
 
   // Lets a viewer report anonymous content without the author id ever being sent (spec 0.9).
   reportToken String @unique @default(uuid()) @map("report_token")
 
-  viewCount    Int @default(0) @map("view_count")
-  helperCount  Int @default(0) @map("helper_count")
-  replyCount   Int @default(0) @map("reply_count")
+  viewCount   Int @default(0) @map("view_count")
+  helperCount Int @default(0) @map("helper_count")
+  replyCount  Int @default(0) @map("reply_count")
 
   resolvedAt DateTime? @map("resolved_at") @db.Timestamptz
   expiresAt  DateTime? @map("expires_at") @db.Timestamptz
@@ -244,11 +244,11 @@ model Guide {
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
 
-  sources    GuideSource[]
-  reactions  GuideReaction[]
-  bookmarks  GuideBookmark[]
-  feedback   GuideFeedback[]
-  progress   GuideProgress[]
+  sources     GuideSource[]
+  reactions   GuideReaction[]
+  bookmarks   GuideBookmark[]
+  feedback    GuideFeedback[]
+  progress    GuideProgress[]
   deflections GuideDeflection[]
 
   @@index([topicCode, publishedAt])
@@ -351,9 +351,9 @@ model GuideDeflection {
 // ─── Groups ──────────────────────────────────────────────────────────────────
 
 model Group {
-  id          String @id @default(uuid())
-  name        String @map("name")
-  description String @map("description")
+  id          String  @id @default(uuid())
+  name        String  @map("name")
+  description String  @map("description")
   rules       String? @map("rules")
 
   cityId String @map("city_id")
@@ -366,10 +366,10 @@ model Group {
   createdById String @map("created_by_id")
   createdBy   User   @relation("GroupCreator", fields: [createdById], references: [id], onDelete: Cascade)
 
-  memberCount Int      @default(0) @map("member_count")
-  postCount   Int      @default(0) @map("post_count")
+  memberCount Int       @default(0) @map("member_count")
+  postCount   Int       @default(0) @map("post_count")
   lastPostAt  DateTime? @map("last_post_at") @db.Timestamptz
-  reportToken String   @unique @default(uuid()) @map("report_token")
+  reportToken String    @unique @default(uuid()) @map("report_token")
 
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
@@ -393,8 +393,8 @@ model GroupMembership {
   userId  String @map("user_id")
   user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  state    GroupMembershipState @default(MEMBER) @map("state")
-  isAdmin  Boolean              @default(false) @map("is_admin")
+  state   GroupMembershipState @default(MEMBER) @map("state")
+  isAdmin Boolean              @default(false) @map("is_admin")
 
   // Drives the unread dot on the My groups pills without counting rows per load.
   lastReadAt   DateTime? @map("last_read_at") @db.Timestamptz

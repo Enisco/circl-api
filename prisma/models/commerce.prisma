@@ -25,16 +25,23 @@ model Store {
   longitude         Float?  @map("longitude")
 
   /// Object keys, signed on read (0.11.3).
-  logoKey  String? @map("logo_key")
-  coverKey String? @map("cover_key")
+  logoKey      String? @map("logo_key")
+  coverKey     String? @map("cover_key")
   /// The server-rendered map tile for this store's pin. An object key like every other image:
   /// rendered here so the map provider's key never reaches an app binary (G12).
   staticMapKey String? @map("static_map_key")
 
   status          StoreStatus          @default(OPEN) @map("status")
   complianceState StoreComplianceState @default(ACTIVE) @map("compliance_state") // D23: exists, does not gate publishing
-  delivers        Boolean              @default(false) @map("delivers")
   timezone        String               @default("Europe/London") @map("timezone")
+
+  // The stored answer to "how do people get their order". `delivers` is the same answer in older
+  // words, kept in step on every write so an app release that still reads it is never wrong.
+  fulfilment StoreFulfilment @default(COLLECTION) @map("fulfilment")
+  delivers   Boolean         @default(false) @map("delivers")
+
+  /// Pence. Null is no minimum at all; zero is a minimum of nothing, and they are not the same.
+  minimumOrderPence Int? @map("minimum_order_pence")
 
   viewCount    Int @default(0) @map("view_count")
   enquiryCount Int @default(0) @map("enquiry_count")
@@ -45,12 +52,12 @@ model Store {
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz
 
-  items         StoreItem[]
-  openingHours  StoreOpeningHours[]
-  contacts      StoreContact[]
-  heritageTags  StoreHeritageTag[]
-  categories    StoreCategory[]
-  enquiries     Enquiry[]
+  items        StoreItem[]
+  openingHours StoreOpeningHours[]
+  contacts     StoreContact[]
+  heritageTags StoreHeritageTag[]
+  categories   StoreCategory[]
+  enquiries    Enquiry[]
 
   @@index([cityId, status])
   @@index([typeCode])
@@ -120,7 +127,7 @@ model StoreItem {
   unitCode        String  @default("EACH") @map("unit_code")
   unitCustomLabel String? @map("unit_custom_label")
 
-  categoryCode String @map("category_code")
+  categoryCode String  @map("category_code")
   options      String? @map("options")
 
   isAvailable Boolean @default(true) @map("is_available")
@@ -174,11 +181,11 @@ model Enquiry {
   conversationId String?       @map("conversation_id")
   conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
-  readyAt     DateTime? @map("ready_at") @db.Timestamptz
-  receivedAt  DateTime? @map("received_at") @db.Timestamptz
-  completedAt DateTime? @map("completed_at") @db.Timestamptz
-  cancelledAt DateTime? @map("cancelled_at") @db.Timestamptz
-  cancelReason String?  @map("cancel_reason")
+  readyAt      DateTime? @map("ready_at") @db.Timestamptz
+  receivedAt   DateTime? @map("received_at") @db.Timestamptz
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz
+  cancelledAt  DateTime? @map("cancelled_at") @db.Timestamptz
+  cancelReason String?   @map("cancel_reason")
 
   // D24: 30 days without a transition sets EXPIRED and drops it off the active list.
   expiresAt DateTime? @map("expires_at") @db.Timestamptz
@@ -236,22 +243,22 @@ model EnquiryEvent {
 
 // Drafts are NOT items.
 model AiItemDraft {
-  id      String @id @default(uuid())
-  jobId   String @map("job_id")
-  userId  String @map("user_id")
-  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id      String  @id @default(uuid())
+  jobId   String  @map("job_id")
+  userId  String  @map("user_id")
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   storeId String? @map("store_id")
 
   sourceMediaId String? @map("source_media_id")
   sourceMedia   Media?  @relation(fields: [sourceMediaId], references: [id], onDelete: SetNull)
 
-  name         String? @map("name")
-  description  String? @map("description")
-  categoryCode String? @map("category_code")
-  unitCode     String? @map("unit_code")
+  name           String? @map("name")
+  description    String? @map("description")
+  categoryCode   String? @map("category_code")
+  unitCode       String? @map("unit_code")
   // A suggestion, always editable.
-  suggestedPrice Int?  @map("suggested_price")
-  confidence     Float @default(0) @map("confidence")
+  suggestedPrice Int?    @map("suggested_price")
+  confidence     Float   @default(0) @map("confidence")
 
   acceptedItemId String?   @map("accepted_item_id")
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
@@ -267,11 +274,11 @@ model AiDraftJob {
   userId String @map("user_id")
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  storeId String? @map("store_id")
-  tone    String  @default("WARM") @map("tone")
+  storeId String?         @map("store_id")
+  tone    String          @default("WARM") @map("tone")
   status  QueueJobStatus? @map("status")
-  state   String  @default("PENDING") @map("state") // PENDING | RUNNING | DONE | FAILED
-  error   String? @map("error")
+  state   String          @default("PENDING") @map("state") // PENDING | RUNNING | DONE | FAILED
+  error   String?         @map("error")
 
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
   completedAt DateTime? @map("completed_at") @db.Timestamptz

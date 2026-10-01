@@ -81,10 +81,10 @@ model QuestionCluster {
   cityId       String? @map("city_id")
 
   // The normalised phrase the cluster formed around, and its member requests.
-  signature   String @map("signature")
-  label       String @map("label")
-  requestIds  Json   @map("request_ids")
-  askCount    Int    @default(0) @map("ask_count")
+  signature  String @map("signature")
+  label      String @map("label")
+  requestIds Json   @map("request_ids")
+  askCount   Int    @default(0) @map("ask_count")
 
   // Set once a guide has been drafted from this cluster, so it is not redrafted every time the job runs.
   draftedGuideId String? @map("drafted_guide_id")

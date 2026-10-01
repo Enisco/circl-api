@@ -23,7 +23,8 @@ const STORES = [
       'Yam, plantain, egusi, palm oil and the spices you cannot find in the big supermarkets. ' +
       'Family run since 2019.',
     status: 'OPEN',
-    delivers: true,
+    fulfilment: 'BOTH' as const,
+    minimumOrderPence: 1500,
     daysAgo: 170,
     heritageTags: ['WEST_AFRICAN'],
     // Peckham. Populated because this store does not hide its address, so the map has a pin (G12).
@@ -98,7 +99,8 @@ const STORES = [
     description: 'Kenyan home cooking, made to order. Collection only, weekends.',
     // A store on holiday, so that state renders somewhere (B.4).
     status: 'HOLIDAY',
-    delivers: false,
+    fulfilment: 'COLLECTION' as const,
+    minimumOrderPence: null,
     daysAgo: 40,
     heritageTags: ['EAST_AFRICAN'],
     // Chapeltown. A home kitchen, so the exact address is hidden and the serialiser rounds the
@@ -140,7 +142,8 @@ const STORES = [
       'Ankara by the yard, ready-to-wear and alterations while you wait. Bring a photo and we ' +
       'will cut to it.',
     status: 'OPEN',
-    delivers: false,
+    fulfilment: 'COLLECTION' as const,
+    minimumOrderPence: null,
     daysAgo: 95,
     heritageTags: ['WEST_AFRICAN'],
     latitude: 53.4517,
@@ -257,7 +260,8 @@ const STORES = [
       'Hair, henna and skin, on the Curry Mile. If we do not have your shade we will order it in ' +
       'for the Thursday.',
     status: 'OPEN',
-    delivers: true,
+    fulfilment: 'BOTH' as const,
+    minimumOrderPence: null,
     daysAgo: 60,
     heritageTags: ['SOUTH_ASIAN', 'MIDDLE_EASTERN'],
     latitude: 53.4531,
@@ -345,7 +349,8 @@ const STORES = [
       'Screens, batteries and unlocking, most done the same day. Parts have a three month ' +
       'guarantee and we will tell you when a repair is not worth it.',
     status: 'OPEN',
-    delivers: false,
+    fulfilment: 'COLLECTION' as const,
+    minimumOrderPence: null,
     daysAgo: 25,
     heritageTags: ['WEST_AFRICAN'],
     latitude: 53.4529,
@@ -446,7 +451,8 @@ const STORES = [
       'Prayer mats, incense, cookware and the small things that make a flat feel like home. ' +
       'Collection or local delivery.',
     status: 'OPEN',
-    delivers: true,
+    fulfilment: 'BOTH' as const,
+    minimumOrderPence: 1000,
     daysAgo: 12,
     heritageTags: ['SOUTH_ASIAN', 'MIDDLE_EASTERN'],
     latitude: 52.4667,
@@ -633,7 +639,10 @@ export const seedCommerce = async (ctx: DemoSeedContext) => {
       area: store.area,
       cityId: store.cityId,
       status: store.status as never,
-      delivers: store.delivers,
+      fulfilment: store.fulfilment,
+      // Derived, exactly as the service derives it, so the demo data cannot disagree with itself.
+      delivers: store.fulfilment !== 'COLLECTION',
+      minimumOrderPence: store.minimumOrderPence,
       latitude: store.latitude,
       longitude: store.longitude,
       hidesExactAddress: store.hidesExactAddress,

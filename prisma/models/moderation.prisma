@@ -28,10 +28,10 @@ model Report {
   riskLevel    RiskLevel     @default(NONE) @map("risk_level")
   riskCategory RiskCategory? @map("risk_category")
 
-  reviewedById String?   @map("reviewed_by_id")
-  reviewedAt   DateTime? @map("reviewed_at") @db.Timestamptz
+  reviewedById String?             @map("reviewed_by_id")
+  reviewedAt   DateTime?           @map("reviewed_at") @db.Timestamptz
   decision     ModerationDecision? @map("decision")
-  decisionNote String?   @map("decision_note")
+  decisionNote String?             @map("decision_note")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
@@ -58,8 +58,8 @@ model Block {
 
 // The admin work queue.
 model ModerationQueueItem {
-  id    String              @id @default(uuid())
-  type  ModerationQueueType @map("type")
+  id    String               @id @default(uuid())
+  type  ModerationQueueType  @map("type")
   state ModerationQueueState @default(PENDING) @map("state")
 
   targetType ReportTargetType @map("target_type")
@@ -79,8 +79,8 @@ model ModerationQueueItem {
   summary String? @map("summary")
   payload Json?   @map("payload")
 
-  assignedToId String?   @map("assigned_to_id")
-  assignedTo   User?     @relation("QueueAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  assignedToId String? @map("assigned_to_id")
+  assignedTo   User?   @relation("QueueAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
 
   decision     ModerationDecision? @map("decision")
   decisionNote String?             @map("decision_note")

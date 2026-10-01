@@ -174,7 +174,6 @@ enum MediaStatus {
 
 /**
  * The prefix a key is minted under (spec 0.11.1).
- *
  * One prefix per purpose so a key is attributable without a database lookup and
  * a prefix can be lifecycled on its own.
  */
@@ -516,6 +515,15 @@ enum Weekday {
 enum Fulfilment {
   DELIVERY
   COLLECTION
+}
+
+/// How a shop hands an order over. Supersedes `Store.delivers`, which says the same thing in the
+/// words one app release still speaks. COLLECTION rather than PICKUP so it reads the same as
+/// `Fulfilment` above: two words for one thing is how a schema starts drifting.
+enum StoreFulfilment {
+  COLLECTION
+  DELIVERY
+  BOTH
 }
 
 // ─── Messaging ───────────────────────────────────────────────────────────────
