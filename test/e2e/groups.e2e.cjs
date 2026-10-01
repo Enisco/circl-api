@@ -331,7 +331,61 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
   r = await api(admin.token, 'GET', `/messages/${secondThread}`);
   check('and its thread goes with it', r.status === 403 || r.status === 404, { status: r.status });
 
-  console.log('\n── 10 headline, the one new field on the author object ────');
+  console.log('\n── 10 One picture, on every shape that draws it ──────────');
+
+  // The create path takes `avatarKey` and never had a client sending one, so nothing exercised it.
+  const createKey = await uploadPng(admin.token, 'COMMUNITY', 400, 400);
+  r = await api(admin.token, 'POST', '/community/groups', {
+    name: `E2E Pictured Group ${stamp}`,
+    description: 'A group with its picture chosen on the create screen rather than afterwards.',
+    cityId: 'MANCHESTER',
+    joinPolicy: 'APPROVAL',
+    visibility: 'CLOSED',
+    avatarKey: createKey,
+  });
+  check('a picture may be chosen on create, not only added afterwards', r.status === 201 && !!r.body?.data?.avatarUrl, { status: r.status, avatarUrl: r.body?.data?.avatarUrl });
+  const pictured = r.body?.data?.id;
+  const attached = await prisma.media.count({ where: { ownerType: 'GROUP_AVATAR', ownerId: pictured } });
+  check('and the create path attaches the media, as the patch path does', attached === 1, attached);
+
+  // Five places draw it and three of them read a list row, so a null here is a grey circle that
+  // cannot be told apart from a group with no picture.
+  r = await api(outsider.token, 'GET', '/community/groups?scope=DISCOVER&limit=50');
+  const picturedRow = (r.body?.data ?? []).find(g => g.id === pictured);
+  check('the list row carries it too', !!picturedRow?.avatarUrl, picturedRow?.avatarUrl);
+  check('a closed group\'s picture is part of the shop window, not redacted', picturedRow?.lastMessagePreview === null && !!picturedRow?.avatarUrl, { preview: picturedRow?.lastMessagePreview, avatarUrl: !!picturedRow?.avatarUrl });
+
+  r = await api(outsider.token, 'GET', `/community/groups/${pictured}`);
+  check('and so is the detail a non-member reads', !!r.body?.data?.avatarUrl, r.body?.data?.avatarUrl);
+
+  await api(admin.token, 'POST', `/community/groups/${pictured}/invites`, { userIds: [outsider.id] });
+  r = await api(outsider.token, 'GET', '/community/groups/invites');
+  const card = (r.body?.data ?? []).find(row => row.group?.id === pictured);
+  check('the invitation card has the picture it draws', !!card?.group?.avatarUrl, card?.group);
+  check('with the name and member count beside it', !!card?.group?.name && typeof card?.group?.memberCount === 'number', card?.group);
+
+  console.log('\n── 11 The waiting banner reads a per-row count ───────────');
+
+  // The banner says "2 people are waiting · <group>", so the number has to be right on each row.
+  // A banner that says two when one is waiting is worse than no banner.
+  await api(asker.token, 'POST', `/community/groups/${pictured}/join`, { message: 'Can I join?' });
+  await api(joiner.token, 'POST', `/community/groups/${pictured}/join`, { message: 'Me too.' });
+
+  r = await api(admin.token, 'GET', '/community/groups?scope=MINE&limit=50');
+  const rows = r.body?.data ?? [];
+  const twoWaiting = rows.find(g => g.id === pictured);
+  const noneWaiting = rows.find(g => g.id === open);
+  check('a group with two waiting says two on its own row', twoWaiting?.pendingRequestCount === 2, twoWaiting?.pendingRequestCount);
+  check('and one with nobody waiting says zero on the same page', noneWaiting?.pendingRequestCount === 0, noneWaiting?.pendingRequestCount);
+  check('every row the admin runs carries the number', rows.filter(g => g.viewer?.canModerate).every(g => typeof g.pendingRequestCount === 'number'), rows.map(g => g.pendingRequestCount));
+
+  r = await api(outsider.token, 'GET', '/community/groups?limit=50');
+  check('and no row carries it for somebody who runs none of them', (r.body?.data ?? []).every(g => g.pendingRequestCount === undefined), (r.body?.data ?? []).filter(g => g.pendingRequestCount !== undefined).length);
+
+  r = await api(admin.token, 'POST', `/community/groups/${pictured}/join-requests/${asker.id}`, { approve: true });
+  check('and it moves the moment one is answered', r.body?.data?.pendingRequestCount === 1, r.body?.data?.pendingRequestCount);
+
+  console.log('\n── 12 headline, the one new field on the author object ────');
 
   await api(asker.token, 'PATCH', '/users/profile', { headline: 'Immigration law' });
   r = await api(admin.token, 'GET', `/community/groups/${closed}/members`);
