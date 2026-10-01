@@ -131,6 +131,20 @@ export class UpdateProfileDto {
   gender?: Gender;
 
   @ApiProperty({
+    example: 'Immigration law',
+    description:
+      'One short line about what the member does, shown under their name in member, request and ' +
+      'invite lists. Separate from `bio`, which is a paragraph. Null where they have not said: ' +
+      'it is never inferred from anything else.',
+    maxLength: 60,
+    required: false,
+  })
+  @MaxLength(60, { message: 'headline must be 60 characters or fewer' })
+  @IsString()
+  @IsOptional()
+  headline?: string;
+
+  @ApiProperty({
     example: 'I moved to the UK in 2022. Love helping newcomers navigate life here.',
     description: 'Short personal bio shown on the community profile.',
     maxLength: 500,

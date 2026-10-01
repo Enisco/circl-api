@@ -24,8 +24,13 @@ import {
   CreateGroupDto,
   CreateGroupPostDto,
   CreateGroupPostReplyDto,
+  InviteAnswerDto,
+  InviteMembersDto,
   JoinDecisionDto,
+  JoinGroupDto,
   ListGroupsDto,
+  MuteGroupDto,
+  SearchPageDto,
   UpdateGroupDto,
 } from '../dtos/group.dto';
 import { GroupService } from '../services/group.service';
@@ -64,6 +69,21 @@ export class GroupController {
     const data = await this.groups.create(userId, dto);
 
     return { data, message: SuccessMessage.RESOURCE_CREATED('Group') };
+  }
+
+  @Get('invites')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'My group invitations',
+    description:
+      'Every invitation waiting on the caller, with the group each is for. Shown at the top of ' +
+      'the Groups screen rather than buried in a feed. Declared before `:id` on purpose, or the ' +
+      'word "invites" would be read as a group id.',
+  })
+  async myInvitations(@CurrentUserId() userId: string) {
+    const data = await this.groups.myInvitations(userId);
+
+    return { data, message: SuccessMessage.RESOURCE_FETCHED('Invitations') };
   }
 
   @Get(':id')
@@ -111,8 +131,12 @@ export class GroupController {
       'Returns the updated viewer state and memberCount so the client reconciles without a refetch.',
   })
   @RateLimit('REACT')
-  async join(@CurrentUserId() userId: string, @Param('id') id: string) {
-    const data = await this.groups.join(userId, id);
+  async join(
+    @CurrentUserId() userId: string,
+    @Param('id') id: string,
+    @Body() dto: JoinGroupDto,
+  ) {
+    const data = await this.groups.join(userId, id, dto);
 
     return { data, message: 'Membership updated' };
   }
@@ -128,6 +152,100 @@ export class GroupController {
     const data = await this.groups.leave(userId, id);
 
     return { data, message: 'Membership updated' };
+  }
+
+  @Patch(':id/mute')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Mute or unmute a group',
+    description:
+      'Per member, never for the group. Answers the whole group, so `viewer.isMuted` comes back ' +
+      'with it. A muted group still counts its unread; it simply does not notify.',
+  })
+  async setMuted(
+    @CurrentUserId() userId: string,
+    @Param('id') id: string,
+    @Body() dto: MuteGroupDto,
+  ) {
+    const data = await this.groups.setMuted(userId, id, dto.isMuted);
+
+    return { data, message: dto.isMuted ? 'Group muted' : 'Group unmuted' };
+  }
+
+  @Get(':id/members')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Who is in a group',
+    description:
+      'Members only: who is in a group is not public, even for a group whose wall is. `q` ' +
+      'searches names. Each row carries the member\'s `headline` under their name, where they ' +
+      'have said what they do.',
+  })
+  async listMembers(
+    @CurrentUserId() userId: string,
+    @Param('id') id: string,
+    @Query() query: SearchPageDto,
+  ) {
+    const { data, meta } = await this.groups.listMembers(userId, id, query);
+
+    return { data, meta, message: SuccessMessage.RESOURCE_FETCHED('Members') };
+  }
+
+  @Get(':id/invitable')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Who an admin can still invite',
+    description:
+      'Admin only. Members of Circl not in the group and with no invitation outstanding. ' +
+      'Somebody the admin removed before stays listed, because an invitation is the only way ' +
+      'back in, and carries `wasRemoved: true` so the admin knows who they are re-admitting.',
+  })
+  async listInvitable(
+    @CurrentUserId() adminId: string,
+    @Param('id') id: string,
+    @Query() query: SearchPageDto,
+  ) {
+    const { data, meta } = await this.groups.listInvitable(adminId, id, query);
+
+    return { data, meta, message: SuccessMessage.RESOURCE_FETCHED('Invitable members') };
+  }
+
+  @Post(':id/invites')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Invite members',
+    description:
+      'Admin only, several at once. Inviting somebody already invited is not an error. Each one ' +
+      'is notified. Answers the whole group.',
+  })
+  @RateLimit('REACT')
+  async invite(
+    @CurrentUserId() adminId: string,
+    @Param('id') id: string,
+    @Body() dto: InviteMembersDto,
+  ) {
+    const data = await this.groups.invite(adminId, id, dto);
+
+    return { data, message: 'Invitations sent' };
+  }
+
+  @Post(':id/invites/answer')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Accept or decline an invitation',
+    description:
+      'The `{id}` may be the group\'s or the invitation\'s; the client sends the group\'s, which ' +
+      'is what every screen holds. Accepting answers the whole group, now joined; declining ' +
+      'answers nothing and the invitation is gone.',
+  })
+  async answerInvitation(
+    @CurrentUserId() userId: string,
+    @Param('id') id: string,
+    @Body() dto: InviteAnswerDto,
+  ) {
+    const data = await this.groups.answerInvitation(userId, id, dto.accept);
+
+    return { data, message: dto.accept ? 'Invitation accepted' : 'Invitation declined' };
   }
 
   @Get(':id/join-requests')
@@ -152,7 +270,12 @@ export class GroupController {
     @Param('userId') subjectUserId: string,
     @Body() dto: JoinDecisionDto,
   ) {
-    const data = await this.groups.decideJoinRequest(adminId, id, subjectUserId, dto.decision);
+    const data = await this.groups.decideJoinRequest(
+      adminId,
+      id,
+      subjectUserId,
+      dto.decision ?? (dto.approve ? 'APPROVE' : 'REJECT'),
+    );
 
     return { data, message: 'Request decided' };
   }

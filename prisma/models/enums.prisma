@@ -535,9 +535,20 @@ enum ThreadKind {
   COMMERCE
   SUPPORT
   DIRECT
+  /// A group's chat. The one thread with more than two people in it by design, which is why
+  /// `Conversation.participantKey` is the group's id rather than a sorted pair.
+  GROUP
+}
+
+/// Who can read a group without getting in, which is a separate decision from who gets in
+/// (`JoinPolicy`). An open group is a forum people read before they commit.
+enum GroupVisibility {
+  OPEN
+  CLOSED
 }
 
 enum ThreadContextType {
+  GROUP
   REQUEST
   OFFER
   PROFESSIONAL

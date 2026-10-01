@@ -46,6 +46,10 @@ export const ApiErrorCode = {
   GROUP_NAME_TAKEN: 'GROUP_NAME_TAKEN',
   NOT_A_MEMBER: 'NOT_A_MEMBER',
   LAST_ADMIN_CANNOT_LEAVE: 'LAST_ADMIN_CANNOT_LEAVE',
+  /// Final until an invitation: a removed member cannot ask again (1.7.6).
+  REMOVED_FROM_GROUP: 'REMOVED_FROM_GROUP',
+  /// A member doing an admin's job. Its own code so the client can say whose job it is.
+  NOT_ADMIN: 'NOT_ADMIN',
   ALREADY_A_MEMBER: 'ALREADY_A_MEMBER',
   GUIDE_PROVENANCE_REQUIRED: 'GUIDE_PROVENANCE_REQUIRED',
 

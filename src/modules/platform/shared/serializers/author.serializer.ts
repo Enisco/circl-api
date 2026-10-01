@@ -19,6 +19,13 @@ export interface AuthorView {
   trustChecks: TrustCheckType[];
   isProfessional: boolean;
   professionalId: string | null;
+  /**
+   * One short line about what somebody does, under their name in member, request and invite
+   * lists. The member's own `headline`, or their professional title where they have a listing and
+   * have not written one — both are them saying it. Never inferred from anything else, and null
+   * rather than guessed.
+   */
+  headline: string | null;
 }
 
 /** The minimum a query must select to build an AuthorView. */
@@ -34,13 +41,14 @@ export const authorSelect = {
     select: {
       city: { select: { id: true, name: true, region: true } },
       countryOfOrigin: true,
+      headline: true,
     },
   },
   trustChecks: {
     where: { status: TrustCheckStatus.VERIFIED },
     select: { check: true },
   },
-  professionalListing: { select: { id: true } },
+  professionalListing: { select: { id: true, professionTitle: true } },
 } as const;
 
 export type AuthorSource = {
@@ -54,9 +62,10 @@ export type AuthorSource = {
   profile?: {
     city: { id: string; name: string; region: string | null } | null;
     countryOfOrigin?: string | null;
+    headline?: string | null;
   } | null;
   trustChecks?: Array<{ check: TrustCheckType }>;
-  professionalListing?: { id: string } | null;
+  professionalListing?: { id: string; professionTitle?: string } | null;
 };
 
 /** Joins the two name columns without inventing a space or the word "null". */
@@ -102,6 +111,8 @@ export const toAuthorView = (
       trustChecks: [],
       isProfessional: false,
       professionalId: null,
+      // What somebody does is one of the two or three facts that would name them.
+      headline: null,
     };
   }
 
@@ -118,6 +129,7 @@ export const toAuthorView = (
       trustChecks: [],
       isProfessional: false,
       professionalId: null,
+      headline: null,
     };
   }
 
@@ -135,5 +147,7 @@ export const toAuthorView = (
     trustChecks: (author.trustChecks ?? []).map(check => check.check),
     isProfessional: listingId !== null,
     professionalId: listingId,
+    headline:
+      author.profile?.headline?.trim() || author.professionalListing?.professionTitle || null,
   };
 };

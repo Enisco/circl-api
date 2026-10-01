@@ -51,6 +51,8 @@ model User {
   guideDeflections GuideDeflection[]
   groupsCreated    Group[]            @relation("GroupCreator")
   groupMemberships GroupMembership[]
+  groupInvites     GroupInvitation[]  @relation("GroupInvitee")
+  groupInvitesSent GroupInvitation[]  @relation("GroupInviter")
   groupPosts       GroupPost[]
   groupPostReplies GroupPostReply[]
 
@@ -190,6 +192,9 @@ model UserProfile {
   phoneNumber             String? @map("phone_number")
 
   // ── Community presence ────────────────────────────────────────────────────
+  /// One short line about what somebody does — "Immigration law", "Caterer". Shown under their
+  /// name in member, request and invite lists. Null where nobody has said, and never invented.
+  headline    String? @map("headline")
   bio         String? @map("bio")
   canHelpWith String? @map("can_help_with")
   openInbox   Boolean @default(true) @map("open_inbox")

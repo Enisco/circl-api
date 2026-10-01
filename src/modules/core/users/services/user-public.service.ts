@@ -40,6 +40,7 @@ export class UserPublicService {
         profile: {
           select: {
             bio: true,
+            headline: true,
             canHelpWith: true,
             countryOfOrigin: true,
             openInbox: true,
@@ -71,6 +72,7 @@ export class UserPublicService {
         user: toAuthorView(user, { sign: this.media.sign }),
         username: user.username,
         bio: user.profile?.bio ?? null,
+        headline: user.profile?.headline ?? null,
         canHelpWith: splitHelpWith(user.profile?.canHelpWith),
         countryOfOrigin: toCountryView(user.profile?.countryOfOrigin),
         // The same numbers as GET /reviews/{userId} (2.5.1), summarised.

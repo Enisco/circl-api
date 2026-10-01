@@ -193,6 +193,7 @@ export const CONTEXTS_THAT_NAME_THE_RECIPIENT: readonly ThreadContextType[] = [
 
 /** The section a thread files under, which is the context's, not the participants' (5.0.1). */
 export const KIND_FOR_CONTEXT: Record<ThreadContextType, ThreadKind> = {
+  [ThreadContextType.GROUP]: ThreadKind.GROUP,
   [ThreadContextType.REQUEST]: ThreadKind.COMMUNITY,
   [ThreadContextType.OFFER]: ThreadKind.COMMUNITY,
   [ThreadContextType.PROFESSIONAL]: ThreadKind.PROFESSIONAL,

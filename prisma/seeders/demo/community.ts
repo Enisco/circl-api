@@ -385,9 +385,15 @@ interface SeedGroup {
   description: string;
   cityId: string;
   joinPolicy: 'OPEN' | 'APPROVAL';
+  /** Who can read it without getting in, which is the other, independent decision (1.7.1). */
+  visibility: 'OPEN' | 'CLOSED';
+  categoryCode: string;
+  rules: string[];
   createdBy: number;
   daysAgo: number;
   members: Array<{ user: number; isAdmin?: boolean; state?: 'MEMBER' | 'ADMIN' | 'PENDING'; daysAgo: number }>;
+  /** The group's chat, which is the part that makes a group a group (1.7.7). */
+  chat: Array<{ from: number; body: string; hoursAgo: number }>;
   posts: Array<{
     label: string;
     author: number;
@@ -407,6 +413,13 @@ const GROUPS: SeedGroup[] = [
       'who is driving to London at the weekend.',
     cityId: HOME_CITY,
     joinPolicy: 'OPEN',
+    visibility: 'OPEN',
+    categoryCode: 'MAKE_FRIENDS',
+    rules: [
+      'Keep it kind. Everybody here was new once.',
+      'No selling. There is a whole marketplace for that.',
+      'Ask anything. Nobody is going to laugh at a question.',
+    ],
     createdBy: 6,
     daysAgo: 500,
     // A pending member, so the APPROVAL path is not the only place a non-member state renders.
@@ -416,6 +429,15 @@ const GROUPS: SeedGroup[] = [
       { user: 3, daysAgo: 380 },
       { user: 4, daysAgo: 15 },
       { user: 5, daysAgo: 280 },
+    ],
+    chat: [
+      { from: 6, body: 'Anyone driving to London Saturday? Happy to share petrol.', hoursAgo: 260 },
+      { from: 3, body: 'I am, leaving about seven from Fallowfield.', hoursAgo: 256 },
+      { from: 1, body: 'Two of us would take you up on that if there is room.', hoursAgo: 252 },
+      { from: 5, body: 'Save me a seat on the way back if anyone is returning Sunday.', hoursAgo: 200 },
+      { from: 6, body: 'Room for three. I will put the address in here Friday night.', hoursAgo: 120 },
+      { from: 4, body: 'This group is the only reason I know how to get anywhere.', hoursAgo: 30 },
+      { from: 3, body: 'Address is *14 Wilmslow Road* — outside the chemist, seven sharp.', hoursAgo: 6 },
     ],
     posts: [
       {
@@ -446,6 +468,11 @@ const GROUPS: SeedGroup[] = [
     cityId: HOME_CITY,
     // The approval path, so a pending membership renders somewhere (1.6).
     joinPolicy: 'APPROVAL',
+    // Closed as well as by approval, which is the pair that proves the two are independent: a
+    // non-member sees its name and member count and nothing it has said.
+    visibility: 'CLOSED',
+    categoryCode: 'ACCOMMODATION',
+    rules: ['Ask the obvious questions. That is what this is for.'],
     createdBy: 1,
     daysAgo: 210,
     members: [
@@ -453,6 +480,15 @@ const GROUPS: SeedGroup[] = [
       { user: 2, daysAgo: 3 },
       { user: 4, daysAgo: 12 },
       { user: 9, state: 'PENDING', daysAgo: 1 },
+    ],
+    chat: [
+      { from: 1, body: 'Welcome to the four of you who joined this week.', hoursAgo: 320 },
+      { from: 2, body: 'Thank you. Is there a bus that goes past the hospital?', hoursAgo: 312 },
+      { from: 1, body: 'The 42 and the 142. Get a Beeline pass, it pays for itself in a week.', hoursAgo: 300 },
+      { from: 4, body: 'Seconding the pass. I wasted about forty pounds before anyone told me.', hoursAgo: 220 },
+      { from: 2, body: 'Noted. And where do people register with a GP round here?', hoursAgo: 120 },
+      { from: 1, body: 'There is a guide in the Guides tab for exactly that one.', hoursAgo: 100 },
+      { from: 4, body: 'It is the one I used. Took twenty minutes.', hoursAgo: 26 },
     ],
     posts: [
       {
@@ -470,11 +506,22 @@ const GROUPS: SeedGroup[] = [
     description: 'South London mostly, but everyone is welcome. Food, church, and where to get your hair done.',
     cityId: 'LONDON',
     joinPolicy: 'OPEN',
+    visibility: 'OPEN',
+    categoryCode: 'OTHER',
+    rules: [],
     createdBy: 7,
     daysAgo: 160,
     members: [
       { user: 7, isAdmin: true, daysAgo: 160 },
       { user: 8, daysAgo: 90 },
+    ],
+    chat: [
+      { from: 7, body: 'Does anyone know a plumber south of the river who answers the phone?', hoursAgo: 420 },
+      { from: 8, body: 'The one on Rye Lane. Ask for Kwame, say you are from here.', hoursAgo: 412 },
+      { from: 7, body: 'Rang him, he is coming Thursday. Thank you.', hoursAgo: 380 },
+      { from: 8, body: 'He did my boiler in January and did not overcharge me.', hoursAgo: 370 },
+      { from: 7, body: 'Good to know. I will put his number in the rules so it stops getting asked.', hoursAgo: 300 },
+      { from: 8, body: 'Church is at eleven on Sunday if anyone new wants to come along.', hoursAgo: 20 },
     ],
     posts: [
       {
@@ -615,6 +662,9 @@ export const seedCommunity = async (ctx: DemoSeedContext) => {
       description: group.description,
       cityId: group.cityId,
       joinPolicy: group.joinPolicy as never,
+      visibility: group.visibility as never,
+      categoryCode: group.categoryCode,
+      rules: group.rules,
       createdById: userId(group.createdBy),
       // Held on the row rather than counted per load, so the pill and the list agree.
       memberCount: active.length,
@@ -625,6 +675,40 @@ export const seedCommunity = async (ctx: DemoSeedContext) => {
     };
 
     await prisma.group.upsert({ where: { id }, update: data, create: { id, ...data } });
+
+    // Every group has its chat, because that is the part that makes a group a group. An ordinary
+    // conversation, so the demo exercises the same messages API every other thread uses.
+    const lastChat = group.chat.length
+      ? hoursAgo(Math.min(...group.chat.map(message => message.hoursAgo)))
+      : null;
+    const threadData = {
+      kind: 'GROUP' as never,
+      contextType: 'GROUP' as never,
+      contextId: id,
+      contextSnapshot: { title: group.name, route: `/community/group/${id}` },
+      // The group's id, not a sorted pair: this is the one thread whose membership changes.
+      participantKey: `group:${id}`,
+      lastMessageAt: lastChat,
+      messageCount: group.chat.length,
+      createdAt: daysAgo(group.daysAgo),
+    };
+
+    // A group may already have its thread — the service makes one with the group, and the
+    // backfill made one for every group that predated them. Adopt it rather than insisting on a
+    // seeded id: `(participantKey, contextType, contextId)` is unique, so a second one is not a
+    // duplicate, it is an error.
+    const existingThread = await prisma.conversation.findFirst({
+      where: { contextType: 'GROUP' as never, contextId: id },
+      select: { id: true },
+    });
+    const conversationId = existingThread?.id ?? seedId(`group-thread:${group.label}`);
+
+    await prisma.conversation.upsert({
+      where: { id: conversationId },
+      update: threadData,
+      create: { id: conversationId, ...threadData },
+    });
+    await prisma.group.update({ where: { id }, data: { conversationId } });
 
     for (const member of group.members) {
       const state = member.state ?? (member.isAdmin ? 'ADMIN' : 'MEMBER');
@@ -643,6 +727,48 @@ export const seedCommunity = async (ctx: DemoSeedContext) => {
           decidedAt: joinedAt,
           // Behind the newest post on one member, so the unread dot on the pill has somewhere to show.
           lastReadAt: member.user === 1 && group.label === 'manchester-nigerians' ? daysAgo(2) : joinedAt,
+        },
+      });
+
+      // Membership of a group and participation in its thread are one thing said twice.
+      if (state !== 'PENDING') {
+        const spoke = group.chat.some(message => message.from === member.user);
+        const participant = {
+          hasSentMessage: spoke,
+          // One member behind the last thing said, so a group's unread badge renders somewhere.
+          unreadCount: member.user === 1 && group.label === 'london-west-african' ? 2 : 0,
+        };
+
+        await prisma.conversationParticipant.upsert({
+          where: { conversationId_userId: { conversationId, userId: userId(member.user) } },
+          update: participant,
+          create: {
+            conversationId,
+            userId: userId(member.user),
+            joinedAt: joinedAt ?? new Date(),
+            ...participant,
+          },
+        });
+      }
+    }
+
+    for (const [index, message] of group.chat.entries()) {
+      const messageId = seedId(`group-chat:${group.label}:${index}`);
+
+      await prisma.message.upsert({
+        where: { id: messageId },
+        // sentAt too: a reseed that leaves the old timestamp means editing the fixture changes
+        // nothing, which is a demo dataset that quietly stops matching the file describing it.
+        update: { body: message.body, sentAt: hoursAgo(message.hoursAgo) },
+        create: {
+          id: messageId,
+          conversationId,
+          senderId: userId(message.from),
+          kind: 'TEXT' as never,
+          body: message.body,
+          clientId: `seed-group-${group.label}-${index}`,
+          status: 'SENT' as never,
+          sentAt: hoursAgo(message.hoursAgo),
         },
       });
     }

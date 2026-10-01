@@ -67,7 +67,7 @@ export class DiscoveryService {
                 },
               },
               trustChecks: { where: { status: 'VERIFIED' }, select: { check: true } },
-              professionalListing: { select: { id: true } },
+              professionalListing: { select: { id: true, professionTitle: true } },
             },
           },
           city: { select: { id: true, name: true, region: true } },

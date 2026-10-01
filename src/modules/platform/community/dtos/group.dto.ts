@@ -1,9 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { JoinPolicy } from '@prisma/client';
+import { GroupVisibility, JoinPolicy } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsIn,
   IsOptional,
@@ -14,6 +16,21 @@ import {
 import { PageOptionsDto } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
+
+/** A list, or the one blob of text an older build sends, which becomes a single rule. */
+const Rules = () =>
+  Transform(({ value }) => (typeof value === 'string' ? (value.trim() ? [value.trim()] : []) : value));
+
+/** Repeated or comma-separated, because both are sent and neither is wrong. */
+const CsvArray = () =>
+  Transform(({ value }) =>
+    typeof value === 'string'
+      ? value
+          .split(',')
+          .map(part => part.trim())
+          .filter(Boolean)
+      : value,
+  );
 
 export class CreateGroupDto {
   @ApiProperty({ minLength: 3, maxLength: 60 })
@@ -40,12 +57,37 @@ export class CreateGroupDto {
   @IsOptional()
   joinPolicy?: JoinPolicy;
 
-  @ApiPropertyOptional({ maxLength: 2000 })
+  @ApiPropertyOptional({
+    enum: GroupVisibility,
+    default: GroupVisibility.OPEN,
+    description:
+      'Who can read it without getting in, which is a separate decision from `joinPolicy`. An ' +
+      'OPEN group is a forum people read before they commit; a CLOSED one tells a non-member its ' +
+      'name, description, city, category, member count and rules, and nothing it has said.',
+  })
+  @IsEnum(GroupVisibility)
+  @IsOptional()
+  visibility?: GroupVisibility;
+
+  @ApiPropertyOptional({ description: 'A COMMUNITY_CATEGORY code, the list the feed filters by.' })
   @Trim()
   @IsString()
-  @MaxLength(2000)
   @IsOptional()
-  rules?: string;
+  categoryCode?: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'One entry per rule. A plain string is still accepted and becomes a single rule — it is ' +
+      'not split on newlines, because nobody agreed that a newline starts a rule.',
+  })
+  @Rules()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(300, { each: true })
+  @IsOptional()
+  rules?: string[];
 
   @ApiPropertyOptional()
   @IsString()
@@ -75,17 +117,79 @@ export class UpdateGroupDto {
   @IsOptional()
   joinPolicy?: JoinPolicy;
 
-  @ApiPropertyOptional({ maxLength: 2000 })
-  @Trim()
-  @IsString()
-  @MaxLength(2000)
+  @ApiPropertyOptional({
+    enum: GroupVisibility,
+    description:
+      'Changeable at any time, and it changes nothing about who is a member: closing a group ' +
+      'stops a non-member reading its wall, and the chat was always members only.',
+  })
+  @IsEnum(GroupVisibility)
   @IsOptional()
-  rules?: string;
+  visibility?: GroupVisibility;
 
   @ApiPropertyOptional()
+  @Trim()
   @IsString()
   @IsOptional()
-  avatarKey?: string;
+  cityId?: string;
+
+  @ApiPropertyOptional({ description: 'A COMMUNITY_CATEGORY code.' })
+  @Trim()
+  @IsString()
+  @IsOptional()
+  categoryCode?: string;
+
+  @ApiPropertyOptional({ type: [String], description: 'Replaces the list. Absent leaves it.' })
+  @Rules()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(300, { each: true })
+  @IsOptional()
+  rules?: string[];
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'A key replaces, an explicit `null` removes it, absent leaves it alone.',
+  })
+  @IsString()
+  @IsOptional()
+  avatarKey?: string | null;
+}
+
+export class JoinGroupDto {
+  @ApiPropertyOptional({
+    maxLength: 500,
+    description:
+      'Shown to the admin beside the request. Optional, may be empty, and plain text — it is ' +
+      'whatever the asker typed. Ignored by an open group, which has nobody to show it to.',
+  })
+  @Trim()
+  @IsString()
+  @MaxLength(500)
+  @IsOptional()
+  message?: string;
+}
+
+export class InviteMembersDto {
+  @ApiProperty({ type: [String], description: 'Several at once. Already invited is not an error.' })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  userIds: string[];
+}
+
+export class InviteAnswerDto {
+  @ApiProperty()
+  @IsBoolean()
+  accept: boolean;
+}
+
+export class MuteGroupDto {
+  @ApiProperty()
+  @IsBoolean()
+  isMuted: boolean;
 }
 
 export class ListGroupsDto extends PageOptionsDto {
@@ -104,6 +208,24 @@ export class ListGroupsDto extends PageOptionsDto {
   @IsIn(['JOINED', 'PENDING', 'NOT_JOINED', 'ALL'])
   @IsOptional()
   membership?: 'JOINED' | 'PENDING' | 'NOT_JOINED' | 'ALL';
+
+  @ApiPropertyOptional({
+    enum: ['MINE', 'DISCOVER'],
+    description:
+      'MINE is every group the caller is in, DISCOVER every other one. Absent means both. A ' +
+      'closed group still appears in DISCOVER: its name and description are public.',
+  })
+  @IsIn(['MINE', 'DISCOVER'])
+  @IsOptional()
+  scope?: 'MINE' | 'DISCOVER';
+
+  @ApiPropertyOptional({ type: [String], description: 'Repeated. COMMUNITY_CATEGORY codes.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @IsOptional()
+  categoryCodes?: string[];
 
   @ApiPropertyOptional({ description: 'Name and description.' })
   @Trim()
@@ -147,7 +269,25 @@ export class CreateGroupPostReplyDto {
 }
 
 export class JoinDecisionDto {
-  @ApiProperty({ enum: ['APPROVE', 'REJECT'] })
+  @ApiPropertyOptional({
+    enum: ['APPROVE', 'REJECT'],
+    description: 'Either this or `approve`. Both are accepted; this one wins where both are sent.',
+  })
   @IsIn(['APPROVE', 'REJECT'])
-  decision: 'APPROVE' | 'REJECT';
+  @IsOptional()
+  decision?: 'APPROVE' | 'REJECT';
+
+  @ApiPropertyOptional({ description: 'The same answer as a bool, which is what the app sends.' })
+  @IsBoolean()
+  @IsOptional()
+  approve?: boolean;
+}
+
+/** A page with a name search on it, for the member, request and invite lists. */
+export class SearchPageDto extends PageOptionsDto {
+  @ApiPropertyOptional({ description: 'Searches names.' })
+  @Trim()
+  @IsString()
+  @IsOptional()
+  q?: string;
 }

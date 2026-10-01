@@ -80,9 +80,13 @@ export type ThreadLabel =
   | 'ABOUT_ORDER'
   | 'ABOUT_SHOP'
   | 'CIRCL_TEAM'
+  | 'GROUP'
   | null;
 
 const conversationInclude = {
+  // A group thread draws the group's name and photo where a 1:1 draws the other person's, and
+  // `memberCount` moves on every join, so it is joined rather than kept in the snapshot.
+  group: { select: { id: true, name: true, avatarKey: true, memberCount: true } },
   participants: {
     include: {
       user: {
@@ -961,7 +965,19 @@ export class ConversationService {
       id: conversation.id,
       kind: conversation.kind,
       isPinned: conversation.isPinned,
-      participant: participantView,
+      // A group thread has no other person: it carries the group instead, and the header draws
+      // the group's name and photo where a 1:1 draws theirs.
+      participant: conversation.group ? null : participantView,
+      group: conversation.group
+        ? {
+            id: conversation.group.id,
+            name: conversation.group.name,
+            avatarUrl: conversation.group.avatarKey
+              ? this.media.sign(conversation.group.avatarKey)
+              : null,
+            memberCount: conversation.group.memberCount,
+          }
+        : null,
       participantCount: conversation.participants.length,
       context: this.toContextView(conversation, snapshot),
       label: this.labelFor(conversation, userId),
@@ -1014,6 +1030,8 @@ export class ConversationService {
     if (!conversation.contextId) return null;
 
     switch (conversation.contextType) {
+      case ThreadContextType.GROUP:
+        return `/community/group/${conversation.contextId}`;
       case ThreadContextType.REQUEST:
         return `/community/request/${conversation.contextId}`;
       case ThreadContextType.OFFER:
@@ -1037,6 +1055,7 @@ export class ConversationService {
 
   private labelFor(conversation: ConversationRow, userId: string): ThreadLabel {
     if (conversation.kind === ThreadKind.SUPPORT) return 'CIRCL_TEAM';
+    if (conversation.kind === ThreadKind.GROUP) return 'GROUP';
 
     switch (conversation.contextType) {
       case ThreadContextType.REQUEST:

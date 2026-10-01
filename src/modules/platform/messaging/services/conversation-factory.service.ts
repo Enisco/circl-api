@@ -24,6 +24,11 @@ export interface ContextSnapshot {
 export interface EnsureConversationInput {
   kind: ThreadKind;
   participantIds: string[];
+  /**
+   * Overrides the sorted-pair key. A group's thread is the one whose membership changes, so its
+   * key has to be the group rather than whoever happened to be in it when it was created.
+   */
+  participantKey?: string;
   contextType?: ThreadContextType | null;
   contextId?: string | null;
   snapshot?: ContextSnapshot | null;
@@ -47,7 +52,8 @@ export class ConversationFactoryService {
     tx?: Prisma.TransactionClient,
   ): Promise<{ conversation: Conversation; created: boolean }> {
     const client = tx ?? this.database;
-    const participantKey = ConversationFactoryService.participantKey(input.participantIds);
+    const participantKey =
+      input.participantKey ?? ConversationFactoryService.participantKey(input.participantIds);
     const contextType = input.contextType ?? null;
     const contextId = input.contextId ?? null;
 

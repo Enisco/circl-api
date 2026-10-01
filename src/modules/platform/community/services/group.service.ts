@@ -4,9 +4,14 @@ import {
   ActivityVerb,
   Group,
   GroupMembershipState,
+  GroupVisibility,
   JoinPolicy,
   NotificationKind,
+  ParticipantRole,
   Prisma,
+  TaxonomyKind,
+  ThreadContextType,
+  ThreadKind,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { NotificationFeedService } from '../../notifications';
@@ -18,6 +23,7 @@ import {
   escapeLike,
   excerpt,
   Paginated,
+  stripFormatting,
 } from '@/common';
 import {
   ActivityService,
@@ -27,46 +33,135 @@ import {
   CityView,
   MediaService,
   MediaView,
+  TaxonomyService,
+  TermView,
   authorSelect,
   toAuthorView,
   toCityView,
   toMediaViews,
+  toTermView,
 } from '../../shared';
+import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
 import {
   CreateGroupDto,
   CreateGroupPostDto,
   CreateGroupPostReplyDto,
+  InviteMembersDto,
+  JoinGroupDto,
   ListGroupsDto,
   UpdateGroupDto,
 } from '../dtos/group.dto';
 
 export const GROUP_POST_MEDIA_OWNER = 'GROUP_POST';
+export const GROUP_AVATAR_MEDIA_OWNER = 'GROUP_AVATAR';
+
+/** A group row with everything the view needs selected. */
+type GroupRow = Group & { city: { id: string; name: string; region: string | null } | null };
+
+interface Standing {
+  membership: MembershipView;
+  wasRemoved: boolean;
+  isInvited: boolean;
+  isMuted: boolean;
+  unreadCount: number;
+  unreadPostCount: number;
+}
+
+interface ThreadFacts {
+  lastMessageAt: Date | null;
+  messageCount: number;
+  preview: string | null;
+}
+
+/** What a one-line preview says when the last thing said was not words. */
+const MEDIA_PREVIEW: Partial<Record<string, string>> = {
+  IMAGE: 'Photo',
+  VIDEO: 'Video',
+  AUDIO: 'Voice note',
+};
+
+/**
+ * Rules arrive as a list, or as the one blob of text an older build sends. A string becomes a
+ * single rule rather than being split on guesswork: nobody agreed that a newline means a new rule.
+ */
+const toRuleList = (rules: string | string[] | null | undefined): string[] => {
+  if (rules === null || rules === undefined) return [];
+  if (Array.isArray(rules)) return rules.map(rule => rule.trim()).filter(Boolean);
+
+  return rules.trim() ? [rules.trim()] : [];
+};
 
 /** `isNew` is server-computed so the definition lives in one place (1.7.1). */
 const NEW_GROUP_DAYS = 14;
 
 export type MembershipView = 'NONE' | 'PENDING' | 'MEMBER' | 'ADMIN';
 
+/**
+ * The flags the client's one button is chosen from, in this order: member, removed, invited,
+ * requested, then the policy. They have to be mutually honest or the button lies, so all of them
+ * are derived from one membership row and one invitation lookup rather than computed apart.
+ */
+export interface GroupViewerView {
+  membership: MembershipView;
+  canPost: boolean;
+  canModerate: boolean;
+  /** Survives a reload, which is what stops the button flipping back to Join after a refresh. */
+  hasRequested: boolean;
+  /** Final until an invitation. True for ever after, which is how the client knows not to offer. */
+  wasRemoved: boolean;
+  isInvited: boolean;
+  /** Per member. A muted group still counts its unread; it simply does not notify. */
+  isMuted: boolean;
+  /** @deprecated Read `unreadCount`, which counts the chat rather than the wall. */
+  unreadPostCount: number;
+  /** @deprecated Read `membership === 'ADMIN'` or `canModerate`. */
+  isAdmin: boolean;
+}
+
 export interface GroupSummaryView {
   id: string;
   name: string;
   description: string;
   city: CityView | null;
+  category: TermView | null;
+  rules: string[];
   memberCount: number;
   joinPolicy: JoinPolicy;
+  visibility: GroupVisibility;
   isNew: boolean;
   avatarUrl: string | null;
-  viewer: { membership: MembershipView; unreadPostCount: number; isAdmin: boolean };
+  createdBy: string;
+  /** The group's chat. Null when the caller may not have it: see `redactedFor`. */
+  conversationId: string | null;
+  lastMessageAt: string | null;
+  /** Plain words: the markers are stripped, because this is a one-line preview. */
+  lastMessagePreview: string | null;
+  unreadCount: number;
+  /** Everything ever said, which is how busy a group looks before joining. */
+  messageCount: number | null;
+  /** Admin only, absent for everybody else. */
+  pendingRequestCount?: number;
+  viewer: GroupViewerView;
   createdAt: string;
 }
 
 export interface GroupDetailView extends GroupSummaryView {
-  rules: string | null;
   memberPreview: AuthorView[];
   admins: AuthorView[];
   reportToken: string;
-  pendingRequestCount?: number;
-  viewer: GroupSummaryView['viewer'] & { canPost: boolean; canModerate: boolean };
+}
+
+export interface GroupMemberView {
+  user: AuthorView;
+  role: 'ADMIN' | 'MEMBER';
+  joinedAt: string | null;
+}
+
+export interface GroupInvitationView {
+  id: string;
+  group: { id: string; name: string; avatarUrl: string | null; memberCount: number };
+  invitedBy: AuthorView;
+  sentAt: string;
 }
 
 export interface GroupPostView {
@@ -88,6 +183,8 @@ export class GroupService {
     private readonly blocking: BlockingService,
     private readonly activity: ActivityService,
     private readonly notifications: NotificationFeedService,
+    private readonly taxonomy: TaxonomyService,
+    private readonly conversations: ConversationFactoryService,
   ) {}
 
   // ─── 1.7.1 List ────────────────────────────────────────────────────────────
@@ -96,6 +193,18 @@ export class GroupService {
     const where: Prisma.GroupWhereInput = { deletedAt: null };
 
     if (query.cityId) where.cityId = query.cityId;
+    if (query.categoryCodes?.length) where.categoryCode = { in: query.categoryCodes };
+
+    // MINE is every group the caller is in; DISCOVER is every other one. A closed group still
+    // appears in DISCOVER — its name and description are public, what it has said is not.
+    if (query.scope === 'MINE' || query.scope === 'DISCOVER') {
+      const joined = {
+        userId: viewerId,
+        state: { in: [GroupMembershipState.MEMBER, GroupMembershipState.ADMIN] },
+      };
+
+      where.memberships = query.scope === 'MINE' ? { some: joined } : { none: joined };
+    }
 
     if (query.q) {
       // `%` and `_` are ILIKE wildcards; unescaped, `%` matches the whole table (0.5).
@@ -149,14 +258,21 @@ export class GroupService {
       }),
     ]);
 
-    const memberships = await this.membershipsFor(
-      viewerId,
-      rows.map(row => row.id),
-    );
-    const unread = await this.unreadCounts(viewerId, rows, memberships);
+    const [standing, threads, labels] = await Promise.all([
+      this.standingFor(viewerId, rows),
+      this.threadFactsFor(rows),
+      this.categoryLabels(),
+    ]);
 
     return {
-      data: rows.map(row => this.toSummary(row, memberships.get(row.id), unread.get(row.id) ?? 0)),
+      data: rows.map(row =>
+        this.toSummary(
+          row,
+          standing.get(row.id)!,
+          labels,
+          row.conversationId ? threads.get(row.conversationId) : undefined,
+        ),
+      ),
       meta: buildPageMeta(query, total),
     };
   }
@@ -186,9 +302,11 @@ export class GroupService {
     if (!group) throw ApiException.notFound('This group could not be found.');
     if (group.deletedAt) throw ApiException.deleted('This group');
 
-    const memberships = await this.membershipsFor(viewerId, [id]);
-    const membership = memberships.get(id);
-    const unread = await this.unreadCounts(viewerId, [group], memberships);
+    const [standing, threads, labels] = await Promise.all([
+      this.standingFor(viewerId, [group]),
+      this.threadFactsFor([group]),
+      this.categoryLabels(),
+    ]);
 
     const [preview, admins] = await Promise.all([
       this.database.groupMembership.findMany({
@@ -207,20 +325,20 @@ export class GroupService {
       }),
     ]);
 
-    const isMember = membership === 'MEMBER' || membership === 'ADMIN';
-    const isAdmin = membership === 'ADMIN';
-
-    const summary = this.toSummary(group, membership, unread.get(id) ?? 0);
+    const summary = this.toSummary(
+      group,
+      standing.get(id)!,
+      labels,
+      group.conversationId ? threads.get(group.conversationId) : undefined,
+    );
     const detail: GroupDetailView = {
       ...summary,
-      rules: group.rules,
       memberPreview: preview.map(row => toAuthorView(row.user, { sign: this.media.sign })),
       admins: admins.map(row => toAuthorView(row.user, { sign: this.media.sign })),
       reportToken: group.reportToken,
-      viewer: { ...summary.viewer, canPost: isMember, canModerate: isAdmin },
     };
 
-    if (isAdmin) {
+    if (summary.viewer.canModerate) {
       detail.pendingRequestCount = await this.database.groupMembership.count({
         where: { groupId: id, state: GroupMembershipState.PENDING },
       });
@@ -257,14 +375,24 @@ export class GroupService {
         )[0]
       : null;
 
+    if (dto.categoryCode) {
+      await this.taxonomy.assertAllValid(
+        TaxonomyKind.COMMUNITY_CATEGORY,
+        [dto.categoryCode],
+        'categoryCode',
+      );
+    }
+
     const group = await this.database.$transaction(async tx => {
       const created = await tx.group.create({
         data: {
           name: dto.name,
           description: dto.description,
           cityId: city.id,
+          categoryCode: dto.categoryCode ?? null,
           joinPolicy: dto.joinPolicy ?? JoinPolicy.OPEN,
-          rules: dto.rules ?? null,
+          visibility: dto.visibility ?? GroupVisibility.OPEN,
+          rules: toRuleList(dto.rules),
           createdById: userId,
           avatarKey: avatar?.storageKey ?? null,
           // The creator becomes the first member and the first admin, which is what the live preview card in the composer already shows (1.7.3).
@@ -282,7 +410,32 @@ export class GroupService {
         },
       });
 
-      if (avatar) await this.media.attach(tx, [avatar], 'GROUP_AVATAR', created.id);
+      // The group gets its thread now, so there is something to open the moment it exists. An
+      // ordinary conversation: every client gets bubbles, attachments, voice notes, delivery
+      // state and pagination without a second messaging stack.
+      const { conversation } = await this.conversations.ensure(
+        {
+          kind: ThreadKind.GROUP,
+          // The group's id, not a sorted pair: this is the one thread whose membership changes.
+          participantKey: `group:${created.id}`,
+          participantIds: [userId],
+          contextType: ThreadContextType.GROUP,
+          contextId: created.id,
+          snapshot: {
+            title: created.name,
+            thumbnailKey: created.avatarKey,
+            route: `/community/group/${created.id}`,
+          },
+        },
+        tx,
+      );
+
+      await tx.group.update({
+        where: { id: created.id },
+        data: { conversationId: conversation.id },
+      });
+
+      if (avatar) await this.media.attach(tx, [avatar], GROUP_AVATAR_MEDIA_OWNER, created.id);
 
       return created;
     });
@@ -302,21 +455,70 @@ export class GroupService {
   async update(userId: string, id: string, dto: UpdateGroupDto): Promise<GroupDetailView> {
     await this.assertAdmin(userId, id);
 
-    await this.database.group.update({
-      where: { id },
-      data: {
-        name: dto.name,
-        description: dto.description,
-        joinPolicy: dto.joinPolicy,
-        rules: dto.rules,
-      },
+    if (dto.categoryCode) {
+      await this.taxonomy.assertAllValid(
+        TaxonomyKind.COMMUNITY_CATEGORY,
+        [dto.categoryCode],
+        'categoryCode',
+      );
+    }
+
+    const city = dto.cityId ? await this.cities.assertValid(dto.cityId) : null;
+    const avatar = dto.avatarKey
+      ? (
+          await this.media.validate([dto.avatarKey], userId, {
+            maxImages: 1,
+            allowVideo: false,
+            allowAudio: false,
+          })
+        )[0]
+      : null;
+
+    await this.database.$transaction(async tx => {
+      if (avatar) await this.media.attach(tx, [avatar], GROUP_AVATAR_MEDIA_OWNER, id);
+
+      // An explicit null is the remove action. Absent is not: an admin editing the rules sends no
+      // avatar key, and reading that as null would take the group's picture with it.
+      if (dto.avatarKey === null) {
+        await this.media.releaseOwner(tx, GROUP_AVATAR_MEDIA_OWNER, id);
+      }
+
+      const updated = await tx.group.update({
+        where: { id },
+        data: {
+          name: dto.name,
+          description: dto.description,
+          cityId: city?.id,
+          categoryCode: dto.categoryCode,
+          joinPolicy: dto.joinPolicy,
+          visibility: dto.visibility,
+          ...(dto.rules !== undefined ? { rules: toRuleList(dto.rules) } : {}),
+          ...(avatar ? { avatarKey: avatar.storageKey } : {}),
+          ...(dto.avatarKey === null ? { avatarKey: null } : {}),
+        },
+      });
+
+      // The inbox row reads the snapshot rather than joining back to the group, so a renamed
+      // group would otherwise keep its old name in everybody's messages list for months.
+      if (updated.conversationId) {
+        await this.conversations.refreshSnapshot(
+          ThreadContextType.GROUP,
+          id,
+          {
+            title: updated.name,
+            thumbnailKey: updated.avatarKey,
+            route: `/community/group/${id}`,
+          },
+          tx,
+        );
+      }
     });
 
     return this.findOne(userId, id);
   }
 
   async remove(userId: string, id: string): Promise<void> {
-    await this.assertAdmin(userId, id);
+    const group = await this.assertAdmin(userId, id);
 
     // Soft delete, cascading to posts through the same flag rather than a physical cascade — a deleted group's content stays available to moderation.
     await this.database.$transaction(async tx => {
@@ -327,6 +529,16 @@ export class GroupService {
         where: { groupId: id, deletedAt: null },
         data: { deletedAt: now },
       });
+      await tx.groupInvitation.deleteMany({ where: { groupId: id } });
+      await tx.groupMembership.deleteMany({ where: { groupId: id } });
+
+      // The thread leaves every inbox and answers 403 to everyone, because participation is what
+      // the messages API checks. The messages themselves stay, for the same reason the posts do.
+      if (group.conversationId) {
+        await tx.conversationParticipant.deleteMany({
+          where: { conversationId: group.conversationId },
+        });
+      }
     });
   }
 
@@ -335,22 +547,38 @@ export class GroupService {
   async join(
     userId: string,
     id: string,
+    dto: JoinGroupDto = {},
   ): Promise<{ membership: MembershipView; memberCount: number }> {
     const group = await this.load(id);
-    const existing = await this.database.groupMembership.findUnique({
-      where: { groupId_userId: { groupId: id, userId } },
-    });
+    const [existing, invitation] = await Promise.all([
+      this.database.groupMembership.findUnique({
+        where: { groupId_userId: { groupId: id, userId } },
+      }),
+      this.database.groupInvitation.findUnique({
+        where: { groupId_userId: { groupId: id, userId } },
+        select: { id: true },
+      }),
+    ]);
 
     if (
       existing &&
       existing.state !== GroupMembershipState.REMOVED &&
       existing.state !== GroupMembershipState.REJECTED
     ) {
-      // Already in, or already waiting.
+      // Already in, or already waiting. Asking twice is not an error: answer where they stand.
       return { membership: this.stateToView(existing), memberCount: group.memberCount };
     }
 
-    const isOpen = group.joinPolicy === JoinPolicy.OPEN;
+    // Removal is final until an invitation. The client hides the button, so this is the backstop.
+    if (existing?.state === GroupMembershipState.REMOVED && !invitation) {
+      throw ApiException.forbidden(
+        ApiErrorCode.REMOVED_FROM_GROUP,
+        'An admin removed you from this group. Only an invitation can let you back in.',
+      );
+    }
+
+    // An invitation goes straight in, whatever the policy — the admin has already decided.
+    const isOpen = group.joinPolicy === JoinPolicy.OPEN || invitation !== null;
     const state = isOpen ? GroupMembershipState.MEMBER : GroupMembershipState.PENDING;
 
     const memberCount = await this.database.$transaction(async tx => {
@@ -358,14 +586,29 @@ export class GroupService {
         where: { groupId_userId: { groupId: id, userId } },
         update: {
           state,
+          isAdmin: false,
           requestedAt: new Date(),
+          requestMessage: dto.message?.trim() || null,
           joinedAt: isOpen ? new Date() : null,
           decidedAt: null,
         },
-        create: { groupId: id, userId, state, joinedAt: isOpen ? new Date() : null },
+        create: {
+          groupId: id,
+          userId,
+          state,
+          requestMessage: dto.message?.trim() || null,
+          joinedAt: isOpen ? new Date() : null,
+        },
       });
 
+      // An invitation that outlived the joining it led to would keep the button reading Accept.
+      if (invitation) {
+        await tx.groupInvitation.delete({ where: { id: invitation.id } });
+      }
+
       if (!isOpen) return group.memberCount;
+
+      await this.addToThread(tx, group.conversationId, [userId]);
 
       const updated = await tx.group.update({
         where: { id },
@@ -384,6 +627,28 @@ export class GroupService {
         subjectId: id,
         cityId: group.cityId,
         weight: 3,
+      });
+
+      // The admin alone, and never every member: a group that narrates everything is a group
+      // people mute.
+      const actor = await this.notifications.actorName(userId);
+
+      this.notifications.raise({
+        userId: group.createdById,
+        actorId: userId,
+        kind: NotificationKind.GROUP,
+        categoryCode: 'GROUPS',
+        title: `${actor} joined ${group.name}`,
+        body: null,
+        route: `/community/group/${id}/members`,
+        target: { type: 'GROUP', id },
+        collapseKey: `group-joined:${id}`,
+        collapsedTitle: (count, actorName) =>
+          count === 2
+            ? `${actorName} and 1 other joined ${group.name}`
+            : `${actorName} and ${count - 1} others joined ${group.name}`,
+        actorTitle: actor,
+        metadata: { groupId: id, event: 'GROUP_MEMBER_JOINED' },
       });
     } else {
       // A pending request sits in a queue nobody is told about otherwise, so a closed group's
@@ -406,7 +671,7 @@ export class GroupService {
             ? `${actorName} and 1 other asked to join ${group.name}`
             : `${actorName} and ${count - 1} others asked to join ${group.name}`,
         actorTitle: actor,
-        metadata: { groupId: id },
+        metadata: { groupId: id, event: 'GROUP_JOIN_REQUEST' },
       });
     }
 
@@ -452,7 +717,10 @@ export class GroupService {
     const memberCount = await this.database.$transaction(async tx => {
       await tx.groupMembership.delete({ where: { groupId_userId: { groupId: id, userId } } });
 
+      // Withdrawing a request moves nothing: a request was never a membership.
       if (!wasCounted) return group.memberCount;
+
+      await this.removeFromThread(tx, group.conversationId, [userId]);
 
       const updated = await tx.group.update({
         where: { id },
@@ -470,7 +738,7 @@ export class GroupService {
     userId: string,
     id: string,
     query: { skip: number; take: number; currentPage: number; perPage: number },
-  ): Promise<Paginated<{ user: AuthorView; requestedAt: string }>> {
+  ): Promise<Paginated<{ user: AuthorView; message: string | null; requestedAt: string }>> {
     await this.assertAdmin(userId, id);
 
     const where = { groupId: id, state: GroupMembershipState.PENDING };
@@ -489,6 +757,7 @@ export class GroupService {
     return {
       data: rows.map(row => ({
         user: toAuthorView(row.user, { sign: this.media.sign }),
+        message: row.requestMessage,
         requestedAt: row.requestedAt.toISOString(),
       })),
       meta: buildPageMeta(query, total),
@@ -500,8 +769,8 @@ export class GroupService {
     id: string,
     subjectUserId: string,
     decision: 'APPROVE' | 'REJECT',
-  ): Promise<{ membership: MembershipView; memberCount: number }> {
-    await this.assertAdmin(adminId, id);
+  ): Promise<{ membership: MembershipView; memberCount: number; group: GroupDetailView }> {
+    const group = await this.assertAdmin(adminId, id);
 
     const membership = await this.database.groupMembership.findUnique({
       where: { groupId_userId: { groupId: id, userId: subjectUserId } },
@@ -523,7 +792,9 @@ export class GroupService {
         },
       });
 
-      const group = approve
+      if (approve) await this.addToThread(tx, group.conversationId, [subjectUserId]);
+
+      const counted = approve
         ? await tx.group.update({
             where: { id },
             data: { memberCount: { increment: 1 } },
@@ -531,12 +802,7 @@ export class GroupService {
           })
         : await tx.group.findUniqueOrThrow({ where: { id }, select: { memberCount: true } });
 
-      return group.memberCount;
-    });
-
-    const group = await this.database.group.findUnique({
-      where: { id },
-      select: { name: true },
+      return counted.memberCount;
     });
 
     // Both outcomes, because a request that is silently declined is indistinguishable from one
@@ -547,25 +813,34 @@ export class GroupService {
       kind: NotificationKind.GROUP,
       categoryCode: 'GROUPS',
       title: approve
-        ? `You are in ${group?.name ?? 'the group'}`
-        : `Your request to join ${group?.name ?? 'the group'} was declined`,
+        ? `You are in ${group.name}`
+        : `Your request to join ${group.name} was declined`,
       body: null,
       // A declined member has nowhere useful to go, so that row is unroutable by design (6.1.1).
       route: approve ? `/community/group/${id}` : null,
       // A declined member has nowhere to go, so there is no target either.
       target: approve ? { type: 'GROUP', id } : null,
-      metadata: { groupId: id },
+      metadata: {
+        groupId: id,
+        event: approve ? 'GROUP_REQUEST_ACCEPTED' : 'GROUP_REQUEST_REJECTED',
+      },
     });
 
-    return { membership: approve ? 'MEMBER' : 'NONE', memberCount };
+    // Both numbers moved and the screen reads both, so the whole group comes back rather than a
+    // pair the client has to merge.
+    return {
+      membership: approve ? 'MEMBER' : 'NONE',
+      memberCount,
+      group: await this.findOne(adminId, id),
+    };
   }
 
   async removeMember(
     adminId: string,
     id: string,
     subjectUserId: string,
-  ): Promise<{ memberCount: number }> {
-    await this.assertAdmin(adminId, id);
+  ): Promise<{ memberCount: number; group: GroupDetailView }> {
+    const group = await this.assertAdmin(adminId, id);
 
     if (adminId === subjectUserId) {
       throw ApiException.unprocessable(
@@ -590,25 +865,311 @@ export class GroupService {
         data: { state: GroupMembershipState.REMOVED, isAdmin: false, decidedAt: new Date() },
       });
 
+      // An invitation is the only way back, so any outstanding one goes with the removal.
+      await tx.groupInvitation.deleteMany({ where: { groupId: id, userId: subjectUserId } });
+
       if (!wasCounted) {
-        const group = await tx.group.findUniqueOrThrow({
+        const counted = await tx.group.findUniqueOrThrow({
           where: { id },
           select: { memberCount: true },
         });
 
-        return group.memberCount;
+        return counted.memberCount;
       }
 
-      const group = await tx.group.update({
+      await this.removeFromThread(tx, group.conversationId, [subjectUserId]);
+
+      const counted = await tx.group.update({
         where: { id },
         data: { memberCount: { decrement: 1 } },
         select: { memberCount: true },
       });
 
-      return group.memberCount;
+      return counted.memberCount;
     });
 
-    return { memberCount };
+    // Being removed from a group is something a member has to be told, or they come back to a
+    // group that has silently stopped being theirs.
+    this.notifications.raise({
+      userId: subjectUserId,
+      actorId: adminId,
+      kind: NotificationKind.GROUP,
+      categoryCode: 'GROUPS',
+      title: `You were removed from ${group.name}`,
+      body: null,
+      // Nowhere useful to go, so that row is unroutable by design (6.1.1).
+      route: null,
+      target: null,
+      metadata: { groupId: id, event: 'GROUP_REMOVED' },
+    });
+
+    return { memberCount, group: await this.findOne(adminId, id) };
+  }
+
+  // ─── 1.7.6 Members, mute and invitations ───────────────────────────────────
+
+  /** Members only: who is in a group is not public, even where what it says is. */
+  async listMembers(
+    viewerId: string,
+    id: string,
+    query: { skip: number; take: number; currentPage: number; perPage: number; q?: string },
+  ): Promise<Paginated<GroupMemberView>> {
+    await this.assertMember(viewerId, id);
+
+    const where: Prisma.GroupMembershipWhereInput = {
+      groupId: id,
+      state: { in: [GroupMembershipState.MEMBER, GroupMembershipState.ADMIN] },
+      ...(query.q
+        ? {
+            user: {
+              OR: [
+                { firstName: { contains: escapeLike(query.q), mode: 'insensitive' } },
+                { lastName: { contains: escapeLike(query.q), mode: 'insensitive' } },
+              ],
+            },
+          }
+        : {}),
+    };
+
+    const [total, rows] = await this.database.$transaction([
+      this.database.groupMembership.count({ where }),
+      this.database.groupMembership.findMany({
+        where,
+        include: { user: { select: authorSelect } },
+        // Admins first, then by how long they have been in it.
+        orderBy: [{ isAdmin: 'desc' }, { joinedAt: 'asc' }],
+        skip: query.skip,
+        take: query.take,
+      }),
+    ]);
+
+    return {
+      data: rows.map(row => ({
+        user: toAuthorView(row.user, { sign: this.media.sign }),
+        role: row.isAdmin ? ('ADMIN' as const) : ('MEMBER' as const),
+        joinedAt: row.joinedAt?.toISOString() ?? null,
+      })),
+      meta: buildPageMeta(query, total),
+    };
+  }
+
+  /**
+   * Per member, never for the group. Held on the thread's own participant row rather than on the
+   * membership, so the group's switch and the chat's are the same switch: two would drift and a
+   * member would mute a group and still be pushed.
+   */
+  async setMuted(userId: string, id: string, isMuted: boolean): Promise<GroupDetailView> {
+    const group = await this.assertMember(userId, id);
+
+    if (group.conversationId) {
+      await this.database.conversationParticipant.updateMany({
+        where: { conversationId: group.conversationId, userId },
+        data: { isMuted },
+      });
+    }
+
+    return this.findOne(userId, id);
+  }
+
+  /**
+   * Who an admin can still invite: members of Circl not in the group and with nothing outstanding.
+   * Somebody the admin removed before stays on this list, because an invitation is the only way
+   * back in, and says so, so the admin knows who they are re-admitting.
+   */
+  async listInvitable(
+    adminId: string,
+    id: string,
+    query: { skip: number; take: number; currentPage: number; perPage: number; q?: string },
+  ): Promise<Paginated<{ user: AuthorView; wasRemoved: boolean }>> {
+    await this.assertAdmin(adminId, id);
+
+    const blockedIds = await this.blocking.blockedUserIds(adminId);
+    const where: Prisma.UserWhereInput = {
+      isAnonymised: false,
+      isStaff: false,
+      id: { notIn: [adminId, ...blockedIds] },
+      // Not in it and not waiting. A removed member is neither, which is why they stay listed.
+      groupMemberships: {
+        none: {
+          groupId: id,
+          state: {
+            in: [
+              GroupMembershipState.MEMBER,
+              GroupMembershipState.ADMIN,
+              GroupMembershipState.PENDING,
+            ],
+          },
+        },
+      },
+      groupInvites: { none: { groupId: id } },
+      ...(query.q
+        ? {
+            OR: [
+              { firstName: { contains: escapeLike(query.q), mode: 'insensitive' } },
+              { lastName: { contains: escapeLike(query.q), mode: 'insensitive' } },
+              { username: { contains: escapeLike(query.q), mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    const [total, rows] = await this.database.$transaction([
+      this.database.user.count({ where }),
+      this.database.user.findMany({
+        where,
+        select: {
+          ...authorSelect,
+          groupMemberships: {
+            where: { groupId: id, state: GroupMembershipState.REMOVED },
+            select: { state: true },
+          },
+        },
+        orderBy: { firstName: 'asc' },
+        skip: query.skip,
+        take: query.take,
+      }),
+    ]);
+
+    return {
+      data: rows.map(row => ({
+        user: toAuthorView(row, { sign: this.media.sign }),
+        wasRemoved: row.groupMemberships.length > 0,
+      })),
+      meta: buildPageMeta(query, total),
+    };
+  }
+
+  /** Several at once, and inviting somebody already invited is not an error. */
+  async invite(adminId: string, id: string, dto: InviteMembersDto): Promise<GroupDetailView> {
+    const group = await this.assertAdmin(adminId, id);
+
+    const eligible = await this.database.user.findMany({
+      where: {
+        id: { in: dto.userIds },
+        isAnonymised: false,
+        groupMemberships: {
+          none: {
+            groupId: id,
+            state: { in: [GroupMembershipState.MEMBER, GroupMembershipState.ADMIN] },
+          },
+        },
+      },
+      select: { id: true },
+    });
+
+    if (eligible.length) {
+      await this.database.groupInvitation.createMany({
+        data: eligible.map(user => ({ groupId: id, userId: user.id, invitedById: adminId })),
+        skipDuplicates: true,
+      });
+    }
+
+    const actor = await this.notifications.actorName(adminId);
+
+    for (const user of eligible) {
+      this.notifications.raise({
+        userId: user.id,
+        actorId: adminId,
+        kind: NotificationKind.GROUP,
+        categoryCode: 'GROUPS',
+        title: `${actor} invited you to ${group.name}`,
+        body: null,
+        // The Groups screen, which is where the invitation is waiting.
+        route: '/community/groups',
+        target: { type: 'GROUP', id },
+        metadata: { groupId: id, event: 'GROUP_INVITED' },
+      });
+    }
+
+    return this.findOne(adminId, id);
+  }
+
+  /** Every invitation waiting on the caller, shown at the top of the Groups screen. */
+  async myInvitations(userId: string): Promise<GroupInvitationView[]> {
+    const rows = await this.database.groupInvitation.findMany({
+      where: { userId, group: { deletedAt: null } },
+      include: {
+        group: { select: { id: true, name: true, avatarKey: true, memberCount: true } },
+        invitedBy: { select: authorSelect },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    return rows.map(row => ({
+      id: row.id,
+      group: {
+        id: row.group.id,
+        name: row.group.name,
+        avatarUrl: row.group.avatarKey ? this.media.sign(row.group.avatarKey) : null,
+        memberCount: row.group.memberCount,
+      },
+      invitedBy: toAuthorView(row.invitedBy, { sign: this.media.sign }),
+      sentAt: row.createdAt.toISOString(),
+    }));
+  }
+
+  /**
+   * The `{id}` is the group's, which is what every screen holds. Accepting goes through `join`,
+   * so one path adds a member to the group and to its thread and there is nowhere for the two to
+   * disagree.
+   */
+  async answerInvitation(
+    userId: string,
+    id: string,
+    accept: boolean,
+  ): Promise<GroupDetailView | null> {
+    const invitation = await this.database.groupInvitation.findFirst({
+      where: { userId, OR: [{ groupId: id }, { id }] },
+      select: { id: true, groupId: true },
+    });
+
+    if (!invitation) throw ApiException.notFound('There is no invitation waiting for you here.');
+
+    if (!accept) {
+      await this.database.groupInvitation.delete({ where: { id: invitation.id } });
+
+      return null;
+    }
+
+    await this.join(userId, invitation.groupId);
+
+    return this.findOne(userId, invitation.groupId);
+  }
+
+  /**
+   * Membership of a group and participation in its thread are one thing said twice, so they are
+   * only ever written together.
+   */
+  private async addToThread(
+    tx: Prisma.TransactionClient,
+    conversationId: string | null,
+    userIds: string[],
+  ): Promise<void> {
+    if (!conversationId || !userIds.length) return;
+
+    await tx.conversationParticipant.createMany({
+      data: userIds.map(userId => ({
+        conversationId,
+        userId,
+        role: ParticipantRole.MEMBER,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  private async removeFromThread(
+    tx: Prisma.TransactionClient,
+    conversationId: string | null,
+    userIds: string[],
+  ): Promise<void> {
+    if (!conversationId || !userIds.length) return;
+
+    // Deleted rather than marked left: the messages API checks participation, so this is what
+    // takes the thread out of their inbox and makes reading it a 403.
+    await tx.conversationParticipant.deleteMany({
+      where: { conversationId, userId: { in: userIds } },
+    });
   }
 
   // ─── 1.7.5 Posts and replies ───────────────────────────────────────────────
@@ -620,7 +1181,7 @@ export class GroupService {
   ): Promise<Paginated<GroupPostView> & { meta: { preview?: boolean } }> {
     await this.load(id);
 
-    const membership = (await this.membershipsFor(viewerId, [id])).get(id);
+    const membership = await this.membershipOf(viewerId, id);
     const isMember = membership === 'MEMBER' || membership === 'ADMIN';
 
     // A non-member gets a preview of the last 3 posts rather than an empty wall, because proof of life beats an empty invitation.
@@ -720,7 +1281,7 @@ export class GroupService {
       throw ApiException.notFound('This post could not be found.');
     if (post.deletedAt) throw ApiException.deleted('This post');
 
-    const membership = (await this.membershipsFor(userId, [groupId])).get(groupId);
+    const membership = await this.membershipOf(userId, groupId);
 
     if (post.authorId !== userId && membership !== 'ADMIN') {
       throw ApiException.forbidden(ApiErrorCode.FORBIDDEN, 'You cannot remove this post.');
@@ -855,7 +1416,7 @@ export class GroupService {
 
     if (reply.deletedAt) throw ApiException.deleted('This reply');
 
-    const membership = (await this.membershipsFor(userId, [groupId])).get(groupId);
+    const membership = await this.membershipOf(userId, groupId);
 
     if (reply.authorId !== userId && membership !== 'ADMIN') {
       throw ApiException.forbidden(ApiErrorCode.FORBIDDEN, 'You cannot remove this reply.');
@@ -870,41 +1431,170 @@ export class GroupService {
   // ─── Internals ─────────────────────────────────────────────────────────────
 
   private toSummary(
-    group: Group & { city: { id: string; name: string; region: string | null } | null },
-    membership: MembershipView | undefined,
-    unreadPostCount: number,
+    group: GroupRow,
+    standing: Standing,
+    labels: Map<string, string>,
+    thread: ThreadFacts | undefined,
   ): GroupSummaryView {
+    const isMember = standing.membership === 'MEMBER' || standing.membership === 'ADMIN';
+    // A closed group's name, description, city, category, member count and rules are public.
+    // What it has said is not, and neither is the fact that there is a thread to open.
+    const hidden = group.visibility === GroupVisibility.CLOSED && !isMember;
+
     return {
       id: group.id,
       name: group.name,
       description: group.description,
       city: toCityView(group.city),
+      category: toTermView(group.categoryCode, labels),
+      rules: group.rules,
       // An integer, not "1.2k": the client cannot filter or sort a formatted string (0.6).
       memberCount: group.memberCount,
       joinPolicy: group.joinPolicy,
+      visibility: group.visibility,
       isNew: group.createdAt >= daysAgo(NEW_GROUP_DAYS),
       avatarUrl: group.avatarKey ? this.media.sign(group.avatarKey) : null,
+      createdBy: group.createdById,
+      conversationId: hidden ? null : group.conversationId,
+      lastMessageAt: hidden ? null : (thread?.lastMessageAt?.toISOString() ?? null),
+      lastMessagePreview: hidden ? null : (thread?.preview ?? null),
+      unreadCount: standing.unreadCount,
+      messageCount: hidden ? null : (thread?.messageCount ?? 0),
       viewer: {
         // The single source of truth for whether the button reads Join, Pending or Leave.
-        membership: membership ?? 'NONE',
-        unreadPostCount,
-        isAdmin: membership === 'ADMIN',
+        membership: standing.membership,
+        canPost: isMember,
+        canModerate: standing.membership === 'ADMIN',
+        hasRequested: standing.membership === 'PENDING',
+        wasRemoved: standing.wasRemoved,
+        isInvited: standing.isInvited,
+        isMuted: standing.isMuted,
+        unreadPostCount: standing.unreadPostCount,
+        isAdmin: standing.membership === 'ADMIN',
       },
       createdAt: group.createdAt.toISOString(),
     };
   }
 
-  private async membershipsFor(
-    userId: string,
-    groupIds: string[],
-  ): Promise<Map<string, MembershipView>> {
-    if (!groupIds.length) return new Map();
+  /**
+   * Where the caller stands in each of these groups, in one pass. Every flag the client's button
+   * is chosen from comes from here, so two of them cannot disagree: a member who is also
+   * "removed", or an invitation that outlives the joining it led to, would each draw the wrong
+   * button on a screen that only draws one.
+   */
+  private async standingFor(userId: string, groups: GroupRow[]): Promise<Map<string, Standing>> {
+    const empty: Standing = {
+      membership: 'NONE',
+      wasRemoved: false,
+      isInvited: false,
+      isMuted: false,
+      unreadCount: 0,
+      unreadPostCount: 0,
+    };
 
-    const rows = await this.database.groupMembership.findMany({
-      where: { userId, groupId: { in: groupIds } },
-    });
+    if (!groups.length) return new Map();
 
-    return new Map(rows.map(row => [row.groupId, this.stateToView(row)]));
+    const groupIds = groups.map(group => group.id);
+    const conversationIds = groups
+      .map(group => group.conversationId)
+      .filter((id): id is string => id !== null);
+
+    const [memberships, invitations, participants] = await Promise.all([
+      this.database.groupMembership.findMany({ where: { userId, groupId: { in: groupIds } } }),
+      this.database.groupInvitation.findMany({
+        where: { userId, groupId: { in: groupIds } },
+        select: { groupId: true },
+      }),
+      conversationIds.length
+        ? this.database.conversationParticipant.findMany({
+            where: { userId, conversationId: { in: conversationIds } },
+            select: { conversationId: true, unreadCount: true, isMuted: true },
+          })
+        : Promise.resolve<Array<{ conversationId: string; unreadCount: number; isMuted: boolean }>>(
+            [],
+          ),
+    ]);
+
+    const membershipById = new Map(memberships.map(row => [row.groupId, row] as const));
+    const invited = new Set(invitations.map(row => row.groupId));
+    const participantById = new Map(
+      participants.map(row => [row.conversationId, row] as const),
+    );
+
+    const unreadPosts = await this.unreadCounts(
+      userId,
+      groups,
+      new Map(memberships.map(row => [row.groupId, this.stateToView(row)])),
+    );
+
+    return new Map(
+      groups.map(group => {
+        const row = membershipById.get(group.id);
+        const participant = group.conversationId
+          ? participantById.get(group.conversationId)
+          : undefined;
+
+        return [
+          group.id,
+          {
+            ...empty,
+            membership: row ? this.stateToView(row) : 'NONE',
+            wasRemoved: row?.state === GroupMembershipState.REMOVED,
+            isInvited: invited.has(group.id),
+            isMuted: participant?.isMuted ?? false,
+            unreadCount: participant?.unreadCount ?? 0,
+            unreadPostCount: unreadPosts.get(group.id) ?? 0,
+          },
+        ];
+      }),
+    );
+  }
+
+  /** The last thing said in each thread, for the row's preview line. */
+  private async threadFactsFor(groups: GroupRow[]): Promise<Map<string, ThreadFacts>> {
+    const conversationIds = groups
+      .map(group => group.conversationId)
+      .filter((id): id is string => id !== null);
+
+    if (!conversationIds.length) return new Map();
+
+    const [conversations, lastMessages] = await Promise.all([
+      this.database.conversation.findMany({
+        where: { id: { in: conversationIds } },
+        select: { id: true, lastMessageAt: true, messageCount: true },
+      }),
+      this.database.message.findMany({
+        where: { conversationId: { in: conversationIds }, deletedAt: null },
+        orderBy: { sentAt: 'desc' },
+        distinct: ['conversationId'],
+        select: { conversationId: true, body: true, kind: true },
+      }),
+    ]);
+
+    const previews = new Map<string, string | null>(
+      lastMessages.map(message => [
+        message.conversationId,
+        // Markers out: a one-line preview renders nothing, so `*ID*` would show the member the
+        // asterisks. Media says what it is rather than coming back blank.
+        message.body ? stripFormatting(message.body) : (MEDIA_PREVIEW[message.kind] ?? null),
+      ]),
+    );
+
+    return new Map(
+      conversations.map(conversation => [
+        conversation.id,
+        {
+          lastMessageAt: conversation.lastMessageAt,
+          messageCount: conversation.messageCount,
+          preview: previews.get(conversation.id) ?? null,
+        },
+      ]),
+    );
+  }
+
+  /** One lookup for the category labels every group row needs. */
+  private categoryLabels(): Promise<Map<string, string>> {
+    return this.taxonomy.labels(TaxonomyKind.COMMUNITY_CATEGORY);
   }
 
   private stateToView(row: { state: GroupMembershipState; isAdmin: boolean }): MembershipView {
@@ -968,10 +1658,9 @@ export class GroupService {
     return group;
   }
 
-  private async assertMember(userId: string, groupId: string): Promise<void> {
-    await this.load(groupId);
-
-    const membership = (await this.membershipsFor(userId, [groupId])).get(groupId);
+  private async assertMember(userId: string, groupId: string): Promise<Group> {
+    const group = await this.load(groupId);
+    const membership = await this.membershipOf(userId, groupId);
 
     if (membership !== 'MEMBER' && membership !== 'ADMIN') {
       throw ApiException.forbidden(
@@ -979,15 +1668,26 @@ export class GroupService {
         'Join this group to take part in it.',
       );
     }
+
+    return group;
   }
 
-  private async assertAdmin(userId: string, groupId: string): Promise<void> {
-    await this.load(groupId);
-
-    const membership = (await this.membershipsFor(userId, [groupId])).get(groupId);
+  private async assertAdmin(userId: string, groupId: string): Promise<Group> {
+    const group = await this.load(groupId);
+    const membership = await this.membershipOf(userId, groupId);
 
     if (membership !== 'ADMIN') {
-      throw ApiException.forbidden(ApiErrorCode.FORBIDDEN, 'Only a group admin can do that.');
+      throw ApiException.forbidden(ApiErrorCode.NOT_ADMIN, 'Only a group admin can do that.');
     }
+
+    return group;
+  }
+
+  private async membershipOf(userId: string, groupId: string): Promise<MembershipView> {
+    const row = await this.database.groupMembership.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+    });
+
+    return row ? this.stateToView(row) : 'NONE';
   }
 }

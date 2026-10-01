@@ -26,6 +26,7 @@ model Conversation {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
+  group              Group?
   participants       ConversationParticipant[]
   messages           Message[]
   bookings           Booking[]

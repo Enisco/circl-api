@@ -351,17 +351,28 @@ model GuideDeflection {
 // ─── Groups ──────────────────────────────────────────────────────────────────
 
 model Group {
-  id          String  @id @default(uuid())
-  name        String  @map("name")
-  description String  @map("description")
-  rules       String? @map("rules")
+  id          String   @id @default(uuid())
+  name        String   @map("name")
+  description String   @map("description")
+  /// One entry per rule. Was a single blob of text; a list is what the group screen renders.
+  rules       String[] @map("rules")
 
   cityId String @map("city_id")
   city   City   @relation(fields: [cityId], references: [id])
 
-  joinPolicy JoinPolicy @default(OPEN) @map("join_policy")
+  /// TaxonomyKind.COMMUNITY_CATEGORY — the same list the feed filters by.
+  categoryCode String? @map("category_code")
+
+  /// Who gets in, and who can read it without getting in. Genuinely independent: an open group
+  /// that anybody may read can still take members by approval, and the other way round.
+  joinPolicy JoinPolicy      @default(OPEN) @map("join_policy")
+  visibility GroupVisibility @default(OPEN) @map("visibility")
+
+  /// The group's chat, created with the group so there is something to open the moment it exists.
+  conversationId String?       @unique @map("conversation_id")
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
   /// Object key, signed on read (0.11.3). Surfaces as `avatarUrl`.
-  avatarKey  String?    @map("avatar_key")
+  avatarKey      String?       @map("avatar_key")
 
   createdById String @map("created_by_id")
   createdBy   User   @relation("GroupCreator", fields: [createdById], references: [id], onDelete: Cascade)
@@ -377,6 +388,7 @@ model Group {
 
   memberships GroupMembership[]
   posts       GroupPost[]
+  invitations GroupInvitation[]
 
   // Two "Manchester Nigerians" in Manchester is a support problem, not a feature.
   @@unique([cityId, name])
@@ -396,6 +408,9 @@ model GroupMembership {
   state   GroupMembershipState @default(MEMBER) @map("state")
   isAdmin Boolean              @default(false) @map("is_admin")
 
+  /// Whatever the asker typed with their request. Optional, may be empty, plain text.
+  requestMessage String? @map("request_message")
+
   // Drives the unread dot on the My groups pills without counting rows per load.
   lastReadAt   DateTime? @map("last_read_at") @db.Timestamptz
   lastActiveAt DateTime  @default(now()) @map("last_active_at") @db.Timestamptz
@@ -407,6 +422,25 @@ model GroupMembership {
   @@index([userId, state])
   @@index([groupId, state])
   @@map("group_memberships")
+}
+
+/// An invitation is the only way back in for somebody an admin removed (1.7.6).
+model GroupInvitation {
+  id      String @id @default(uuid())
+  groupId String @map("group_id")
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId  String @map("user_id")
+  user    User   @relation("GroupInvitee", fields: [userId], references: [id], onDelete: Cascade)
+
+  invitedById String @map("invited_by_id")
+  invitedBy   User   @relation("GroupInviter", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  /// Inviting somebody already invited is not an error, so one row per pair and the send is an upsert.
+  @@unique([groupId, userId])
+  @@index([userId, createdAt])
+  @@map("group_invitations")
 }
 
 model GroupPost {
