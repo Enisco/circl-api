@@ -38,7 +38,9 @@ export class MessageService {
    * cursor skipped the anchor's twin. `hasMore` is counted by fetching one row more than asked.
    */
   async history(userId: string, conversationId: string, query: ListMessagesDto) {
-    await this.conversations.requireParticipant(userId, conversationId);
+    // Reading, not taking part: an open group's thread is readable by somebody who has not joined.
+    // Sending, the read cursor and everything else below still require participation.
+    await this.conversations.requireReadable(userId, conversationId);
 
     // `since` pages with `after`. `before` would ask for changes older than the window itself.
     if (query.since && query.before) {
@@ -105,12 +107,17 @@ export class MessageService {
       .filter(participant => participant.userId !== userId)
       .map(participant => participant.userId);
 
-    for (const other of others) {
-      if (await this.blocking.isBlockedEitherWay(userId, other)) {
-        throw ApiException.forbidden(
-          ApiErrorCode.CONVERSATION_BLOCKED,
-          'You cannot message this member.',
-        );
+    // A block is a thing between two people. Checking every other participant is right for a 1:1
+    // and wrong for a group: it would stop a member speaking at all because they had blocked one
+    // of five hundred, and it would cost one query per member on every send.
+    if (conversation.kind !== ThreadKind.GROUP) {
+      for (const other of others) {
+        if (await this.blocking.isBlockedEitherWay(userId, other)) {
+          throw ApiException.forbidden(
+            ApiErrorCode.CONVERSATION_BLOCKED,
+            'You cannot message this member.',
+          );
+        }
       }
     }
 
@@ -431,6 +438,9 @@ export class MessageService {
 
   toView(message: MessageRow, viewerId: string) {
     const isDeleted = message.deletedAt !== null;
+    const sender = message.sender
+      ? toAuthorView(message.sender, { sign: this.media.sign })
+      : null;
 
     return {
       id: message.id,
@@ -438,7 +448,12 @@ export class MessageService {
       clientId: message.clientId,
       kind: message.kind,
       body: isDeleted ? '' : (message.body ?? ''),
-      sender: message.sender ? toAuthorView(message.sender, { sign: this.media.sign }) : null,
+      /**
+       * `name` is an alias of `displayName`, which every other author object in this API uses.
+       * Kept for one release because a group bubble needs a name above it and the shipped client
+       * reads `sender.name`.
+       */
+      sender: sender ? { ...sender, name: sender.displayName } : null,
       isMine: message.senderId === viewerId,
       attachments: isDeleted
         ? []

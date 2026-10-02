@@ -235,6 +235,27 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
   const thread = r.body?.data?.conversationId;
   check('the group carries its thread', typeof thread === 'string', thread);
 
+  r = await api(admin.token, 'GET', `/community/groups/${closed}`);
+  const closedThread = r.body?.data?.conversationId;
+  check('a closed group hands its own admin the thread id', typeof closedThread === 'string', closedThread);
+
+  r = await api(outsider.token, 'GET', `/community/groups/${closed}`);
+  check('and withholds it from a non-member, because an id that 403s is worse than none', r.body?.data?.conversationId === null, r.body?.data?.conversationId);
+  r = await api(outsider.token, 'GET', `/community/groups/${open}`);
+  check('while an open group hands it over, since that id is what their tap opens', typeof r.body?.data?.conversationId === 'string', r.body?.data?.conversationId);
+
+  // Readable by a stranger and joinable only by approval, which is the pair the read-only bar has
+  // to get right: it says "Ask to join" rather than "Join".
+  r = await api(admin.token, 'POST', '/community/groups', {
+    name: `E2E Open By Approval ${stamp}`,
+    description: 'Anyone may read it, and an admin answers every request to come in.',
+    cityId: 'MANCHESTER', visibility: 'OPEN', joinPolicy: 'APPROVAL',
+  });
+  const pendingGroup = r.body?.data?.id;
+  const pendingThread = r.body?.data?.conversationId;
+  await api(admin.token, 'POST', `/messages/${pendingThread}/messages`, { clientId: `pg-${stamp}`, body: 'Anybody can read this one.' });
+  check('an open group may still take members by approval', r.status === 201 && !!pendingThread, r.body?.error);
+
   r = await api(admin.token, 'GET', `/messages/${thread}`);
   check('which the messages API answers', r.status === 200, r.body?.error);
   check('as kind GROUP', r.body?.data?.kind === 'GROUP', r.body?.data?.kind);
@@ -242,8 +263,21 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
   check('and the group in its place, for the chat header', r.body?.data?.group?.id === open && !!r.body?.data?.group?.name, r.body?.data?.group);
   check('carrying memberCount, which moves on every join', typeof r.body?.data?.group?.memberCount === 'number', r.body?.data?.group);
 
+  // A group IS its conversation, so an open group's thread is readable by somebody who has not
+  // joined: a stranger who can see the name and the rules and nothing anybody ever said is
+  // exactly the group the admin was trying not to run. Reading is the only verb that opens up.
   r = await api(outsider.token, 'GET', `/messages/${thread}`);
-  check('a non-member reading it → 403 NOT_A_PARTICIPANT', r.status === 403 && r.body?.error?.code === 'NOT_A_PARTICIPANT', r.body?.error);
+  check('a non-member may read an open group\'s thread', r.status === 200, { status: r.status, code: r.body?.error?.code });
+  check('told it is read-only before the composer is drawn', r.body?.data?.viewer?.canPost === false, r.body?.data?.viewer);
+  check('and given the policy, so the bar says Join or Ask to join', r.body?.data?.group?.joinPolicy === 'OPEN', r.body?.data?.group);
+
+  r = await api(admin.token, 'GET', `/messages/${thread}`);
+  check('while a member is told they may send', r.body?.data?.viewer?.canPost === true, r.body?.data?.viewer);
+
+  r = await api(outsider.token, 'GET', `/messages/${closedThread}`);
+  check('a closed group is unchanged: 403 NOT_A_PARTICIPANT', r.status === 403 && r.body?.error?.code === 'NOT_A_PARTICIPANT', r.body?.error);
+  r = await api(outsider.token, 'GET', `/messages/${closedThread}/messages`);
+  check('and so are its messages', r.status === 403 && r.body?.error?.code === 'NOT_A_PARTICIPANT', r.body?.error);
 
   r = await api(admin.token, 'POST', `/messages/${thread}/messages`, {
     clientId: `g-1-${stamp}`, body: 'Bring *ID* and _proof of address_ on Thursday.',
@@ -254,6 +288,45 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
   r = await api(invitee.token, 'GET', `/messages/${thread}/messages?limit=5`);
   check('another member reads it', (r.body?.data ?? []).length >= 1, (r.body?.data ?? []).length);
   check('with the markers untouched in the bubble', r.body?.data?.[0]?.body === 'Bring *ID* and _proof of address_ on Thursday.', r.body?.data?.[0]?.body);
+
+  // Every bubble needs a name, or a thread with more than two people in it is unreadable.
+  const bubble = r.body?.data?.[0];
+  check('each message says who said it', !!bubble?.sender?.id && !!bubble?.sender?.displayName, bubble?.sender);
+  check('under `name` as well, which is what the shipped client reads', bubble?.sender?.name === bubble?.sender?.displayName, bubble?.sender?.name);
+  check('and carries their picture field, null or not', 'avatarUrl' in (bubble?.sender ?? {}), bubble?.sender);
+
+  r = await api(outsider.token, 'GET', `/messages/${thread}/messages?limit=5`);
+  check('a non-member reads the messages of an open group', r.status === 200 && (r.body?.data ?? []).length >= 1, { status: r.status, length: (r.body?.data ?? []).length });
+
+  // Everything other than reading stays shut.
+  r = await api(outsider.token, 'POST', `/messages/${thread}/messages`, { clientId: `g-ro-${stamp}`, body: 'Can I speak?' });
+  check('but may not write in it', r.status === 403 && r.body?.error?.code === 'NOT_A_PARTICIPANT', r.body?.error);
+  r = await api(outsider.token, 'POST', `/messages/${thread}/read`, {});
+  check('and has no read cursor to move', r.status === 403, { status: r.status, code: r.body?.error?.code });
+  r = await api(outsider.token, 'POST', `/messages/${thread}/mute`, {});
+  check('nor anything to mute', r.status === 403 && r.body?.error?.code === 'NOT_A_PARTICIPANT', { status: r.status, code: r.body?.error?.code });
+  r = await api(outsider.token, 'POST', `/messages/${thread}/archive`, {});
+  check('nor anything to file away', r.status === 403 && r.body?.error?.code === 'NOT_A_PARTICIPANT', { status: r.status, code: r.body?.error?.code });
+
+  r = await api(outsider.token, 'GET', '/messages?limit=50');
+  check('reading one does not put it in their inbox', !(r.body?.data ?? []).some(row => row.id === thread), (r.body?.data ?? []).length);
+
+  // Removal beats open: an admin's decision is not undone by the visibility setting.
+  r = await api(joiner.token, 'GET', `/messages/${thread}`);
+  check('a member reads their own group normally', r.status === 200, { status: r.status });
+  await api(admin.token, 'DELETE', `/community/groups/${open}/members/${joiner.id}`);
+  r = await api(joiner.token, 'GET', `/messages/${thread}`);
+  check('but somebody an admin removed reads nothing, whatever the visibility', r.status === 403 && r.body?.error?.code === 'NOT_A_PARTICIPANT', r.body?.error);
+  await api(admin.token, 'POST', `/community/groups/${open}/invites`, { userIds: [joiner.id] });
+  await api(joiner.token, 'POST', `/community/groups/${open}/join`);
+
+  // A pending request is remembered, or somebody who asked yesterday is offered Ask to join today.
+  r = await api(asker.token, 'POST', `/community/groups/${pendingGroup}/join`, { message: 'Letting me in?' });
+  check('asking from inside a thread leaves a request', r.body?.data?.membership === 'PENDING', r.body?.data);
+  r = await api(asker.token, 'GET', `/messages/${pendingThread}`);
+  check('which the thread remembers across opens', r.body?.data?.viewer?.hasRequested === true, r.body?.data?.viewer);
+  check('and it is still read-only until an admin answers', r.body?.data?.viewer?.canPost === false, r.body?.data?.viewer);
+  check('with the policy saying which words the bar uses', r.body?.data?.group?.joinPolicy === 'APPROVAL', r.body?.data?.group);
 
   r = await api(admin.token, 'GET', `/community/groups/${open}`);
   check('the group\'s preview is plain words, markers stripped', r.body?.data?.lastMessagePreview === 'Bring ID and proof of address on Thursday.', r.body?.data?.lastMessagePreview);
@@ -284,11 +357,20 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
   r = await api(invitee.token, 'DELETE', `/community/groups/${open}/join`);
   check('leaving a group → NONE, and the count moves', r.body?.data?.membership === 'NONE', r.body?.data);
 
+  // Leaving takes away taking part, not reading — this group is open, and an open group's thread
+  // is readable by anybody. What leaving does take is the composer and the inbox row.
   r = await api(invitee.token, 'GET', `/messages/${thread}`);
-  check('leaving closes the thread for them', r.status === 403, { status: r.status, code: r.body?.error?.code });
+  check('leaving an open group leaves its thread readable', r.status === 200, { status: r.status });
+  check('but read-only now', r.body?.data?.viewer?.canPost === false, r.body?.data?.viewer);
 
   r = await api(invitee.token, 'GET', '/messages?limit=50');
-  check('and it leaves their inbox', !(r.body?.data ?? []).some(row => row.id === thread), (r.body?.data ?? []).length);
+  check('and it leaves their inbox either way', !(r.body?.data ?? []).some(row => row.id === thread), (r.body?.data ?? []).length);
+
+  r = await api(asker.token, 'GET', `/messages/${closedThread}`);
+  check('while leaving a closed group does close it', r.status === 200, { status: r.status });
+  await api(asker.token, 'DELETE', `/community/groups/${closed}/join`);
+  r = await api(asker.token, 'GET', `/messages/${closedThread}`);
+  check('— 403 once they are out of it', r.status === 403 && r.body?.error?.code === 'NOT_A_PARTICIPANT', { status: r.status, code: r.body?.error?.code });
 
   console.log('\n── 9 Editing and deleting ────────────────────────────────');
 
@@ -330,6 +412,11 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
 
   r = await api(admin.token, 'GET', `/messages/${secondThread}`);
   check('and its thread goes with it', r.status === 403 || r.status === 404, { status: r.status });
+
+  // The relaxation must not outlive the group: a deleted open group's thread is readable by
+  // nobody, which the delete used to achieve only by emptying the participant list.
+  r = await api(outsider.token, 'GET', `/messages/${secondThread}`);
+  check('and is readable by nobody, open or not', r.status === 403 || r.status === 404, { status: r.status });
 
   console.log('\n── 10 One picture, on every shape that draws it ──────────');
 
@@ -388,11 +475,11 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
   console.log('\n── 12 headline, the one new field on the author object ────');
 
   await api(asker.token, 'PATCH', '/users/profile', { headline: 'Immigration law' });
-  r = await api(admin.token, 'GET', `/community/groups/${closed}/members`);
+  r = await api(admin.token, 'GET', `/community/groups/${pictured}/members`);
   const askerRow = (r.body?.data ?? []).find(row => row.user?.id === asker.id);
   check('a member\'s headline is theirs to set and shows under their name', askerRow?.user?.headline === 'Immigration law', askerRow?.user);
 
-  r = await api(admin.token, 'GET', `/community/groups/${closed}/members`);
+  r = await api(admin.token, 'GET', `/community/groups/${pictured}/members`);
   const adminRow = (r.body?.data ?? []).find(row => row.user?.id === admin.id);
   check('and it is null where nobody has said, never guessed at', adminRow?.user?.headline === null, adminRow?.user);
 

@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import {
   Conversation,
   DealStage,
+  GroupMembershipState,
+  GroupVisibility,
   DealTrack,
   JobState,
   MessageKind,
@@ -71,6 +73,12 @@ export interface ContextView {
   route: string | null;
 }
 
+/** The other people in a thread. Empty for a group read by somebody who is not in it. */
+const others = (conversation: ConversationRow, userId: string): string[] =>
+  conversation.participants
+    .filter(participant => participant.userId !== userId)
+    .map(participant => participant.userId);
+
 /** The chip on an inbox row. */
 export type ThreadLabel =
   | 'OFFERED_HELP'
@@ -86,7 +94,19 @@ export type ThreadLabel =
 const conversationInclude = {
   // A group thread draws the group's name and photo where a 1:1 draws the other person's, and
   // `memberCount` moves on every join, so it is joined rather than kept in the snapshot.
-  group: { select: { id: true, name: true, avatarKey: true, memberCount: true } },
+  group: {
+    select: {
+      id: true,
+      name: true,
+      avatarKey: true,
+      memberCount: true,
+      // The bar under a read-only thread says "Join group" or "Ask to join", and has to say the
+      // right one without a second request. `visibility` decides whether it may be read at all.
+      joinPolicy: true,
+      visibility: true,
+      deletedAt: true,
+    },
+  },
   participants: {
     include: {
       user: {
@@ -132,6 +152,7 @@ export class ConversationService {
 
   async list(userId: string, query: ListConversationsDto) {
     const blockedIds = await this.blocking.blockedUserIds(userId);
+    const blockedSet = new Set(blockedIds);
 
     const where: Prisma.ConversationWhereInput = {
       participants: {
@@ -225,6 +246,9 @@ export class ConversationService {
           lastMessages.get(row.id) ?? null,
           review.reviewable.has(row.id),
           review.reviewed.has(row.id),
+          blockedSet,
+          // Every row in an inbox is a thread the caller is in, so nothing is pending on it.
+          false,
         ),
       ),
       meta: buildPageMeta(query, total, {
@@ -239,10 +263,12 @@ export class ConversationService {
 
   /** Used on a deep link, when the inbox has not been loaded. */
   async findOne(userId: string, conversationId: string) {
-    const conversation = await this.requireParticipant(userId, conversationId);
-    const [lastMessages, review] = await Promise.all([
+    const conversation = await this.requireReadable(userId, conversationId);
+    const [lastMessages, review, blockedIds, requested] = await Promise.all([
       this.lastMessages([conversationId]),
       this.reviewState(userId, [conversation]),
+      this.blocking.blockedUserIds(userId),
+      this.pendingGroupRequest(userId, conversation),
     ]);
 
     return this.toRow(
@@ -251,7 +277,43 @@ export class ConversationService {
       lastMessages.get(conversationId) ?? null,
       review.reviewable.has(conversationId),
       review.reviewed.has(conversationId),
+      new Set(blockedIds),
+      requested,
     );
+  }
+
+  /**
+   * A block is a thing between two people. In a 1:1 it stops the thread; in a group it must not,
+   * or blocking one person in a group of five hundred would take the composer away for ever —
+   * and whether a member may speak in a group is the group's business, not a pair's.
+   */
+  private blockedFromPosting(
+    conversation: ConversationRow,
+    userId: string,
+    blockedIds: Set<string>,
+  ): boolean {
+    if (conversation.kind === ThreadKind.GROUP) return false;
+
+    return others(conversation, userId).some(id => blockedIds.has(id));
+  }
+
+  /** Whether this caller has asked to join the group behind a thread and nobody has answered. */
+  private async pendingGroupRequest(
+    userId: string,
+    conversation: ConversationRow,
+  ): Promise<boolean> {
+    if (!conversation.group) return false;
+
+    const row = await this.database.groupMembership.findFirst({
+      where: {
+        groupId: conversation.group.id,
+        userId,
+        state: GroupMembershipState.PENDING,
+      },
+      select: { userId: true },
+    });
+
+    return row !== null;
   }
 
   // ─── 5.3.5 Start a plain DM ────────────────────────────────────────────────
@@ -671,7 +733,67 @@ export class ConversationService {
     };
   }
 
+  /**
+   * Reading, which is not the same as taking part. A group with `visibility: OPEN` is a shop
+   * window: a stranger may read what is being discussed and only members may add to it. Writing,
+   * the read cursor, muting, archiving and every deal action still go through
+   * `requireParticipant`, and a `CLOSED` group is unchanged — so this relaxes exactly one verb.
+   *
+   * It deliberately does not create a participant row. A reader has no unread count, no read
+   * cursor and no inbox entry: an open group they are merely allowed to read is reachable by id,
+   * or the inbox would fill with every open group in the city.
+   */
+  async requireReadable(userId: string, conversationId: string): Promise<ConversationRow> {
+    const conversation = await this.loadForParticipant(conversationId);
+
+    if (conversation.participants.some(participant => participant.userId === userId)) {
+      return conversation;
+    }
+
+    // A deleted group is readable by nobody. Without this the relaxation outlived the group: the
+    // delete takes every participant out of the thread, which used to be what closed it, and an
+    // open group's thread would have stayed readable to the whole city afterwards.
+    const isOpenGroup =
+      conversation.kind === ThreadKind.GROUP &&
+      conversation.group?.visibility === GroupVisibility.OPEN &&
+      conversation.group.deletedAt === null;
+
+    // Removal beats open: somebody an admin took out reads nothing, whatever the visibility.
+    const removed = isOpenGroup
+      ? await this.database.groupMembership.findFirst({
+          where: {
+            groupId: conversation.group!.id,
+            userId,
+            state: GroupMembershipState.REMOVED,
+          },
+          select: { userId: true },
+        })
+      : null;
+
+    if (!isOpenGroup || removed) {
+      throw ApiException.forbidden(
+        ApiErrorCode.NOT_A_PARTICIPANT,
+        'You are not part of this conversation.',
+      );
+    }
+
+    return conversation;
+  }
+
   async requireParticipant(userId: string, conversationId: string): Promise<ConversationRow> {
+    const conversation = await this.loadForParticipant(conversationId);
+
+    if (!conversation.participants.some(participant => participant.userId === userId)) {
+      throw ApiException.forbidden(
+        ApiErrorCode.NOT_A_PARTICIPANT,
+        'You are not part of this conversation.',
+      );
+    }
+
+    return conversation;
+  }
+
+  private async loadForParticipant(conversationId: string): Promise<ConversationRow> {
     // Socket payloads have no validation pipe, so a missing id reaches this instead of Prisma,
     // which throws an unreadable error on `where: { id: undefined }`.
     if (typeof conversationId !== 'string' || !conversationId) {
@@ -696,13 +818,6 @@ export class ConversationService {
           ? 'That is a member id, not a conversation id. Read `viewer.conversationId` from ' +
               'GET /users/{id}/profile, or POST /messages with `recipientUserId` to open the thread.'
           : 'That conversation could not be found.',
-      );
-    }
-
-    if (!conversation.participants.some(participant => participant.userId === userId)) {
-      throw ApiException.forbidden(
-        ApiErrorCode.NOT_A_PARTICIPANT,
-        'You are not part of this conversation.',
       );
     }
 
@@ -945,6 +1060,8 @@ export class ConversationService {
     } | null,
     canReview = false,
     hasReviewed = false,
+    blockedIds: Set<string> = new Set(),
+    hasRequested = false,
   ) {
     const me = conversation.participants.find(participant => participant.userId === userId);
     const other = this.counterpart(conversation, userId);
@@ -976,6 +1093,9 @@ export class ConversationService {
               ? this.media.sign(conversation.group.avatarKey)
               : null,
             memberCount: conversation.group.memberCount,
+            // So the bar under a read-only thread says Join or Ask to join without a second call.
+            joinPolicy: conversation.group.joinPolicy,
+            visibility: conversation.group.visibility,
           }
         : null,
       participantCount: conversation.participants.length,
@@ -997,7 +1117,19 @@ export class ConversationService {
       isMuted: me?.isMuted ?? false,
       isArchived: me?.isArchived ?? false,
       // Archiving is per participant, so only the caller's own copy can answer either of these.
-      viewer: { isArchived: me?.isArchived ?? false, canReview, hasReviewed },
+      viewer: {
+        isArchived: me?.isArchived ?? false,
+        canReview,
+        hasReviewed,
+        /**
+         * Whether this caller may send, answered before the composer is drawn: one that takes a
+         * message and then fails on send is worse than none. False for a non-member reading an
+         * open group, false where the other party is blocked either way, true otherwise.
+         */
+        canPost: Boolean(me) && !this.blockedFromPosting(conversation, userId, blockedIds),
+        /** True where they have asked to join the group and no admin has answered. */
+        hasRequested,
+      },
       // 3.6: true until BOTH people have sent at least one message.
       safetyNoticeRequired:
         conversation.kind === ThreadKind.CONNECT &&
