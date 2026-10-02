@@ -6,7 +6,9 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
+  Put,
   Query,
   Res,
   UseGuards,
@@ -15,10 +17,12 @@ import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagg
 import { Response } from 'express';
 import { CurrentUserId, Idempotent, JwtAuthGuard, RateLimit, SuccessMessage } from '@/common';
 import {
+  EditMessageDto,
   ListConversationsDto,
   ListMessagesDto,
   MarkReadDto,
   MuteDto,
+  ReactDto,
   SendMessageDto,
   StartThreadDto,
 } from '../dtos/message.dto';
@@ -155,6 +159,71 @@ export class MessagingController {
     await this.gateway.fanOut(id, data, userId);
 
     return { data, message: 'Message sent' };
+  }
+
+  @Patch(':conversationId/messages/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Edit a message',
+    description:
+      'Sender only, within the same fifteen minutes as withdrawing, text only — a photo or a ' +
+      'voice note is withdrawn and sent again rather than edited. Past the window it is a ' +
+      '`403 EDIT_WINDOW_CLOSED`, which the client can tell apart from a generic refusal. The ' +
+      'payload comes back with `editedAt` set, which is what makes the bubble say "edited", and ' +
+      '`?since=` already returns anything whose `editedAt` moved.',
+  })
+  async editMessage(
+    @CurrentUserId() userId: string,
+    @Param('conversationId') conversationId: string,
+    @Param('id') id: string,
+    @Body() dto: EditMessageDto,
+  ) {
+    const data = await this.messages.edit(userId, conversationId, id, dto.body);
+
+    void this.gateway.broadcastMessageUpdated(conversationId, id, userId);
+
+    return { data, message: 'Message updated' };
+  }
+
+  @Put(':conversationId/messages/:id/reactions')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'React to a message',
+    description:
+      'One reaction per member per message, so this replaces any previous one — which is why it ' +
+      'is a PUT. Answers the new aggregate rather than a row, because that is what the chips ' +
+      'under a bubble read.',
+  })
+  @RateLimit('REACT')
+  async react(
+    @CurrentUserId() userId: string,
+    @Param('conversationId') conversationId: string,
+    @Param('id') id: string,
+    @Body() dto: ReactDto,
+  ) {
+    const data = await this.messages.react(userId, conversationId, id, dto.emoji);
+
+    void this.gateway.broadcastReaction(conversationId, id);
+
+    return { data, message: 'Reaction saved' };
+  }
+
+  @Delete(':conversationId/messages/:id/reactions')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Take a reaction back',
+    description: 'Idempotent: removing one you never left answers the state you asked for.',
+  })
+  async unreact(
+    @CurrentUserId() userId: string,
+    @Param('conversationId') conversationId: string,
+    @Param('id') id: string,
+  ) {
+    const data = await this.messages.unreact(userId, conversationId, id);
+
+    void this.gateway.broadcastReaction(conversationId, id);
+
+    return { data, message: 'Reaction removed' };
   }
 
   @Delete(':conversationId/messages/:id')

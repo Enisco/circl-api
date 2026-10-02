@@ -88,6 +88,21 @@ model Message {
   // The client-generated id used for optimistic rendering, echoed in the acknowledgement so the pending bubble is replaced rather than duplicated.
   clientId String @map("client_id")
 
+  /// Swipe to reply. The id rather than a copy of the quoted text: a stored copy would outlive the
+  /// withdrawal of what it quotes, and "Message deleted" is the whole point of a tombstone. The
+  /// quote is resolved on read, so a deleted original quotes as deleted everywhere at once.
+  replyToMessageId String?   @map("reply_to_message_id")
+  replyTo          Message?  @relation("MessageReply", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies          Message[] @relation("MessageReply")
+
+  /// `[{ userId, offset, length }]`. Offsets are UTF-16 code units into `body`, which is what the
+  /// client measures in, and are stored as sent rather than recomputed from the text.
+  mentions Json? @map("mentions")
+
+  /// Said by somebody else first. Without it a forward reads as the sender's own words, which is
+  /// how a rumour gets attributed to whoever passed it on.
+  isForwarded Boolean @default(false) @map("is_forwarded")
+
   status MessageStatus @default(SENT) @map("status")
 
   // D26: the server stamps sentAt. Never the sending device's clock.
@@ -99,11 +114,29 @@ model Message {
 
   attachments MessageAttachment[]
   receipts    MessageReceipt[]
+  reactions   MessageReaction[]
 
   @@unique([conversationId, clientId])
   @@index([conversationId, sentAt])
   @@index([senderId])
   @@map("messages")
+}
+
+/// One per member per message: a different emoji replaces the old one, which is why the write is a
+/// PUT. The emoji is stored as the client sent it — skin tone, ZWJ and all, because `👍🏾` is not `👍`.
+model MessageReaction {
+  messageId String  @map("message_id")
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String  @map("user_id")
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  emoji String @map("emoji")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@id([messageId, userId])
+  @@index([messageId, emoji])
+  @@map("message_reactions")
 }
 
 model MessageAttachment {

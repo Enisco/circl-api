@@ -41,11 +41,13 @@ export class MessagePushService {
     const [conversation, message, sender, participants, devices] = await Promise.all([
       this.database.conversation.findUnique({
         where: { id: input.conversationId },
-        select: { kind: true, contextSnapshot: true },
+        // The group id travels with the push so several messages from one group collapse into one
+        // notification rather than twenty.
+        select: { kind: true, contextSnapshot: true, group: { select: { id: true, name: true } } },
       }),
       this.database.message.findUnique({
         where: { id: input.messageId },
-        select: { kind: true, body: true },
+        select: { kind: true, body: true, mentions: true },
       }),
       this.database.user.findUnique({
         where: { id: input.senderId },
@@ -73,7 +75,16 @@ export class MessagePushService {
     // sender alone it read as a direct message from somebody the member may not know, and three
     // groups and a DM all looked the same on a lock screen.
     const groupName =
-      (conversation.contextSnapshot as { title?: string } | null)?.title ?? 'A group';
+      conversation.group?.name ??
+      (conversation.contextSnapshot as { title?: string } | null)?.title ??
+      'A group';
+    // A mention reaches somebody who has muted the group. It is the one exception, and it is the
+    // reason mute is worth having: a member can silence the chatter and still be called on.
+    const mentioned = new Set(
+      ((message.mentions as Array<{ userId?: string }> | null) ?? [])
+        .map(mention => mention.userId)
+        .filter((id): id is string => typeof id === 'string'),
+    );
     const tokensByUser = new Map<string, string[]>();
 
     for (const device of devices) {
@@ -86,8 +97,9 @@ export class MessagePushService {
     for (const participant of participants) {
       const muted =
         participant.isMuted && (!participant.mutedUntil || participant.mutedUntil > now);
+      const wasMentioned = mentioned.has(participant.userId);
 
-      if (muted) continue;
+      if (muted && !wasMentioned) continue;
 
       const tokens = tokensByUser.get(participant.userId) ?? [];
 
@@ -100,17 +112,28 @@ export class MessagePushService {
 
       const { deadTokens } = await this.fcm.sendPushToMany(
         tokens,
-        isSupport ? 'Circl' : isGroup ? groupName : senderName,
+        isSupport
+          ? 'Circl'
+          : wasMentioned && isGroup
+            ? `${senderName} mentioned you in ${groupName}`
+            : isGroup
+              ? groupName
+              : senderName,
         // Never the body on a support thread.
         isSupport
           ? 'You have a new message from the Circl team.'
-          : isGroup
+          : isGroup && !wasMentioned
             ? `${sender?.firstName ?? 'Someone'}: ${this.preview(message)}`
             : this.preview(message),
         {
           // The three keys the client reads out of message.data (G14 15.1). MESSAGE pulls the
           // thread and re-reads the unread totals.
           type: 'MESSAGE',
+          // The target triple, which is what the client routes on. `targetParentId` is the group,
+          // so several messages from one group collapse into one notification rather than twenty.
+          targetType: 'CONVERSATION',
+          targetId: input.conversationId,
+          ...(conversation.group ? { targetParentId: conversation.group.id } : {}),
           // So the tap opens the thread directly rather than the inbox.
           conversationId: input.conversationId,
           // An in-app path, so a new kind becomes tappable without an app release.

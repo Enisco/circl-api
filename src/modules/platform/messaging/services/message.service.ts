@@ -1,24 +1,49 @@
 import { Injectable } from '@nestjs/common';
 import { MediaType, MessageKind, MessageStatus, Prisma, ThreadKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException } from '@/common';
+import { ApiErrorCode, ApiException, toJson } from '@/common';
 import {
   BlockingService,
   MediaService,
   authorSelect,
+  displayNameOf,
   toAuthorView,
   toMediaViews,
 } from '../../shared';
-import { ListMessagesDto, SendMessageDto } from '../dtos/message.dto';
+import { ListMessagesDto, MentionDto, SendMessageDto } from '../dtos/message.dto';
 import { ConversationService } from './conversation.service';
 
-/** Sender only, within 15 minutes (5.3.6). */
+/** How long a sender has to withdraw or edit what they said. One window, one definition (5.3.6). */
 const DELETE_WINDOW_MS = 15 * 60 * 1000;
 
 const messageInclude = {
   sender: { select: authorSelect },
   attachments: { include: { media: true }, orderBy: { position: 'asc' } },
+  // The quote is resolved rather than copied, so a withdrawn original quotes as withdrawn.
+  replyTo: {
+    select: {
+      id: true,
+      kind: true,
+      body: true,
+      deletedAt: true,
+      sender: { select: authorSelect },
+    },
+  },
+  // Aggregated on the way out: one row per member would ship a megabyte to a 400-member group.
+  reactions: { select: { emoji: true, userId: true } },
 } satisfies Prisma.MessageInclude;
+
+/**
+ * A mention as stored. The display name is kept with it rather than resolved on read, because the
+ * body already contains the literal "@Ada Obi" at that offset: resolving live would let the array
+ * and the text it points into disagree the day somebody changes their name.
+ */
+export interface StoredMention {
+  userId: string;
+  displayName: string;
+  offset: number;
+  length: number;
+}
 
 type MessageRow = Prisma.MessageGetPayload<{ include: typeof messageInclude }>;
 
@@ -97,6 +122,90 @@ export class MessageService {
     };
   }
 
+  /** 422 rather than a dangling quote: a reply to something in another thread is a mistake. */
+  private async resolveReplyTo(
+    conversationId: string,
+    replyToMessageId?: string,
+  ): Promise<string | null> {
+    if (!replyToMessageId) return null;
+
+    const quoted = await this.database.message.findUnique({
+      where: { id: replyToMessageId },
+      select: { conversationId: true },
+    });
+
+    if (!quoted || quoted.conversationId !== conversationId) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.MESSAGE_NOT_IN_CONVERSATION,
+        'That message is not in this conversation.',
+        { details: [{ field: 'replyToMessageId', message: 'Not a message in this thread.' }] },
+      );
+    }
+
+    return replyToMessageId;
+  }
+
+  /**
+   * Only the people in this thread may be mentioned, and anybody else is dropped rather than
+   * refused: a mention of somebody who has left is not a reason to lose the message.
+   */
+  private async resolveMentions(
+    conversation: { participants: Array<{ userId: string }> },
+    mentions?: MentionDto[],
+  ): Promise<StoredMention[]> {
+    if (!mentions?.length) return [];
+
+    const inThread = new Set(conversation.participants.map(participant => participant.userId));
+    const wanted = [...new Set(mentions.map(mention => mention.userId))].filter(id =>
+      inThread.has(id),
+    );
+
+    if (!wanted.length) return [];
+
+    const users = await this.database.user.findMany({
+      where: { id: { in: wanted } },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    const names = new Map(
+      users.map(user => [user.id, displayNameOf(user.firstName, user.lastName)] as const),
+    );
+
+    return mentions
+      .filter(mention => names.has(mention.userId))
+      .map(mention => ({
+        userId: mention.userId,
+        displayName: names.get(mention.userId)!,
+        offset: mention.offset,
+        length: mention.length,
+      }));
+  }
+
+  /**
+   * The message being passed on, loaded only to carry its media across. The sender has to be able
+   * to read it, or forwarding would be a way to pull an attachment out of a thread they are not in.
+   */
+  private async resolveForward(userId: string, forwardFromMessageId?: string) {
+    if (!forwardFromMessageId) return null;
+
+    const source = await this.database.message.findUnique({
+      where: { id: forwardFromMessageId },
+      select: {
+        conversationId: true,
+        deletedAt: true,
+        attachments: { select: { mediaId: true }, orderBy: { position: 'asc' } },
+      },
+    });
+
+    if (!source || source.deletedAt) {
+      throw ApiException.notFound('That message could not be found.');
+    }
+
+    // Readable, not writable: forwarding out of an open group you only read is fine.
+    await this.conversations.requireReadable(userId, source.conversationId);
+
+    return source;
+  }
+
   // ─── 5.3.4 Send ────────────────────────────────────────────────────────────
 
   /** The REST fallback for sending. */
@@ -164,6 +273,16 @@ export class MessageService {
       dto.attachmentKeys ?? dto.attachmentIds,
     );
 
+    const [replyToMessageId, mentions, forwarded] = await Promise.all([
+      this.resolveReplyTo(conversationId, dto.replyToMessageId),
+      this.resolveMentions(conversation, dto.mentions),
+      this.resolveForward(userId, dto.forwardFromMessageId),
+    ]);
+
+    // Forwarding carries the original's media without a re-upload: the sender has the URL, not a
+    // key they could hand back, and asking them to upload bytes they already have is a worse API.
+    const carried = forwarded?.attachments ?? [];
+
     const message = await this.database.$transaction(async tx => {
       const created = await tx.message.create({
         data: {
@@ -173,8 +292,17 @@ export class MessageService {
           body: body || null,
           clientId: dto.clientId,
           status: MessageStatus.SENT,
+          replyToMessageId,
+          mentions: mentions.length ? toJson(mentions) : undefined,
+          isForwarded: dto.isForwarded === true || forwarded !== null,
           attachments: {
-            create: attachments.map((media, position) => ({ mediaId: media.id, position })),
+            create: [
+              ...attachments.map((media, position) => ({ mediaId: media.id, position })),
+              ...carried.map((attachment, index) => ({
+                mediaId: attachment.mediaId,
+                position: attachments.length + index,
+              })),
+            ],
           },
           // Per-participant receipts, so the server stays the only writer of message status (5.2.4).
           receipts: {
@@ -341,6 +469,138 @@ export class MessageService {
     });
   }
 
+  // ─── 5.3.6 Edit ────────────────────────────────────────────────────────────
+
+  /**
+   * Sender only, inside the same fifteen minutes as withdrawing, and text only: an attachment is
+   * not edited, it is withdrawn and sent again. `editedAt` is what makes the bubble say "edited".
+   */
+  async edit(userId: string, conversationId: string, messageId: string, body: string) {
+    await this.conversations.requireParticipant(userId, conversationId);
+
+    const message = await this.database.message.findUnique({ where: { id: messageId } });
+
+    if (!message || message.conversationId !== conversationId) {
+      throw ApiException.notFound('That message could not be found.');
+    }
+
+    if (message.deletedAt) throw ApiException.deleted('This message');
+
+    if (message.senderId !== userId) {
+      throw ApiException.forbidden(
+        ApiErrorCode.FORBIDDEN,
+        'You can only edit your own messages.',
+      );
+    }
+
+    if (message.kind !== MessageKind.TEXT) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'A photo or a voice note is withdrawn and sent again rather than edited.',
+        { details: [{ field: 'body', message: 'Only a text message can be edited.' }] },
+      );
+    }
+
+    if (Date.now() - message.sentAt.getTime() > DELETE_WINDOW_MS) {
+      throw ApiException.forbidden(
+        ApiErrorCode.EDIT_WINDOW_CLOSED,
+        'The fifteen minutes for editing this message have passed.',
+      );
+    }
+
+    const trimmed = body.trim();
+
+    if (!trimmed) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'An edit cannot empty a message. Withdraw it instead.',
+        { details: [{ field: 'body', message: 'This is required.' }] },
+      );
+    }
+
+    const updated = await this.database.message.update({
+      where: { id: messageId },
+      // `since=` already promises anything whose editedAt moved, so the catch-up path needs
+      // nothing beyond the column being set.
+      data: { body: trimmed, editedAt: new Date() },
+      include: messageInclude,
+    });
+
+    return this.toView(updated, userId);
+  }
+
+  // ─── 5.3.7 Reactions ───────────────────────────────────────────────────────
+
+  /**
+   * One per member per message, which is why this replaces rather than adds: sending a different
+   * emoji is changing your mind, not reacting twice.
+   */
+  async react(userId: string, conversationId: string, messageId: string, emoji: string) {
+    await this.conversations.requireParticipant(userId, conversationId);
+    await this.messageInThread(conversationId, messageId);
+
+    await this.database.messageReaction.upsert({
+      where: { messageId_userId: { messageId, userId } },
+      update: { emoji },
+      create: { messageId, userId, emoji },
+    });
+
+    return this.reactionsOf(messageId, userId);
+  }
+
+  async unreact(userId: string, conversationId: string, messageId: string) {
+    await this.conversations.requireParticipant(userId, conversationId);
+    await this.messageInThread(conversationId, messageId);
+
+    // Idempotent: taking back a reaction you never left is the state you asked for.
+    await this.database.messageReaction.deleteMany({ where: { messageId, userId } });
+
+    return this.reactionsOf(messageId, userId);
+  }
+
+  /** The aggregate the socket and both reaction routes answer with. */
+  async reactionsOf(messageId: string, viewerId: string) {
+    const rows = await this.database.messageReaction.findMany({
+      where: { messageId },
+      select: { emoji: true, userId: true },
+    });
+
+    return { messageId, reactions: this.aggregateReactions(rows, viewerId) };
+  }
+
+  private async messageInThread(conversationId: string, messageId: string) {
+    const message = await this.database.message.findUnique({
+      where: { id: messageId },
+      select: { conversationId: true, deletedAt: true },
+    });
+
+    if (!message || message.conversationId !== conversationId) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.MESSAGE_NOT_IN_CONVERSATION,
+        'That message is not in this conversation.',
+        { details: [{ field: 'messageId', message: 'Not a message in this thread.' }] },
+      );
+    }
+
+    if (message.deletedAt) throw ApiException.deleted('This message');
+  }
+
+  /**
+   * The same stored message as each of these callers must see it. `isMine` and `mine` on a
+   * reaction are the reader's, not the sender's, so one serialisation cannot be broadcast to
+   * everybody — which is exactly what made every member of a group see every message as their own.
+   */
+  async viewsFor(messageId: string, viewerIds: string[]) {
+    const message = await this.database.message.findUnique({
+      where: { id: messageId },
+      include: messageInclude,
+    });
+
+    if (!message) return new Map<string, ReturnType<MessageService['toView']>>();
+
+    return new Map(viewerIds.map(viewerId => [viewerId, this.toView(message, viewerId)] as const));
+  }
+
   // ─── 5.3.6 Delete ──────────────────────────────────────────────────────────
 
   /** A deleted message is a tombstone, not a gap: `deletedAt` is set and the body and attachments are emptied, but the row stays. */
@@ -436,11 +696,40 @@ export class MessageService {
     });
   }
 
+  /**
+   * One row per emoji with a count, and `mine` for this caller alone. Never one row per member: a
+   * 400-member group would ship a megabyte of reactions to render six chips.
+   */
+  private aggregateReactions(
+    reactions: Array<{ emoji: string; userId: string }>,
+    viewerId: string,
+  ): Array<{ emoji: string; count: number; mine: boolean }> {
+    if (!reactions.length) return [];
+
+    const counts = new Map<string, { count: number; mine: boolean }>();
+
+    for (const reaction of reactions) {
+      const seen = counts.get(reaction.emoji) ?? { count: 0, mine: false };
+
+      counts.set(reaction.emoji, {
+        count: seen.count + 1,
+        mine: seen.mine || reaction.userId === viewerId,
+      });
+    }
+
+    // Most reacted first, which is the order the chips read in.
+    return [...counts.entries()]
+      .map(([emoji, row]) => ({ emoji, ...row }))
+      .sort((a, b) => b.count - a.count || a.emoji.localeCompare(b.emoji));
+  }
+
   toView(message: MessageRow, viewerId: string) {
     const isDeleted = message.deletedAt !== null;
     const sender = message.sender
       ? toAuthorView(message.sender, { sign: this.media.sign })
       : null;
+    const quoted = message.replyTo;
+    const mentions = (message.mentions as unknown as StoredMention[] | null) ?? null;
 
     return {
       id: message.id,
@@ -461,6 +750,27 @@ export class MessageService {
             message.attachments.map(attachment => attachment.media),
             this.media.sign,
           ),
+      /**
+       * A snapshot of what this answers, resolved rather than copied. Where the original was
+       * withdrawn it comes back with `deletedAt` set and an empty body, which is what lets the
+       * quote read "Message deleted" instead of resurfacing something somebody took back.
+       */
+      replyTo: quoted
+        ? {
+            id: quoted.id,
+            kind: quoted.kind,
+            body: quoted.deletedAt ? '' : (quoted.body ?? ''),
+            sender: quoted.sender
+              ? toAuthorView(quoted.sender, { sign: this.media.sign })
+              : null,
+            deletedAt: quoted.deletedAt?.toISOString() ?? null,
+          }
+        : null,
+      /** Echoed as stored, so a reader renders and taps without a lookup. Empty, never null. */
+      mentions: isDeleted ? [] : (mentions ?? []),
+      /** Aggregated, with `mine` answering for this caller alone. */
+      reactions: this.aggregateReactions(message.reactions, viewerId),
+      isForwarded: message.isForwarded,
       status: message.status,
       systemType: message.systemType,
       systemData: message.systemData,

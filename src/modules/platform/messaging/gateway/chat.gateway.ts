@@ -296,8 +296,17 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   async fanOut(conversationId: string, message: { id: string }, senderId: string): Promise<void> {
     const recipients = await this.recipientsOf(conversationId, senderId);
 
+    // Serialised per recipient, not once for the sender. `isMine` and a reaction's `mine` are the
+    // reader's answer, and broadcasting the sender's copy told every member of a group that every
+    // message was their own — drawn on the right, in the sent colour, with read receipts on
+    // messages they had not sent. A one-to-one reader could derive it from the other participant;
+    // a group has no other participant to derive from.
+    const views = await this.messages.viewsFor(message.id, recipients);
+
     for (const recipient of recipients) {
-      this.server.to(this.roomFor(recipient)).emit('message.new', { conversationId, message });
+      this.server
+        .to(this.roomFor(recipient))
+        .emit('message.new', { conversationId, message: views.get(recipient) ?? message });
 
       void this.pushUnread(recipient);
     }
@@ -327,6 +336,42 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         messageId: message.id,
         status: 'DELIVERED',
       });
+    }
+  }
+
+  /** An edit reaches the thread the way a new message does: whole message, per reader. */
+  async broadcastMessageUpdated(
+    conversationId: string,
+    messageId: string,
+    senderId: string,
+  ): Promise<void> {
+    const recipients = await this.recipientsOf(conversationId, senderId);
+    const views = await this.messages.viewsFor(messageId, [...recipients, senderId]);
+
+    for (const recipient of [...recipients, senderId]) {
+      const view = views.get(recipient);
+
+      if (view) {
+        this.server
+          .to(this.roomFor(recipient))
+          .emit('message.updated', { conversationId, message: view });
+      }
+    }
+  }
+
+  /** The new aggregate, not a row: `mine` is the reader's, so each one is told their own. */
+  async broadcastReaction(conversationId: string, messageId: string): Promise<void> {
+    const everyone = await this.database.conversationParticipant.findMany({
+      where: { conversationId },
+      select: { userId: true },
+    });
+
+    for (const participant of everyone) {
+      const data = await this.messages.reactionsOf(messageId, participant.userId);
+
+      this.server
+        .to(this.roomFor(participant.userId))
+        .emit('message.reaction', { conversationId, ...data });
     }
   }
 

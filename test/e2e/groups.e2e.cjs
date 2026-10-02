@@ -472,7 +472,94 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
   r = await api(admin.token, 'POST', `/community/groups/${pictured}/join-requests/${asker.id}`, { approve: true });
   check('and it moves the moment one is answered', r.body?.data?.pendingRequestCount === 1, r.body?.data?.pendingRequestCount);
 
-  console.log('\n── 12 The wall is retired, and still answers ─────────────');
+  console.log('\n── 12 What a group chat needs that a 1:1 did not ─────────');
+
+  // isMine was serialised once for the sender and broadcast to everybody. A 1:1 reader could
+  // derive it from the other participant; a group has none, so every member saw every message as
+  // their own — on the right, in the sent colour, with read receipts they had not earned.
+  r = await api(admin.token, 'POST', `/messages/${thread}/messages`, { clientId: `cf-1-${stamp}`, body: 'Who is free this weekend?' });
+  const anchor = r.body?.data?.id;
+  check('the sender is told the message is theirs', r.body?.data?.isMine === true, r.body?.data?.isMine);
+
+  r = await api(joiner.token, 'GET', `/messages/${thread}/messages?limit=5`);
+  check('and a reader is told it is not', r.body?.data?.[0]?.isMine === false, r.body?.data?.[0]?.isMine);
+
+  // Swipe to reply. A snapshot that renders after the original is withdrawn or has scrolled away.
+  r = await api(joiner.token, 'POST', `/messages/${thread}/messages`, {
+    clientId: `cf-2-${stamp}`, body: 'I can do Saturday', replyToMessageId: anchor,
+  });
+  check('a reply carries what it answers', r.status === 201 && r.body?.data?.replyTo?.id === anchor, { status: r.status, replyTo: r.body?.data?.replyTo?.id });
+  check('with the quoted text and who said it', r.body?.data?.replyTo?.body === 'Who is free this weekend?' && !!r.body?.data?.replyTo?.sender?.displayName, r.body?.data?.replyTo);
+  const replyId = r.body?.data?.id;
+
+  r = await api(joiner.token, 'POST', `/messages/${thread}/messages`, {
+    clientId: `cf-3-${stamp}`, body: 'Wrong thread', replyToMessageId: closedThread,
+  });
+  check('and replying to something outside this thread is refused', r.status === 422 && r.body?.error?.code === 'MESSAGE_NOT_IN_CONVERSATION', r.body?.error);
+
+  // Mentions: the positions travel beside the text, and somebody who is not in the thread is
+  // dropped rather than costing the sender their message.
+  r = await api(joiner.token, 'POST', `/messages/${thread}/messages`, {
+    clientId: `cf-4-${stamp}`, body: 'Can you take this one, @E2E gadmin?',
+    mentions: [{ userId: admin.id, offset: 23, length: 11 }, { userId: outsider.id, offset: 0, length: 1 }],
+  });
+  check('a mention survives the round trip', r.status === 201 && r.body?.data?.mentions?.length === 1, { status: r.status, mentions: r.body?.data?.mentions });
+  check('with the display name added, so a reader renders it without a lookup', r.body?.data?.mentions?.[0]?.displayName === 'E2E gadmin', r.body?.data?.mentions?.[0]);
+  check('and somebody outside the thread is dropped, not a 422', r.body?.data?.mentions?.every(m => m.userId !== outsider.id), r.body?.data?.mentions);
+  check('the offsets come back as sent', r.body?.data?.mentions?.[0]?.offset === 23 && r.body?.data?.mentions?.[0]?.length === 11, r.body?.data?.mentions?.[0]);
+
+  // Reactions, with a real keyboard rather than a fixed set of our own icons.
+  r = await api(admin.token, 'PUT', `/messages/${thread}/messages/${replyId}/reactions`, { emoji: '👍🏾' });
+  check('a reaction is stored as the keyboard produced it', r.body?.data?.reactions?.[0]?.emoji === '👍🏾', r.body?.data?.reactions);
+  check('counted, with mine answering for the caller alone', r.body?.data?.reactions?.[0]?.count === 1 && r.body?.data?.reactions?.[0]?.mine === true, r.body?.data?.reactions);
+
+  r = await api(joiner.token, 'PUT', `/messages/${thread}/messages/${replyId}/reactions`, { emoji: '👍🏾' });
+  check('two members on one emoji is one row of two', r.body?.data?.reactions?.[0]?.count === 2, r.body?.data?.reactions);
+  check('and mine is theirs, not the first reactor\'s', r.body?.data?.reactions?.[0]?.mine === true, r.body?.data?.reactions);
+
+  r = await api(admin.token, 'PUT', `/messages/${thread}/messages/${replyId}/reactions`, { emoji: '😂' });
+  check('a second emoji replaces the first rather than adding to it', (r.body?.data?.reactions ?? []).reduce((n, row) => n + row.count, 0) === 2, r.body?.data?.reactions);
+
+  r = await api(admin.token, 'PUT', `/messages/${thread}/messages/${replyId}/reactions`, { emoji: 'not an emoji' });
+  check('anything that is not one emoji is refused, or the chips become a text field', r.status === 400, { status: r.status });
+
+  r = await api(admin.token, 'DELETE', `/messages/${thread}/messages/${replyId}/reactions`);
+  check('taking one back leaves the others', (r.body?.data?.reactions ?? []).length === 1, r.body?.data?.reactions);
+  r = await api(admin.token, 'DELETE', `/messages/${thread}/messages/${replyId}/reactions`);
+  check('and doing it twice is the state you asked for', r.status === 200, r.status);
+
+  r = await api(outsider.token, 'PUT', `/messages/${thread}/messages/${replyId}/reactions`, { emoji: '👍' });
+  check('somebody only reading an open group cannot react', r.status === 403 && r.body?.error?.code === 'NOT_A_PARTICIPANT', r.body?.error);
+
+  // Editing, in the same fifteen minutes as withdrawing.
+  r = await api(joiner.token, 'PATCH', `/messages/${thread}/messages/${replyId}`, { body: 'Sorry, Sunday not Saturday' });
+  check('a sender edits their own message', r.status === 200 && r.body?.data?.body === 'Sorry, Sunday not Saturday', { status: r.status, body: r.body?.data?.body });
+  check('and editedAt is set, which is what makes the bubble say edited', !!r.body?.data?.editedAt, r.body?.data?.editedAt);
+
+  r = await api(admin.token, 'PATCH', `/messages/${thread}/messages/${replyId}`, { body: 'Not mine to edit' });
+  check('nobody edits anybody else', r.status === 403, { status: r.status, code: r.body?.error?.code });
+
+  r = await api(joiner.token, 'PATCH', `/messages/${thread}/messages/${replyId}`, { body: '   ' });
+  check('and an edit cannot empty a message, which is what withdrawing is for', r.status === 400 || r.status === 422, { status: r.status });
+
+  // Forwarding: the same words said by somebody else first, and it has to say so.
+  r = await api(admin.token, 'POST', `/messages/${thread}/messages`, {
+    clientId: `cf-5-${stamp}`, body: 'Passing this on', forwardFromMessageId: anchor,
+  });
+  check('a forward is marked as one', r.status === 201 && r.body?.data?.isForwarded === true, { status: r.status, isForwarded: r.body?.data?.isForwarded });
+
+  r = await api(outsider.token, 'POST', `/messages/${thread}/messages`, {
+    clientId: `cf-6-${stamp}`, body: 'Forwarding into a group I only read', forwardFromMessageId: anchor,
+  });
+  check('and is refused into a thread the member cannot write in', r.status === 403 && r.body?.error?.code === 'NOT_A_PARTICIPANT', r.body?.error);
+
+  // A withdrawal has to reach the quote, or something somebody took back reads on in a reply.
+  await api(admin.token, 'DELETE', `/messages/${thread}/messages/${anchor}`);
+  r = await api(joiner.token, 'GET', `/messages/${thread}/messages?limit=20`);
+  const quoting = (r.body?.data ?? []).find(m => m.replyTo?.id === anchor);
+  check('a withdrawn original quotes as withdrawn, not as what it said', quoting?.replyTo?.body === '' && !!quoting?.replyTo?.deletedAt, quoting?.replyTo);
+
+  console.log('\n── 13 The wall is retired, and still answers ─────────────');
 
   // A group is its conversation, so the wall was a second place to say the same things and the app
   // has stopped calling it. The endpoints stay: builds in the wild keep calling them until people
@@ -497,7 +584,7 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
   r = await api(admin.token, 'GET', `/users/${admin.id}/activity?type=GROUP_POST`);
   check('and an older build\'s chip answers an empty list rather than a 400', r.status === 200 && (r.body?.data ?? []).length === 0, { status: r.status, length: (r.body?.data ?? []).length });
 
-  console.log('\n── 13 headline, the one new field on the author object ────');
+  console.log('\n── 14 headline, the one new field on the author object ────');
 
   await api(asker.token, 'PATCH', '/users/profile', { headline: 'Immigration law' });
   r = await api(admin.token, 'GET', `/community/groups/${pictured}/members`);

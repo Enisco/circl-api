@@ -95,6 +95,10 @@ export const ApiErrorCode = {
   CONVERSATION_BLOCKED: 'CONVERSATION_BLOCKED',
   NOT_A_PARTICIPANT: 'NOT_A_PARTICIPANT',
   MESSAGE_DELETE_WINDOW_PASSED: 'MESSAGE_DELETE_WINDOW_PASSED',
+  /// Its own code, so the client can tell "too late" from a generic refusal.
+  EDIT_WINDOW_CLOSED: 'EDIT_WINDOW_CLOSED',
+  /// Replying to, reacting to or forwarding something that is not in this thread.
+  MESSAGE_NOT_IN_CONVERSATION: 'MESSAGE_NOT_IN_CONVERSATION',
   CANNOT_MESSAGE_YOURSELF: 'CANNOT_MESSAGE_YOURSELF',
 
   // ─── Account: sessions, email, export, privacy (BACKEND-DATA-GAPS) ─────────

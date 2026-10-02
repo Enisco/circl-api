@@ -51,6 +51,7 @@ model User {
   guideDeflections GuideDeflection[]
   groupsCreated    Group[]            @relation("GroupCreator")
   groupMemberships GroupMembership[]
+  messageReactions MessageReaction[]
   groupInvites     GroupInvitation[]  @relation("GroupInvitee")
   groupInvitesSent GroupInvitation[]  @relation("GroupInviter")
   groupPosts       GroupPost[]

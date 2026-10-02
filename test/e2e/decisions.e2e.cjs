@@ -241,9 +241,18 @@ const { api, check, dobFor, finish, makeUser, prisma, sweep } = require('./harne
   check('D26 the server stamps sentAt', typeof sent.body?.data?.sentAt === 'string',
     Object.keys(sent.body?.data ?? {}));
 
+  // D27 held `editedAt` nullable and unused so that adding editing later would not be a
+  // migration. Editing landed on 2026-10-02 and it was not one: the column was already there.
   r = await api(b.token, 'PATCH', `/messages/${convoId}/messages/${sent.body?.data?.id}`,
     { body: 'Edited' });
-  check('D27 there is no message edit route', r.status === 404 || r.status === 405, r.status);
+  check('D27 editing arrived without migrating the column it was held for',
+    r.status === 200 && !!r.body?.data?.editedAt, { status: r.status, editedAt: r.body?.data?.editedAt });
+  check('and nothing marks a message that was not edited',
+    sent.body?.data?.editedAt === null, sent.body?.data?.editedAt);
+
+  r = await api(a.token, 'PATCH', `/messages/${convoId}/messages/${sent.body?.data?.id}`,
+    { body: 'Not mine to edit' });
+  check('D27 and it is the sender\'s alone', r.status === 403, { status: r.status });
 
   console.log('\n── D2 anonymous posts stay blockable ────────────────────────');
   const anon = await api(a.token, 'POST', '/community/requests', {

@@ -15,7 +15,10 @@ import {
   MaxLength,
   Min,
   MinLength,
+  Validate,
   ValidateNested,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
 } from 'class-validator';
 import { PageOptionsDto, ToBoolean } from '@/common';
 
@@ -102,6 +105,80 @@ export class ListMessagesDto {
   limit?: number;
 }
 
+/**
+ * One emoji, as the keyboard produced it. A grapheme rather than a code point, so a skin tone or a
+ * ZWJ sequence survives: `👍🏾` is not `👍`, and required to be pictographic so the chips do not turn
+ * into a text field.
+ *
+ * 32 bytes rather than the 16 the client suggested: the grapheme check is what guarantees one
+ * emoji, and 16 refuses real ones. A three-person family (`👩‍👩‍👧`) is 18 bytes and the Scottish
+ * flag is 28. The cap is only a bound against a pathological ZWJ chain.
+ */
+@ValidatorConstraint({ name: 'isSingleEmoji', async: false })
+class IsSingleEmojiConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    if (typeof value !== 'string' || !value) return false;
+    if (Buffer.byteLength(value, 'utf8') > 32) return false;
+
+    // One user-perceived character. A segmenter is the only thing that counts them correctly: a
+    // ZWJ family is eleven code points and one emoji.
+    const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
+
+    if ([...segmenter.segment(value)].length !== 1) return false;
+
+    return /\p{Extended_Pictographic}/u.test(value);
+  }
+
+  defaultMessage(): string {
+    return 'emoji must be a single emoji, 16 bytes or fewer';
+  }
+}
+
+export class ReactDto {
+  @ApiProperty({
+    example: '👍',
+    description:
+      'A single emoji, stored as the Unicode sequence you send — skin tone and ZWJ included, ' +
+      'because `👍🏾` is not `👍`. One reaction per member per message, so this replaces any ' +
+      'previous one rather than adding to it. Up to 32 bytes: 16 would refuse a three-person ' +
+      'family and a subdivision flag, and the single-grapheme rule is what keeps it to one emoji.',
+  })
+  @Validate(IsSingleEmojiConstraint)
+  emoji: string;
+}
+
+export class EditMessageDto {
+  @ApiProperty({ minLength: 1, maxLength: 4000 })
+  @Trim()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(4000)
+  body: string;
+}
+
+export class MentionDto {
+  @ApiProperty({ description: 'Must be somebody in this thread; anybody else is dropped.' })
+  @Trim()
+  @IsString()
+  userId: string;
+
+  @ApiProperty({
+    description:
+      'UTF-16 code units from the start of `body`, which is what the client measures in. Stored ' +
+      'as sent rather than recomputed from the text.',
+  })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  offset: number;
+
+  @ApiProperty({ description: 'Covers the `@Name` run.' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  length: number;
+}
+
 export class SendMessageDto {
   @ApiProperty({
     maxLength: 64,
@@ -133,6 +210,52 @@ export class SendMessageDto {
   @MaxLength(4000)
   @IsOptional()
   body?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Swipe to reply. 422 where that message is not in this conversation. The payload then ' +
+      'carries a `replyTo` snapshot, resolved on read so a withdrawn original quotes as withdrawn.',
+  })
+  @Trim()
+  @IsString()
+  @IsOptional()
+  replyToMessageId?: string;
+
+  @ApiPropertyOptional({
+    type: [MentionDto],
+    description:
+      'The body carries the plain text (`Can you take this one, @Ada Obi?`) and the positions ' +
+      'travel beside it. Anybody who is not in the thread is dropped rather than refused — a ' +
+      'mention of somebody who left is not a reason to lose the message. A mention notifies even ' +
+      'when the group is muted.',
+  })
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => MentionDto)
+  @IsOptional()
+  mentions?: MentionDto[];
+
+  @ApiPropertyOptional({
+    description:
+      'Passes a message on. Its attachments are copied server-side, so a forward never ' +
+      're-uploads. The caller has to be able to read the source thread, and `isForwarded` comes ' +
+      'back true whether this or the flag below set it.',
+  })
+  @Trim()
+  @IsString()
+  @IsOptional()
+  forwardFromMessageId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'For a forward the client assembled itself, such as plain text. Implied by ' +
+      '`forwardFromMessageId`, so only send it on its own.',
+  })
+  @Bool()
+  @IsBoolean()
+  @IsOptional()
+  isForwarded?: boolean;
 
   @ApiPropertyOptional({
     type: [String],
