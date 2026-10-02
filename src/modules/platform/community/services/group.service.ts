@@ -1410,10 +1410,11 @@ export class GroupService {
       categoryCode: 'GROUPS',
       title: `${actor} replied in your group post`,
       body: excerpt(dto.content, 80),
-      // Both ids: replies live at `/community/groups/{groupId}/posts/{postId}/replies` and nothing
-      // resolves a post id to its group, so a post id alone is unopenable.
-      route: `/community/group/${groupId}/post/${postId}`,
-      target: { type: 'GROUP_POST', id: postId, parent: { type: 'GROUP', id: groupId } },
+      // The wall is retired (2026-10-02) and there is no post screen to open, so this lands on
+      // the group — the one thing that still exists — rather than on a route nothing resolves.
+      // Only an app old enough to still have the wall can get here at all.
+      route: `/community/group/${groupId}`,
+      target: { type: 'GROUP', id: groupId },
     });
 
     return {

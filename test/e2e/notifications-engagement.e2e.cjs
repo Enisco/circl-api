@@ -335,20 +335,21 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
   });
 
   const postRows = await waitFor(owner.token, 'GROUP', 'reply in your group post');
-  const postRow = postRows.find(row => row.target?.type === 'GROUP_POST');
+  const postRow = postRows.find(row => row.target?.type === 'GROUP');
 
-  check('a group post reply names its group as well as the post',
-    postRow?.target?.id === groupPostId && postRow?.target?.parent?.id === postGroupId
-      && postRow?.target?.parent?.type === 'GROUP',
-    postRow?.target);
-  check('and its route carries both ids, so it is openable',
-    postRow?.route === `/community/group/${postGroupId}/post/${groupPostId}`, postRow?.route);
+  // The wall was retired on 2026-10-02 and there is no post screen left, so this points at the
+  // group — the one thing that still exists. It used to carry the post id and its group as a
+  // parent, which was right while there was something for the post id to open.
+  check('a group post reply points at the group, since the post has no screen',
+    postRow?.target?.type === 'GROUP' && postRow?.target?.id === postGroupId, postRow?.target);
+  check('and its route is the group, not a path nothing resolves',
+    postRow?.route === `/community/group/${postGroupId}`, postRow?.route);
+  check('the post id is gone from the target rather than left to dangle',
+    postRow?.target?.id !== groupPostId && postRow?.target?.parent === undefined, postRow?.target);
 
-  r = await api(owner.token, 'GET',
-    `/community/groups/${postRow?.target?.parent?.id}/posts/${postRow?.target?.id}/replies`);
-  check('the two ids off the notification fetch the replies with no other lookup',
-    r.status === 200 && (r.body?.data?.replies ?? []).length >= 1,
-    { s: r.status, n: r.body?.data?.replies?.length });
+  r = await api(owner.token, 'GET', `/community/groups/${postRow?.target?.id}`);
+  check('and the one id off the notification opens that group with no other lookup',
+    r.status === 200 && r.body?.data?.id === postGroupId, { s: r.status, id: r.body?.data?.id });
 
   console.log('\n── Push: every device, not the last one to register ─────────');
 

@@ -32,6 +32,8 @@ const ROUTES: Record<ActivityType, (id: string) => string> = {
   [ActivityType.OFFER]: id => `/community/offer/${id}`,
   [ActivityType.GUIDE]: id => `/community/guide/${id}`,
   [ActivityType.UPDATE]: id => `/community/update/${id}`,
+  // Unreachable since the wall was retired: no GROUP_POST row is selected any more. Kept so the
+  // map stays total and the type does not have to be optional for a value nothing produces.
   [ActivityType.GROUP_POST]: id => `/community/group-post/${id}`,
   [ActivityType.REVIEW]: id => `/reviews/${id}`,
 };
@@ -123,11 +125,10 @@ export class UserActivityService {
         FROM community_updates
         WHERE author_id = ${subjectId} AND deleted_at IS NULL AND ${visible}`,
 
-      [ActivityType.GROUP_POST]: Prisma.sql`
-        SELECT id, 'GROUP_POST' AS type, NULL AS title, content AS body, NULL AS status_code,
-               reply_count, false AS is_anonymous, created_at
-        FROM group_posts
-        WHERE author_id = ${subjectId} AND deleted_at IS NULL`,
+      // GROUP_POST is deliberately absent. The wall was retired on 2026-10-02 and a row pointing
+      // at a screen that no longer exists is worse than no row: it renders with no destination.
+      // The enum value stays so `?type=GROUP_POST` from an older build answers an empty list
+      // rather than a 400, and the posts themselves stay for moderation.
 
       // The review a member WROTE is their history.
       [ActivityType.REVIEW]: Prisma.sql`

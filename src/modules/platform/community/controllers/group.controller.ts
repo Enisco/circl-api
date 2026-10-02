@@ -177,7 +177,7 @@ export class GroupController {
   @ApiOperation({
     summary: 'Who is in a group',
     description:
-      'Members only: who is in a group is not public, even for a group whose wall is. `q` ' +
+      'Members only: who is in a group is not public, even for one a stranger may read. `q` ' +
       'searches names. Each row carries the member\'s `headline` under their name, where they ' +
       'have said what they do.',
   })
@@ -293,16 +293,17 @@ export class GroupController {
     return { data, message: 'Member removed' };
   }
 
-  // ─── Posts and replies (1.7.5) ─────────────────────────────────────────────
+  // ─── Posts and replies (1.7.5) — retired, see the note on each route ───────
 
   @Get(':id/posts')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'The group wall',
+    summary: 'The group wall (retired)',
+    deprecated: true,
     description:
-      'Members get the full wall. A non-member gets a truncated preview of the last 3 posts with ' +
-      '`meta.preview: true` — truncated here rather than sent in full for the client to blur, ' +
-      'because anyone can read blurred text off the wire.',
+      '**Retired 2026-10-02.** A group is its conversation, so the wall was a second, quieter place to say the same things, with its own replies and its own unread story. The app no longer calls this. Kept running rather than removed or made to answer 410, because builds in the wild still call it until people update; nothing new should be built on it, and the posts stay readable for moderation. ' +
+      'Members get the full wall. A non-member of an open group gets a truncated preview of the ' +
+      'last 3 posts with `meta.preview: true`; a closed group refuses them.',
   })
   async listPosts(
     @CurrentUserId() userId: string,
@@ -317,7 +318,11 @@ export class GroupController {
   @Post(':id/posts')
   @Idempotent()
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Post to a group', description: 'Members only, always.' })
+  @ApiOperation({
+    summary: 'Post to a group (retired)',
+    deprecated: true,
+    description: '**Retired 2026-10-02.** A group is its conversation, so the wall was a second, quieter place to say the same things, with its own replies and its own unread story. The app no longer calls this. Kept running rather than removed or made to answer 410, because builds in the wild still call it until people update; nothing new should be built on it, and the posts stay readable for moderation. Members only, always.',
+  })
   @RateLimit('CREATE')
   async createPost(
     @CurrentUserId() userId: string,
@@ -332,8 +337,9 @@ export class GroupController {
   @Delete(':id/posts/:postId')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
-    summary: 'Delete a group post',
-    description: 'The author or a group admin. Replies go with it.',
+    summary: 'Delete a group post (retired)',
+    deprecated: true,
+    description: '**Retired 2026-10-02 with the wall.** The app no longer calls this. Kept running rather than removed or made to answer 410, because builds in the wild still call it until people update. The author or a group admin. Replies go with it.',
   })
   async removePost(
     @CurrentUserId() userId: string,
@@ -346,10 +352,11 @@ export class GroupController {
   @Get(':groupId/posts/:postId/replies')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Replies to a group post',
+    summary: 'Replies to a group post (retired)',
+    deprecated: true,
     description:
-      'Returns the parent post alongside the page of replies, so the screen is reachable from a ' +
-      'deep link or a cold start rather than only from an in-memory push.',
+      '**Retired 2026-10-02 with the wall.** The app no longer calls this. Kept running rather than removed or made to answer 410, because builds in the wild still call it until people update. Returns the parent post alongside the page of ' +
+      'replies, so the screen was reachable from a deep link rather than only from a push.',
   })
   async listPostReplies(
     @CurrentUserId() userId: string,
@@ -364,7 +371,13 @@ export class GroupController {
 
   @Post(':groupId/posts/:postId/replies')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Reply to a group post', description: 'One level deep.' })
+  @ApiOperation({
+    summary: 'Reply to a group post (retired)',
+    deprecated: true,
+    description:
+      '**Retired 2026-10-02 with the wall.** The app no longer calls this. Kept running rather than removed or made to answer 410, because builds in the wild still call it until people update. One level deep. Its notification opens the ' +
+      'group rather than the post, since there is no post screen left to open.',
+  })
   @RateLimit('CREATE')
   async createPostReply(
     @CurrentUserId() userId: string,
@@ -380,8 +393,9 @@ export class GroupController {
   @Delete(':groupId/posts/:postId/replies/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
-    summary: 'Delete a group post reply',
-    description: "The reply's author, or a group admin.",
+    summary: 'Delete a group post reply (retired)',
+    deprecated: true,
+    description: '**Retired 2026-10-02 with the wall.** The app no longer calls this. Kept running rather than removed or made to answer 410, because builds in the wild still call it until people update. The reply\'s author, or a group admin.',
   })
   async removePostReply(
     @CurrentUserId() userId: string,

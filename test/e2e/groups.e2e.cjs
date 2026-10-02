@@ -472,7 +472,32 @@ const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require
   r = await api(admin.token, 'POST', `/community/groups/${pictured}/join-requests/${asker.id}`, { approve: true });
   check('and it moves the moment one is answered', r.body?.data?.pendingRequestCount === 1, r.body?.data?.pendingRequestCount);
 
-  console.log('\n── 12 headline, the one new field on the author object ────');
+  console.log('\n── 12 The wall is retired, and still answers ─────────────');
+
+  // A group is its conversation, so the wall was a second place to say the same things and the app
+  // has stopped calling it. The endpoints stay: builds in the wild keep calling them until people
+  // update, and breaking a screen that still exists in a shipped app helps nobody.
+  r = await api(admin.token, 'POST', `/community/groups/${pictured}/posts`, { content: 'An old build can still post to the wall.' });
+  check('the retired wall still answers an old build', r.status === 201, { status: r.status, error: r.body?.error?.code });
+  const retiredPost = r.body?.data?.id;
+
+  r = await api(asker.token, 'POST', `/community/groups/${pictured}/posts/${retiredPost}/replies`, { content: 'And still reply to one.' });
+  check('and so do its replies', r.status === 201, { status: r.status, error: r.body?.error?.code });
+
+  // There is no post screen left, so the notification lands on the group rather than nowhere.
+  r = await api(admin.token, 'GET', '/notifications');
+  const replyRow = (r.body?.data ?? []).find(n => /replied in your group post/.test(n.title ?? ''));
+  check('a reply notification opens the group, not a screen that is gone', replyRow?.route === `/community/group/${pictured}`, replyRow?.route);
+  check('and targets the group, so an older client resolves it too', replyRow?.target?.type === 'GROUP' && replyRow?.target?.id === pictured, replyRow?.target);
+
+  // A row pointing at a screen that no longer exists is worse than no row.
+  r = await api(admin.token, 'GET', `/users/${admin.id}/activity`);
+  check('no GROUP_POST row in the profile activity feed', !(r.body?.data ?? []).some(row => row.type === 'GROUP_POST'), (r.body?.data ?? []).map(row => row.type));
+
+  r = await api(admin.token, 'GET', `/users/${admin.id}/activity?type=GROUP_POST`);
+  check('and an older build\'s chip answers an empty list rather than a 400', r.status === 200 && (r.body?.data ?? []).length === 0, { status: r.status, length: (r.body?.data ?? []).length });
+
+  console.log('\n── 13 headline, the one new field on the author object ────');
 
   await api(asker.token, 'PATCH', '/users/profile', { headline: 'Immigration law' });
   r = await api(admin.token, 'GET', `/community/groups/${pictured}/members`);
