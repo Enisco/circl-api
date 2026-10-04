@@ -268,7 +268,10 @@ export class CreateConnectPostDto {
   })
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(5)
+  // Deliberately looser than the five-photo rule so the service decides: a sixth key then answers
+  // `409 CONNECT_POST_LIMIT` with the limit in `data`, which is a refusal worth showing, rather
+  // than a `400` from the validator about an array length.
+  @ArrayMaxSize(10)
   @IsString({ each: true })
   @MaxLength(512, { each: true })
   keys: string[];

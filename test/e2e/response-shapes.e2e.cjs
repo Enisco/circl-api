@@ -242,7 +242,13 @@ function shape(label, obj, required) {
   shape('3.2.1 connect profile', r.body?.data?.profile, [
     'id', 'user', 'age', 'type', 'lookingFor', 'languages', 'interests',
     'heritageTag', 'journeyStage', 'dmPolicy', 'isVerified',
+    // The rebuild: a profile is now something you look at rather than read (3.1).
+    'accentColour', 'lastActiveBucket', 'hasStory', 'posts', 'prompts',
   ]);
+  // An exact timestamp on a surface where five of six types are not dating is a safety problem
+  // rather than a feature, so only the bucket is sent.
+  check('3.7 no exact lastActiveAt anywhere on a profile', r.body?.data?.profile?.lastActiveAt === undefined, r.body?.data?.profile?.lastActiveAt);
+  check('3.7 and mediaCount is not sent, having been withdrawn', r.body?.data?.profile?.mediaCount === undefined, r.body?.data?.profile?.mediaCount);
 
   r = await api(b.token, 'GET', '/connect/setup/prefill');
   shape('3.2.2 setup prefill', r.body?.data, [

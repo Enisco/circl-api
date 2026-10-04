@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ConnectPostKind, MediaType, TaxonomyKind } from '@prisma/client';
+import { ConnectPostKind, MediaType, Prisma, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException } from '@/common';
 import {
@@ -96,8 +96,11 @@ export class ConnectMediaService {
 
     const [posts, items] = await Promise.all([
       this.database.connectPost.count({ where: { profileId, deletedAt: null } }),
+      // Looser here than the five-photo rule on purpose: `assertShape` is the authority, so a
+      // sixth photo answers `409 CONNECT_POST_LIMIT` with the limit in `data` rather than a
+      // generic "too many images". One rule, one place, one refusal worth showing a member.
       this.media.validate(keys, userId, {
-        maxImages: MAX_PHOTOS_PER_POST,
+        maxImages: 10,
         allowVideo: true,
         allowAudio: false,
       }, 'keys'),
@@ -197,8 +200,8 @@ export class ConnectMediaService {
       );
     }
 
-    await this.assertDuration(items[0]);
-
+    // The missing field first, before reading bytes out of storage to check a length: refusing a
+    // request for something it did not send should not cost a round trip to S3.
     if (!dto.posterKey) {
       throw ApiException.unprocessable(
         ApiErrorCode.CONNECT_POSTER_REQUIRED,
@@ -213,6 +216,8 @@ export class ConnectMediaService {
         },
       );
     }
+
+    await this.assertDuration(items[0]);
 
     const [poster] = await this.media.validate(
       [dto.posterKey],
@@ -287,10 +292,19 @@ export class ConnectMediaService {
   async removePost(profileId: string, postId: string): Promise<void> {
     await this.requirePost(profileId, postId);
 
+    const items = await this.database.media.findMany({
+      where: { ownerType: CONNECT_POST_OWNER, ownerId: postId },
+      select: { id: true },
+    });
+
     await this.database.$transaction(async tx => {
       await tx.connectPost.update({ where: { id: postId }, data: { deletedAt: new Date() } });
       await this.media.releaseOwner(tx, CONNECT_POST_OWNER, postId);
       await this.media.releaseOwner(tx, CONNECT_POSTER_OWNER, postId);
+      await this.detachQuotes(
+        tx,
+        items.map(item => item.id),
+      );
     });
   }
 
@@ -313,7 +327,10 @@ export class ConnectMediaService {
       return null;
     }
 
-    await this.database.media.delete({ where: { id: mediaId } });
+    await this.database.$transaction(async tx => {
+      await tx.media.delete({ where: { id: mediaId } });
+      await this.detachQuotes(tx, [mediaId]);
+    });
 
     return this.postView(postId);
   }
@@ -481,8 +498,19 @@ export class ConnectMediaService {
       );
     }
 
+    const before = await this.database.connectPromptAnswer.findMany({
+      where: { profileId },
+      select: { code: true },
+    });
+    const dropped = before
+      .map(row => row.code)
+      .filter(code => !codes.has(code));
+
     await this.database.$transaction(async tx => {
       await tx.connectPromptAnswer.deleteMany({ where: { profileId } });
+
+      // An answer somebody took down stops being quoted, for the same reason a photo does.
+      await this.detachQuotes(tx, dropped);
 
       if (!answers.length) return;
 
@@ -686,7 +714,12 @@ export class ConnectMediaService {
     const now = new Date();
     const story = await this.database.$transaction(async tx => {
       const created = await tx.connectStory.create({
-        data: { profileId, postedAt: now, expiresAt: new Date(now.getTime() + STORY_TTL_MS) },
+        data: {
+          profileId,
+          userId,
+          postedAt: now,
+          expiresAt: new Date(now.getTime() + STORY_TTL_MS),
+        },
       });
 
       await this.media.attach(tx, [media], CONNECT_STORY_OWNER, created.id);
@@ -817,6 +850,26 @@ export class ConnectMediaService {
       thumbnailUrl: this.media.sign(media.thumbnailKey ?? media.storageKey),
       url: this.media.sign(media.storageKey),
     };
+  }
+
+  /**
+   * A removed item stops being quoted. A conversation that started about one photo has that photo
+   * in its snapshot, so without this a member could take a picture down and still find it beside
+   * every thread it started — the opposite of what removing it means (3.9).
+   *
+   * One statement rather than a read-time check: the alternative is a query per inbox row to ask
+   * whether a photo still exists.
+   */
+  private async detachQuotes(
+    tx: Prisma.TransactionClient,
+    aboutIds: string[],
+  ): Promise<void> {
+    if (!aboutIds.length) return;
+
+    await tx.$executeRaw`
+      UPDATE "conversations"
+      SET "context_snapshot" = "context_snapshot" - 'about'
+      WHERE "context_snapshot" -> 'about' ->> 'id' = ANY(${aboutIds}::text[])`;
   }
 
   /** The item has to belong to that profile, or `about` is a way to quote somebody else's photo. */

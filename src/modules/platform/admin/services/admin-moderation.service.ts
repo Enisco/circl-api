@@ -356,6 +356,45 @@ export class AdminModerationService {
         // Tombstoned like any other deletion, so the thread does not renumber.
         await tx.message.updateMany({ where: { id: targetId }, data: { ...now, body: null } });
         break;
+      case ReportTargetType.PROFESSIONAL_LISTING:
+        await tx.professionalListing.updateMany({ where: { id: targetId }, data: now });
+        break;
+      case ReportTargetType.CONNECT_PROFILE:
+        await tx.connectProfile.updateMany({ where: { id: targetId }, data: now });
+        break;
+      case ReportTargetType.CONNECT_STORY:
+        await tx.connectStory.updateMany({ where: { id: targetId }, data: now });
+        await tx.media.deleteMany({ where: { ownerType: 'CONNECT_STORY', ownerId: targetId } });
+        break;
+      case ReportTargetType.CONNECT_MEDIA: {
+        // A report names one item, because a photo is what somebody objects to. Taking it down
+        // leaves the rest of its post standing — unless it was the last one, because an empty
+        // post is not a post and the grid cannot draw one (3.9).
+        const item = await tx.media.findUnique({
+          where: { id: targetId },
+          select: { ownerType: true, ownerId: true },
+        });
+
+        await tx.media.delete({ where: { id: targetId } }).catch(() => undefined);
+
+        if (item?.ownerType === 'CONNECT_POST' && item.ownerId) {
+          const left = await tx.media.count({
+            where: { ownerType: 'CONNECT_POST', ownerId: item.ownerId },
+          });
+
+          if (left === 0) {
+            await tx.connectPost.updateMany({ where: { id: item.ownerId }, data: now });
+          }
+        }
+
+        // And it stops being quoted. A removed item has to disappear from any conversation that
+        // started about it, the same way a withdrawn message does.
+        await tx.$executeRaw`
+          UPDATE "conversations"
+          SET "context_snapshot" = "context_snapshot" - 'about'
+          WHERE "context_snapshot" -> 'about' ->> 'id' = ${targetId}`;
+        break;
+      }
       default:
         break;
     }

@@ -173,6 +173,11 @@ model ConnectStory {
   profileId String         @map("profile_id")
   profile   ConnectProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
+  /// Denormalised because a report resolves its subject from one column on the reported row: with
+  /// only `profileId` here, a reported story named a profile id where the queue wants a member.
+  userId String @map("user_id")
+  user   User   @relation("ConnectStoryAuthor", fields: [userId], references: [id], onDelete: Cascade)
+
   reportToken String @unique @default(uuid()) @map("report_token")
 
   postedAt  DateTime  @default(now()) @map("posted_at") @db.Timestamptz

@@ -52,7 +52,11 @@ async function makeAdmin(tag) {
   const lists = Object.entries(tax).filter(([, value]) => Array.isArray(value));
   check('every list carries terms', lists.every(([, value]) => value.length > 0),
     lists.filter(([, value]) => !value.length).map(([key]) => key));
-  check('and there are enough of them to be the whole vocabulary', lists.length >= 27, lists.length);
+  check('and there are enough of them to be the whole vocabulary', lists.length >= 28, lists.length);
+  // Served rather than shipped, so the questions can be reworded without a release (3.3.1).
+  check('the Connect prompts are among them, as questions rather than names',
+    (tax.connectPrompts ?? []).length >= 12 && (tax.connectPrompts ?? []).every(p => p.label?.length > 10),
+    (tax.connectPrompts ?? []).slice(0, 1));
 
   // Countries are the one list deliberately absent: ICU knows every one of them, so a curated
   // subset here could only ever be a shorter, staler answer than the app's own library.

@@ -289,6 +289,36 @@ async function uploadPng(token, purpose, width, height) {
   return slot.key;
 }
 
+/**
+ * A clip, for the paths that only exist for video. Deliberately a stub with no readable `moov`:
+ * nothing here plays it, and a server that cannot read a length has to say so rather than let it
+ * through, which is itself worth asserting.
+ */
+async function uploadStubVideo(token, purpose) {
+  const bytes = Buffer.concat([
+    Buffer.from([0, 0, 0, 0x18]),
+    Buffer.from('ftypmp42'),
+    Buffer.from([0, 0, 0, 0]),
+    Buffer.from('mp42isom'),
+    Buffer.alloc(512),
+  ]);
+  const minted = await api(token, 'POST', '/media/uploads', {
+    purpose,
+    files: [{ mimeType: 'video/mp4', byteSize: bytes.length }],
+  });
+  const slot = minted.body?.data?.[0];
+
+  if (!slot) return null;
+
+  await fetch(slot.uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'video/mp4' },
+    body: bytes,
+  });
+
+  return slot.key;
+}
+
 module.exports = {
   api,
   check,
@@ -300,5 +330,6 @@ module.exports = {
   realPng,
   sweep,
   uploadPng,
+  uploadStubVideo,
   verifyEmailCode,
 };

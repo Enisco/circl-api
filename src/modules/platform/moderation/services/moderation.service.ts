@@ -41,7 +41,7 @@ const TARGETS: Record<
   // and `uploadedById` is who put it there; taking it down leaves the rest of its post standing
   // unless it was the last one (3.9).
   CONNECT_MEDIA: { model: 'media', authorField: 'uploadedById', hasReportToken: false },
-  CONNECT_STORY: { model: 'connectStory', authorField: 'profileId', hasReportToken: true },
+  CONNECT_STORY: { model: 'connectStory', authorField: 'userId', hasReportToken: true },
   PROFESSIONAL_LISTING: {
     model: 'professionalListing',
     authorField: 'userId',

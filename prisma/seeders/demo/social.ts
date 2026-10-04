@@ -330,6 +330,7 @@ export const seedSocial = async (ctx: DemoSeedContext) => {
       const postedAt = hoursAgo(3);
       const storyData = {
         profileId: id,
+        userId: userId(profile.user),
         reportToken: reportToken(`connect-story:${profile.user}`),
         postedAt,
         // Twenty-one hours left, so the rail is never empty on a fresh seed.

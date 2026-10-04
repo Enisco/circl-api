@@ -1,5 +1,5 @@
 /* Section 3 end-to-end check. */
-const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require('./harness.cjs');
+const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng, uploadStubVideo } = require('./harness.cjs');
 
 
 
@@ -412,6 +412,25 @@ const dobFor = years => {
   r = await api(ada.token, 'GET', '/connect/me');
   check('which leaves one post behind', (r.body?.data?.profile?.posts ?? []).length === 1, r.body?.data?.profile?.posts?.length);
 
+  // A video post is the only place a poster matters, and the only path with a duration cap, so
+  // neither is exercised by a photo.
+  const videoKey = await uploadStubVideo(ada.token, 'CONNECT');
+  r = await api(ada.token, 'POST', '/connect/me/posts', { keys: [videoKey], kind: 'VIDEO' });
+  check('a video with no poster is refused, rather than shipping a grey tile', r.status === 422 && r.body?.error?.code === 'CONNECT_POSTER_REQUIRED', r.body?.error);
+
+  const posterKey = await uploadPng(ada.token, 'CONNECT', 900, 1200);
+  r = await api(ada.token, 'POST', '/connect/me/posts', { keys: [videoKey], kind: 'VIDEO', posterKey });
+  check('and a clip whose length cannot be read is refused too, not let through', r.status === 422 && r.body?.error?.code === 'CONNECT_VIDEO_TOO_LONG', r.body?.error);
+
+  // The caps the client says on the screen, so none of the three is only discovered in a refusal.
+  const sixKeys = [];
+
+  for (let i = 0; i < 6; i += 1) sixKeys.push(await uploadPng(ada.token, 'CONNECT', 900, 1200));
+
+  r = await api(ada.token, 'POST', '/connect/me/posts', { keys: sixKeys, kind: 'PHOTO' });
+  check('six photos in one post → 409 with the limit, not a 400 about an array', r.status === 409 && r.body?.error?.code === 'CONNECT_POST_LIMIT', { status: r.status, code: r.body?.error?.code });
+  check('and the limit travels with it, so the client can say it', r.body?.error?.data?.limit === 5 || r.body?.data?.limit === 5, r.body?.error?.data ?? r.body?.data);
+
   console.log('\n── 3.3 Prompts: the question travels with the answer ───────');
 
   r = await api(ada.token, 'GET', '/connect/prompts');
@@ -478,6 +497,62 @@ const dobFor = years => {
 
   r = await api(tunde.token, 'GET', '/connect/stories');
   check('and it is gone from every other reader on the next load', !(r.body?.data ?? []).some(row => row.items.some(i => i.id === storyId)), (r.body?.data ?? []).length);
+
+  // Ten live per person: a story layer with no ceiling becomes a feed nobody asked for.
+  const storyIds = [];
+
+  for (let i = 0; i < 10; i += 1) {
+    const key = await uploadPng(ada.token, 'CONNECT', 1080, 1920);
+    const res = await api(ada.token, 'POST', '/connect/stories', { key });
+
+    if (res.status === 201) storyIds.push(res.body.data.id);
+  }
+
+  check('ten stories go up', storyIds.length === 10, storyIds.length);
+  const eleventh = await uploadPng(ada.token, 'CONNECT', 1080, 1920);
+
+  r = await api(ada.token, 'POST', '/connect/stories', { key: eleventh });
+  check('and an eleventh is refused with a code the client can show', r.status === 409 && r.body?.error?.code === 'CONNECT_STORY_LIMIT', { status: r.status, code: r.body?.error?.code });
+
+  r = await api(ada.token, 'GET', '/connect/stories');
+  const ownRow = (r.body?.data ?? []).find(row => row.items.length === 10);
+  check('all ten sit in one row, oldest first, because a tap-through reads forwards', !!ownRow, (r.body?.data ?? []).map(x => x.items.length));
+  check('each with its own expiry for the viewer to count down against', (ownRow?.items ?? []).every(i => !!i.expiresAt), ownRow?.items?.length);
+
+  for (const id of storyIds) await api(ada.token, 'DELETE', `/connect/stories/${id}`);
+
+  console.log('\n── 3.9 Reporting a photo, not only a person ───────────────');
+
+  // Media on a dating-adjacent surface is the one place this will attract what it does not want.
+  r = await api(ada.token, 'GET', '/connect/me');
+  const reportablePost = r.body?.data?.profile?.posts?.[0];
+
+  r = await api(tunde.token, 'POST', '/moderation/reports', {
+    targetType: 'CONNECT_MEDIA', targetId: reportablePost?.items?.[0]?.id, reasonCode: 'INAPPROPRIATE',
+  });
+  check('a photo can be reported, not only the person holding it', r.status === 202, { status: r.status, error: r.body?.error });
+
+  const mediaReport = await prisma.report.findFirst({
+    where: { targetType: 'CONNECT_MEDIA', targetId: reportablePost?.items?.[0]?.id },
+    select: { targetUserId: true },
+  });
+  check('and it names the member who put it there, not an owning row', mediaReport?.targetUserId === ada.id, mediaReport);
+
+  const storyKeyForReport = await uploadPng(ada.token, 'CONNECT', 1080, 1920);
+
+  r = await api(ada.token, 'POST', '/connect/stories', { key: storyKeyForReport });
+  const reportableStory = r.body?.data?.id;
+  r = await api(tunde.token, 'POST', '/moderation/reports', {
+    targetType: 'CONNECT_STORY', targetId: reportableStory, reasonCode: 'INAPPROPRIATE',
+  });
+  check('a story can be reported the same way', r.status === 202, { status: r.status, error: r.body?.error });
+
+  const storyReport = await prisma.report.findFirst({
+    where: { targetType: 'CONNECT_STORY', targetId: reportableStory },
+    select: { targetUserId: true },
+  });
+  check('naming the member, which a profile id in that field would not', storyReport?.targetUserId === ada.id, storyReport);
+  await api(ada.token, 'DELETE', `/connect/stories/${reportableStory}`);
 
   console.log('\n── 3.5 A conversation about one thing ─────────────────────');
 
