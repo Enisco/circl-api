@@ -106,6 +106,8 @@ enum TaxonomyKind {
   LANGUAGE
   COUNTRY_OF_ORIGIN
   CONNECTION_TYPE
+  /// The questions a Connect profile answers, served so they can be reworded without a release.
+  CONNECT_PROMPT
   ITEM_CATEGORY
   ITEM_UNIT
   ITEM_PRICE_BAND
@@ -185,6 +187,8 @@ enum MediaPurpose {
   MESSAGE
   VERIFICATION
   DISPUTE
+  /// A Connect post item, a video poster or a story. Same signing, limits and scanner (3.2).
+  CONNECT
 }
 
 /**
@@ -262,6 +266,9 @@ enum GroupMembershipState {
 // ─── Moderation & Guard ──────────────────────────────────────────────────────
 
 enum ReportTargetType {
+  /// One item out of a Connect post, because a photo is what somebody objects to (3.9).
+  CONNECT_MEDIA
+  CONNECT_STORY
   REQUEST
   RESPONSE
   OFFER

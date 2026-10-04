@@ -79,6 +79,14 @@ export const ApiErrorCode = {
   DIRECT_MESSAGE_ALLOWED: 'DIRECT_MESSAGE_ALLOWED',
   REQUEST_COOLDOWN: 'REQUEST_COOLDOWN',
   CANNOT_CONNECT_WITH_YOURSELF: 'CANNOT_CONNECT_WITH_YOURSELF',
+  /// Nine posts per profile, five photos per photo post, one video per video post (3.2.2).
+  CONNECT_POST_LIMIT: 'CONNECT_POST_LIMIT',
+  /// Past sixty seconds. Its own code so the client can put the refusal in front of the member.
+  CONNECT_VIDEO_TOO_LONG: 'CONNECT_VIDEO_TOO_LONG',
+  /// A video with no poster is a grey square, so the frame is required rather than hoped for.
+  CONNECT_POSTER_REQUIRED: 'CONNECT_POSTER_REQUIRED',
+  /// Ten live stories per person. A story layer with no ceiling becomes a feed nobody asked for.
+  CONNECT_STORY_LIMIT: 'CONNECT_STORY_LIMIT',
 
   // ─── Section 4: Commerce ───────────────────────────────────────────────────
   STORE_ALREADY_EXISTS: 'STORE_ALREADY_EXISTS',

@@ -52,6 +52,7 @@ model User {
   groupsCreated    Group[]            @relation("GroupCreator")
   groupMemberships GroupMembership[]
   messageReactions MessageReaction[]
+  connectStorySeen ConnectStorySeen[]
   groupInvites     GroupInvitation[]  @relation("GroupInvitee")
   groupInvitesSent GroupInvitation[]  @relation("GroupInviter")
   groupPosts       GroupPost[]

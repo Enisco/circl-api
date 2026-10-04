@@ -37,6 +37,11 @@ const TARGETS: Record<
   STORE: { model: 'store', authorField: 'ownerId', hasReportToken: true },
   STORE_ITEM: { model: 'storeItem', authorField: 'storeId', hasReportToken: true },
   CONNECT_PROFILE: { model: 'connectProfile', authorField: 'userId', hasReportToken: true },
+  // A report names one item, because a photo is what somebody objects to. `media` holds the item
+  // and `uploadedById` is who put it there; taking it down leaves the rest of its post standing
+  // unless it was the last one (3.9).
+  CONNECT_MEDIA: { model: 'media', authorField: 'uploadedById', hasReportToken: false },
+  CONNECT_STORY: { model: 'connectStory', authorField: 'profileId', hasReportToken: true },
   PROFESSIONAL_LISTING: {
     model: 'professionalListing',
     authorField: 'userId',

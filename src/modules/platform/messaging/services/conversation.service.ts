@@ -71,6 +71,17 @@ export interface ContextView {
   trailing: string | null;
   /** Sent from the server, so a new context type is tappable without a release. */
   route: string | null;
+  /**
+   * The one thing this conversation started about, where it started from one: a Connect photo or
+   * a prompt answer, with enough to draw it. Null for every other thread (3.5).
+   */
+  about: {
+    kind: 'MEDIA' | 'PROMPT';
+    id: string;
+    thumbnailUrl: string | null;
+    question: string | null;
+    answer: string | null;
+  } | null;
 }
 
 /** The other people in a thread. Empty for a group read by somebody who is not in it. */
@@ -1155,6 +1166,31 @@ export class ConversationService {
         : null,
       trailing: (snapshot?.trailing as string) ?? null,
       route: (snapshot?.route as string) ?? this.routeFor(conversation),
+      about: this.aboutView(snapshot),
+    };
+  }
+
+  /** Signed on read: the snapshot holds a key, because a stored URL would have expired. */
+  private aboutView(snapshot: Record<string, unknown> | null): ContextView['about'] {
+    const about = snapshot?.about as
+      | {
+          kind?: 'MEDIA' | 'PROMPT';
+          id?: string;
+          thumbnailKey?: string | null;
+          question?: string;
+          answer?: string;
+        }
+      | null
+      | undefined;
+
+    if (!about?.kind || !about.id) return null;
+
+    return {
+      kind: about.kind,
+      id: about.id,
+      thumbnailUrl: about.thumbnailKey ? this.media.sign(about.thumbnailKey) : null,
+      question: about.question ?? null,
+      answer: about.answer ?? null,
     };
   }
 

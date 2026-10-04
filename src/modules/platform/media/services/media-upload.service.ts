@@ -26,6 +26,7 @@ const PREFIXES: Record<MediaPurpose, string> = {
   MESSAGE: 'circl/messages',
   VERIFICATION: 'circl/verification',
   DISPUTE: 'circl/disputes',
+  CONNECT: 'circl/connect',
 };
 
 @Injectable()

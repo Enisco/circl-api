@@ -22,6 +22,8 @@ export interface TaxonomyCatalogue {
   interests: CatalogueTerm[];
   languages: CatalogueTerm[];
   connectionTypes: CatalogueTerm[];
+  /** The questions a Connect profile answers. `label` is the question itself (3.3.1). */
+  connectPrompts: CatalogueTerm[];
   itemCategories: CatalogueTerm[];
   itemUnits: CatalogueTerm[];
   itemPriceBands: CatalogueTerm[];
@@ -106,6 +108,7 @@ export class TaxonomyCatalogueService {
       interests,
       languages,
       connectionTypes,
+      connectPrompts,
       itemCategories,
       itemUnits,
       itemPriceBands,
@@ -135,6 +138,7 @@ export class TaxonomyCatalogueService {
       this.taxonomy.list(TaxonomyKind.INTEREST, false),
       this.taxonomy.list(TaxonomyKind.LANGUAGE, false),
       this.taxonomy.list(TaxonomyKind.CONNECTION_TYPE, false),
+      this.taxonomy.list(TaxonomyKind.CONNECT_PROMPT, false),
       this.taxonomy.list(TaxonomyKind.ITEM_CATEGORY, false),
       this.taxonomy.list(TaxonomyKind.ITEM_UNIT, false),
       this.taxonomy.list(TaxonomyKind.ITEM_PRICE_BAND, false),
@@ -173,6 +177,7 @@ export class TaxonomyCatalogueService {
       interests: interests.map(flatten),
       languages: languages.map(flatten),
       connectionTypes: connectionTypes.map(flatten),
+      connectPrompts: connectPrompts.map(flatten),
       itemCategories: itemCategories.map(flatten),
       itemUnits: itemUnits.map(flatten),
       itemPriceBands: itemPriceBands.map(flatten),

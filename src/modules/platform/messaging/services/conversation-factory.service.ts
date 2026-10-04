@@ -19,6 +19,17 @@ export interface ContextSnapshot {
   thumbnailKey?: string | null;
   trailing?: string | null;
   route?: string | null;
+  /**
+   * What the conversation is about, where it started from one particular thing — a Connect photo
+   * or a prompt answer (3.5). Keys rather than URLs, because a snapshot outlives a signature.
+   */
+  about?: {
+    kind: 'MEDIA' | 'PROMPT';
+    id: string;
+    thumbnailKey?: string | null;
+    question?: string;
+    answer?: string;
+  } | null;
 }
 
 export interface EnsureConversationInput {

@@ -4,6 +4,7 @@ import { ConnectController } from './controllers/connect.controller';
 import { ConnectProfileService } from './services/connect-profile.service';
 import { ConnectionRequestService } from './services/connection-request.service';
 import { DiscoveryService } from './services/discovery.service';
+import { ConnectMediaService } from './services/connect-media.service';
 
 @Module({
   imports: [
@@ -12,7 +13,12 @@ import { DiscoveryService } from './services/discovery.service';
     ]),
   ],
   controllers: [ConnectController],
-  providers: [ConnectProfileService, DiscoveryService, ConnectionRequestService],
-  exports: [ConnectProfileService, DiscoveryService],
+  providers: [
+    ConnectProfileService,
+    DiscoveryService,
+    ConnectionRequestService,
+    ConnectMediaService,
+  ],
+  exports: [ConnectProfileService, DiscoveryService, ConnectMediaService],
 })
 export class ConnectModule {}

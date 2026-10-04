@@ -20,6 +20,7 @@ const MEDIA_PREFIXES = {
   PROFESSIONAL: 'circl/professionals',
   COMMERCE: 'circl/commerce',
   MESSAGE: 'circl/messages',
+  CONNECT: 'circl/connect',
 } as const;
 
 const emailOf = (n: number) => `seed${n}@circl.test`;
@@ -27,36 +28,76 @@ const userId = (n: number) => seedId(`user:${n}`);
 
 // ─── Media ───────────────────────────────────────────────────────────────────
 
+/**
+ * Enough of an MP4 to be a file with the right type and a plausible length. Nothing in the demo
+ * plays it, and generating a real clip would mean an encoder in the seeder — but a video post has
+ * to exist, because it is the only thing that exercises the poster rule (3.2.2).
+ */
+const stubMp4 = (): Buffer =>
+  Buffer.concat([
+    // ftyp, declaring an ordinary MP4.
+    Buffer.from([0, 0, 0, 0x18]),
+    Buffer.from('ftypmp42'),
+    Buffer.from([0, 0, 0, 0]),
+    Buffer.from('mp42isom'),
+    // A short, deliberately inert payload. The duration is written onto the row instead.
+    Buffer.alloc(512),
+  ]);
+
+
 /** Writes the object and the row together (B.2.2). */
 const putMedia = async (
   ctx: DemoSeedContext,
   options: {
     label: string;
     uploadedById: string;
-    purpose: 'AVATAR' | 'COMMUNITY' | 'PROFESSIONAL' | 'COMMERCE' | 'MESSAGE';
-    kind: 'avatar' | 'banner';
+    purpose: 'AVATAR' | 'COMMUNITY' | 'PROFESSIONAL' | 'COMMERCE' | 'MESSAGE' | 'CONNECT';
+    /** `portrait` is the shape Connect renders full-bleed: 900×1200 (3.2.1). */
+    kind: 'avatar' | 'banner' | 'portrait' | 'video';
     ownerType?: string;
     ownerId?: string;
     position?: number;
     createdAt?: Date;
+    /** For a seeded clip: the poster's own key, which becomes its `thumbnailUrl`. */
+    thumbnailKey?: string;
+    durationMs?: number;
   },
 ): Promise<string> => {
   const id = seedId(`media:${options.label}`);
+  const isVideo = options.kind === 'video';
   // The same prefixes the app mints under (0.11.1).
-  const key = `${MEDIA_PREFIXES[options.purpose]}/${options.uploadedById}/seed-${id.slice(0, 12)}.png`;
-  const body = options.kind === 'avatar' ? avatarPng(options.label) : bannerPng(options.label);
+  const key = `${MEDIA_PREFIXES[options.purpose]}/${options.uploadedById}/seed-${id.slice(0, 12)}.${isVideo ? 'mp4' : 'png'}`;
+  const body = isVideo
+    ? stubMp4()
+    : options.kind === 'avatar'
+      ? avatarPng(options.label)
+      : options.kind === 'portrait'
+        ? bannerPng(options.label, 900, 1200)
+        : bannerPng(options.label);
 
-  await ctx.storage.put(key, body, 'image/png');
+  await ctx.storage.put(key, body, isVideo ? 'video/mp4' : 'image/png');
+
+  const size =
+    options.kind === 'avatar'
+      ? { width: 240, height: 240 }
+      : options.kind === 'portrait'
+        ? { width: 900, height: 1200 }
+        : isVideo
+          ? { width: 1080, height: 1920 }
+          : { width: 960, height: 540 };
 
   const data = {
     uploadedById: options.uploadedById,
-    type: 'IMAGE' as const,
+    type: (isVideo ? 'VIDEO' : 'IMAGE') as 'VIDEO' | 'IMAGE',
     purpose: options.purpose,
-    mimeType: 'image/png',
+    mimeType: isVideo ? 'video/mp4' : 'image/png',
     byteSize: body.length,
     storageKey: key,
-    width: options.kind === 'avatar' ? 240 : 960,
-    height: options.kind === 'avatar' ? 240 : 540,
+    ...size,
+    // Written here rather than derived: the stub clip has no readable header, and a VIDEO item
+    // with a null duration is a shape the client would never see from a real upload.
+    ...(options.durationMs ? { durationMs: options.durationMs } : {}),
+    ...(options.thumbnailKey ? { thumbnailKey: options.thumbnailKey } : {}),
     // The scan is what gates attaching a key (0.11.4).
     scanStatus: 'CLEAN' as const,
     scannedAt: new Date(),

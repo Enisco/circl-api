@@ -208,6 +208,34 @@ const connectionTypes: Array<[string, string, string]> = [
   ['DATING', 'Dating', 'Meet someone. 18+ only.'],
 ];
 
+/**
+ * The questions a Connect profile answers (3.3). Served rather than shipped so they can be
+ * reworded without a release — and the question travels with the answer on read, so a rewording
+ * never silently changes what somebody already said.
+ *
+ * Sixteen, open rather than yes/no, and none of them about dating: five of the six connection
+ * types are not, and a prompt that only makes sense on a dating profile is dead on the other five.
+ * The label IS the question, because that is what a profile renders.
+ */
+const connectPrompts: Array<[string, string]> = [
+  ['FIRST_THING', "The first thing I'd show you in this city…"],
+  ['MISS_MOST', 'What I miss most from home…'],
+  ['ASK_ME_ABOUT', 'Ask me about…'],
+  ['WEEKEND', 'A good weekend looks like…'],
+  ['MOVED_HERE', 'What brought me here…'],
+  ['GOOD_AT', "Something I'm unreasonably good at…"],
+  ['LEARNING', "Something I'm learning…"],
+  ['FOOD', 'The meal I cook when somebody comes over…'],
+  ['SUNDAY', 'Where to find me on a Sunday…'],
+  ['WISH_KNOWN', 'Something I wish I had known when I arrived…'],
+  ['HELP_WITH', 'I can help somebody with…'],
+  ['LOOKING_FOR_HELP', "I'd like help with…"],
+  ['LANGUAGE', 'The language I switch to at home…'],
+  ['PROUD_OF', 'Something I am proud of…'],
+  ['UNPOPULAR', 'An opinion nobody here agrees with…'],
+  ['NEXT_YEAR', 'Where I would like to be in a year…'],
+];
+
 // ─── Commerce (4.2, D22) ──────────────────────────────────────────────────────
 // The app renders 8; the v2 spec lists 12. Same rule as D1.
 const itemCategories: Array<[string, string, boolean]> = [
@@ -463,6 +491,13 @@ export const taxonomySeeds: TaxonomySeed[] = [
     code,
     label,
     description,
+    sort: index + 1,
+  })),
+  ...connectPrompts.map(([code, question], index) => ({
+    kind: TaxonomyKind.CONNECT_PROMPT,
+    code,
+    // The label is the question: a profile renders this string, not a name for it.
+    label: question,
     sort: index + 1,
   })),
   ...itemCategories.map(([code, label, isActive], index) => ({

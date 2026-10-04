@@ -47,6 +47,9 @@ export class ProfessionalsHomeService {
             listing: {
               deletedAt: null,
               verificationStatus: { not: ListingVerificationStatus.DRAFT },
+              // Their own listing is excluded from browse, so counting it here would leave a
+              // category tile reading one and opening on an empty grid.
+              userId: { not: userId },
               ...(city ? { cityId: city } : {}),
             },
           },

@@ -1,10 +1,18 @@
 import { Injectable } from '@nestjs/common';
-import { ConnectProfile, DmPolicy, Prisma, TaxonomyKind, TrustCheckType } from '@prisma/client';
+import {
+  ConnectAccent,
+  ConnectProfile,
+  DmPolicy,
+  Prisma,
+  TaxonomyKind,
+  TrustCheckType,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import {
   ageFromDateOfBirth,
   ApiErrorCode,
   ApiException,
+  daysAgo,
   toDateOnly,
   toJsonOrUndefined,
 } from '@/common';
@@ -23,6 +31,11 @@ import {
 } from '../../shared';
 import { CONNECT_MINIMUM_AGE } from '../../taxonomy/services/taxonomy-catalogue.service';
 import { UpsertConnectProfileDto } from '../dtos/connect.dto';
+import {
+  ConnectMediaService,
+  ConnectPostView,
+  ConnectPromptView,
+} from './connect-media.service';
 
 export interface ConnectProfileView {
   id: string;
@@ -40,7 +53,36 @@ export interface ConnectProfileView {
   dmPolicy: DmPolicy;
   isVerified: boolean;
   isVisible: boolean;
+  /**
+   * The colour the member picked. Null falls back to the connection type's colour, which is what
+   * every profile used before anybody could choose (3.6).
+   */
+  accentColour: ConnectAccent | null;
+  /**
+   * Bucketed, never exact: a precise timestamp on a surface where five of six types are not
+   * dating is still a safety problem rather than a feature (3.7).
+   */
+  lastActiveBucket: 'TODAY' | 'THIS_WEEK' | 'THIS_MONTH' | 'EARLIER';
+  /** So a card can draw the ring without loading the gallery. */
+  hasStory: boolean;
+  /** Up to nine, in the order the owner chose. Post 0's first item is what discovery shows. */
+  posts: ConnectPostView[];
+  /** Up to three, with the question travelling beside the answer. */
+  prompts: ConnectPromptView[];
 }
+
+/** Which bucket a timestamp falls in. Today means since midnight, not within 24 hours. */
+const lastActiveBucketOf = (at: Date): ConnectProfileView['lastActiveBucket'] => {
+  const startOfToday = new Date();
+
+  startOfToday.setHours(0, 0, 0, 0);
+
+  if (at >= startOfToday) return 'TODAY';
+  if (at >= daysAgo(7)) return 'THIS_WEEK';
+  if (at >= daysAgo(31)) return 'THIS_MONTH';
+
+  return 'EARLIER';
+};
 
 const profileInclude = {
   user: {
@@ -71,6 +113,7 @@ export class ConnectProfileService {
     private readonly taxonomy: TaxonomyService,
     private readonly cities: CityService,
     private readonly media: MediaService,
+    private readonly connectMedia: ConnectMediaService,
   ) {}
 
   // ─── 3.2.2 Setup prefill ───────────────────────────────────────────────────
@@ -284,6 +327,8 @@ export class ConnectProfileService {
           dmPolicy: dto.dmPolicy ?? undefined,
           ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
           cityIdOverride: override?.id ?? null,
+          // Absent leaves it alone; an explicit null clears it back to the type's colour.
+          ...(dto.accentColour !== undefined ? { accentColour: dto.accentColour } : {}),
           ...(dto.typeCode === 'DATING' ? { datingConfirmedAt: new Date() } : {}),
           deletedAt: null,
           lastActiveAt: new Date(),
@@ -299,6 +344,7 @@ export class ConnectProfileService {
           // waiting for connections that can never arrive, with nothing on screen to say why.
           isVisible: dto.isVisible ?? true,
           cityIdOverride: override?.id ?? null,
+          accentColour: dto.accentColour ?? null,
           datingConfirmedAt: dto.typeCode === 'DATING' ? new Date() : null,
         },
         include: profileInclude,
@@ -330,7 +376,19 @@ export class ConnectProfileService {
 
   // ─── Serialisation ─────────────────────────────────────────────────────────
 
-  async toView(profile: ConnectProfileRow): Promise<ConnectProfileView> {
+  /**
+   * `extras` is passed by a caller that has already loaded them for a page of profiles. Without
+   * it this loads its own, which is right for one profile and wrong for twenty — so the list
+   * endpoints batch and the single-profile ones do not.
+   */
+  async toView(
+    profile: ConnectProfileRow,
+    extras?: {
+      posts: ConnectPostView[];
+      prompts: ConnectPromptView[];
+      hasStory: boolean;
+    },
+  ): Promise<ConnectProfileView> {
     const [typeLabels, languageLabels, interestLabels, heritageLabels, stageLabels] =
       await Promise.all([
         this.taxonomy.labels(TaxonomyKind.CONNECTION_TYPE),
@@ -339,6 +397,18 @@ export class ConnectProfileService {
         this.taxonomy.labels(TaxonomyKind.HERITAGE_TAG),
         this.taxonomy.labels(TaxonomyKind.JOURNEY_STAGE),
       ]);
+
+    const resolved =
+      extras ??
+      (await Promise.all([
+        this.connectMedia.postsFor([profile.id]),
+        this.connectMedia.promptsFor([profile.id]),
+        this.connectMedia.hasStoryFor([profile.id]),
+      ]).then(([posts, prompts, stories]) => ({
+        posts: posts.get(profile.id) ?? [],
+        prompts: prompts.get(profile.id) ?? [],
+        hasStory: stories.has(profile.id),
+      })));
 
     const userProfile = profile.user.profile;
     const languages = ((userProfile?.languages as string[] | null) ?? []).map(code =>
@@ -368,6 +438,11 @@ export class ConnectProfileService {
         check => check.check === TrustCheckType.IDENTITY,
       ),
       isVisible: profile.isVisible,
+      accentColour: profile.accentColour,
+      lastActiveBucket: lastActiveBucketOf(profile.lastActiveAt),
+      hasStory: resolved.hasStory,
+      posts: resolved.posts,
+      prompts: resolved.prompts,
     };
   }
 

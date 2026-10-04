@@ -1,5 +1,5 @@
 /* Section 3 end-to-end check. */
-const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness.cjs');
+const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require('./harness.cjs');
 
 
 
@@ -355,6 +355,253 @@ const dobFor = years => {
   r = await api(tunde.token, 'GET', `/connect/profiles/${ada.id}`);
   check('blocked in the other direction → 404, never "you are blocked"', r.status === 404, r.status);
   await api(ada.token, 'DELETE', `/moderation/blocks/${tunde.id}`);
+
+  console.log('\n── 3.2 Posts: the unit is the post, not the photo ──────────');
+
+  // Everything picked in one go goes up as one post with one caption, and the grid draws one tile
+  // per post. A grid of nine single squares says somebody uploaded nine times.
+  const k1 = await uploadPng(ada.token, 'CONNECT', 900, 1200);
+  const k2 = await uploadPng(ada.token, 'CONNECT', 900, 1200);
+  const k3 = await uploadPng(ada.token, 'CONNECT', 900, 1200);
+
+  r = await api(ada.token, 'POST', '/connect/me/posts', {
+    keys: [k1, k2], kind: 'PHOTO', caption: 'Sunday league, Hackney Marshes',
+  });
+  check('two keys in one call are one post of two', r.status === 201 && r.body?.data?.items?.length === 2, { status: r.status, items: r.body?.data?.items?.length, error: r.body?.error });
+  const albumId = r.body?.data?.id;
+  check('with the caption on the post, not on a frame of it', r.body?.data?.caption === 'Sunday league, Hackney Marshes', r.body?.data?.caption);
+  check('appended at position 0, being the first', r.body?.data?.position === 0, r.body?.data?.position);
+  check('every item keeps its own id, which is what `about` names', r.body?.data?.items?.every(i => !!i.id), r.body?.data?.items);
+  check('and its ratio, so a full-bleed card does not jump as it decodes', r.body?.data?.items?.every(i => i.width === 900 && i.height === 1200), r.body?.data?.items?.map(i => [i.width, i.height]));
+  check('a photo carries no duration', r.body?.data?.items?.every(i => i.durationMs === null), r.body?.data?.items?.map(i => i.durationMs));
+  const firstPhotoId = r.body?.data?.items?.[0]?.id;
+
+  r = await api(ada.token, 'POST', '/connect/me/posts', { keys: [k3], kind: 'PHOTO' });
+  check('a second post appends after it', r.body?.data?.position === 1, r.body?.data?.position);
+  const singleId = r.body?.data?.id;
+
+  const spare1 = await uploadPng(ada.token, 'CONNECT', 900, 1200);
+  const spare2 = await uploadPng(ada.token, 'CONNECT', 900, 1200);
+  r = await api(ada.token, 'POST', '/connect/me/posts', { keys: [spare1, spare2], kind: 'VIDEO' });
+  check('a video post is exactly one key', r.status === 422 && r.body?.error?.code === 'CONNECT_POST_LIMIT', r.body?.error);
+
+  // A post is one thing or the other: two photos declared as a video is the same refusal as a
+  // photo post with a clip in it, which is the rule the client is asked not to have to enforce.
+  r = await api(ada.token, 'POST', '/connect/me/posts', { keys: [spare1], kind: 'VIDEO' });
+  check('and a photo declared as a video is refused too', r.status === 422, { status: r.status, code: r.body?.error?.code });
+
+  r = await api(ada.token, 'GET', '/connect/me');
+  check('the profile carries its gallery, in the order chosen', (r.body?.data?.profile?.posts ?? []).map(p => p.id).join() === [albumId, singleId].join(), r.body?.data?.profile?.posts?.map(p => p.id));
+
+  r = await api(ada.token, 'PATCH', `/connect/me/posts/${singleId}`, { caption: 'The room, before the plants' });
+  check('a caption can be changed afterwards', r.body?.data?.caption === 'The room, before the plants', r.body?.data?.caption);
+
+  r = await api(ada.token, 'PUT', '/connect/me/posts/order', { ids: [singleId, albumId] });
+  check('reordering answers the whole list', (r.body?.data?.posts ?? []).length === 2, r.body?.data?.posts?.length);
+  check('renumbered from zero, because a stale position draws the wrong face first', r.body?.data?.posts?.[0]?.id === singleId && r.body?.data?.posts?.[0]?.position === 0, r.body?.data?.posts?.map(p => [p.id === singleId, p.position]));
+
+  r = await api(ada.token, 'PUT', '/connect/me/posts/order', { ids: [singleId] });
+  check('a short list is refused, so a stale client cannot drop a post', r.status === 422, { status: r.status });
+
+  r = await api(ada.token, 'DELETE', `/connect/me/posts/${albumId}/media/${firstPhotoId}`);
+  check('one photo comes out of a post, leaving the rest', r.body?.data?.items?.length === 1, r.body?.data?.items?.length);
+
+  r = await api(ada.token, 'DELETE', `/connect/me/posts/${albumId}/media/${r.body?.data?.items?.[0]?.id}`);
+  check('and taking the last one takes the post, because an empty post is not a post', r.body?.data === null, r.body?.data);
+
+  r = await api(ada.token, 'GET', '/connect/me');
+  check('which leaves one post behind', (r.body?.data?.profile?.posts ?? []).length === 1, r.body?.data?.profile?.posts?.length);
+
+  console.log('\n── 3.3 Prompts: the question travels with the answer ───────');
+
+  r = await api(ada.token, 'GET', '/connect/prompts');
+  check('the questions are served, not shipped', r.status === 200 && (r.body?.data ?? []).length >= 12, (r.body?.data ?? []).length);
+  check('each is a code and the question itself', !!r.body?.data?.[0]?.code && !!r.body?.data?.[0]?.question, r.body?.data?.[0]);
+
+  r = await api(ada.token, 'PUT', '/connect/me/prompts', {
+    prompts: [
+      { code: 'FIRST_THING', answer: 'The market on Ridley Road, on a Saturday.' },
+      { code: 'MISS_MOST', answer: 'My mother shouting at the television during a match.' },
+    ],
+  });
+  check('answers are saved as a set, in the order given', (r.body?.data?.prompts ?? []).length === 2, r.body?.data?.prompts);
+  check('and the question comes back beside the answer, never resolved at render time', r.body?.data?.prompts?.[0]?.question?.length > 10, r.body?.data?.prompts?.[0]);
+
+  r = await api(ada.token, 'PUT', '/connect/me/prompts', { prompts: [{ code: 'NOT_A_PROMPT', answer: 'x' }] });
+  check('an unknown code is refused rather than stored', r.status === 422, { status: r.status });
+
+  r = await api(ada.token, 'PUT', '/connect/me/prompts', {
+    prompts: [{ code: 'FIRST_THING', answer: 'a' }, { code: 'FIRST_THING', answer: 'b' }],
+  });
+  check('and the same question twice is refused', r.status === 422, { status: r.status });
+
+  r = await api(ada.token, 'PUT', '/connect/me/prompts', { prompts: [] });
+  check('an empty set clears them', (r.body?.data?.prompts ?? []).length === 0, r.body?.data?.prompts);
+  await api(ada.token, 'PUT', '/connect/me/prompts', {
+    prompts: [{ code: 'ASK_ME_ABOUT', answer: 'Where to get jollof that tastes like home.' }],
+  });
+
+  console.log('\n── 3.4 Stories: a day, then gone ──────────────────────────');
+
+  const storyKey = await uploadPng(ada.token, 'CONNECT', 1080, 1920);
+  r = await api(ada.token, 'POST', '/connect/stories', { key: storyKey });
+  check('a story is posted', r.status === 201 && !!r.body?.data?.id, { status: r.status, error: r.body?.error });
+  const storyId = r.body?.data?.id;
+  check('with an expiry the server stamped, never the client', !!r.body?.data?.expiresAt, r.body?.data?.expiresAt);
+  const ttl = new Date(r.body?.data?.expiresAt) - new Date(r.body?.data?.postedAt);
+  check('a day from posting, which is what the viewer counts down against', Math.abs(ttl - 86400000) < 2000, ttl);
+
+  r = await api(ada.token, 'GET', '/connect/stories');
+  const mine = (r.body?.data ?? []).find(row => row.items.some(i => i.id === storyId));
+  check('the caller\'s own row is in the list, for the "Your story" tile', !!mine, (r.body?.data ?? []).length);
+  check('exactly one row per person, including them', (r.body?.data ?? []).length === new Set((r.body?.data ?? []).map(x => x.profileId)).size, (r.body?.data ?? []).map(x => x.profileId));
+
+  r = await api(tunde.token, 'GET', '/connect/stories');
+  const theirs = (r.body?.data ?? []).find(row => row.items.some(i => i.id === storyId));
+  check('another member who may see the profile sees the story', !!theirs, (r.body?.data ?? []).length);
+  check('unseen, which is what drives the ring', theirs?.hasUnseen === true && theirs?.items?.[0]?.seen === false, { unseen: theirs?.hasUnseen, seen: theirs?.items?.[0]?.seen });
+
+  r = await api(tunde.token, 'POST', `/connect/stories/${storyId}/seen`);
+  check('marking it seen → 200', r.status === 200, r.status);
+  r = await api(tunde.token, 'POST', `/connect/stories/${storyId}/seen`);
+  check('and twice is idempotent', r.status === 200, r.status);
+
+  r = await api(tunde.token, 'GET', '/connect/stories');
+  const after = (r.body?.data ?? []).find(row => row.items.some(i => i.id === storyId));
+  check('the ring goes out once it is seen', after?.hasUnseen === false && after?.items?.[0]?.seen === true, { unseen: after?.hasUnseen, seen: after?.items?.[0]?.seen });
+
+  r = await api(tunde.token, 'DELETE', `/connect/stories/${storyId}`);
+  check('only the owner takes one down', r.status === 403 || r.status === 404, { status: r.status });
+
+  r = await api(ada.token, 'DELETE', `/connect/stories/${storyId}`);
+  check('the owner can, early', r.status === 204, r.status);
+
+  r = await api(tunde.token, 'GET', '/connect/stories');
+  check('and it is gone from every other reader on the next load', !(r.body?.data ?? []).some(row => row.items.some(i => i.id === storyId)), (r.body?.data ?? []).length);
+
+  console.log('\n── 3.5 A conversation about one thing ─────────────────────');
+
+  // The mechanic the whole rebuild hangs on: without it the first message is "hey".
+  //
+  // A fresh member with a REQUEST_FIRST inbox, because an open one needs no request at all — that
+  // half of §5 is checked separately below.
+  const rhoda = await makeUser('rhoda', { countryOfOrigin: 'NG', journeyStage: 'SETTLING_IN' });
+
+  ids.push(rhoda.id);
+  await api(rhoda.token, 'PUT', '/connect/me', {
+    typeCode: 'FLATMATE',
+    lookingFor: 'Looking for a flatmate near the Northern Quarter from September.',
+    dateOfBirth: dobFor(27), dmPolicy: 'REQUEST_FIRST', isVisible: true,
+  });
+
+  const photoKey = await uploadPng(rhoda.token, 'CONNECT', 900, 1200);
+  r = await api(rhoda.token, 'POST', '/connect/me/posts', { keys: [photoKey], kind: 'PHOTO' });
+  const tundePhoto = r.body?.data?.items?.[0]?.id;
+
+  // The other half of §5: an open inbox needs no request, and the thing the member tapped still
+  // has to travel — the thread is created on that refusal, so it is the only place to attach it.
+  // A fresh pair, because `about` is attached when the thread is created and a pair who have
+  // already talked have a thread whose subject is already settled.
+  const sola = await makeUser('sola', { countryOfOrigin: 'GH', journeyStage: 'SETTLING_IN' });
+
+  ids.push(sola.id);
+  await api(sola.token, 'PUT', '/connect/me', {
+    typeCode: 'FRIENDSHIP', lookingFor: 'New here and would like people to walk with at weekends.',
+    dateOfBirth: dobFor(34), dmPolicy: 'OPEN', isVisible: true,
+  });
+
+  const openPhotoKey = await uploadPng(sola.token, 'CONNECT', 900, 1200);
+  r = await api(sola.token, 'POST', '/connect/me/posts', { keys: [openPhotoKey], kind: 'PHOTO' });
+  const openPhoto = r.body?.data?.items?.[0]?.id;
+
+  r = await api(rhoda.token, 'POST', '/connect/requests', {
+    toProfileId: sola.id, about: { kind: 'MEDIA', id: openPhoto },
+  });
+  check('an open inbox answers with the thread rather than taking a request', r.status === 422 && r.body?.error?.code === 'DIRECT_MESSAGE_ALLOWED', r.body?.error?.code);
+  const openThread = r.body?.data?.conversationId;
+
+  r = await api(rhoda.token, 'GET', `/messages/${openThread}`);
+  check('and that thread is about the photo they tapped', r.body?.data?.context?.about?.id === openPhoto, r.body?.data?.context?.about);
+
+  r = await api(mei.token, 'POST', '/connect/requests', {
+    toProfileId: rhoda.id, about: { kind: 'MEDIA', id: tundePhoto },
+  });
+  check('a request with `about` and no note is accepted — that is the heart', r.status === 201, { status: r.status, error: r.body?.error });
+  check('and it echoes what it was about', r.body?.data?.about?.kind === 'MEDIA' && r.body?.data?.about?.id === tundePhoto, r.body?.data?.about);
+  const heartId = r.body?.data?.id;
+
+  r = await api(rhoda.token, 'GET', '/connect/requests?direction=RECEIVED&state=PENDING');
+  const heartRow = (r.body?.data ?? []).find(row => row.id === heartId);
+  check('the tray row carries it, because for a wordless request that picture IS the message', heartRow?.about?.kind === 'MEDIA', heartRow?.about);
+  check('with something to draw, never a null thumbnail', !!heartRow?.about?.thumbnailUrl, heartRow?.about);
+
+  r = await api(mei.token, 'GET', `/connect/profiles/${rhoda.id}`);
+  check('the sender is handed the id of the request to withdraw', r.body?.data?.viewer?.requestId === heartId, r.body?.data?.viewer);
+  check('beside the state the heart is drawn from', r.body?.data?.viewer?.requestState === 'SENT_PENDING', r.body?.data?.viewer?.requestState);
+
+  r = await api(sola.token, 'POST', '/connect/requests', { toProfileId: rhoda.id, note: 'Walk at the weekend?' });
+  check('a request with words is still a request', r.status === 201, { status: r.status, error: r.body?.error?.code });
+  const wordedId = r.body?.data?.id;
+
+  r = await api(rhoda.token, 'GET', `/connect/profiles/${sola.id}`);
+  check('the receiver is told a request is waiting', r.body?.data?.viewer?.requestState === 'RECEIVED_PENDING', r.body?.data?.viewer?.requestState);
+  check('and given no id, having nothing to withdraw', r.body?.data?.viewer?.requestId === null, r.body?.data?.viewer);
+  await api(sola.token, 'DELETE', `/connect/requests/${wordedId}`);
+
+  // The toggle: taking a heart back and putting it straight back is an undo, not a second request.
+  r = await api(mei.token, 'DELETE', `/connect/requests/${heartId}`);
+  check('withdrawing is silent and immediate', r.status === 200, r.status);
+  r = await api(mei.token, 'POST', '/connect/requests', {
+    toProfileId: rhoda.id, about: { kind: 'MEDIA', id: tundePhoto },
+  });
+  check('and sending it straight back is not refused by a cooldown', r.status === 201, { status: r.status, error: r.body?.error?.code });
+  const secondHeart = r.body?.data?.id;
+
+  r = await api(mei.token, 'POST', '/connect/requests', {
+    toProfileId: rhoda.id, about: { kind: 'MEDIA', id: firstPhotoId },
+  });
+  check('`about` has to belong to that profile, or it quotes somebody else\'s photo', r.status === 422 || r.status === 409, { status: r.status, code: r.body?.error?.code });
+
+  r = await api(rhoda.token, 'POST', `/connect/requests/${secondHeart}/accept`);
+  check('accepting opens the thread', r.status === 200 && !!r.body?.data?.conversationId, r.body?.error);
+  const connectThread = r.body?.data?.conversationId;
+
+  r = await api(mei.token, 'GET', `/messages/${connectThread}`);
+  check('and the thread is about that photo, so the first message is not "hey"', r.body?.data?.context?.about?.kind === 'MEDIA' && r.body?.data?.context?.about?.id === tundePhoto, r.body?.data?.context?.about);
+  check('with something to draw beside it', !!r.body?.data?.context?.about?.thumbnailUrl, r.body?.data?.context?.about);
+
+  console.log('\n── 3.6 / 3.7 The colour, and how alive it feels ───────────');
+
+  r = await api(ada.token, 'PUT', '/connect/me', {
+    typeCode: 'LANGUAGE_EXCHANGE',
+    lookingFor: 'Practising English after work, happy to help with Yoruba in return.',
+    accentColour: 'FOREST', isVisible: true,
+  });
+  check('a member picks their own colour', r.body?.data?.accentColour === 'FOREST', r.body?.data?.accentColour);
+
+  r = await api(ada.token, 'PUT', '/connect/me', {
+    typeCode: 'LANGUAGE_EXCHANGE',
+    lookingFor: 'Practising English after work, happy to help with Yoruba in return.',
+    accentColour: 'NEON_PINK', isVisible: true,
+  });
+  check('anything outside the set is refused rather than stored', r.status === 400 || r.status === 422, { status: r.status });
+
+  r = await api(ada.token, 'PUT', '/connect/me', {
+    typeCode: 'LANGUAGE_EXCHANGE',
+    lookingFor: 'Practising English after work, happy to help with Yoruba in return.',
+    accentColour: null, isVisible: true,
+  });
+  check('and null clears it back to the connection type\'s colour', r.body?.data?.accentColour === null, r.body?.data?.accentColour);
+
+  r = await api(tunde.token, 'GET', `/connect/profiles/${ada.id}`);
+  check('liveness is bucketed, never an exact timestamp', ['TODAY', 'THIS_WEEK', 'THIS_MONTH', 'EARLIER'].includes(r.body?.data?.lastActiveBucket), r.body?.data?.lastActiveBucket);
+  check('and lastActiveAt is not sent at all', r.body?.data?.lastActiveAt === undefined, r.body?.data?.lastActiveAt);
+  check('hasStory rides on the payload, so a card draws the ring without the gallery', typeof r.body?.data?.hasStory === 'boolean', r.body?.data?.hasStory);
+  check('mediaCount is withdrawn and not sent', r.body?.data?.mediaCount === undefined, r.body?.data?.mediaCount);
+
+  r = await api(ada.token, 'GET', '/connect/profiles?limit=50');
+  check('discovery never offers the caller themselves', !(r.body?.data ?? []).some(x => x.user?.id === ada.id), (r.body?.data ?? []).length);
+  check('and every row carries its gallery, so the grid needs no second call', (r.body?.data ?? []).every(x => Array.isArray(x.posts) && Array.isArray(x.prompts)), (r.body?.data ?? []).slice(0, 1));
 
   console.log('\n── Cleanup ──────────────────────────────────────────────────');
   await sweep('cleanup');

@@ -12,6 +12,7 @@ import { CONNECT_MINIMUM_AGE } from '../../taxonomy/services/taxonomy-catalogue.
 import { DiscoveryDto } from '../dtos/connect.dto';
 import { normaliseTerm, termVariants } from '../../search/services/search-terms';
 import { ConnectProfileService } from './connect-profile.service';
+import { ConnectMediaService } from './connect-media.service';
 
 export interface SharedContext {
   sameCountry?: string;
@@ -26,6 +27,7 @@ export class DiscoveryService {
     private readonly profiles: ConnectProfileService,
     private readonly taxonomy: TaxonomyService,
     private readonly blocking: BlockingService,
+    private readonly connectMedia: ConnectMediaService,
   ) {}
 
   // ─── 3.4 Discovery ─────────────────────────────────────────────────────────
@@ -78,8 +80,25 @@ export class DiscoveryService {
       }),
     ]);
 
+    // Batched for the whole page rather than per row: `toView` loads its own where nobody has,
+    // which is right for one profile and twenty queries for twenty.
+    const profileIds = rows.map(row => row.id);
+    const [posts, prompts, hasStory] = await Promise.all([
+      this.connectMedia.postsFor(profileIds),
+      this.connectMedia.promptsFor(profileIds),
+      this.connectMedia.hasStoryFor(profileIds),
+    ]);
+
     const [views, sharedContexts, conversationIds, connections] = await Promise.all([
-      Promise.all(rows.map(row => this.profiles.toView(row))),
+      Promise.all(
+        rows.map(row =>
+          this.profiles.toView(row, {
+            posts: posts.get(row.id) ?? [],
+            prompts: prompts.get(row.id) ?? [],
+            hasStory: hasStory.has(row.id),
+          }),
+        ),
+      ),
       this.sharedContexts(
         viewerId,
         rows.map(row => row.userId),
@@ -338,7 +357,7 @@ export class DiscoveryService {
       select: { cityId: true, countryOfOrigin: true, journeyStage: true },
     });
 
-    const [view, shared, conversationId, requestState] = await Promise.all([
+    const [view, shared, conversationId, request] = await Promise.all([
       this.profiles.toView(profile),
       this.sharedContexts(viewerId, [profile.userId], viewerProfile),
       this.conversationIds(viewerId, [profile.userId]),
@@ -350,9 +369,11 @@ export class DiscoveryService {
       sharedContext: shared.get(profile.userId) ?? {},
       viewer: {
         // True when the subject's policy is OPEN or a connection already exists.
-        canMessageDirectly: profile.dmPolicy === 'OPEN' || requestState === 'CONNECTED',
+        canMessageDirectly: profile.dmPolicy === 'OPEN' || request.state === 'CONNECTED',
         // Stops the client offering a request that already exists.
-        requestState,
+        requestState: request.state,
+        /** Set only while the caller's own request is pending — what the heart withdraws. */
+        requestId: request.requestId,
         conversationId: conversationId.get(profile.userId) ?? null,
         isBlocked: false,
       },
@@ -456,10 +477,18 @@ export class DiscoveryService {
     );
   }
 
+  /**
+   * The state, and the request's own id where the caller sent it. The heart is a toggle, so a
+   * screen that opens on an already-filled one needs something to withdraw: without the id the
+   * client lists its own pending requests to answer a question this payload was already holding.
+   */
   private async requestStateBetween(
     viewerId: string,
     otherUserId: string,
-  ): Promise<'NONE' | 'SENT_PENDING' | 'RECEIVED_PENDING' | 'CONNECTED' | 'DECLINED'> {
+  ): Promise<{
+    state: 'NONE' | 'SENT_PENDING' | 'RECEIVED_PENDING' | 'CONNECTED' | 'DECLINED';
+    requestId: string | null;
+  }> {
     const request = await this.database.connectionRequest.findFirst({
       where: {
         OR: [
@@ -470,13 +499,20 @@ export class DiscoveryService {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (!request) return 'NONE';
-    if (request.state === 'ACCEPTED') return 'CONNECTED';
-    if (request.state === 'DECLINED') return 'DECLINED';
+    if (!request) return { state: 'NONE', requestId: null };
+    if (request.state === 'ACCEPTED') return { state: 'CONNECTED', requestId: null };
+    if (request.state === 'DECLINED') return { state: 'DECLINED', requestId: null };
+
     if (request.state === 'PENDING') {
-      return request.fromUserId === viewerId ? 'SENT_PENDING' : 'RECEIVED_PENDING';
+      const sent = request.fromUserId === viewerId;
+
+      return {
+        state: sent ? 'SENT_PENDING' : 'RECEIVED_PENDING',
+        // Only the sender can withdraw, so only they are given the id.
+        requestId: sent ? request.id : null,
+      };
     }
 
-    return 'NONE';
+    return { state: 'NONE', requestId: null };
   }
 }

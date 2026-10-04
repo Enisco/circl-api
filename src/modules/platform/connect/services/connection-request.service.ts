@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  ConnectAboutKind,
   ConnectionRequestState,
   DmPolicy,
   NotificationKind,
@@ -18,6 +19,7 @@ import {
   ListConnectionRequestsDto,
 } from '../dtos/connect.dto';
 import { ConnectProfileService } from './connect-profile.service';
+import { ConnectMediaService } from './connect-media.service';
 import { NotificationFeedService } from '../../notifications';
 
 /** A declined pair may not be re-requested for 30 days (3.5.3). */
@@ -31,6 +33,7 @@ export class ConnectionRequestService {
   constructor(
     private readonly database: PrismaService,
     private readonly profiles: ConnectProfileService,
+    private readonly connectMedia: ConnectMediaService,
     private readonly blocking: BlockingService,
     private readonly conversations: ConversationFactoryService,
     private readonly notifications: NotificationFeedService,
@@ -60,12 +63,22 @@ export class ConnectionRequestService {
 
     // Sending a request to an open inbox is a wasted step, so the response hands the client the thread instead of an error it has to interpret.
     if (target.dmPolicy === DmPolicy.OPEN) {
+      // An open inbox needs no request, but the thing the member tapped still has to travel: the
+      // thread is created here, so this is the only place it can be attached.
+      const about = dto.about
+        ? await this.connectMedia.aboutSnapshot(target.id, dto.about.kind, dto.about.id)
+        : null;
+
       const { conversation } = await this.conversations.ensure({
         kind: ThreadKind.CONNECT,
         participantIds: [userId, target.userId],
         contextType: ThreadContextType.CONNECT_PROFILE,
         contextId: target.id,
-        snapshot: { title: target.lookingFor.slice(0, 60), route: `/connect/profile/${target.id}` },
+        snapshot: {
+          title: target.lookingFor.slice(0, 60),
+          route: `/connect/profile/${target.id}`,
+          about,
+        },
       });
 
       throw ApiException.unprocessable(
@@ -126,8 +139,16 @@ export class ConnectionRequestService {
       );
     }
 
+    // Withdrawn requests are not counted. The heart is a toggle, and taking one back and putting
+    // it straight back is an undo rather than a second request: spam protection belongs on
+    // repeated requests to somebody who has not answered, not on a correction made seconds later.
+    // Nothing reached the other member, so nothing was spent.
     const sentToday = await this.database.connectionRequest.count({
-      where: { fromUserId: userId, createdAt: { gte: addDays(new Date(), -1) } },
+      where: {
+        fromUserId: userId,
+        createdAt: { gte: addDays(new Date(), -1) },
+        state: { not: ConnectionRequestState.CANCELLED },
+      },
     });
 
     if (sentToday >= DAILY_REQUEST_LIMIT) {
@@ -138,13 +159,34 @@ export class ConnectionRequestService {
       );
     }
 
+    // `about` has to belong to the profile being written to, or it is a way to quote somebody
+    // else's photo at them.
+    if (dto.about) {
+      const owns =
+        dto.about.kind === ConnectAboutKind.MEDIA
+          ? (await this.connectMedia.ownedMedia(target.id, dto.about.id)) !== null
+          : await this.connectMedia.ownsPrompt(target.id, dto.about.id);
+
+      if (!owns) {
+        throw ApiException.unprocessable(
+          ApiErrorCode.VALIDATION_FAILED,
+          'That is not on this profile.',
+          { details: [{ field: 'about.id', message: 'Not this profile\'s photo or answer.' }] },
+        );
+      }
+    }
+
     const request = await this.database.connectionRequest.create({
       data: {
         fromProfileId: own.id,
         toProfileId: target.id,
         fromUserId: userId,
         toUserId: target.userId,
-        note: dto.note ?? null,
+        // Optional on purpose: a request with `about` and no note is the heart, and the common
+        // case. Never refused for being absent or empty (3.5.1).
+        note: dto.note?.trim() || null,
+        aboutKind: dto.about?.kind ?? null,
+        aboutId: dto.about?.id ?? null,
       },
     });
 
@@ -172,8 +214,28 @@ export class ConnectionRequestService {
       state: request.state,
       direction: 'SENT' as const,
       note: request.note,
+      about: await this.aboutOf(request),
       createdAt: request.createdAt.toISOString(),
     };
+  }
+
+  /**
+   * What the request was about, drawn in the tray. For a request sent with no words that picture
+   * IS the message, so a row that arrives without it is "somebody wants to connect" — the thing
+   * this whole section is trying to stop being.
+   */
+  private async aboutOf(request: {
+    aboutKind: ConnectAboutKind | null;
+    aboutId: string | null;
+    toProfileId: string;
+  }): Promise<Record<string, unknown> | null> {
+    if (!request.aboutKind || !request.aboutId) return null;
+
+    return this.connectMedia.aboutView(
+      request.toProfileId,
+      request.aboutKind,
+      request.aboutId,
+    );
   }
 
   // ─── 3.5.2 List ────────────────────────────────────────────────────────────
@@ -212,15 +274,18 @@ export class ConnectionRequestService {
     );
 
     return {
-      data: rows.map((row, index) => ({
-        id: row.id,
-        direction,
-        state: row.state,
-        note: row.note,
-        profile: byId.get(otherProfileIds[index]) ?? null,
-        conversationId: row.conversationId,
-        createdAt: row.createdAt.toISOString(),
-      })),
+      data: await Promise.all(
+        rows.map(async (row, index) => ({
+          id: row.id,
+          direction,
+          state: row.state,
+          note: row.note,
+          about: await this.aboutOf(row),
+          profile: byId.get(otherProfileIds[index]) ?? null,
+          conversationId: row.conversationId,
+          createdAt: row.createdAt.toISOString(),
+        })),
+      ),
       meta: buildPageMeta(query, total),
     };
   }
@@ -232,6 +297,18 @@ export class ConnectionRequestService {
     const { request, own } = await this.loadForRecipient(userId, id);
     const target = await this.profiles.findByIdOrUserId(request.fromProfileId);
 
+    // The thread opens quoted against the photo or the answer the request named, so the first
+    // message is about something rather than being "hey". Resolved against the profile the
+    // request was sent TO, which is the accepter's own.
+    const about =
+      request.aboutKind && request.aboutId
+        ? await this.connectMedia.aboutSnapshot(
+            request.toProfileId,
+            request.aboutKind,
+            request.aboutId,
+          )
+        : null;
+
     const conversationId = await this.database.$transaction(async tx => {
       const { conversation } = await this.conversations.ensure(
         {
@@ -242,6 +319,7 @@ export class ConnectionRequestService {
           snapshot: {
             title: target?.lookingFor.slice(0, 60) ?? 'Connection',
             route: `/connect/profile/${request.fromProfileId}`,
+            about,
           },
         },
         tx,

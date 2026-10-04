@@ -6,22 +6,29 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { CurrentUserId, JwtAuthGuard, SuccessMessage } from '@/common';
+import { CurrentUserId, JwtAuthGuard, RateLimit, SuccessMessage } from '@/common';
 import {
   CreateConnectionRequestDto,
+  CreateConnectPostDto,
+  CreateConnectStoryDto,
   DeclineRequestDto,
   DiscoveryDto,
   ListConnectionRequestsDto,
+  ReorderPostsDto,
+  UpdateConnectPostDto,
   UpsertConnectProfileDto,
+  UpsertPromptsDto,
 } from '../dtos/connect.dto';
 import { ConnectProfileService } from '../services/connect-profile.service';
 import { ConnectionRequestService } from '../services/connection-request.service';
+import { ConnectMediaService } from '../services/connect-media.service';
 import { DiscoveryService } from '../services/discovery.service';
 
 @ApiBearerAuth()
@@ -33,7 +40,179 @@ export class ConnectController {
     private readonly profiles: ConnectProfileService,
     private readonly discovery: DiscoveryService,
     private readonly requests: ConnectionRequestService,
+    private readonly connectMedia: ConnectMediaService,
   ) {}
+
+  // ─── 3.2 Posts ─────────────────────────────────────────────────────────────
+
+  @Post('me/posts')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Add a post',
+    description:
+      '**Every key in one call is one post**, in the order given: the grouping is the call, not ' +
+      'the upload. Up to 9 posts per profile, 5 photos per photo post, exactly 1 video per video ' +
+      'post, and never a mix. A video also needs `posterKey` — nothing here derives a frame from ' +
+      'a clip, and a video handed to an image loader is a grey square. Appended at the end.',
+  })
+  @RateLimit('CREATE')
+  async createPost(@CurrentUserId() userId: string, @Body() dto: CreateConnectPostDto) {
+    const own = await this.profiles.requireOwn(userId);
+    const data = await this.connectMedia.createPost(own.id, userId, dto);
+
+    return { data, message: 'Post added' };
+  }
+
+  @Patch('me/posts/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Change a post\'s caption',
+    description: 'Answers the single post, which is what the client renders rather than re-fetching.',
+  })
+  async updatePost(
+    @CurrentUserId() userId: string,
+    @Param('id') id: string,
+    @Body() dto: UpdateConnectPostDto,
+  ) {
+    const own = await this.profiles.requireOwn(userId);
+    const data = await this.connectMedia.updatePost(own.id, id, dto);
+
+    return { data, message: 'Post updated' };
+  }
+
+  @Delete('me/posts/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Remove a post', description: 'Takes its items with it.' })
+  async removePost(@CurrentUserId() userId: string, @Param('id') id: string) {
+    const own = await this.profiles.requireOwn(userId);
+
+    await this.connectMedia.removePost(own.id, id);
+  }
+
+  @Delete('me/posts/:postId/media/:mediaId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Remove one photo from a post',
+    description:
+      'Answers the post without it. Removing the last item removes the post and answers `null`: ' +
+      'an empty post is not a post, and the grid cannot draw one.',
+  })
+  async removePostItem(
+    @CurrentUserId() userId: string,
+    @Param('postId') postId: string,
+    @Param('mediaId') mediaId: string,
+  ) {
+    const own = await this.profiles.requireOwn(userId);
+    const data = await this.connectMedia.removePostItem(own.id, postId, mediaId);
+
+    return { data, message: data ? 'Photo removed' : 'Post removed' };
+  }
+
+  @Put('me/posts/order')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Reorder the gallery',
+    description:
+      'The whole list in the new order. Refused unless the ids are exactly this profile\'s ' +
+      'posts, once each, so a stale client cannot drop one by leaving it out. Answers the list ' +
+      'with `position` renumbered from zero — a stale position is how a gallery draws the wrong ' +
+      'face first.',
+  })
+  async reorderPosts(@CurrentUserId() userId: string, @Body() dto: ReorderPostsDto) {
+    const own = await this.profiles.requireOwn(userId);
+    const data = await this.connectMedia.reorderPosts(own.id, dto);
+
+    return { data: { posts: data }, message: 'Gallery reordered' };
+  }
+
+  // ─── 3.3 Prompts ───────────────────────────────────────────────────────────
+
+  @Get('prompts')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'The questions a profile can answer',
+    description:
+      'Served like any other taxonomy, so the questions can be reworded without a release. The ' +
+      'same list travels on `GET /taxonomy` as `connectPrompts`.',
+  })
+  async prompts() {
+    const data = await this.connectMedia.prompts();
+
+    return { data, message: SuccessMessage.RESOURCE_FETCHED('Prompts') };
+  }
+
+  @Put('me/prompts')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Answer the prompts',
+    description:
+      'The whole set, max 3, which keeps the order the owner chose. An empty array clears them. ' +
+      'The question is not stored: it travels with the answer on read, so a rewording never ' +
+      'silently changes what somebody said.',
+  })
+  async setPrompts(@CurrentUserId() userId: string, @Body() dto: UpsertPromptsDto) {
+    const own = await this.profiles.requireOwn(userId);
+    const data = await this.connectMedia.setPrompts(own.id, dto);
+
+    return { data: { prompts: data }, message: 'Prompts saved' };
+  }
+
+  // ─── 3.4 Stories ───────────────────────────────────────────────────────────
+
+  @Get('stories')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Live stories',
+    description:
+      'Everybody this caller may see who has a live story, following the discovery rules exactly ' +
+      '— same visibility, same reciprocity gate, same blocks. One row per person **including the ' +
+      'caller**, whose own row is the "Your story" tile. Unseen first, then newest. Expired items ' +
+      'are simply absent; there are no tombstones.',
+  })
+  async stories(@CurrentUserId() userId: string) {
+    const data = await this.connectMedia.stories(userId);
+
+    return { data, message: SuccessMessage.RESOURCE_FETCHED('Stories') };
+  }
+
+  @Post('stories')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Post a story',
+    description:
+      'Up to 10 live at once. `expiresAt` is stamped here and never sent by the client: the ' +
+      'viewer counts down against it, and a drifted device clock is the one thing that would ' +
+      'show somebody a story that is already gone. A video takes the same 60-second cap and the ' +
+      'same optional `posterKey` as a post.',
+  })
+  @RateLimit('CREATE')
+  async createStory(@CurrentUserId() userId: string, @Body() dto: CreateConnectStoryDto) {
+    const own = await this.profiles.requireOwn(userId);
+    const data = await this.connectMedia.createStory(own.id, userId, dto);
+
+    return { data, message: 'Story posted' };
+  }
+
+  @Post('stories/:id/seen')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mark a story seen', description: 'Idempotent, one call per item.' })
+  async markStorySeen(@CurrentUserId() userId: string, @Param('id') id: string) {
+    const data = await this.connectMedia.markStorySeen(userId, id);
+
+    return { data, message: 'Seen' };
+  }
+
+  @Delete('stories/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Take a story down early',
+    description: 'The owner only. It vanishes from every other reader on their next load.',
+  })
+  async removeStory(@CurrentUserId() userId: string, @Param('id') id: string) {
+    const own = await this.profiles.requireOwn(userId);
+
+    await this.connectMedia.removeStory(own.id, id);
+  }
 
   // ─── Profile (3.2, 3.3) ────────────────────────────────────────────────────
 

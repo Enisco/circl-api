@@ -4,6 +4,40 @@
 //
 // D15 is why `languages`, `heritageTag`, `interests` and `dateOfBirth` are on UserProfile and not here: Professionals and Commerce both want them, and moving them out after these tables exist is a migration.
 
+/// The colour a member picks for their own profile. A fixed set rather than a hex value: each one
+/// has been checked against white text, which a free colour cannot promise, and a hero nobody can
+/// read their own name on is not a choice worth offering. Absent falls back to the type's colour.
+enum ConnectAccent {
+  BLUE
+  GREEN
+  TEAL
+  VIOLET
+  AMBER
+  ROSE
+  SLATE
+  FOREST
+  INDIGO
+  SKY
+  PLUM
+  CRIMSON
+  RUST
+  OLIVE
+  NAVY
+  PINE
+}
+
+/// A post is one or the other, never a mix: up to five photos, or exactly one video.
+enum ConnectPostKind {
+  PHOTO
+  VIDEO
+}
+
+/// What a request or a first message is about — one photo inside a post, or one prompt answer.
+enum ConnectAboutKind {
+  MEDIA
+  PROMPT
+}
+
 model ConnectProfile {
   id     String @id @default(uuid())
   userId String @unique @map("user_id")
@@ -24,6 +58,9 @@ model ConnectProfile {
   // DATING carries an extra confirm step reiterating 18+ and the safety block.
   datingConfirmedAt DateTime? @map("dating_confirmed_at") @db.Timestamptz
 
+  /// Null falls back to the connection type's colour, which is what every profile used to be.
+  accentColour ConnectAccent? @map("accent_colour")
+
   reportToken String @unique @default(uuid()) @map("report_token")
 
   lastActiveAt DateTime  @default(now()) @map("last_active_at") @db.Timestamptz
@@ -31,8 +68,11 @@ model ConnectProfile {
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt    DateTime? @map("deleted_at") @db.Timestamptz
 
-  sentRequests     ConnectionRequest[] @relation("ConnectionFrom")
-  receivedRequests ConnectionRequest[] @relation("ConnectionTo")
+  sentRequests     ConnectionRequest[]   @relation("ConnectionFrom")
+  receivedRequests ConnectionRequest[]   @relation("ConnectionTo")
+  posts            ConnectPost[]
+  prompts          ConnectPromptAnswer[]
+  stories          ConnectStory[]
 
   @@index([isVisible, typeCode])
   @@index([isVisible, lastActiveAt])
@@ -56,6 +96,12 @@ model ConnectionRequest {
   note  String?                @map("note")
   state ConnectionRequestState @default(PENDING) @map("state")
 
+  /// What the request is about: one photo inside a post, or one prompt answer. A request with
+  /// `about` and no `note` is the heart, and the common case (3.5.1).
+  aboutKind ConnectAboutKind? @map("about_kind")
+  /// A media id for MEDIA, a prompt code for PROMPT.
+  aboutId   String?           @map("about_id")
+
   conversationId String?       @map("conversation_id")
   conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
@@ -71,4 +117,86 @@ model ConnectionRequest {
   @@index([fromProfileId, state, createdAt])
   @@index([fromUserId, toUserId])
   @@map("connection_requests")
+}
+
+/// Everything that went up in one go, with one caption. The unit is the post, not the photo: a
+/// grid of nine single squares says somebody uploaded nine times, a grid of three posts says they
+/// did three things worth showing. Items are `Media` rows owned by the post.
+model ConnectPost {
+  id        String         @id @default(uuid())
+  profileId String         @map("profile_id")
+  profile   ConnectProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  kind    ConnectPostKind @map("kind")
+  /// 140 characters, plain text. About the moment, not about one frame of it.
+  caption String?         @map("caption")
+
+  /// The order the owner chose, ascending and renumbered from zero on every reorder.
+  position Int @default(0) @map("position")
+
+  reportToken String @unique @default(uuid()) @map("report_token")
+
+  postedAt  DateTime  @default(now()) @map("posted_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  @@index([profileId, position])
+  @@map("connect_posts")
+}
+
+/// Three short answers to questions the server serves, so the questions can change without a
+/// release. The question travels with the answer on read: resolving it from the code at render
+/// time means a reworded question silently changes what somebody said.
+model ConnectPromptAnswer {
+  profileId String         @map("profile_id")
+  profile   ConnectProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  /// TaxonomyKind.CONNECT_PROMPT.
+  code   String @map("code")
+  answer String @map("answer")
+
+  /// The order the owner chose, which is why the write replaces the whole set.
+  position Int @default(0) @map("position")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@id([profileId, code])
+  @@index([profileId, position])
+  @@map("connect_prompt_answers")
+}
+
+/// Posted, seen for a day, gone. Separate from the gallery: a story is a moment and a gallery is
+/// who somebody is. One `Media` row per story, owned by it.
+model ConnectStory {
+  id        String         @id @default(uuid())
+  profileId String         @map("profile_id")
+  profile   ConnectProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  reportToken String @unique @default(uuid()) @map("report_token")
+
+  postedAt  DateTime  @default(now()) @map("posted_at") @db.Timestamptz
+  /// Stamped by the server, never sent by the client: the viewer counts down against it and a
+  /// drifted device clock is the one thing that would show somebody a story already gone.
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  seenBy ConnectStorySeen[]
+
+  @@index([profileId, postedAt])
+  @@index([expiresAt])
+  @@map("connect_stories")
+}
+
+model ConnectStorySeen {
+  storyId String       @map("story_id")
+  story   ConnectStory @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  userId  String       @map("user_id")
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  seenAt DateTime @default(now()) @map("seen_at") @db.Timestamptz
+
+  @@id([storyId, userId])
+  @@index([userId])
+  @@map("connect_story_seen")
 }

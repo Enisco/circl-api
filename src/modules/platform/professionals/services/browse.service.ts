@@ -68,10 +68,10 @@ export class BrowseService {
     const [listings, offers] = await Promise.all([
       listingType === 'COMMUNITY_OFFER'
         ? { rows: [], total: 0, inCityTotal: 0 }
-        : this.queryListings(query, viewerCityId, blockedIds, origin),
+        : this.queryListings(query, viewerCityId, blockedIds, origin, viewerId),
       listingType === 'PROFESSIONAL'
         ? { rows: [], total: 0 }
-        : this.queryOffers(query, viewerCityId, blockedIds),
+        : this.queryOffers(query, viewerCityId, blockedIds, viewerId),
     ]);
 
     const items = [...listings.rows, ...offers.rows];
@@ -101,12 +101,17 @@ export class BrowseService {
     viewerCityId: string | null,
     blockedIds: string[],
     origin: { latitude: number; longitude: number } | null,
+    viewerId: string,
   ) {
     const where: Prisma.ProfessionalListingWhereInput = {
       deletedAt: null,
       // A DRAFT listing is visible to its owner only, through /professionals/me.
       verificationStatus: { not: ListingVerificationStatus.DRAFT },
-      ...(blockedIds.length ? { userId: { notIn: blockedIds } } : {}),
+      // Nobody hires themselves. Their own listing is theirs through /professionals/me and on
+      // the home screen as `myListing`; in the directory it is a row they cannot act on, and a
+      // browse that opens on yourself reads as a bug before it reads as anything else. In the
+      // query rather than in four clients, because the one that forgets has no reviewer.
+      userId: { not: viewerId, ...(blockedIds.length ? { notIn: blockedIds } : {}) },
     };
 
     const category = query.category && !isAllCategories(query.category) ? query.category : null;
@@ -387,10 +392,13 @@ export class BrowseService {
     query: BrowseProfessionalsDto,
     viewerCityId: string | null,
     blockedIds: string[],
+    viewerId: string,
   ) {
     const where: Prisma.CommunityOfferWhereInput = {
       deletedAt: null,
-      ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
+      // `listingType=BOTH` mixes these with listings, so the same rule has to hold on both halves
+      // or the caller reappears in the merged list through the other door.
+      authorId: { not: viewerId, ...(blockedIds.length ? { notIn: blockedIds } : {}) },
       // As in the community list: an offer promoted into a verified listing has become it.
       OR: [
         { promotedToListingId: null },
