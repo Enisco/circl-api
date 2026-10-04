@@ -1,5 +1,5 @@
 /* Circl Guard and the admin endpoints. */
-const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness.cjs');
+const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require('./harness.cjs');
 const jwt = require('jsonwebtoken');
 
 /** Creates a staff account holding exactly one role's permissions. */
@@ -180,6 +180,103 @@ async function makeStaff(tag, roleCode) {
 
   const reportRow = await prisma.report.findFirst({ where: { targetId: spamId } });
   check('the report is marked actioned', reportRow?.state === 'ACTIONED', reportRow?.state);
+
+  console.log('\n── Admin: a report has to name a member, not an owning row ──');
+
+  // The queue resolves who to act against from one column on the reported row. An item belongs to
+  // a shop and a shop belongs to a member, so without reading through, a reported item named a
+  // shop id: nobody to show, and nothing for a suspend to act on.
+  const seller = await makeUser('gaseller');
+  const dob = new Date();
+
+  dob.setUTCFullYear(dob.getUTCFullYear() - 33);
+
+  r = await api(seller.token, 'POST', '/commerce/stores', {
+    name: `Guard Admin Shop ${Date.now()}`,
+    description: 'A shop that exists so one of its items can be reported.',
+    area: 'Moss Side', cityId: 'MANCHESTER',
+  });
+  const guardStore = r.body?.data?.id;
+
+  r = await api(seller.token, 'POST', `/commerce/stores/${guardStore}/items`, {
+    name: 'Something reportable', price: 500, categoryCode: 'FOOD_GROCERIES',
+  });
+  const guardItem = r.body?.data?.id;
+
+  await api(quiet.token, 'POST', '/moderation/reports', {
+    targetType: 'STORE_ITEM', targetId: guardItem, reasonCode: 'SPAM',
+  });
+  await new Promise(res => setTimeout(res, 400));
+
+  const itemReport = await prisma.report.findFirst({
+    where: { targetType: 'STORE_ITEM', targetId: guardItem },
+    select: { targetUserId: true },
+  });
+  check('a reported item names the member who sells it, read through the shop', itemReport?.targetUserId === seller.id, itemReport);
+
+  r = await api(moderator.token, 'GET', '/admin/moderation/queue?type=REPORTED_CONTENT&limit=50');
+  const itemQueue = r.body?.data?.find(i => i.targetId === guardItem);
+  // Which is what SUSPEND_AUTHOR acts on: a shop id here would have been nobody to suspend.
+  check('and the queue row carries the same member, so there is somebody to act against', itemQueue?.subject?.id === seller.id, { subject: itemQueue?.subject });
+
+  r = await api(moderator.token, 'POST', `/admin/moderation/queue/${itemQueue?.id}/decide`, {
+    decision: 'REMOVE_CONTENT', reason: 'Advertising.',
+  });
+  check('removing it → 200', r.status === 200, r.body?.error);
+
+  r = await api(quiet.token, 'GET', `/commerce/stores/${guardStore}/items`);
+  check('and the item leaves the catalogue', !(r.body?.data ?? []).some(i => i.id === guardItem), (r.body?.data ?? []).map(i => i.id));
+
+  console.log('\n── Admin: taking down one Connect photo ─────────────────────');
+
+  // A report names one item, because a photo is what somebody objects to. Accepting the subject
+  // and then doing nothing on a takedown is worse than refusing the report.
+  await api(seller.token, 'PUT', '/connect/me', {
+    typeCode: 'FRIENDSHIP', lookingFor: 'Here so that one of my photos can be taken down.',
+    dateOfBirth: dob.toISOString().slice(0, 10), isVisible: true,
+  });
+
+  const shot1 = await uploadPng(seller.token, 'CONNECT', 900, 1200);
+  const shot2 = await uploadPng(seller.token, 'CONNECT', 900, 1200);
+
+  r = await api(seller.token, 'POST', '/connect/me/posts', { keys: [shot1, shot2], kind: 'PHOTO' });
+  const guardPost = r.body?.data?.id;
+  const guardPhotos = (r.body?.data?.items ?? []).map(i => i.id);
+
+  await api(quiet.token, 'POST', '/moderation/reports', {
+    targetType: 'CONNECT_MEDIA', targetId: guardPhotos[0], reasonCode: 'INAPPROPRIATE',
+  });
+  await new Promise(res => setTimeout(res, 400));
+
+  r = await api(moderator.token, 'GET', '/admin/moderation/queue?type=REPORTED_CONTENT&limit=50');
+  const photoQueue = r.body?.data?.find(i => i.targetId === guardPhotos[0]);
+  check('a reported photo reaches the queue against its uploader', !!photoQueue, { found: !!photoQueue });
+
+  r = await api(moderator.token, 'POST', `/admin/moderation/queue/${photoQueue?.id}/decide`, {
+    decision: 'REMOVE_CONTENT', reason: 'Not appropriate here.',
+  });
+  check('taking it down → 200', r.status === 200, r.body?.error);
+
+  r = await api(seller.token, 'GET', '/connect/me');
+  const guardGallery = r.body?.data?.profile?.posts ?? [];
+  const survivor = guardGallery.find(post => post.id === guardPost);
+  check('the photo is gone from the gallery', !!survivor && !survivor.items.some(i => i.id === guardPhotos[0]), survivor?.items?.map(i => i.id));
+  check('and the rest of its post is still standing', survivor?.items?.length === 1, survivor?.items?.length);
+
+  await api(quiet.token, 'POST', '/moderation/reports', {
+    targetType: 'CONNECT_MEDIA', targetId: guardPhotos[1], reasonCode: 'INAPPROPRIATE',
+  });
+  await new Promise(res => setTimeout(res, 400));
+
+  r = await api(moderator.token, 'GET', '/admin/moderation/queue?type=REPORTED_CONTENT&limit=50');
+  const lastQueue = r.body?.data?.find(i => i.targetId === guardPhotos[1]);
+
+  await api(moderator.token, 'POST', `/admin/moderation/queue/${lastQueue?.id}/decide`, {
+    decision: 'REMOVE_CONTENT', reason: 'Not appropriate here.',
+  });
+
+  r = await api(seller.token, 'GET', '/connect/me');
+  check('taking the last one takes the post, because an empty post is not a post', !(r.body?.data?.profile?.posts ?? []).some(post => post.id === guardPost), (r.body?.data?.profile?.posts ?? []).map(p => p.id));
 
   console.log('\n── Admin: suspending a member ───────────────────────────────');
 

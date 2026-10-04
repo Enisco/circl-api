@@ -18,11 +18,21 @@ import {
 } from '../../shared';
 import { CreateBlockDto, CreateReportDto, ListBlocksDto } from '../dtos/moderation.dto';
 
-/** Which table holds each reportable thing, and which of its columns names the author. */
-const TARGETS: Record<
-  ReportTargetType,
-  { model: keyof PrismaService; authorField: string; hasReportToken: boolean } | null
-> = {
+/**
+ * Which table holds each reportable thing, and where the member who put it there is named.
+ *
+ * `authorField` is a column on the row itself. `authorVia` is for the rows that do not have one —
+ * a shop's item is owned by the shop, not by a member — and without it the queue was handed the
+ * owning row's id where it wanted a member: nobody to show, and nothing for a suspend to act on.
+ */
+interface ReportTarget {
+  model: keyof PrismaService;
+  authorField: string;
+  hasReportToken: boolean;
+  authorVia?: { relation: string; field: string };
+}
+
+const TARGETS: Record<ReportTargetType, ReportTarget | null> = {
   REQUEST: { model: 'communityRequest', authorField: 'authorId', hasReportToken: true },
   RESPONSE: { model: 'requestResponse', authorField: 'authorId', hasReportToken: false },
   OFFER: { model: 'communityOffer', authorField: 'authorId', hasReportToken: true },
@@ -35,7 +45,15 @@ const TARGETS: Record<
   MESSAGE: { model: 'message', authorField: 'senderId', hasReportToken: false },
   CONVERSATION: null,
   STORE: { model: 'store', authorField: 'ownerId', hasReportToken: true },
-  STORE_ITEM: { model: 'storeItem', authorField: 'storeId', hasReportToken: true },
+  STORE_ITEM: {
+    model: 'storeItem',
+    authorField: 'storeId',
+    hasReportToken: true,
+    // An item belongs to a shop and a shop belongs to a member. Read through rather than
+    // denormalised onto every item: one join on a path nobody takes twice a day beats a column
+    // that has to be written correctly on every create for ever.
+    authorVia: { relation: 'store', field: 'ownerId' },
+  },
   CONNECT_PROFILE: { model: 'connectProfile', authorField: 'userId', hasReportToken: true },
   // A report names one item, because a photo is what somebody objects to. `media` holds the item
   // and `uploadedById` is who put it there; taking it down leaves the rest of its post standing
@@ -244,13 +262,30 @@ export class ModerationService {
       ? { OR: [{ id: targetId }, { reportToken: targetId }] }
       : { id: targetId };
 
-    const row = await delegate.findFirst({ where }).catch(() => null);
+    const row = await delegate
+      .findFirst({
+        where,
+        ...(target.authorVia
+          ? {
+              include: {
+                [target.authorVia.relation]: { select: { [target.authorVia.field]: true } },
+              },
+            }
+          : {}),
+      })
+      .catch(() => null);
 
     if (!row) return null;
 
+    const viaRow = target.authorVia
+      ? (row[target.authorVia.relation] as Record<string, unknown> | null)
+      : null;
+
     return {
       id: row.id as string,
-      authorId: (row[target.authorField] as string | null) ?? null,
+      authorId: target.authorVia
+        ? ((viaRow?.[target.authorVia.field] as string | null) ?? null)
+        : ((row[target.authorField] as string | null) ?? null),
       text:
         (row.title as string | undefined) ??
         (row.content as string | undefined) ??
