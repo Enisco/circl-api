@@ -2,12 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, TaxonomyKind, ThreadContextType, TrustCheckType } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiException, birthDateRangeForAges, buildPageMeta, escapeLike } from '@/common';
-import {
-  BlockingService,
-  connectVisibility,
-  countryNameOf,
-  TaxonomyService,
-} from '../../shared';
+import { BlockingService, connectVisibility, countryNameOf, TaxonomyService } from '../../shared';
 import { CONNECT_MINIMUM_AGE } from '../../taxonomy/services/taxonomy-catalogue.service';
 import { DiscoveryDto } from '../dtos/connect.dto';
 import { normaliseTerm, termVariants } from '../../search/services/search-terms';

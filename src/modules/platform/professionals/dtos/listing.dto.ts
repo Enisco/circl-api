@@ -99,10 +99,10 @@ export class CreateListingDto {
   @ApiPropertyOptional({
     nullable: true,
     description:
-      'A media key, upload purpose PROFESSIONAL. The listing\'s own photo, which is not the ' +
+      "A media key, upload purpose PROFESSIONAL. The listing's own photo, which is not the " +
       'account avatar: a personal photo is not always the right professional one, and a listing ' +
       'that is a small firm wants its logo. **Omit to leave the current one alone**; send `null` ' +
-      'to remove it, after which the listing falls back to the member\'s avatar again.',
+      "to remove it, after which the listing falls back to the member's avatar again.",
   })
   @IsString()
   @IsOptional()
@@ -188,10 +188,10 @@ export class UpdateListingDto {
   @ApiPropertyOptional({
     nullable: true,
     description:
-      'A media key, upload purpose PROFESSIONAL. The listing\'s own photo, which is not the ' +
+      "A media key, upload purpose PROFESSIONAL. The listing's own photo, which is not the " +
       'account avatar: a personal photo is not always the right professional one, and a listing ' +
       'that is a small firm wants its logo. **Omit to leave the current one alone**; send `null` ' +
-      'to remove it, after which the listing falls back to the member\'s avatar again.',
+      "to remove it, after which the listing falls back to the member's avatar again.",
   })
   @IsString()
   @IsOptional()

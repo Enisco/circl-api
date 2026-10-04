@@ -131,11 +131,7 @@ export class GroupController {
       'Returns the updated viewer state and memberCount so the client reconciles without a refetch.',
   })
   @RateLimit('REACT')
-  async join(
-    @CurrentUserId() userId: string,
-    @Param('id') id: string,
-    @Body() dto: JoinGroupDto,
-  ) {
+  async join(@CurrentUserId() userId: string, @Param('id') id: string, @Body() dto: JoinGroupDto) {
     const data = await this.groups.join(userId, id, dto);
 
     return { data, message: 'Membership updated' };
@@ -178,7 +174,7 @@ export class GroupController {
     summary: 'Who is in a group',
     description:
       'Members only: who is in a group is not public, even for one a stranger may read. `q` ' +
-      'searches names. Each row carries the member\'s `headline` under their name, where they ' +
+      "searches names. Each row carries the member's `headline` under their name, where they " +
       'have said what they do.',
   })
   async listMembers(
@@ -234,7 +230,7 @@ export class GroupController {
   @ApiOperation({
     summary: 'Accept or decline an invitation',
     description:
-      'The `{id}` may be the group\'s or the invitation\'s; the client sends the group\'s, which ' +
+      "The `{id}` may be the group's or the invitation's; the client sends the group's, which " +
       'is what every screen holds. Accepting answers the whole group, now joined; declining ' +
       'answers nothing and the invitation is gone.',
   })
@@ -321,7 +317,8 @@ export class GroupController {
   @ApiOperation({
     summary: 'Post to a group (retired)',
     deprecated: true,
-    description: '**Retired 2026-10-02.** A group is its conversation, so the wall was a second, quieter place to say the same things, with its own replies and its own unread story. The app no longer calls this. Kept running rather than removed or made to answer 410, because builds in the wild still call it until people update; nothing new should be built on it, and the posts stay readable for moderation. Members only, always.',
+    description:
+      '**Retired 2026-10-02.** A group is its conversation, so the wall was a second, quieter place to say the same things, with its own replies and its own unread story. The app no longer calls this. Kept running rather than removed or made to answer 410, because builds in the wild still call it until people update; nothing new should be built on it, and the posts stay readable for moderation. Members only, always.',
   })
   @RateLimit('CREATE')
   async createPost(
@@ -339,7 +336,8 @@ export class GroupController {
   @ApiOperation({
     summary: 'Delete a group post (retired)',
     deprecated: true,
-    description: '**Retired 2026-10-02 with the wall.** The app no longer calls this. Kept running rather than removed or made to answer 410, because builds in the wild still call it until people update. The author or a group admin. Replies go with it.',
+    description:
+      '**Retired 2026-10-02 with the wall.** The app no longer calls this. Kept running rather than removed or made to answer 410, because builds in the wild still call it until people update. The author or a group admin. Replies go with it.',
   })
   async removePost(
     @CurrentUserId() userId: string,
@@ -395,7 +393,8 @@ export class GroupController {
   @ApiOperation({
     summary: 'Delete a group post reply (retired)',
     deprecated: true,
-    description: '**Retired 2026-10-02 with the wall.** The app no longer calls this. Kept running rather than removed or made to answer 410, because builds in the wild still call it until people update. The reply\'s author, or a group admin.',
+    description:
+      "**Retired 2026-10-02 with the wall.** The app no longer calls this. Kept running rather than removed or made to answer 410, because builds in the wild still call it until people update. The reply's author, or a group admin.",
   })
   async removePostReply(
     @CurrentUserId() userId: string,

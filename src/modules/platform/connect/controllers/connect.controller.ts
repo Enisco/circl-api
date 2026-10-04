@@ -66,8 +66,9 @@ export class ConnectController {
   @Patch('me/posts/:id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Change a post\'s caption',
-    description: 'Answers the single post, which is what the client renders rather than re-fetching.',
+    summary: "Change a post's caption",
+    description:
+      'Answers the single post, which is what the client renders rather than re-fetching.',
   })
   async updatePost(
     @CurrentUserId() userId: string,
@@ -113,7 +114,7 @@ export class ConnectController {
   @ApiOperation({
     summary: 'Reorder the gallery',
     description:
-      'The whole list in the new order. Refused unless the ids are exactly this profile\'s ' +
+      "The whole list in the new order. Refused unless the ids are exactly this profile's " +
       'posts, once each, so a stale client cannot drop one by leaving it out. Answers the list ' +
       'with `position` renumbered from zero — a stale position is how a gallery draws the wrong ' +
       'face first.',

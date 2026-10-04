@@ -859,11 +859,7 @@ export class GroupService {
     return this.findOne(adminId, id);
   }
 
-  async removeMember(
-    adminId: string,
-    id: string,
-    subjectUserId: string,
-  ): Promise<GroupDetailView> {
+  async removeMember(adminId: string, id: string, subjectUserId: string): Promise<GroupDetailView> {
     const group = await this.assertAdmin(adminId, id);
 
     if (adminId === subjectUserId) {
@@ -1539,9 +1535,7 @@ export class GroupService {
 
     const membershipById = new Map(memberships.map(row => [row.groupId, row] as const));
     const invited = new Set(invitations.map(row => row.groupId));
-    const participantById = new Map(
-      participants.map(row => [row.conversationId, row] as const),
-    );
+    const participantById = new Map(participants.map(row => [row.conversationId, row] as const));
 
     const unreadPosts = await this.unreadCounts(
       userId,

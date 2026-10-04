@@ -487,10 +487,7 @@ export class MessageService {
     if (message.deletedAt) throw ApiException.deleted('This message');
 
     if (message.senderId !== userId) {
-      throw ApiException.forbidden(
-        ApiErrorCode.FORBIDDEN,
-        'You can only edit your own messages.',
-      );
+      throw ApiException.forbidden(ApiErrorCode.FORBIDDEN, 'You can only edit your own messages.');
     }
 
     if (message.kind !== MessageKind.TEXT) {
@@ -725,9 +722,7 @@ export class MessageService {
 
   toView(message: MessageRow, viewerId: string) {
     const isDeleted = message.deletedAt !== null;
-    const sender = message.sender
-      ? toAuthorView(message.sender, { sign: this.media.sign })
-      : null;
+    const sender = message.sender ? toAuthorView(message.sender, { sign: this.media.sign }) : null;
     const quoted = message.replyTo;
     const mentions = (message.mentions as unknown as StoredMention[] | null) ?? null;
 
@@ -760,9 +755,7 @@ export class MessageService {
             id: quoted.id,
             kind: quoted.kind,
             body: quoted.deletedAt ? '' : (quoted.body ?? ''),
-            sender: quoted.sender
-              ? toAuthorView(quoted.sender, { sign: this.media.sign })
-              : null,
+            sender: quoted.sender ? toAuthorView(quoted.sender, { sign: this.media.sign }) : null,
             deletedAt: quoted.deletedAt?.toISOString() ?? null,
           }
         : null,

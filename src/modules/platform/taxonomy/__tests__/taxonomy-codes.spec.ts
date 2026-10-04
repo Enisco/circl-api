@@ -41,7 +41,9 @@ describe('taxonomy codes are the codes the API accepts', () => {
     const codes = codesOf(TaxonomyKind.FEED_TYPE);
 
     expect(codes).toEqual(['OFFER', 'REQUEST', 'UPDATE']);
-    expect(codes.every(code => (Object.values(FeedItemType) as string[]).includes(code))).toBe(true);
+    expect(codes.every(code => (Object.values(FeedItemType) as string[]).includes(code))).toBe(
+      true,
+    );
     expect(codes).not.toContain(FeedItemType.GUIDE);
   });
 
@@ -83,9 +85,6 @@ describe('taxonomy codes are the codes the API accepts', () => {
     // PRIVATE_HELP_CATEGORY is served from GUARD_CATEGORY, whose codes 6.3.1 fixes.
     // COUNTRY_OF_ORIGIN is not seeded at all: countries come from ICU, which knows every one of
     // them, rather than from a list somebody has to remember to extend.
-    expect(empty).toEqual([
-      TaxonomyKind.COUNTRY_OF_ORIGIN,
-      TaxonomyKind.PRIVATE_HELP_CATEGORY,
-    ]);
+    expect(empty).toEqual([TaxonomyKind.COUNTRY_OF_ORIGIN, TaxonomyKind.PRIVATE_HELP_CATEGORY]);
   });
 });

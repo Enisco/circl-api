@@ -121,7 +121,6 @@ describe('text utilities', () => {
       expect(excerpt('short enough', 200)).toBe('short enough');
     });
   });
-
 });
 
 describe('escapeLike', () => {

@@ -38,7 +38,9 @@ export class TaxonomyCompatMiddleware implements NestMiddleware {
           const resolved = countryCodeFromName(body.countryOfOrigin);
 
           if (resolved && resolved !== body.countryOfOrigin) {
-            this.logger.log(`Deprecated countryOfOrigin value: "${body.countryOfOrigin}" -> ${resolved}`);
+            this.logger.log(
+              `Deprecated countryOfOrigin value: "${body.countryOfOrigin}" -> ${resolved}`,
+            );
             body.countryOfOrigin = resolved;
           }
         }

@@ -99,11 +99,16 @@ export class ConnectMediaService {
       // Looser here than the five-photo rule on purpose: `assertShape` is the authority, so a
       // sixth photo answers `409 CONNECT_POST_LIMIT` with the limit in `data` rather than a
       // generic "too many images". One rule, one place, one refusal worth showing a member.
-      this.media.validate(keys, userId, {
-        maxImages: 10,
-        allowVideo: true,
-        allowAudio: false,
-      }, 'keys'),
+      this.media.validate(
+        keys,
+        userId,
+        {
+          maxImages: 10,
+          allowVideo: true,
+          allowAudio: false,
+        },
+        'keys',
+      ),
     ]);
 
     if (posts >= MAX_POSTS) {
@@ -348,7 +353,11 @@ export class ConnectMediaService {
     const mine = new Set(posts.map(post => post.id));
     const sent = new Set(dto.ids);
 
-    if (sent.size !== dto.ids.length || mine.size !== sent.size || dto.ids.some(id => !mine.has(id))) {
+    if (
+      sent.size !== dto.ids.length ||
+      mine.size !== sent.size ||
+      dto.ids.some(id => !mine.has(id))
+    ) {
       throw ApiException.unprocessable(
         ApiErrorCode.VALIDATION_FAILED,
         'Send every one of your posts, once each, in the order you want them.',
@@ -502,9 +511,7 @@ export class ConnectMediaService {
       where: { profileId },
       select: { code: true },
     });
-    const dropped = before
-      .map(row => row.code)
-      .filter(code => !codes.has(code));
+    const dropped = before.map(row => row.code).filter(code => !codes.has(code));
 
     await this.database.$transaction(async tx => {
       await tx.connectPromptAnswer.deleteMany({ where: { profileId } });
@@ -666,11 +673,16 @@ export class ConnectMediaService {
       this.database.connectStory.count({
         where: { profileId, deletedAt: null, expiresAt: { gt: new Date() } },
       }),
-      this.media.validate([dto.key], userId, {
-        maxImages: 1,
-        allowVideo: true,
-        allowAudio: false,
-      }, 'key'),
+      this.media.validate(
+        [dto.key],
+        userId,
+        {
+          maxImages: 1,
+          allowVideo: true,
+          allowAudio: false,
+        },
+        'key',
+      ),
     ]);
 
     if (live >= MAX_LIVE_STORIES) {
@@ -831,9 +843,7 @@ export class ConnectMediaService {
       const prompts = (await this.promptsFor([profileId])).get(profileId) ?? [];
       const prompt = prompts.find(row => row.code === id);
 
-      return prompt
-        ? { kind, id, question: prompt.question, answer: prompt.answer }
-        : null;
+      return prompt ? { kind, id, question: prompt.question, answer: prompt.answer } : null;
     }
 
     const media = await this.ownedMedia(profileId, id);
@@ -860,10 +870,7 @@ export class ConnectMediaService {
    * One statement rather than a read-time check: the alternative is a query per inbox row to ask
    * whether a photo still exists.
    */
-  private async detachQuotes(
-    tx: Prisma.TransactionClient,
-    aboutIds: string[],
-  ): Promise<void> {
+  private async detachQuotes(tx: Prisma.TransactionClient, aboutIds: string[]): Promise<void> {
     if (!aboutIds.length) return;
 
     await tx.$executeRaw`

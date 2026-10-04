@@ -70,7 +70,8 @@ export class MessagePushService {
 
     const isSupport = conversation.kind === ThreadKind.SUPPORT;
     const isGroup = conversation.kind === ThreadKind.GROUP;
-    const senderName = `${sender?.firstName ?? 'Someone'} ${sender?.lastName?.charAt(0) ?? ''}`.trim();
+    const senderName =
+      `${sender?.firstName ?? 'Someone'} ${sender?.lastName?.charAt(0) ?? ''}`.trim();
     // A group's push is from the group, with the member who spoke in the body. Titled with the
     // sender alone it read as a direct message from somebody the member may not know, and three
     // groups and a DM all looked the same on a lock screen.

@@ -19,7 +19,9 @@ const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.t
 
 /** A list, or the one blob of text an older build sends, which becomes a single rule. */
 const Rules = () =>
-  Transform(({ value }) => (typeof value === 'string' ? (value.trim() ? [value.trim()] : []) : value));
+  Transform(({ value }) =>
+    typeof value === 'string' ? (value.trim() ? [value.trim()] : []) : value,
+  );
 
 /** Repeated or comma-separated, because both are sent and neither is wrong. */
 const CsvArray = () =>

@@ -31,11 +31,7 @@ import {
 } from '../../shared';
 import { CONNECT_MINIMUM_AGE } from '../../taxonomy/services/taxonomy-catalogue.service';
 import { UpsertConnectProfileDto } from '../dtos/connect.dto';
-import {
-  ConnectMediaService,
-  ConnectPostView,
-  ConnectPromptView,
-} from './connect-media.service';
+import { ConnectMediaService, ConnectPostView, ConnectPromptView } from './connect-media.service';
 
 export interface ConnectProfileView {
   id: string;

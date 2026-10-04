@@ -134,10 +134,7 @@ export class EnquiryService {
 
     // Read off the shop's own `fulfilment` rather than the older `delivers`, which cannot say
     // "delivery only" and so could not refuse the other half of the question.
-    if (
-      dto.fulfilment === Fulfilment.DELIVERY &&
-      store.fulfilment === StoreFulfilment.COLLECTION
-    ) {
+    if (dto.fulfilment === Fulfilment.DELIVERY && store.fulfilment === StoreFulfilment.COLLECTION) {
       throw ApiException.unprocessable(
         ApiErrorCode.DELIVERY_NOT_OFFERED,
         'This store does not deliver. Choose collection instead.',
@@ -145,10 +142,7 @@ export class EnquiryService {
       );
     }
 
-    if (
-      dto.fulfilment === Fulfilment.COLLECTION &&
-      store.fulfilment === StoreFulfilment.DELIVERY
-    ) {
+    if (dto.fulfilment === Fulfilment.COLLECTION && store.fulfilment === StoreFulfilment.DELIVERY) {
       throw ApiException.unprocessable(
         ApiErrorCode.COLLECTION_NOT_OFFERED,
         'This store delivers only. Choose delivery instead.',

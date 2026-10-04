@@ -11,8 +11,7 @@ const RESPONSE = { data: { id: 'created-1' } };
 const BODY = { title: 'A request' };
 
 /** The interceptor hashes the body to tell a retry from a different request sent under one key. */
-const hashOf = (body: unknown) =>
-  createHash('sha256').update(JSON.stringify(body)).digest('hex');
+const hashOf = (body: unknown) => createHash('sha256').update(JSON.stringify(body)).digest('hex');
 
 const contextFor = (body: unknown = BODY): ExecutionContext =>
   ({
@@ -221,13 +220,11 @@ describe('IdempotencyInterceptor', () => {
     });
     const emitted: unknown[] = [];
 
-    void run(
-      {
-        findUnique: () => Promise.resolve(null),
-        create: () => Promise.resolve(undefined),
-        update: () => recorded,
-      },
-    ).then(value => emitted.push(value));
+    void run({
+      findUnique: () => Promise.resolve(null),
+      create: () => Promise.resolve(undefined),
+      update: () => recorded,
+    }).then(value => emitted.push(value));
 
     await settle();
     expect(emitted).toHaveLength(0);

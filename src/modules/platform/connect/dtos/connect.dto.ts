@@ -60,7 +60,7 @@ export class UpsertConnectProfileDto {
       'The colour the member picked, and the first thing a reader sees. One of a fixed set ' +
       'rather than a hex value: each has been checked against white text, which a free colour ' +
       'cannot promise. Anything else is rejected rather than stored; absent leaves it alone and ' +
-      '`null` clears it back to the connection type\'s colour.',
+      "`null` clears it back to the connection type's colour.",
   })
   @IsEnum(ConnectAccent)
   @IsOptional()
@@ -285,7 +285,8 @@ export class CreateConnectPostDto {
 
   @ApiPropertyOptional({
     maxLength: 140,
-    description: 'Plain text, about the moment rather than one frame of it. The markup rules do not apply.',
+    description:
+      'Plain text, about the moment rather than one frame of it. The markup rules do not apply.',
   })
   @Trim()
   @IsString()
@@ -296,7 +297,7 @@ export class CreateConnectPostDto {
   @ApiPropertyOptional({
     description:
       '**Required when `kind` is VIDEO.** One frame of the clip, uploaded as an image, which ' +
-      'becomes the video\'s `thumbnailUrl`. Nothing here derives a poster from a video, and a ' +
+      "becomes the video's `thumbnailUrl`. Nothing here derives a poster from a video, and a " +
       'clip handed to an image loader is a grey square — so the frame comes from the device that ' +
       'already decoded it.',
   })
@@ -319,7 +320,7 @@ export class ReorderPostsDto {
   @ApiProperty({
     type: [String],
     description:
-      'The whole list in the new order. Rejected unless these are exactly this profile\'s posts, ' +
+      "The whole list in the new order. Rejected unless these are exactly this profile's posts, " +
       'once each, so a stale client cannot drop one by leaving it out.',
   })
   @IsArray()
@@ -364,7 +365,7 @@ export class CreateConnectStoryDto {
   key: string;
 
   @ApiPropertyOptional({
-    description: 'A still frame, where the story is a video. Same reason as a post\'s poster.',
+    description: "A still frame, where the story is a video. Same reason as a post's poster.",
   })
   @Trim()
   @IsString()

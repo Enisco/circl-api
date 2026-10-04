@@ -171,7 +171,7 @@ export class ConnectionRequestService {
         throw ApiException.unprocessable(
           ApiErrorCode.VALIDATION_FAILED,
           'That is not on this profile.',
-          { details: [{ field: 'about.id', message: 'Not this profile\'s photo or answer.' }] },
+          { details: [{ field: 'about.id', message: "Not this profile's photo or answer." }] },
         );
       }
     }
@@ -231,11 +231,7 @@ export class ConnectionRequestService {
   }): Promise<Record<string, unknown> | null> {
     if (!request.aboutKind || !request.aboutId) return null;
 
-    return this.connectMedia.aboutView(
-      request.toProfileId,
-      request.aboutKind,
-      request.aboutId,
-    );
+    return this.connectMedia.aboutView(request.toProfileId, request.aboutKind, request.aboutId);
   }
 
   // ─── 3.5.2 List ────────────────────────────────────────────────────────────
