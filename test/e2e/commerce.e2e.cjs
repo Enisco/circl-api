@@ -461,7 +461,10 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
   check('re-priced from the catalogue', r.body?.data?.estimatedTotal?.amount === 650 * 2 + 1800, r.body?.data?.estimatedTotal);
   check('no issues on a clean cart', r.body?.data?.hasIssues === false);
 
-  await api(seller.token, 'PATCH', `/commerce/items/${whitingId}`, { isAvailable: false });
+  // The older boolean still works, and means the only thing it ever could: out of stock.
+  r = await api(seller.token, 'PATCH', `/commerce/items/${whitingId}`, { isAvailable: false });
+  check('isAvailable:false still reads as out of stock, never as a draft', r.body?.data?.availability === 'OUT_OF_STOCK', r.body?.data?.availability);
+
   r = await api(buyer.token, 'POST', '/commerce/carts/validate', {
     lines: [{ itemId: egusiId, quantity: 2 }, { itemId: whitingId, quantity: 1 }],
   });
@@ -473,6 +476,54 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
   });
   check('unavailable item → 422 ITEMS_UNAVAILABLE naming the ids', r.status === 422 && r.body?.error?.code === 'ITEMS_UNAVAILABLE' && r.body?.data?.itemIds?.includes(whitingId), r.body);
   await api(seller.token, 'PATCH', `/commerce/items/${whitingId}`, { isAvailable: true });
+
+  console.log('\n── 4.8.3 An item is in one of three states ─────────────────');
+
+  // One boolean was answering two questions. "We have run out" belongs on the shelf; "nobody but
+  // me should see this" cannot be said at all, so sellers said it by deleting and retyped the
+  // listing three months later.
+  r = await api(seller.token, 'POST', `/commerce/stores/${storeId}/items`, {
+    name: 'Half-written listing', price: 900, categoryCode: 'FOOD_GROCERIES',
+  });
+  const draftId = r.body?.data?.id;
+  check('a new item is on sale', r.body?.data?.availability === 'ON_SALE', r.body?.data?.availability);
+
+  r = await api(seller.token, 'PATCH', `/commerce/items/${draftId}`, { availability: 'DRAFT' });
+  check('a seller can put one back in the drawer', r.body?.data?.availability === 'DRAFT', r.body?.data?.availability);
+  check('and the older boolean follows it, so nothing reading that is wrong', r.body?.data?.isAvailable === false, r.body?.data?.isAvailable);
+
+  r = await api(seller.token, 'PATCH', `/commerce/items/${draftId}`, { name: 'Half-written listing, renamed' });
+  check('an edit about something else leaves the state alone', r.body?.data?.availability === 'DRAFT', r.body?.data?.availability);
+
+  // Four surfaces read items, and all four would otherwise have to remember.
+  r = await api(seller.token, 'GET', `/commerce/stores/${storeId}/items?limit=50`);
+  check('the owner sees their own draft on their management screen', (r.body?.data ?? []).some(i => i.id === draftId), (r.body?.data ?? []).length);
+
+  r = await api(buyer.token, 'GET', `/commerce/stores/${storeId}/items?limit=50`);
+  check('a buyer reading the same endpoint does not', !(r.body?.data ?? []).some(i => i.id === draftId), (r.body?.data ?? []).map(i => i.id));
+  check('but still sees what is out of stock, which says what the shop sells', (r.body?.data ?? []).some(i => i.id === whitingId), (r.body?.data ?? []).length);
+
+  r = await api(buyer.token, 'GET', '/commerce/items?cityId=ANYWHERE&limit=50');
+  check('the marketplace grid excludes drafts', !(r.body?.data ?? []).some(i => i.id === draftId), (r.body?.data ?? []).length);
+
+  r = await api(buyer.token, 'GET', `/commerce/items?q=${encodeURIComponent('Half-written listing, renamed')}`);
+  check('and so does search, which reads the same query', !(r.body?.data ?? []).some(i => i.id === draftId), (r.body?.data ?? []).map(i => i.name));
+
+  r = await api(buyer.token, 'GET', '/commerce/home?cityId=MANCHESTER');
+  const rails = [...(r.body?.data?.popularItems ?? []), ...(r.body?.data?.newItems ?? [])];
+  check('no rail carries a draft', !rails.some(i => i.id === draftId), rails.length);
+  check('nor anything nobody can buy, because a popular rail that opens on one is a worse answer', !rails.some(i => i.availability !== 'ON_SALE'), rails.map(i => i.availability));
+
+  r = await api(buyer.token, 'POST', '/commerce/enquiries', {
+    storeId, lines: [{ itemId: draftId, quantity: 1 }], fulfilment: 'COLLECTION',
+  });
+  check('ordering a draft is refused, the way an unavailable one is', r.status === 422 && r.body?.error?.code === 'ITEMS_UNAVAILABLE', r.body?.error);
+
+  r = await api(seller.token, 'PATCH', `/commerce/items/${draftId}`, { availability: 'ON_SALE' });
+  check('and it comes back out of the drawer without being retyped', r.body?.data?.availability === 'ON_SALE' && r.body?.data?.isAvailable === true, r.body?.data);
+
+  r = await api(seller.token, 'DELETE', `/commerce/items/${draftId}`);
+  check('an item nobody has asked about is deleted outright', r.body?.data?.removed === true, r.body?.data);
 
   console.log('\n── 4.7 Enquiries ────────────────────────────────────────────');
 
@@ -564,6 +615,9 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
 
   r = await api(seller.token, 'DELETE', `/commerce/items/${egusiId}`);
   check('item in an enquiry is delisted, not deleted', r.body?.data?.removed === false && r.body?.data?.delisted === true, r.body?.data);
+  // Not a refusal — the item leaves the shop either way — so the seller is told which happened in
+  // words they can act on rather than left to infer it from a flag.
+  check('and the seller is told why, in words rather than a code', typeof r.body?.data?.reason === 'string' && /asking about/i.test(r.body.data.reason), r.body?.data?.reason);
   r = await api(buyer.token, 'GET', `/commerce/enquiries/${enquiryId}`);
   check('the enquiry keeps its own contents', r.body?.data?.lines?.length === 2 && r.body.data.lines[0].name === 'Egusi (ground melon seed)', r.body?.data?.lines);
 

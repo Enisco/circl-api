@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   ActivitySubject,
   ActivityVerb,
+  ItemAvailability,
   Prisma,
   StoreFulfilment,
   StoreStatus,
@@ -279,7 +280,14 @@ export class CommerceBrowseService {
   async browseItems(viewerId: string, query: BrowseCommerceDto) {
     this.recordSearch(viewerId, query);
 
-    const where: Prisma.StoreItemWhereInput = { deletedAt: null, store: { deletedAt: null } };
+    const where: Prisma.StoreItemWhereInput = {
+      deletedAt: null,
+      store: { deletedAt: null },
+      // A draft is the seller's alone, and the grid is the one surface where forgetting that
+      // publishes half-written listings to a whole city. Out of stock is kept: it still tells a
+      // buyer what the shop sells.
+      availability: { not: ItemAvailability.DRAFT },
+    };
     const and: Prisma.StoreItemWhereInput[] = [];
 
     const categories = withoutAllCategories(query.categories ?? []);
@@ -476,13 +484,20 @@ export class CommerceBrowseService {
         city
           ? this.database.city.findUnique({ where: { id: city }, select: { name: true } })
           : null,
+        // On sale only on both rails. A rail called "popular" that opens on something nobody can
+        // buy is a worse answer than a shorter rail, and the shop's own list is where an
+        // out-of-stock item belongs.
         this.database.storeItem.findMany({
-          where: { ...itemBase, isAvailable: true },
+          where: { ...itemBase, availability: ItemAvailability.ON_SALE },
           orderBy: [{ viewCount: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
           take: 10,
         }),
         this.database.storeItem.findMany({
-          where: { ...itemBase, isAvailable: true, createdAt: { gte: daysAgo(30) } },
+          where: {
+            ...itemBase,
+            availability: ItemAvailability.ON_SALE,
+            createdAt: { gte: daysAgo(30) },
+          },
           orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
           take: 10,
         }),

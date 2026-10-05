@@ -112,6 +112,21 @@ model StoreContact {
   @@map("store_contacts")
 }
 
+/**
+ * An item is in one of three states, not two. `isAvailable` answered one question — can somebody
+ * buy this — and was being used for two: "we have run out" and "nobody but me should see this".
+ * With one boolean the second is impossible, so sellers did it by deleting and retyped the whole
+ * listing three months later.
+ */
+enum ItemAvailability {
+  ON_SALE
+  /// Listed and not buyable. Stays on the shelf: it says what this shop sells, and "when is this
+  /// back?" is a fair reason for somebody to write.
+  OUT_OF_STOCK
+  /// Half-written, seasonal, withdrawn. Returned to the shop's owner and to nobody else.
+  DRAFT
+}
+
 model StoreItem {
   id      String @id @default(uuid())
   storeId String @map("store_id")
@@ -130,8 +145,11 @@ model StoreItem {
   categoryCode String  @map("category_code")
   options      String? @map("options")
 
-  isAvailable Boolean @default(true) @map("is_available")
-  viewCount   Int     @default(0) @map("view_count")
+  /// The stored truth. `isAvailable` is the same answer to the narrower question, written in step
+  /// on every save so the older field and the indexes built on it are never wrong.
+  availability ItemAvailability @default(ON_SALE) @map("availability")
+  isAvailable  Boolean          @default(true) @map("is_available")
+  viewCount    Int              @default(0) @map("view_count")
 
   // Set when the item came from an accepted AI draft, for measurement only (4.9).
   sourceDraftId String? @map("source_draft_id")
@@ -146,6 +164,7 @@ model StoreItem {
 
   // Never hard-deleted while an open enquiry references it, or the enquiry loses its own contents (4.8.3).
   @@index([storeId, isAvailable])
+  @@index([storeId, availability])
   @@index([categoryCode, price])
   // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "store_items_name_trgm_idx")

@@ -340,10 +340,16 @@ export class CommerceController {
   @ApiOperation({
     summary: 'A store catalogue',
     description:
-      'Out-of-stock items are included by default: they still tell a buyer what the shop sells.',
+      'Out-of-stock items are included by default: they still tell a buyer what the shop sells. ' +
+      '**Drafts come back only to the shop\'s owner** — this is the same endpoint the seller\'s ' +
+      'own management screen reads, so it cannot filter them out for everybody.',
   })
-  async listStoreItems(@Param('id') id: string, @Query() query: ListStoreItemsDto) {
-    const { data, meta } = await this.items.listForStore(id, query);
+  async listStoreItems(
+    @CurrentUserId() userId: string,
+    @Param('id') id: string,
+    @Query() query: ListStoreItemsDto,
+  ) {
+    const { data, meta } = await this.items.listForStore(id, query, userId);
 
     return { data, meta, message: SuccessMessage.RESOURCE_FETCHED('Items') };
   }

@@ -318,7 +318,7 @@ function shape(label, obj, required) {
   shape('4.4.3 item', ownItem, [
     'id', 'storeId', 'storeName', 'name', 'price.amount', 'price.currency',
     'unit.code', 'unit.label', 'category', 'photos', 'coverPhotoUrl',
-    'isAvailable', 'distanceMiles', 'storeIsOpenNow',
+    'availability', 'isAvailable', 'distanceMiles', 'storeIsOpenNow',
   ]);
 
   const itemId = ownItem?.id;

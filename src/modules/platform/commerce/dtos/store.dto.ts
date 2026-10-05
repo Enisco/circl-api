@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Fulfilment, StoreFulfilment, StoreStatus, Weekday } from '@prisma/client';
+import {
+  Fulfilment,
+  ItemAvailability,
+  StoreFulfilment,
+  StoreStatus,
+  Weekday,
+} from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -351,7 +357,27 @@ export class ItemDto {
   @IsOptional()
   description?: string;
 
-  @ApiPropertyOptional({ default: true })
+  @ApiPropertyOptional({
+    enum: ItemAvailability,
+    default: ItemAvailability.ON_SALE,
+    description:
+      'Which of the three an item is. `OUT_OF_STOCK` stays on the shelf — it says what this shop ' +
+      'sells, and "when is this back?" is a fair reason to write. `DRAFT` is returned to the ' +
+      'shop\'s owner and to nobody else. **Absent leaves it as it is**, which is what every edit ' +
+      'that is not about availability wants.',
+  })
+  @IsEnum(ItemAvailability)
+  @IsOptional()
+  availability?: ItemAvailability;
+
+  @ApiPropertyOptional({
+    default: true,
+    deprecated: true,
+    description:
+      'The same answer to the narrower question, still written and still accepted: `false` is ' +
+      'read as `OUT_OF_STOCK`, which is the only thing this boolean could ever have meant. It ' +
+      'can never set a draft. `availability` wins where both are sent.',
+  })
   @Bool()
   @IsBoolean()
   @IsOptional()

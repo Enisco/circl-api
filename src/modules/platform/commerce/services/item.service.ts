@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   ActivitySubject,
   ActivityVerb,
+  ItemAvailability,
   Media,
   Prisma,
   TaxonomyKind,
@@ -22,6 +23,34 @@ import { ItemDto, ListStoreItemsDto, UpdateItemDto } from '../dtos/store.dto';
 import { StoreService } from './store.service';
 
 export const ITEM_MEDIA_OWNER = 'STORE_ITEM';
+
+/**
+ * What to store for "can somebody buy this". `availability` is the answer; `isAvailable` is the
+ * same answer to the narrower question and is written in step, so the older field and every index
+ * built on it stay right. Absent leaves both alone.
+ *
+ * `isAvailable` on its own is still honoured for a client that has not moved yet: `false` means
+ * out of stock, which is the only thing that boolean could ever have meant. It can never set a
+ * draft, because nothing in it can say so.
+ */
+const availabilityWrite = (dto: {
+  availability?: ItemAvailability;
+  isAvailable?: boolean;
+}): { availability?: ItemAvailability; isAvailable?: boolean } => {
+  if (dto.availability) {
+    return {
+      availability: dto.availability,
+      isAvailable: dto.availability === ItemAvailability.ON_SALE,
+    };
+  }
+
+  if (dto.isAvailable === undefined) return {};
+
+  return {
+    availability: dto.isAvailable ? ItemAvailability.ON_SALE : ItemAvailability.OUT_OF_STOCK,
+    isAvailable: dto.isAvailable,
+  };
+};
 
 @Injectable()
 export class ItemService {
@@ -58,7 +87,7 @@ export class ItemService {
           unitCustomLabel: dto.unitCustomLabel ?? null,
           categoryCode: dto.categoryCode,
           options: dto.options ?? null,
-          isAvailable: dto.isAvailable ?? true,
+          ...availabilityWrite(dto),
           sourceDraftId: dto.sourceDraftId ?? null,
         },
       });
@@ -113,7 +142,9 @@ export class ItemService {
           unitCustomLabel: dto.unitCustomLabel,
           categoryCode: dto.categoryCode,
           options: dto.options,
-          isAvailable: dto.isAvailable,
+          // Absent leaves it as it is, which is what every edit that is not about availability
+          // wants: a seller fixing a typo should not have to restate whether it is on sale.
+          ...availabilityWrite(dto),
         },
       });
     });
@@ -121,7 +152,13 @@ export class ItemService {
     return this.toView(updated, photos ?? (await this.media.forOwner(ITEM_MEDIA_OWNER, itemId)));
   }
 
-  /** An item is never hard-deleted while an open enquiry references it, or the enquiry loses its own contents (4.8.3). */
+  /**
+ * An item is never hard-deleted while an enquiry references it, or the enquiry loses its own
+ * contents (4.8.3). It is not a refusal: the seller tapped delete, and the item leaves their shop
+ * and the marketplace either way — it is kept as a row so somebody's order still says what they
+ * ordered. `removed` tells the two apart, and the message says which happened in words a seller
+ * can act on.
+ */
   async remove(userId: string, itemId: string) {
     const item = await this.loadOwned(userId, itemId);
     const referenced = await this.database.enquiryLine.count({ where: { itemId: item.id } });
@@ -129,10 +166,21 @@ export class ItemService {
     if (referenced > 0) {
       await this.database.storeItem.update({
         where: { id: item.id },
-        data: { isAvailable: false, deletedAt: new Date() },
+        data: {
+          availability: ItemAvailability.OUT_OF_STOCK,
+          isAvailable: false,
+          deletedAt: new Date(),
+        },
       });
 
-      return { removed: false, delisted: true };
+      return {
+        removed: false,
+        delisted: true,
+        // Said in words a seller can act on, rather than left for a client to infer from a flag.
+        reason:
+          'Somebody is still asking about this one, so it has come off the shelf rather than ' +
+          'being deleted. Their order still shows what they ordered.',
+      };
     }
 
     await this.database.$transaction(async tx => {
@@ -143,17 +191,31 @@ export class ItemService {
     return { removed: true, delisted: true };
   }
 
+  /**
+   * The seller's own management screen and a buyer's view of the shop are the same endpoint, so it
+   * cannot simply filter drafts out for everybody: the owner is handed theirs and nobody else is.
+   */
   async listForStore(
     storeId: string,
     query: ListStoreItemsDto,
+    viewerId?: string,
   ): Promise<Paginated<Awaited<ReturnType<ItemService['toView']>>>> {
+    const isOwner = viewerId
+      ? (await this.database.store.findFirst({
+          where: { id: storeId, ownerId: viewerId },
+          select: { id: true },
+        })) !== null
+      : false;
+
     const where: Prisma.StoreItemWhereInput = {
       storeId,
       deletedAt: null,
+      // Out of stock stays: it still tells a buyer what the shop sells. A draft is the owner's.
+      ...(isOwner ? {} : { availability: { not: ItemAvailability.DRAFT } }),
       ...(query.category && !isAllCategories(query.category)
         ? { categoryCode: query.category }
         : {}),
-      ...(query.availableOnly ? { isAvailable: true } : {}),
+      ...(query.availableOnly ? { availability: ItemAvailability.ON_SALE } : {}),
       // `%` and `_` are ILIKE wildcards; unescaped, `%` matches the whole table (0.5).
       ...(query.q
         ? { name: { contains: escapeLike(query.q), mode: Prisma.QueryMode.insensitive } }
@@ -166,7 +228,9 @@ export class ItemService {
         where,
         // `id` last: two items created in the same second would otherwise be free to swap places
         // between page one and page two, showing one twice and the other never.
-        orderBy: [{ isAvailable: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
+        // On sale first, then out of stock, then the owner's drafts — which is the order a
+        // management screen reads in and the order a shopper wants anyway.
+        orderBy: [{ availability: 'asc' }, { createdAt: 'desc' }, { id: 'asc' }],
         skip: query.skip,
         take: query.take,
       }),
@@ -275,6 +339,7 @@ export class ItemService {
       unitCustomLabel: string | null;
       categoryCode: string;
       options: string | null;
+      availability: ItemAvailability;
       isAvailable: boolean;
     },
     media: Media[],
@@ -310,6 +375,11 @@ export class ItemService {
       // The same photo as an object, so a square grid can letterbox a tall one instead of cropping
       // the label off it. `width` and `height` are read out of the file itself (0.11.4).
       coverPhoto: photos[0] ?? null,
+      availability: item.availability,
+      /**
+       * @deprecated The same answer to the narrower question. `availability` says which of the two
+       * things an unbuyable item is, which a boolean never could.
+       */
       isAvailable: item.isAvailable,
     };
   }
