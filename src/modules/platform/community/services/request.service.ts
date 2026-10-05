@@ -10,6 +10,7 @@ import {
   Prisma,
   ReportTargetType,
   RequestStatus,
+  SearchScope,
   TaxonomyKind,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
@@ -88,6 +89,8 @@ export class RequestService {
     ]);
 
     const context = await this.buildContext(rows, viewerId, viewerCityId, blockedIds);
+
+    this.recordSearch(viewerId, query, total);
 
     return {
       data: rows.map(row => toRequestSummary(row, context)),
@@ -635,4 +638,27 @@ export class RequestService {
       })
       .catch(() => undefined);
   }
+
+  /**
+   * What somebody typed, for the published demand lists (6.3). Counted, never attributed, and
+   * recorded with whether it found anything — which cannot be worked out later, because the
+   * catalogue has moved on by the time the job runs.
+   */
+  private recordSearch(
+    viewerId: string | null,
+    query: { q?: string; cityId?: string; categories?: string[] },
+    total: number,
+  ): void {
+    if (!query.q) return;
+
+    this.activity.recordSearch({
+      userId: viewerId,
+      scope: SearchScope.REQUESTS,
+      term: query.q,
+      cityId: query.cityId ?? null,
+      code: query.categories?.[0] ?? null,
+      hadResults: total > 0,
+    });
+  }
+
 }

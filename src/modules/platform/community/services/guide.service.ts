@@ -7,6 +7,7 @@ import {
   GuideBlockType,
   NotificationKind,
   Prisma,
+  SearchScope,
   TaxonomyKind,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
@@ -167,6 +168,8 @@ export class GuideService {
       rows.map(row => row.id),
     );
     const topics = await this.taxonomy.labels(TaxonomyKind.GUIDE_TOPIC);
+
+    this.recordSearch(viewerId, query, total);
 
     return {
       data: rows.map(row => this.toSummary(row, topics, context)),
@@ -557,4 +560,27 @@ export class GuideService {
 
     return guide;
   }
+
+  /**
+   * What somebody typed, for the published demand lists (6.3). Counted, never attributed, and
+   * recorded with whether it found anything — which cannot be worked out later, because the
+   * catalogue has moved on by the time the job runs.
+   */
+  private recordSearch(
+    viewerId: string | null,
+    query: { q?: string; cityId?: string; topic?: string },
+    total: number,
+  ): void {
+    if (!query.q) return;
+
+    this.activity.recordSearch({
+      userId: viewerId,
+      scope: SearchScope.GUIDES,
+      term: query.q,
+      cityId: query.cityId ?? null,
+      code: query.topic ?? null,
+      hadResults: total > 0,
+    });
+  }
+
 }

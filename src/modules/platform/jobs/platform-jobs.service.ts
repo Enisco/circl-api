@@ -4,6 +4,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '@/infrastructure';
 import { ApiException } from '@/common';
 import { MediaDerivationService } from '../media/derivation/media-derivation.service';
+import { SearchDemandService } from '../intelligence/services/search-demand.service';
 import { MediaUploadService } from '../media/services/media-upload.service';
 import { BookingService } from '../professionals/services/booking.service';
 import { ProfessionalsHomeService } from '../professionals/services/professionals-home.service';
@@ -22,6 +23,7 @@ export class PlatformJobsService {
     private readonly database: PrismaService,
     private readonly media: MediaUploadService,
     private readonly derivation: MediaDerivationService,
+    private readonly searchDemand: SearchDemandService,
     private readonly bookings: BookingService,
     private readonly enquiries: EnquiryService,
     private readonly professionals: ProfessionalsHomeService,
@@ -133,6 +135,21 @@ export class PlatformJobsService {
   }
 
   /** Circl Intelligence: the Pulse dashboards, precomputed per section per city. */
+  /**
+   * The published search lists (6.3). Daily, and deliberately not per-search: nobody needs this
+   * leaderboard to move within the minute, the windows are a week and the week before, and
+   * resolving the same typed fragment on every keystroke is work done thousands of times for one
+   * answer. Runs before the metrics job so both read the same day.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_4AM, { name: 'intelligence.search-demand' })
+  async rebuildSearchDemand() {
+    await this.run('intelligence.search-demand', async () => {
+      const written = await this.searchDemand.rebuild();
+
+      return `${written} snapshots`;
+    });
+  }
+
   @Cron(CronExpression.EVERY_DAY_AT_5AM, { name: 'intelligence.metrics' })
   async rebuildMetrics() {
     await this.run('intelligence.metrics', async () => {
@@ -157,6 +174,7 @@ export class PlatformJobsService {
       'intelligence.demand': () => this.rebuildDemand(),
       'intelligence.auto-guides': () => this.draftAutoGuides(),
       'intelligence.metrics': () => this.rebuildMetrics(),
+      'intelligence.search-demand': () => this.rebuildSearchDemand(),
     };
 
     const job = jobs[name];

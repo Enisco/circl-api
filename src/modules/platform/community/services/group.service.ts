@@ -9,6 +9,7 @@ import {
   NotificationKind,
   ParticipantRole,
   Prisma,
+  SearchScope,
   TaxonomyKind,
   ThreadContextType,
   ThreadKind,
@@ -281,6 +282,8 @@ export class GroupService {
     const pending = await this.pendingCountsFor(
       rows.filter(row => standing.get(row.id)?.membership === 'ADMIN').map(row => row.id),
     );
+
+    this.recordSearch(viewerId, query, total);
 
     return {
       data: rows.map(row => {
@@ -1707,4 +1710,27 @@ export class GroupService {
 
     return row ? this.stateToView(row) : 'NONE';
   }
+
+  /**
+   * What somebody typed, for the published demand lists (6.3). Counted, never attributed, and
+   * recorded with whether it found anything — which cannot be worked out later, because the
+   * catalogue has moved on by the time the job runs.
+   */
+  private recordSearch(
+    viewerId: string | null,
+    query: { q?: string; cityId?: string; categoryCodes?: string[] },
+    total: number,
+  ): void {
+    if (!query.q) return;
+
+    this.activity.recordSearch({
+      userId: viewerId,
+      scope: SearchScope.COMMUNITY,
+      term: query.q,
+      cityId: query.cityId ?? null,
+      code: query.categoryCodes?.[0] ?? null,
+      hadResults: total > 0,
+    });
+  }
+
 }

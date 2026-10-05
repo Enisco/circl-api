@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { ListingVerificationStatus, Prisma, TaxonomyKind, ThreadContextType } from '@prisma/client';
+import {
+  ListingVerificationStatus,
+  Prisma,
+  SearchScope,
+  TaxonomyKind,
+  ThreadContextType,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import {
   ApiErrorCode,
@@ -11,11 +17,12 @@ import {
   PageMeta,
 } from '@/common';
 import {
-  authorSelect,
+  ActivityService,
   BlockingService,
-  isAllCategories,
   MediaService,
   TaxonomyService,
+  authorSelect,
+  isAllCategories,
   toAuthorView,
   toCityView,
   toPriceBasisLabel,
@@ -51,6 +58,7 @@ export class BrowseService {
     private readonly blocking: BlockingService,
     private readonly listings: ListingService,
     private readonly media: MediaService,
+    private readonly activity: ActivityService,
   ) {}
 
   // ─── 2.3 Browse ────────────────────────────────────────────────────────────
@@ -91,6 +99,19 @@ export class BrowseService {
     // An empty category is a demand signal, and the member still needs an answer (2.3).
     if (total === 0) {
       meta.nearbyCityMatches = await this.nearbyCityMatches(query, viewerCityId);
+    }
+
+    if (query.q) {
+      // Counted, never attributed, and with whether it found anything — which cannot be worked
+      // out later, because the directory has moved on by the time the job runs (6.3).
+      this.activity.recordSearch({
+        userId: viewerId,
+        scope: SearchScope.PROFESSIONALS,
+        term: query.q,
+        cityId: query.cityId ?? null,
+        code: query.category ?? null,
+        hadResults: total > 0,
+      });
     }
 
     return { data: paged, meta };

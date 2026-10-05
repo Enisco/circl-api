@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import {
-  ActivitySubject,
   ActivityVerb,
   ItemAvailability,
   Prisma,
+  SearchScope,
   StoreFulfilment,
   StoreStatus,
   TaxonomyKind,
@@ -148,7 +148,6 @@ export class CommerceBrowseService {
   // ─── 4.4.2 Browse stores ───────────────────────────────────────────────────
 
   async browseStores(viewerId: string, query: BrowseCommerceDto) {
-    this.recordSearch(viewerId, query);
 
     const where = await this.storeWhere(query, viewerId);
     const origin = this.originOf(query);
@@ -185,6 +184,10 @@ export class CommerceBrowseService {
 
     const effectiveTotal = needsPostFilter ? summaries.length : total;
     const page = needsPostFilter ? summaries.slice(query.skip, query.skip + query.take) : summaries;
+
+    // A shop search is product demand too: somebody looking for "african grocer" wants what the
+    // shop sells, and counting it separately would split one intent across two lists.
+    this.recordDemand(viewerId, query, SearchScope.PRODUCTS, effectiveTotal);
 
     return { data: page, meta: buildPageMeta(query, effectiveTotal) };
   }
@@ -278,7 +281,6 @@ export class CommerceBrowseService {
   // ─── 4.4.3 Browse items ────────────────────────────────────────────────────
 
   async browseItems(viewerId: string, query: BrowseCommerceDto) {
-    this.recordSearch(viewerId, query);
 
     const where: Prisma.StoreItemWhereInput = {
       deletedAt: null,
@@ -395,6 +397,8 @@ export class CommerceBrowseService {
     );
 
     const last = rows[rows.length - 1];
+
+    this.recordDemand(viewerId, query, SearchScope.PRODUCTS, total);
 
     return {
       data: views,
@@ -591,15 +595,28 @@ export class CommerceBrowseService {
   }
 
   /** Every search is a demand signal, which is what feeds the hints above. */
-  private recordSearch(viewerId: string, query: BrowseCommerceDto) {
+  /**
+   * The same search, recorded with the two things the published lists need and the older call
+   * cannot give them: which box it was typed into, and whether it found anything (6.3).
+   *
+   * Both are written on the one row, so a term that found nothing is counted once rather than
+   * being inferred later from a catalogue that has since changed.
+   */
+  private recordDemand(
+    viewerId: string,
+    query: BrowseCommerceDto,
+    scope: SearchScope,
+    total: number,
+  ): void {
     if (!query.q) return;
 
-    this.activity.record({
+    this.activity.recordSearch({
       userId: viewerId,
-      verb: ActivityVerb.SEARCH,
-      subject: ActivitySubject.SEARCH_TERM,
-      cityId: query.cityId ?? null,
+      scope,
       term: query.q,
+      cityId: query.cityId ?? null,
+      code: query.categories?.[0] ?? null,
+      hadResults: total > 0,
     });
   }
 }

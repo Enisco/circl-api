@@ -6,6 +6,12 @@ import { PrismaService } from '@/infrastructure';
 import { DemandService } from '../services/demand.service';
 import { MetricPeriod, MetricSection, MetricsService } from '../services/metrics.service';
 import { PULSE_FLOORS, PulseScope, PulseService } from '../services/pulse.service';
+import {
+  SEARCH_DEPTHS,
+  SEARCH_FILTERS,
+  SearchDemandService,
+  SearchFilter,
+} from '../services/search-demand.service';
 import { CityService } from '../../shared';
 
 @ApiBearerAuth()
@@ -19,7 +25,45 @@ export class PulseController {
     private readonly database: PrismaService,
     private readonly pulse: PulseService,
     private readonly cities: CityService,
+    private readonly searchDemand: SearchDemandService,
   ) {}
+
+  @Get('search-demand')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'What people are searching for',
+    description:
+      'The three search lists the metrics view shows: what was searched for, what was searched ' +
+      'for and **found nothing**, and what is rising fastest against the week before. Every list ' +
+      'carries the window it covers and when it was built, because no number should sit without ' +
+      'a date.\n\n' +
+      'Counted, never attributed. A term is only published once **five different people** have ' +
+      'searched it — not five searches, because one person typing the same thing five times ' +
+      'would clear that, and a rare and specific search identifies whoever typed it however ' +
+      'little is said about them. Anything carrying a number, an `@` or a link is dropped ' +
+      'whatever the counts say.\n\n' +
+      'Each row carries the term and the `code` it resolved to, so tapping it can run the ' +
+      'ordinary search with that filter rather than guessing at one.',
+  })
+  @ApiQuery({ name: 'filter', required: false, enum: [...SEARCH_FILTERS] })
+  @ApiQuery({ name: 'cityId', required: false, description: 'Omit for nationwide.' })
+  @ApiQuery({ name: 'limit', required: false, enum: [...SEARCH_DEPTHS] })
+  async searchDemandList(
+    @Query('filter') filter?: string,
+    @Query('cityId') cityId?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const chosen = (SEARCH_FILTERS as readonly string[]).includes(filter ?? 'ALL')
+      ? ((filter ?? 'ALL') as SearchFilter)
+      : 'ALL';
+    const depth = Number(limit ?? SEARCH_DEPTHS[0]);
+
+    if (cityId) await this.cities.assertValid(cityId);
+
+    const data = await this.searchDemand.published(chosen, cityId ?? null, depth);
+
+    return { data, message: SuccessMessage.RESOURCE_FETCHED('Search demand') };
+  }
 
   @Get('suggestions')
   @HttpCode(HttpStatus.OK)

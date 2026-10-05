@@ -5,6 +5,7 @@ import {
   CommunityOffer,
   ListingVerificationStatus,
   Prisma,
+  SearchScope,
   TaxonomyKind,
   ThreadContextType,
 } from '@prisma/client';
@@ -63,6 +64,8 @@ export class OfferService {
     ]);
 
     const context = await this.buildContext(rows, viewerId, blockedIds);
+
+    this.recordSearch(viewerId, query, total);
 
     return {
       data: rows.map(row => toOfferSummary(row, context)),
@@ -309,4 +312,27 @@ export class OfferService {
       );
     }
   }
+
+  /**
+   * What somebody typed, for the published demand lists (6.3). Counted, never attributed, and
+   * recorded with whether it found anything — which cannot be worked out later, because the
+   * catalogue has moved on by the time the job runs.
+   */
+  private recordSearch(
+    viewerId: string | null,
+    query: { q?: string; cityId?: string; categories?: string[] },
+    total: number,
+  ): void {
+    if (!query.q) return;
+
+    this.activity.recordSearch({
+      userId: viewerId,
+      scope: SearchScope.COMMUNITY,
+      term: query.q,
+      cityId: query.cityId ?? null,
+      code: query.categories?.[0] ?? null,
+      hadResults: total > 0,
+    });
+  }
+
 }

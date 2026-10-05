@@ -15,13 +15,20 @@ model ActivityEvent {
   verb    ActivityVerb    @map("verb")
   subject ActivitySubject @map("subject")
 
-  subjectId String? @map("subject_id")
-  cityId    String? @map("city_id")
+  subjectId  String?      @map("subject_id")
+  cityId     String?      @map("city_id")
   // The category / topic / profession code of the thing acted on, so demand can be grouped without joining back to five different tables.
-  code      String? @map("code")
-  term      String? @map("term") // for SEARCH
-  weight    Int     @default(1) @map("weight")
-  metadata  Json?   @map("metadata")
+  code       String?      @map("code")
+  term       String?      @map("term") // for SEARCH
+  /// Which search box it was typed into. Only set for SEARCH, and a column rather than metadata
+  /// because every published metric groups by it (6.3).
+  scope      SearchScope? @map("scope")
+  /// Whether the search found anything. Recorded here because it cannot be recomputed later: the
+  /// catalogue has changed by the time the job runs, and "searched and found nothing" is the
+  /// metric a prospective seller or guide writer most wants.
+  hadResults Boolean?     @map("had_results")
+  weight     Int          @default(1) @map("weight")
+  metadata   Json?        @map("metadata")
 
   occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz
 
@@ -29,7 +36,37 @@ model ActivityEvent {
   @@index([userId, occurredAt])
   @@index([subject, code, occurredAt])
   @@index([verb, term, occurredAt])
+  @@index([subject, scope, occurredAt])
   @@map("activity_events")
+}
+
+/**
+ * What a typed fragment actually meant, resolved once and remembered.
+ * Somebody searching for olive oil types "o", "ol", "oliv" and then "olive oil" — four rows in the
+ * stream and one thing wanted. Publishing the fragments would be publishing noise, so each raw
+ * term is resolved to a canonical one before anything is shown.
+ * Resolved against our own data rather than by a model: the taxonomy labels and the trigram
+ * indexes on item names, guide titles and profession titles already hold the words members are
+ * reaching for. This table is the dictionary, so a term is only ever worked out once — and it is
+ * where a model's answer would go if one is ever added, with nothing else changing.
+ */
+model SearchTermCanonical {
+  /// Lowercased, trimmed, punctuation stripped. The key the stream is grouped by.
+  normalised String      @map("normalised")
+  scope      SearchScope @map("scope")
+
+  /// What to show, and what tapping it searches for.
+  canonical    String           @map("canonical")
+  source       SearchTermSource @map("source")
+  /// The category it resolved to, where it did, so a tap can filter rather than guess.
+  categoryCode String?          @map("category_code")
+
+  firstSeenAt DateTime @default(now()) @map("first_seen_at") @db.Timestamptz
+  resolvedAt  DateTime @default(now()) @map("resolved_at") @db.Timestamptz
+
+  @@id([normalised, scope])
+  @@index([scope, source])
+  @@map("search_term_canonical")
 }
 
 // "Show me less like this" from a feed card's overflow menu (1.1).

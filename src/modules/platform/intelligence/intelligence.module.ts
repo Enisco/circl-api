@@ -7,10 +7,12 @@ import { FeedRankerService } from './services/feed-ranker.service';
 import { GuideMatcherService } from './services/guide-matcher.service';
 import { MetricsService } from './services/metrics.service';
 import { PulseService } from './services/pulse.service';
+import { SearchDemandService } from './services/search-demand.service';
 import { SmartMatchService } from './services/smart-match.service';
 
 const SERVICES = [
   FeedRankerService,
+  SearchDemandService,
   GuideMatcherService,
   SmartMatchService,
   DemandService,

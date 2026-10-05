@@ -179,6 +179,36 @@ enum MediaStatus {
  * One prefix per purpose so a key is attributable without a database lookup and
  * a prefix can be lifecycled on its own.
  */
+/**
+ * Which search box a term was typed into (6.3). The surface, not the thing found: that is what we
+ * can record reliably, and it is what a member filtering the list is actually asking about.
+ * Connect and the inbox are deliberately absent. Searching for a person, or through your own
+ * messages, is not demand data and publishing it would be publishing somebody's behaviour.
+ */
+enum SearchScope {
+  COMMUNITY
+  GUIDES
+  REQUESTS
+  PROFESSIONALS
+  PRODUCTS
+}
+
+/**
+ * How a raw term was turned into something worth showing.
+ */
+enum SearchTermSource {
+  /// Matched a term resolved on an earlier run, so it cost nothing.
+  DICTIONARY
+  /// Matched a taxonomy label — a category, profession, language, heritage tag.
+  TAXONOMY
+  /// Matched the name of something we actually hold, through the trigram indexes.
+  CONTENT
+  /// Nothing matched it, and it was whole enough to publish as typed.
+  RAW
+  /// Nothing matched it and it is not worth showing anybody.
+  JUNK
+}
+
 enum MediaPurpose {
   AVATAR
   COMMUNITY
