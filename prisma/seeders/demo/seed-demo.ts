@@ -1,6 +1,7 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import { StorageProvider } from '../../../src/modules/platform/media/storage/storage.interface';
 import { avatarPng, bannerPng } from './imagery';
+import { fetchAsset, mimeFor, photoFor, sizeOf, videoFor } from './assets';
 import { daysAgo, daysAhead, hoursAgo, seedId, reportToken } from './ids';
 import { connectExtras, PEOPLE, SeedPerson } from './people';
 
@@ -28,21 +29,6 @@ const userId = (n: number) => seedId(`user:${n}`);
 
 // ─── Media ───────────────────────────────────────────────────────────────────
 
-/**
- * Enough of an MP4 to be a file with the right type and a plausible length. Nothing in the demo
- * plays it, and generating a real clip would mean an encoder in the seeder — but a video post has
- * to exist, because it is the only thing that exercises the poster rule (3.2.2).
- */
-const stubMp4 = (): Buffer =>
-  Buffer.concat([
-    // ftyp, declaring an ordinary MP4.
-    Buffer.from([0, 0, 0, 0x18]),
-    Buffer.from('ftypmp42'),
-    Buffer.from([0, 0, 0, 0]),
-    Buffer.from('mp42isom'),
-    // A short, deliberately inert payload. The duration is written onto the row instead.
-    Buffer.alloc(512),
-  ]);
 
 
 /** Writes the object and the row together (B.2.2). */
@@ -60,44 +46,61 @@ const putMedia = async (
     createdAt?: Date;
     /** For a seeded clip: the poster's own key, which becomes its `thumbnailUrl`. */
     thumbnailKey?: string;
-    durationMs?: number;
   },
 ): Promise<string> => {
   const id = seedId(`media:${options.label}`);
   const isVideo = options.kind === 'video';
-  // The same prefixes the app mints under (0.11.1).
-  const key = `${MEDIA_PREFIXES[options.purpose]}/${options.uploadedById}/seed-${id.slice(0, 12)}.${isVideo ? 'mp4' : 'png'}`;
-  const body = isVideo
-    ? stubMp4()
-    : options.kind === 'avatar'
+
+  // A real photograph, or a real clip, from Flutter's public asset repository. The generated PNGs
+  // this replaces were coloured noise, which tells a reviewer nothing about a design that draws
+  // profiles full-bleed and shops as a grid of covers.
+  const assetPath = isVideo ? videoFor(options.label) : photoFor(options.label);
+  const asset = await fetchAsset(assetPath);
+
+  // Null means the bytes could not be had. The seed must not need the internet, so it falls back
+  // to the generated image and the demo still comes up — one boot without a network is not a
+  // reason for a server not to start.
+  const mimeType = asset ? mimeFor(assetPath) : 'image/png';
+  const body =
+    asset ??
+    (options.kind === 'avatar'
       ? avatarPng(options.label)
       : options.kind === 'portrait'
         ? bannerPng(options.label, 900, 1200)
-        : bannerPng(options.label);
+        : bannerPng(options.label));
 
-  await ctx.storage.put(key, body, isVideo ? 'video/mp4' : 'image/png');
+  const extension = mimeType === 'video/mp4' ? 'mp4' : mimeType === 'image/jpeg' ? 'jpg' : 'png';
+  // The same prefixes the app mints under (0.11.1).
+  const key = `${MEDIA_PREFIXES[options.purpose]}/${options.uploadedById}/seed-${id.slice(0, 12)}.${extension}`;
 
-  const size =
-    options.kind === 'avatar'
-      ? { width: 240, height: 240 }
-      : options.kind === 'portrait'
-        ? { width: 900, height: 1200 }
-        : isVideo
-          ? { width: 1080, height: 1920 }
-          : { width: 960, height: 540 };
+  await ctx.storage.put(key, body, mimeType);
+
+  // Read out of the file, never declared beside it: a row that claims a size the bytes do not
+  // have is a demo lying about the one field a full-bleed card cannot do without.
+  const measured = asset
+    ? sizeOf(body, mimeType)
+    : {
+        ...(options.kind === 'avatar'
+          ? { width: 240, height: 240 }
+          : options.kind === 'portrait'
+            ? { width: 900, height: 1200 }
+            : { width: 960, height: 540 }),
+        durationMs: null,
+      };
 
   const data = {
     uploadedById: options.uploadedById,
     type: (isVideo ? 'VIDEO' : 'IMAGE') as 'VIDEO' | 'IMAGE',
     purpose: options.purpose,
-    mimeType: isVideo ? 'video/mp4' : 'image/png',
+    mimeType,
     byteSize: body.length,
     storageKey: key,
-    ...size,
-    // Written here rather than derived: the stub clip has no readable header, and a VIDEO item
-    // with a null duration is a shape the client would never see from a real upload.
-    ...(options.durationMs ? { durationMs: options.durationMs } : {}),
-    ...(options.thumbnailKey ? { thumbnailKey: options.thumbnailKey } : {}),
+    width: measured.width,
+    height: measured.height,
+    // Written unconditionally, including null. Spreading these only when set meant a reseed could
+    // not correct them: a row kept a duration from a previous run after the file behind it changed.
+    durationMs: measured.durationMs,
+    thumbnailKey: options.thumbnailKey ?? null,
     // The scan is what gates attaching a key (0.11.4).
     scanStatus: 'CLEAN' as const,
     scannedAt: new Date(),

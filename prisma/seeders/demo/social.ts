@@ -350,7 +350,8 @@ export const seedSocial = async (ctx: DemoSeedContext) => {
         ownerType: 'CONNECT_POST',
         ownerId: postId,
         thumbnailKey: posterKey,
-        durationMs: 9_000,
+        // No duration here any more: it is read out of the clip's own header, the same way the
+        // API reads one on a real upload, so the seeded video cannot claim a length it has not.
         createdAt: daysAgo(5),
       });
     }
