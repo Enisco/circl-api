@@ -123,6 +123,34 @@ async function objectExists(url) {
     r.body?.meta?.totalCount,
   );
 
+  // Connect is a profile you look at now, so a seeded profile with an empty gallery is the whole
+  // of the rebuild missing from the demo. Every one of them had one until 2026-10-05.
+  const seededProfiles = await prisma.connectProfile.findMany({
+    where: { user: { email: { endsWith: '@circl.test' } }, deletedAt: null },
+    select: { user: { select: { email: true } }, _count: { select: { posts: true } } },
+  });
+  const bare = seededProfiles.filter(row => row._count.posts === 0).map(row => row.user.email);
+
+  check('every seeded Connect profile has a gallery', seededProfiles.length > 0 && !bare.length, bare);
+
+  const seededMembers = await prisma.user.count({ where: { email: { endsWith: '@circl.test' } } });
+
+  check('and every seeded member has a profile at all', seededProfiles.length === seededMembers, { profiles: seededProfiles.length, members: seededMembers });
+
+  // A second city with a grid worth scrolling. Manchester keeps its own cohort because the Pulse
+  // floor is counted per city, so London needed one of its own rather than a share of that.
+  r = await api(token, 'GET', '/connect/profiles?cityId=LONDON&limit=30');
+  const londonRows = r.body?.data ?? [];
+
+  check('London has a grid rather than a handful', londonRows.length >= 12, londonRows.length);
+  check('and all six connection types in it', new Set(londonRows.map(row => row.type?.code)).size === 6, [...new Set(londonRows.map(row => row.type?.code))]);
+  check('with a gallery on every seeded one', londonRows.filter(row => (row.posts ?? []).length === 0).every(row => !/@circl\.test$/.test(row.user?.username ?? '')), londonRows.filter(row => !(row.posts ?? []).length).map(row => row.user?.displayName));
+  check('a tile to draw on the first card', !!londonRows[0]?.posts?.[0]?.items?.[0]?.url, londonRows[0]?.posts?.[0]?.items?.[0]);
+  check('and somebody with a live story in it', londonRows.some(row => row.hasStory), londonRows.filter(row => row.hasStory).length);
+
+  r = await api(token, 'GET', '/connect/profiles?cityId=LONDON&type=FLATMATE&limit=30');
+  check('a type narrows London rather than emptying it', (r.body?.data ?? []).length > 0, (r.body?.data ?? []).length);
+
   r = await api(token, 'GET', '/messages');
   check('the inbox has threads', (r.body?.data ?? []).length > 0, r.body?.meta);
   check('with a non-zero unread total', (r.body?.meta?.unreadTotal ?? 0) > 0, r.body?.meta);

@@ -1,6 +1,5 @@
 import { DemoSeedContext, HOME_CITY, putMedia, userId } from './seed-demo';
-import { daysAgo, hoursAgo, seedId } from './ids';
-import { reportToken } from './community';
+import { daysAgo, hoursAgo, seedId, reportToken } from './ids';
 
 /** Connect, messaging and notifications (B.4). */
 
@@ -100,6 +99,47 @@ const CONNECT_PROFILES: Array<{
     dmPolicy: 'REQUEST_FIRST',
     accentColour: 'PLUM',
     posts: { photos: [2, 1] },
+  },
+  // The four full members who had no Connect profile at all. Every one of the ten is reachable
+  // from somewhere in the app, so a tap through to Connect that dead-ends on "not on Connect" is
+  // a hole a reviewer finds before a feature.
+  {
+    user: 3,
+    typeCode: 'LANGUAGE_EXCHANGE',
+    lookingFor: 'Portuguese and a bit of Spanish. Would like to practise English over coffee.',
+    dmPolicy: 'OPEN',
+    accentColour: 'TEAL',
+    posts: { photos: [2, 1] },
+    prompts: [
+      ['ASK_ME_ABOUT', 'Where to find proper bread in this city. It took me a year.'],
+      ['WEEKEND', 'The market first, then whoever is cooking.'],
+    ],
+  },
+  {
+    user: 4,
+    typeCode: 'NETWORKING',
+    lookingFor: 'Electrician, newly qualified here. Looking for others in the trades.',
+    dmPolicy: 'REQUEST_FIRST',
+    accentColour: 'SLATE',
+    posts: { photos: [1, 1] },
+  },
+  {
+    user: 5,
+    typeCode: 'STUDY_PARTNER',
+    lookingFor: 'Retraining as a teaching assistant and the evenings are long on my own.',
+    dmPolicy: 'REQUEST_FIRST',
+    posts: { photos: [2] },
+    hasStory: true,
+  },
+  {
+    user: 7,
+    typeCode: 'FRIENDSHIP',
+    lookingFor: 'Peckham. I run a shop, I am always here, and I would like to know more neighbours.',
+    dmPolicy: 'OPEN',
+    accentColour: 'AMBER',
+    posts: { photos: [2, 1] },
+    prompts: [['HELP_WITH', 'Finding anything West African south of the river. Ask me.']],
+    hasStory: true,
   },
 ];
 

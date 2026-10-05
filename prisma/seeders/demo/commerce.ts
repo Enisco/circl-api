@@ -1,7 +1,6 @@
 import { JobState } from '@prisma/client';
 import { DemoSeedContext, putMedia, userId } from './seed-demo';
-import { daysAhead, hoursAgo, seedId } from './ids';
-import { reportToken } from './community';
+import { daysAhead, hoursAgo, seedId, reportToken } from './ids';
 import {
   MAP_HEIGHT,
   MAP_WIDTH,

@@ -1,7 +1,7 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import { StorageProvider } from '../../../src/modules/platform/media/storage/storage.interface';
 import { avatarPng, bannerPng } from './imagery';
-import { daysAgo, daysAhead, hoursAgo, seedId } from './ids';
+import { daysAgo, daysAhead, hoursAgo, seedId, reportToken } from './ids';
 import { connectExtras, PEOPLE, SeedPerson } from './people';
 
 /** Everything the app shows before launch (Appendix B). */
@@ -216,7 +216,7 @@ const seedConnectExtras = async (ctx: DemoSeedContext) => {
         id,
         firstName: extra.firstName,
         lastName: extra.lastName,
-        username: extra.username,
+        username: `${extra.firstName}${extra.lastName}`.toLowerCase(),
         email: emailOf(extra.n),
         status: 'ACTIVE',
         createdAt: joined,
@@ -251,15 +251,111 @@ const seedConnectExtras = async (ctx: DemoSeedContext) => {
         id: seedId(`connect:${extra.n}`),
         userId: id,
         typeCode: extra.typeCode,
-        lookingFor: `New to Manchester and looking for ${extra.typeCode
-          .toLowerCase()
-          .replace(/_/g, ' ')}.`,
+        // Written per member rather than assembled from the type code: this is the line the card
+        // leads with, and eighteen variations on one sentence is a grid nobody can review.
+        lookingFor: extra.lookingFor,
         dmPolicy: 'REQUEST_FIRST',
         isVisible: true,
+        // A spread, so `lastActiveBucket` is not one value for everybody.
+        lastActiveAt: hoursAgo(extra.n % 5 === 0 ? 2 : 24 + (extra.n % 17) * 9),
         createdAt: joined,
       },
     });
+
+    await seedConnectMedia(ctx, extra);
   }
+};
+
+/**
+ * A gallery per member, because a discovery grid draws one tile per profile and every one of these
+ * had an empty one: the whole of what the Connect rebuild is for, invisible in the demo.
+ *
+ * One post each as the floor, a second for some, so the album shape appears outside the handful of
+ * full members. Deliberately modest — each photo is a real object written to storage on every seed
+ * run, and thirty-four members with five photos apiece is a slow boot for no extra review value.
+ */
+const seedConnectMedia = async (
+  ctx: DemoSeedContext,
+  extra: {
+    n: number;
+    posts: number[];
+    prompts?: Array<[string, string]>;
+    hasStory?: boolean;
+  },
+) => {
+  const profileId = seedId(`connect:${extra.n}`);
+  let photoIndex = 0;
+
+  for (const [postIndex, count] of extra.posts.entries()) {
+    const postId = seedId(`connect-post:${extra.n}:${postIndex}`);
+    const postedAt = daysAgo(20 - postIndex * 4);
+    const postData = {
+      profileId,
+      kind: 'PHOTO' as never,
+      caption: null,
+      position: postIndex,
+      reportToken: reportToken(`connect-post:${extra.n}:${postIndex}`),
+      postedAt,
+    };
+
+    await ctx.prisma.connectPost.upsert({
+      where: { id: postId },
+      update: postData,
+      create: { id: postId, ...postData },
+    });
+
+    for (let position = 0; position < count; position += 1) {
+      await putMedia(ctx, {
+        label: `connect:${extra.n}:${photoIndex}`,
+        uploadedById: userId(extra.n),
+        purpose: 'CONNECT',
+        kind: 'portrait',
+        ownerType: 'CONNECT_POST',
+        ownerId: postId,
+        position,
+        createdAt: postedAt,
+      });
+
+      photoIndex += 1;
+    }
+  }
+
+  for (const [position, [code, answer]] of (extra.prompts ?? []).entries()) {
+    await ctx.prisma.connectPromptAnswer.upsert({
+      where: { profileId_code: { profileId, code } },
+      update: { answer, position },
+      create: { profileId, code, answer, position },
+    });
+  }
+
+  if (!extra.hasStory) return;
+
+  const storyId = seedId(`connect-story:${extra.n}`);
+  const postedAt = hoursAgo(4);
+  const storyData = {
+    profileId,
+    userId: userId(extra.n),
+    reportToken: reportToken(`connect-story:${extra.n}`),
+    postedAt,
+    expiresAt: new Date(postedAt.getTime() + 24 * 60 * 60 * 1000),
+    deletedAt: null,
+  };
+
+  await ctx.prisma.connectStory.upsert({
+    where: { id: storyId },
+    update: storyData,
+    create: { id: storyId, ...storyData },
+  });
+
+  await putMedia(ctx, {
+    label: `connect-story:${extra.n}`,
+    uploadedById: userId(extra.n),
+    purpose: 'CONNECT',
+    kind: 'portrait',
+    ownerType: 'CONNECT_STORY',
+    ownerId: storyId,
+    createdAt: postedAt,
+  });
 };
 
 export const seedDemoPeople = async (ctx: DemoSeedContext) => {

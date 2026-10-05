@@ -14,6 +14,13 @@ export const seedId = (label: string): string => {
   ].join('-');
 };
 
+/**
+ * A stable report token for a seeded row. Here rather than in one of the section seeders because
+ * both sides of a module cycle need it, and a second copy of the formula would eventually drift.
+ */
+export const reportToken = (label: string): string =>
+  `rpt_${seedId(label).replace(/-/g, '').slice(0, 20)}`;
+
 /** Marks every row this seeder owns, so a reset can find them all. */
 export const SEED_TAG = 'circl-seed';
 

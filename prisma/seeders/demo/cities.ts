@@ -1,7 +1,6 @@
 import { PostVisibility } from '@prisma/client';
 import { DemoSeedContext, putMedia, userId } from './seed-demo';
-import { hoursAgo, seedId } from './ids';
-import { reportToken } from './community';
+import { hoursAgo, seedId, reportToken } from './ids';
 import { connectExtras, PEOPLE } from './people';
 
 /**

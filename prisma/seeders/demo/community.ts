@@ -1,10 +1,9 @@
 import { randomBytes } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { DemoSeedContext, HOME_CITY, putMedia, userId } from './seed-demo';
-import { daysAgo, hoursAgo, seedId } from './ids';
+import { daysAgo, hoursAgo, seedId, reportToken } from './ids';
 
 /** Section 1 content (B.4). */
-const reportToken = (label: string) => `rpt_${seedId(label).replace(/-/g, '').slice(0, 20)}`;
 
 interface SeedRequest {
   label: string;
@@ -816,4 +815,4 @@ export const seedCommunity = async (ctx: DemoSeedContext) => {
   };
 };
 
-export { REQUESTS, OFFERS, GUIDES, GROUPS, reportToken };
+export { REQUESTS, OFFERS, GUIDES, GROUPS };
