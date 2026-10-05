@@ -371,6 +371,30 @@ export class CreateConnectStoryDto {
   @IsString()
   @IsOptional()
   posterKey?: string;
+
+  @ApiPropertyOptional({
+    maxLength: 140,
+    description:
+      'One line, plain text, the same cap as a post caption — a photograph of a plate of food ' +
+      'says nothing until somebody says where it was. Absent and empty are the same thing.',
+  })
+  @Trim()
+  @IsString()
+  @MaxLength(140)
+  @IsOptional()
+  caption?: string;
+
+  @ApiPropertyOptional({
+    enum: ConnectPostKind,
+    deprecated: true,
+    description:
+      'Accepted and **ignored**: the type comes from the upload itself, so a client declaring it ' +
+      'cannot disagree with the bytes. Here because sending it used to be a 400 — after the ' +
+      'photo was already in the bucket, which is the worst order for that to happen in.',
+  })
+  @IsEnum(ConnectPostKind)
+  @IsOptional()
+  kind?: ConnectPostKind;
 }
 
 export class ListConnectionRequestsDto extends PageOptionsDto {

@@ -62,6 +62,8 @@ export interface ConnectPromptView {
 }
 
 export interface ConnectStoryItemView extends Omit<ConnectMediaItemView, 'position'> {
+  /** Null where nobody wrote one. Removed with the story, never separately. */
+  caption: string | null;
   postedAt: string;
   expiresAt: string;
   seen: boolean;
@@ -643,6 +645,8 @@ export class ConnectMediaService {
         // The story's id, not the media's: it is what `seen` and `DELETE` address, so handing
         // back the media id would give the client an id none of its own endpoints accept.
         id: story.id,
+        // Without the round trip a member cannot see their own words on their own story.
+        caption: story.caption,
         postedAt: story.postedAt.toISOString(),
         expiresAt: story.expiresAt.toISOString(),
         seen,
@@ -729,6 +733,7 @@ export class ConnectMediaService {
         data: {
           profileId,
           userId,
+          caption: dto.caption?.trim() || null,
           postedAt: now,
           expiresAt: new Date(now.getTime() + STORY_TTL_MS),
         },
@@ -748,6 +753,7 @@ export class ConnectMediaService {
       ...item,
       // Addressed by the story, as in the list: `seen` and `DELETE` take this id.
       id: story.id,
+      caption: story.caption,
       postedAt: story.postedAt.toISOString(),
       expiresAt: story.expiresAt.toISOString(),
       seen: false,

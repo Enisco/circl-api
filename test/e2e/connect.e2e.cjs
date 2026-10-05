@@ -463,9 +463,14 @@ const dobFor = years => {
   console.log('\n── 3.4 Stories: a day, then gone ──────────────────────────');
 
   const storyKey = await uploadPng(ada.token, 'CONNECT', 1080, 1920);
-  r = await api(ada.token, 'POST', '/connect/stories', { key: storyKey });
+  // `kind` is accepted and ignored: sending it used to be a 400, after the photo was already in
+  // the bucket, which is the worst order for a refusal to happen in.
+  r = await api(ada.token, 'POST', '/connect/stories', {
+    key: storyKey, kind: 'PHOTO', caption: 'Egusi at the place on the corner',
+  });
   check('a story is posted', r.status === 201 && !!r.body?.data?.id, { status: r.status, error: r.body?.error });
   const storyId = r.body?.data?.id;
+  check('with the line somebody wrote on it', r.body?.data?.caption === 'Egusi at the place on the corner', r.body?.data?.caption);
   check('with an expiry the server stamped, never the client', !!r.body?.data?.expiresAt, r.body?.data?.expiresAt);
   const ttl = new Date(r.body?.data?.expiresAt) - new Date(r.body?.data?.postedAt);
   check('a day from posting, which is what the viewer counts down against', Math.abs(ttl - 86400000) < 2000, ttl);
@@ -473,6 +478,17 @@ const dobFor = years => {
   r = await api(ada.token, 'GET', '/connect/stories');
   const mine = (r.body?.data ?? []).find(row => row.items.some(i => i.id === storyId));
   check('the caller\'s own row is in the list, for the "Your story" tile', !!mine, (r.body?.data ?? []).length);
+  // Without the round trip a member cannot see their own words on their own story.
+  check('and the caption comes back on the item', mine?.items?.find(i => i.id === storyId)?.caption === 'Egusi at the place on the corner', mine?.items?.map(i => i.caption));
+
+  const bareKey = await uploadPng(ada.token, 'CONNECT', 1080, 1920);
+  r = await api(ada.token, 'POST', '/connect/stories', { key: bareKey });
+  check('a story with no words is null rather than empty', r.body?.data?.caption === null, r.body?.data?.caption);
+  await api(ada.token, 'DELETE', `/connect/stories/${r.body?.data?.id}`);
+
+  const longKey = await uploadPng(ada.token, 'CONNECT', 1080, 1920);
+  r = await api(ada.token, 'POST', '/connect/stories', { key: longKey, caption: 'x'.repeat(141) });
+  check('past 140 characters is refused, being a client bug rather than a mistake', r.status === 400 || r.status === 422, { status: r.status });
   check('exactly one row per person, including them', (r.body?.data ?? []).length === new Set((r.body?.data ?? []).map(x => x.profileId)).size, (r.body?.data ?? []).map(x => x.profileId));
 
   r = await api(tunde.token, 'GET', '/connect/stories');

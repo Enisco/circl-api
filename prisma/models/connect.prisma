@@ -178,6 +178,11 @@ model ConnectStory {
   userId String @map("user_id")
   user   User   @relation("ConnectStoryAuthor", fields: [userId], references: [id], onDelete: Cascade)
 
+  /// 140 characters, plain text, the same as a post caption. A photograph of a plate of food says
+  /// nothing until somebody says where it was. Removed with the story: there is nothing separate
+  /// for a moderator to take down.
+  caption String? @map("caption")
+
   reportToken String @unique @default(uuid()) @map("report_token")
 
   postedAt  DateTime  @default(now()) @map("posted_at") @db.Timestamptz
