@@ -257,9 +257,25 @@ export class MetricsService {
       }),
     ]);
 
+    // The lines carry the name that was copied at send time, not the category. Without it the
+    // action row's route came out as `/commerce?category=` — a filter with nothing in it — and the
+    // client had no code to narrow the list with either.
+    const categoryOf = new Map(
+      (
+        await this.database.storeItem.findMany({
+          where: { name: { in: topItems.map(row => row.name) } },
+          select: { name: true, categoryCode: true },
+        })
+      ).map(item => [item.name, item.categoryCode]),
+    );
+
     return this.write('COMMERCE', cityId, period, since, {
       topProducts: this.floorBy(
-        topItems.map(row => ({ label: row.name, value: row._sum.quantity ?? 0 })),
+        topItems.map(row => ({
+          label: row.name,
+          code: categoryOf.get(row.name),
+          value: row._sum.quantity ?? 0,
+        })),
         CONTENT_FLOOR,
       ),
       mostSearched: this.floorBy(await this.namedSearches(searches), CONTENT_FLOOR),

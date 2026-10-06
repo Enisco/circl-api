@@ -253,6 +253,61 @@ const admin = await makeStaff('pladm', 'super_admin');
     above.actions.every(a => typeof a.route === 'string' && a.route.startsWith('/')), above.actions);
   check('still names nobody', !JSON.stringify(above).includes(fixtureUsers[0].id), 'a user id leaked');
 
+  console.log('\n── 6.2.1 an action row says what it is about ────────────────');
+
+  // The button opens the section's own search already searching the row's subject, so a row that
+  // names a subject the search cannot find sends the member to an empty screen. Followed here
+  // rather than assumed: both searches match on substrings, and the row's wording has to be words
+  // that something actually contains.
+  const sections = {
+    community: (row, city) =>
+      `/community/requests?q=${encodeURIComponent(row.subject)}&unanswered=true&cityId=${city}` +
+      (row.subjectCode ? `&categories=${row.subjectCode}` : ''),
+    professionals: (row, city) =>
+      `/professionals?q=${encodeURIComponent(row.subject)}&cityId=${city}` +
+      (row.subjectCode ? `&category=${row.subjectCode}` : ''),
+    commerce: (row, city) => `/commerce/items?q=${encodeURIComponent(row.subject)}&cityId=${city}`,
+  };
+
+  for (const [scope, searchFor] of Object.entries(sections)) {
+    for (const city of ['MANCHESTER', 'LONDON']) {
+      const dash = await api(fixtureUsers[0].token, 'GET', `/pulse/${scope}?cityId=${city}`);
+      const rows = dash.body?.data?.actions ?? [];
+
+      check(`${scope}/${city}: every action row carries a subject and a kind`,
+        rows.length > 0 && rows.every(a => typeof a.subject === 'string' && a.subject.length > 0
+          && (a.kind === 'BROWSE' || a.kind === 'CREATE')),
+        rows.map(a => ({ subject: a.subject, kind: a.kind })));
+
+      check(`${scope}/${city}: no subject is a raw code or a filter label`,
+        rows.every(a => !/^[A-Z_]+$/.test(a.subject) && !/[/&]/.test(a.subject)),
+        rows.map(a => a.subject));
+
+      const empty = [];
+
+      for (const row of rows) {
+        const hit = await api(fixtureUsers[0].token, 'GET', searchFor(row, city));
+
+        if (hit.status !== 200 || (hit.body?.data ?? []).length === 0) {
+          empty.push({ subject: row.subject, status: hit.status });
+        }
+      }
+
+      check(`${scope}/${city}: and each one leads to something`, empty.length === 0, empty);
+    }
+  }
+
+  // The filter the action row's count depends on: "4 unanswered" has to open four, not forty.
+  let answered = await api(fixtureUsers[0].token, 'GET', '/community/requests?cityId=MANCHESTER&limit=50');
+  const all = (answered.body?.data ?? []).length;
+  answered = await api(fixtureUsers[0].token, 'GET', '/community/requests?cityId=MANCHESTER&limit=50&unanswered=true');
+  const none = answered.body?.data ?? [];
+
+  check('unanswered=true returns only requests with no reply',
+    none.length > 0 && none.every(req => (req.replyCount ?? 0) === 0),
+    none.slice(0, 3).map(req => req.replyCount));
+  check('and it is a narrower set, not the same one', none.length < all, { all, unanswered: none.length });
+
   // Connect's floor is 20, so six contributors must NOT publish it. The six are put in Bristol,
   // which the dataset leaves empty on purpose, so this counts exactly them. Against Manchester it
   // was really asserting that nobody else was there, which held only while the city was thin.

@@ -119,6 +119,13 @@ export class RequestService {
       where.status = RequestStatus.OPEN;
     }
 
+    // Nobody has replied yet, which is what the Pulse action row counts. Read off the maintained
+    // column rather than counting responses per row, and left alone when absent so every existing
+    // caller sees exactly what it saw before.
+    if (query.unanswered) {
+      where.replyCount = 0;
+    }
+
     // City.
     if (query.nearYou) {
       if (viewerCityId) where.cityId = viewerCityId;

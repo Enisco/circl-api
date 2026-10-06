@@ -186,6 +186,13 @@ const seedMembers = async (ctx: DemoSeedContext) => {
  * so a city with two questions in each of six categories publishes nothing. Four per category is
  * the smallest shape that puts a bar on the screen with a little room above the floor.
  */
+/**
+ * One title per category carries the words the Pulse action row is about, and it is one of the
+ * UNANSWERED ones. The row's button opens the section's own search already searching its subject,
+ * and both searches here match on substrings — so a category with four questions in it and the
+ * category's own words in none of their titles sends the member to an empty screen. The same is
+ * true of the listing text further down.
+ */
 interface RequestSeed {
   cityId: PulseCity;
   categoryCode: string;
@@ -200,7 +207,7 @@ const REQUESTS: RequestSeed[] = [
     titles: [
       'Is a guarantor always needed if you can pay six months up front?',
       'Any landlords near Rusholme who take DSS?',
-      'Shared house in Fallowfield — is £520 a room reasonable?',
+      'Accommodation in Fallowfield — is £520 a room reasonable?',
       'Moving out before the tenancy ends, what happens to the deposit?',
     ],
   },
@@ -208,7 +215,7 @@ const REQUESTS: RequestSeed[] = [
     cityId: 'MANCHESTER', categoryCode: 'MOVING_HELP', answered: 1,
     titles: [
       'Two of us and a sofa, Withington to Chorlton, Saturday',
-      'Anyone with a van free on the 2nd? Paying fuel and lunch',
+      'Moving help on the 2nd — anyone with a van? Paying fuel and lunch',
       'Need one more pair of hands to shift a wardrobe upstairs',
       'Boxes going spare after a move? Happy to collect',
     ],
@@ -217,7 +224,7 @@ const REQUESTS: RequestSeed[] = [
     cityId: 'MANCHESTER', categoryCode: 'AIRPORT_PICKUP', answered: 1,
     titles: [
       'Landing at Terminal 1 at 6am and the tram is not running',
-      'Mum arrives Thursday with three cases and no English',
+      'Airport pickup Thursday — mum arrives with three cases and no English',
       'Sharing a taxi from the airport to Levenshulme?',
       'Is the 43 bus safe to take with luggage late at night?',
     ],
@@ -227,7 +234,7 @@ const REQUESTS: RequestSeed[] = [
     titles: [
       'BRP says my name is in the wrong order — does it matter?',
       'Share code expired before the landlord used it',
-      'Do I need my degree certificate translated and stamped?',
+      'Visa docs — does my degree certificate need translating and stamping?',
       'Graduate route application while waiting on results',
     ],
   },
@@ -235,7 +242,7 @@ const REQUESTS: RequestSeed[] = [
     cityId: 'MANCHESTER', categoryCode: 'CHILDCARE', answered: 1,
     titles: [
       'Childminders near Longsight with a space after school',
-      'How far ahead do nursery waiting lists actually go?',
+      'Childcare for a night shift — how far ahead do the lists go?',
       'Anyone else doing a school run from Moss Side to Hulme?',
       'Is the 15 free hours available before the term starts?',
     ],
@@ -245,17 +252,35 @@ const REQUESTS: RequestSeed[] = [
     titles: [
       'GP refused to register me without a tenancy agreement',
       'Dentist taking NHS patients anywhere in south Manchester?',
-      'How long is the wait for a maternity booking appointment?',
+      'NHS maternity booking — how long is the wait in Manchester?',
       'Prescription charges — is there help if you are a student?',
     ],
   },
 
   {
+    cityId: 'MANCHESTER', categoryCode: 'BANK_ACCOUNT', answered: 1,
+    titles: [
+      'Which banks here accept a university letter as proof of address?',
+      'Bank account before my BRP arrives — is that possible at all?',
+      'Opened a joint account and the second name was refused',
+      'Does a credit union count for a tenancy reference?',
+    ],
+  },
+  {
+    cityId: 'MANCHESTER', categoryCode: 'JOBS', answered: 1,
+    titles: [
+      'Warehouse shifts in Trafford Park that do not need a car',
+      'Jobs that will take a graduate route visa without asking twice',
+      'Is a trial shift supposed to be unpaid?',
+      'Reference from an employer abroad — does anyone accept one?',
+    ],
+  },
+  {
     cityId: 'LONDON', categoryCode: 'ACCOMMODATION', answered: 2,
     titles: [
       'Is it normal to pay a holding deposit before seeing the room?',
       'Agents in Peckham that do not want a UK guarantor',
-      'Council said I am not priority need — what now?',
+      'Temporary accommodation — the council said I am not priority need',
       'Sharing with three strangers, how do you split the bills?',
     ],
   },
@@ -263,7 +288,7 @@ const REQUESTS: RequestSeed[] = [
     cityId: 'LONDON', categoryCode: 'JOBS', answered: 1,
     titles: [
       'Care work with no UK experience — who actually hires?',
-      'Is an agency allowed to take a fee from my wages?',
+      'Jobs through an agency — are they allowed a fee from my wages?',
       'Right to work check before or after the interview?',
       'Weekend shifts near Croydon, anything going?',
     ],
@@ -272,7 +297,7 @@ const REQUESTS: RequestSeed[] = [
     cityId: 'LONDON', categoryCode: 'BANK_ACCOUNT', answered: 1,
     titles: [
       'Which bank opens an account on a share code alone?',
-      'Monzo asked for proof of address I do not have yet',
+      'Bank account with no proof of address — who actually opens one?',
       'Can I use my brother’s address until my tenancy starts?',
       'Sending money home — what is actually cheapest?',
     ],
@@ -281,7 +306,7 @@ const REQUESTS: RequestSeed[] = [
     cityId: 'LONDON', categoryCode: 'MOVING_HELP', answered: 1,
     titles: [
       'One van, north London, Saturday morning — splitting cost',
-      'Two people and a mattress, Walthamstow to Leyton',
+      'Moving help — two people and a mattress, Walthamstow to Leyton',
       'Anyone free to help carry a fridge up two flights?',
       'Storage for a month between tenancies, south of the river',
     ],
@@ -291,7 +316,7 @@ const REQUESTS: RequestSeed[] = [
     titles: [
       'Registering with a GP while living in temporary housing',
       'Where do you go for a walk-in appointment on a Sunday?',
-      'Interpreter at a hospital appointment — do you have to ask?',
+      'NHS interpreter at a hospital appointment — do you have to ask?',
       'Is the health surcharge refunded if the visa is refused?',
     ],
   },
@@ -299,7 +324,7 @@ const REQUESTS: RequestSeed[] = [
     cityId: 'LONDON', categoryCode: 'LANGUAGE_HELP', answered: 1,
     titles: [
       'Free ESOL classes with a creche anywhere in east London?',
-      'Who can certify a translation for the Home Office?',
+      'Language help — who can certify a translation for the Home Office?',
       'Practising spoken English with someone patient',
       'Letter from the council I cannot read — help?',
     ],
@@ -444,19 +469,19 @@ interface ListingSeed {
 }
 
 const LISTINGS: ListingSeed[] = [
-  { n: 200, cityId: 'MANCHESTER', professionTitle: 'Immigration Adviser', codes: ['IMMIGRATION', 'LEGAL'], about: 'Student and graduate route applications, and the paperwork around them.', priceFrom: 4500, responseMinutes: 90, years: 6 },
-  { n: 201, cityId: 'MANCHESTER', professionTitle: 'Immigration Caseworker', codes: ['IMMIGRATION', 'TRANSLATION'], about: 'Family visas and settlement. I will tell you plainly if you do not need me.', priceFrom: 4000, responseMinutes: 140, years: 4 },
-  { n: 202, cityId: 'MANCHESTER', professionTitle: 'Interpreter, Urdu and Punjabi', codes: ['TRANSLATION', 'IMMIGRATION'], about: 'Hospital and council appointments, in person or on the phone.', priceFrom: 3000, responseMinutes: 45, years: 8 },
-  { n: 203, cityId: 'MANCHESTER', professionTitle: 'CV and Interview Coach', codes: ['CAREERS_CV', 'TRANSLATION'], about: 'Two sessions, one on the CV and one on the questions you will be asked.', priceFrom: 2500, responseMinutes: 200, years: 3 },
-  { n: 204, cityId: 'MANCHESTER', professionTitle: 'Bookkeeper for Small Shops', codes: ['FINANCE_ACCOUNTING'], about: 'Self-assessment and the quarterly returns, for people trading from home.', priceFrom: 3500, responseMinutes: 260, years: 7 },
-  { n: 205, cityId: 'MANCHESTER', professionTitle: 'Handyman and Flat-pack', codes: ['TRADES_REPAIRS'], about: 'Shelves, beds, blinds, the jobs a new tenancy comes with.', priceFrom: 2000, responseMinutes: 70, years: 10 },
+  { n: 200, cityId: 'MANCHESTER', professionTitle: 'Immigration Adviser', codes: ['IMMIGRATION', 'LEGAL'], about: 'Immigration advice on student and graduate route applications, and the paperwork around them.', priceFrom: 4500, responseMinutes: 90, years: 6 },
+  { n: 201, cityId: 'MANCHESTER', professionTitle: 'Immigration Caseworker', codes: ['IMMIGRATION', 'TRANSLATION'], about: 'Immigration advice on family visas and settlement. I will tell you plainly if you do not need me.', priceFrom: 4000, responseMinutes: 140, years: 4 },
+  { n: 202, cityId: 'MANCHESTER', professionTitle: 'Interpreter, Urdu and Punjabi', codes: ['TRANSLATION', 'IMMIGRATION'], about: 'Translation and interpreting for hospital and council appointments, in person or on the phone.', priceFrom: 3000, responseMinutes: 45, years: 8 },
+  { n: 203, cityId: 'MANCHESTER', professionTitle: 'CV and Interview Coach', codes: ['CAREERS_CV', 'TRANSLATION'], about: 'Careers help in two sessions, one on the CV and one on the questions you will be asked.', priceFrom: 2500, responseMinutes: 200, years: 3 },
+  { n: 204, cityId: 'MANCHESTER', professionTitle: 'Bookkeeper for Small Shops', codes: ['FINANCE_ACCOUNTING'], about: 'Finance and bookkeeping for people trading from home: self-assessment and the quarterly returns.', priceFrom: 3500, responseMinutes: 260, years: 7 },
+  { n: 205, cityId: 'MANCHESTER', professionTitle: 'Handyman and Flat-pack', codes: ['TRADES_REPAIRS'], about: 'Trades and repairs around a new tenancy: shelves, beds, blinds.', priceFrom: 2000, responseMinutes: 70, years: 10 },
 
-  { n: 216, cityId: 'LONDON', professionTitle: 'Immigration Solicitor', codes: ['IMMIGRATION', 'LEGAL'], about: 'Appeals and refusals. Regulated, and Circl has not checked that — ask me for the number.', priceFrom: 6500, responseMinutes: 120, years: 11 },
-  { n: 217, cityId: 'LONDON', professionTitle: 'Immigration Adviser', codes: ['IMMIGRATION', 'TRANSLATION'], about: 'Visa extensions and dependants, evenings and weekends.', priceFrom: 5000, responseMinutes: 95, years: 5 },
-  { n: 218, cityId: 'LONDON', professionTitle: 'Housing Rights Adviser', codes: ['PROPERTY_LETTINGS', 'LEGAL'], about: 'Disrepair, deposits and eviction notices. I read the letter before you reply to it.', priceFrom: 4000, responseMinutes: 160, years: 9 },
-  { n: 219, cityId: 'LONDON', professionTitle: 'Translator, Tamil and Sinhala', codes: ['TRANSLATION'], about: 'Certified translations for the Home Office and for universities.', priceFrom: 3200, responseMinutes: 50, years: 6 },
-  { n: 220, cityId: 'LONDON', professionTitle: 'Careers Adviser, Care Sector', codes: ['CAREERS_CV', 'RECRUITMENT', 'TRANSLATION'], about: 'Applications for care and NHS bank work, including the checks.', priceFrom: 2800, responseMinutes: 230, years: 4 },
-  { n: 221, cityId: 'LONDON', professionTitle: 'Accountant for Sole Traders', codes: ['FINANCE_ACCOUNTING'], about: 'Registering, invoicing, and keeping enough back for the tax bill.', priceFrom: 4200, responseMinutes: 300, years: 12 },
+  { n: 216, cityId: 'LONDON', professionTitle: 'Immigration Solicitor', codes: ['IMMIGRATION', 'LEGAL'], about: 'Immigration advice on appeals and refusals, and the legal side of a decision. Regulated, and Circl has not checked that — ask me for the number.', priceFrom: 6500, responseMinutes: 120, years: 11 },
+  { n: 217, cityId: 'LONDON', professionTitle: 'Immigration Adviser', codes: ['IMMIGRATION', 'TRANSLATION'], about: 'Immigration advice on visa extensions and dependants, evenings and weekends.', priceFrom: 5000, responseMinutes: 95, years: 5 },
+  { n: 218, cityId: 'LONDON', professionTitle: 'Housing Rights Adviser', codes: ['PROPERTY_LETTINGS', 'LEGAL'], about: 'Property and lettings: disrepair, deposits and the legal notices that come with them. I read the letter before you reply to it.', priceFrom: 4000, responseMinutes: 160, years: 9 },
+  { n: 219, cityId: 'LONDON', professionTitle: 'Translator, Tamil and Sinhala', codes: ['TRANSLATION'], about: 'Translation certified for the Home Office and for universities.', priceFrom: 3200, responseMinutes: 50, years: 6 },
+  { n: 220, cityId: 'LONDON', professionTitle: 'Careers Adviser, Care Sector', codes: ['CAREERS_CV', 'RECRUITMENT', 'TRANSLATION'], about: 'Careers advice for care and NHS bank work, including the checks.', priceFrom: 2800, responseMinutes: 230, years: 4 },
+  { n: 221, cityId: 'LONDON', professionTitle: 'Accountant for Sole Traders', codes: ['FINANCE_ACCOUNTING'], about: 'Finance for sole traders: registering, invoicing, and keeping enough back for the tax bill.', priceFrom: 4200, responseMinutes: 300, years: 12 },
 ];
 
 const seedListings = async (ctx: DemoSeedContext) => {

@@ -32,8 +32,24 @@ interface ScopeShape {
     detail: string;
     actionLabel: string;
     route: string;
+    /** The words to put in the section's search box. */
+    subject: string;
+    /** The taxonomy code behind the row, where the row has one. */
+    subjectCode?: string;
+    /** `BROWSE` to go and look at this, `CREATE` to go and make it. */
+    kind: 'BROWSE' | 'CREATE';
   };
 }
+
+/**
+ * A label is a chip, not a query.
+ *
+ * "Visa / COS / Docs" and "Translation & Interpreting" are how a filter row reads, and neither is
+ * anything a member would type or that any title contains — searched verbatim they find nothing at
+ * all. The part before the first separator is the word the row is actually about, and it is what
+ * goes in the search box. The code travels beside it untouched, so filtering stays exact.
+ */
+const searchable = (label: string): string => (label.split(/[/&]/)[0] ?? label).trim();
 
 const SHAPES: Record<PulseScope, ScopeShape> = {
   community: {
@@ -51,6 +67,10 @@ const SHAPES: Record<PulseScope, ScopeShape> = {
       detail: 'Nobody has replied to these yet',
       actionLabel: 'Take a look',
       route: `/community?category=${item.code ?? ''}`,
+      subject: searchable(item.label),
+      subjectCode: item.code,
+      // Go and read them. There is something there; nobody has replied to it.
+      kind: 'BROWSE',
     }),
   },
   professionals: {
@@ -68,6 +88,9 @@ const SHAPES: Record<PulseScope, ScopeShape> = {
       detail: 'Listing this service puts you in front of them',
       actionLabel: 'See the demand',
       route: `/professionals?category=${item.code ?? ''}`,
+      subject: searchable(item.label),
+      subjectCode: item.code,
+      kind: 'BROWSE',
     }),
   },
   commerce: {
@@ -85,6 +108,11 @@ const SHAPES: Record<PulseScope, ScopeShape> = {
       detail: `${item.value} people looked at this`,
       actionLabel: 'Browse',
       route: `/commerce?category=${item.code ?? ''}`,
+      // The product's own name, which is a thing somebody listed and so a thing a search finds.
+      // No `searchable` here: this is not a label off a filter row.
+      subject: item.label,
+      subjectCode: item.code,
+      kind: 'BROWSE',
     }),
   },
   connect: {
@@ -98,6 +126,9 @@ const SHAPES: Record<PulseScope, ScopeShape> = {
       detail: 'Your profile is shown to people looking for this',
       actionLabel: 'See who',
       route: `/connect?type=${item.code ?? ''}`,
+      subject: searchable(item.label),
+      subjectCode: item.code,
+      kind: 'BROWSE',
     }),
   },
 };
@@ -154,7 +185,10 @@ export class PulseService {
           // If a count would be 1, suppress the row rather than sending it (D34).
           .filter(item => item.value > 1)
           .slice(0, 3)
-          .map(shape.action),
+          .map(shape.action)
+          // Absent rather than present and empty: a row whose subject has no code says so by not
+          // carrying the field, which is what the client reads it as.
+          .map(row => (row.subjectCode ? row : { ...row, subjectCode: undefined })),
         contributingMembers,
         updatedAt,
       },

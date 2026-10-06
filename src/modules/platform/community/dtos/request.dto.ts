@@ -192,6 +192,16 @@ export class ListRequestsDto extends PageOptionsDto {
   @IsOptional()
   q?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Only requests nobody has replied to yet. What the Pulse action row counts, so the row and ' +
+      'the screen it opens describe the same set.',
+  })
+  @ToBoolean()
+  @IsBoolean()
+  @IsOptional()
+  unanswered?: boolean;
+
   @ApiPropertyOptional({ enum: ['RECENT', 'MOST_HELPERS', 'NEEDED_SOONEST'], default: 'RECENT' })
   @IsIn(['RECENT', 'MOST_HELPERS', 'NEEDED_SOONEST'])
   @IsOptional()
