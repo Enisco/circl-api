@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { JobState, RequestStatus, TaxonomyKind } from '@prisma/client';
+import { ActivitySubject, JobState, RequestStatus, SearchScope, SearchTermSource, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { daysAgo, toJson } from '@/common';
 import { TaxonomyService } from '../../shared';
@@ -227,6 +227,11 @@ export class MetricsService {
         by: ['term'],
         where: {
           verb: 'SEARCH',
+          // "What people searched for" on the COMMERCE dashboard means the shop's search box, not
+          // every box on the platform. Scoped by verb alone this printed "bank account" and
+          // "immigration" as things people were shopping for. The second arm is the older rows,
+          // which carry the subject and no scope.
+          OR: [{ scope: SearchScope.PRODUCTS }, { subject: ActivitySubject.STORE_ITEM }],
           term: { not: null },
           occurredAt: { gte: since },
           ...(cityId ? { cityId } : {}),
@@ -257,10 +262,7 @@ export class MetricsService {
         topItems.map(row => ({ label: row.name, value: row._sum.quantity ?? 0 })),
         CONTENT_FLOOR,
       ),
-      mostSearched: this.floorBy(
-        searches.map(row => ({ term: row.term!, label: row.term!, value: row._count._all })),
-        CONTENT_FLOOR,
-      ),
+      mostSearched: this.floorBy(await this.namedSearches(searches), CONTENT_FLOOR),
       averagePrices: this.floorBy(
         prices.map(row => ({
           code: row.categoryCode,
@@ -410,6 +412,62 @@ export class MetricsService {
         return distinct(profiles);
       }
     }
+  }
+
+  /**
+   * Search terms under the name of the thing people were reaching for.
+   *
+   * The raw column holds what was typed, so this bar read "ko" and "ol" — the fragments that
+   * started the whole resolution problem, printed on a dashboard where nobody can tell what they
+   * mean. The dictionary already knows: "ko" is Kohl liner. Terms that fold onto the same answer
+   * are added together, as the published lists add them, and a fragment that resolved to nothing
+   * is dropped rather than shown as itself.
+   */
+  private async namedSearches(
+    rows: Array<{ term: string | null; _count: { _all: number } }>,
+  ): Promise<MetricItem[]> {
+    const normalise = (term: string) =>
+      term
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s]/gu, '')
+        .trim();
+
+    const known = await this.database.searchTermCanonical.findMany({
+      where: {
+        scope: SearchScope.PRODUCTS,
+        normalised: { in: rows.flatMap(row => (row.term ? [normalise(row.term)] : [])) },
+      },
+      select: { normalised: true, canonical: true, categoryCode: true, source: true },
+    });
+    const dictionary = new Map(known.map(row => [row.normalised, row]));
+    const folded = new Map<string, MetricItem>();
+
+    for (const row of rows) {
+      if (!row.term) continue;
+
+      const entry = dictionary.get(normalise(row.term));
+
+      if (entry?.source === SearchTermSource.JUNK) continue;
+
+      // Unresolved is not the same as junk: the dictionary is only built for the scopes the
+      // published lists record, and an older row may predate it. Those keep the typed form.
+      const label = entry?.canonical ?? row.term;
+      const seen = folded.get(label.toLowerCase());
+
+      if (seen) {
+        seen.value += row._count._all;
+        continue;
+      }
+
+      folded.set(label.toLowerCase(), {
+        term: row.term,
+        label,
+        code: entry?.categoryCode ?? undefined,
+        value: row._count._all,
+      });
+    }
+
+    return [...folded.values()].sort((a, b) => b.value - a.value);
   }
 
   /** Suppressed, never rounded: rounding 4 to "fewer than 10" still says 4 exist. */

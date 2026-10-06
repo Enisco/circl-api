@@ -253,8 +253,24 @@ const admin = await makeStaff('pladm', 'super_admin');
     above.actions.every(a => typeof a.route === 'string' && a.route.startsWith('/')), above.actions);
   check('still names nobody', !JSON.stringify(above).includes(fixtureUsers[0].id), 'a user id leaked');
 
-  // Connect's floor is 20, so six contributors must NOT publish it.
-  const connect = await api(fixtureUsers[0].token, 'GET', '/pulse/connect?cityId=Manchester');
+  // Connect's floor is 20, so six contributors must NOT publish it. The six are put in Bristol,
+  // which the dataset leaves empty on purpose, so this counts exactly them. Against Manchester it
+  // was really asserting that nobody else was there, which held only while the city was thin.
+  for (const [index, user] of fixtureUsers.entries()) {
+    await api(user.token, 'PUT', '/connect/me', {
+      typeCode: 'FRIENDSHIP',
+      lookingFor: `Pulse fixture ${index}: someone to show me around.`,
+      dateOfBirth: '1993-04-02',
+      isVisible: true,
+      cityIdOverride: 'BRISTOL',
+    });
+  }
+
+  await api(admin.token, 'POST', '/admin/jobs/intelligence.metrics/run');
+
+  const connect = await api(fixtureUsers[0].token, 'GET', '/pulse/connect?cityId=BRISTOL');
+  check('six contributors are counted',
+    connect.body?.data?.contributingMembers === 6, connect.body?.data?.contributingMembers);
   check('Connect holds the higher floor (D19)',
     connect.body.data.bars.length === 0 && connect.body.data.stats.length === 0,
     connect.body.data);

@@ -137,13 +137,17 @@ async function plantCode(userId, code) {
   check('the suppression thresholds ship with the payload', r.body?.data?.suppression?.peopleFloor === 20, r.body?.data?.suppression);
   check('so an empty list reads as "too few to publish"', /suppressed rather than rounded/.test(r.body?.data?.suppression?.note ?? ''), r.body?.data?.suppression?.note);
 
-  // D19 is the one to get right: a handful of people must never be published.
+  // D19 is the one to get right: a handful of people must never be published. Looked for in
+  // Bristol, which the dataset leaves empty on purpose, so the bucket under test really is one
+  // person. Asserted against Manchester it only ever passed while Manchester was thin, and it
+  // stopped meaning anything the moment the city had members.
   await api(helper.token, 'PUT', '/connect/me', {
     typeCode: 'FRIENDSHIP', lookingFor: 'Meeting people who have been through the same move.',
     dateOfBirth: '1994-03-11', isVisible: true, heritageTag: 'WEST_AFRICAN',
+    cityIdOverride: 'BRISTOL',
   });
   await metrics.rebuild('MONTH');
-  r = await api(helper.token, 'GET', '/pulse/raw/CONNECT?cityId=MANCHESTER');
+  r = await api(helper.token, 'GET', '/pulse/raw/CONNECT?cityId=BRISTOL');
   check('D19: a bucket of one person is SUPPRESSED, not rounded', (r.body?.data?.metrics?.trendingTypes?.length ?? 0) === 0, r.body?.data?.metrics?.trendingTypes);
   check('and heritage — the re-identifiable one — is suppressed too', (r.body?.data?.metrics?.demandByBackground?.length ?? 0) === 0, r.body?.data?.metrics?.demandByBackground);
 

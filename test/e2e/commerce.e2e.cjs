@@ -346,16 +346,21 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
   check('nor among the product rails', ![...(r.body?.data?.popularItems ?? []), ...(r.body?.data?.newItems ?? [])].some(i => i.storeId === storeId), r.body?.data?.popularItems?.map(i => i.name));
   check('but it is still their myStore, which is where it belongs', r.body?.data?.myStore?.id === storeId, r.body?.data?.myStore);
 
-  r = await api(buyer.token, 'GET', '/commerce/items?cityId=ANYWHERE&limit=50');
-  check('a buyer still sees every one of them', (r.body?.data ?? []).some(i => i.storeId === storeId), (r.body?.data ?? []).length);
-
   r = await api(seller.token, 'GET', `/commerce/stores/${storeId}/items`);
   check('and the seller still manages them from their own catalogue', (r.body?.data ?? []).length > 0, r.body?.meta);
 
+  // Searched by name rather than taken from the first page of everything: the catalogue is larger
+  // than one page now, so "it is in the first fifty" stopped being a question about visibility.
+  const own = r.body?.data?.[0]?.name;
+  r = await api(buyer.token, 'GET', `/commerce/items?cityId=ANYWHERE&limit=50&q=${encodeURIComponent(own)}`);
+  check('a buyer still sees every one of them', (r.body?.data ?? []).some(i => i.storeId === storeId), { q: own, got: (r.body?.data ?? []).length });
+
   console.log('\n── 4.4.3 The grid scrolls by cursor ─────────────────────────');
 
-  // Walked to the end with a small page size, which is what an infinite scroll does.
-  const walk = async (query, hops = 12) => {
+  // Walked to the end with a small page size, which is what an infinite scroll does. The hop
+  // allowance is read from the count rather than fixed, because a fixed twelve stopped reaching
+  // the end as soon as the dataset grew past sixty items — which looked like a broken cursor.
+  const walk = async (query, hops) => {
     const seen = [];
     let cursor = null;
 
@@ -374,7 +379,9 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
   const first = await api(buyer.token, 'GET', '/commerce/items?limit=5');
   check('the first page hands back a cursor', typeof first.body?.meta?.nextCursor === 'string', first.body?.meta);
 
-  const straight = await walk('sort=RECOMMENDED');
+  // One spare hop, so a walk that does not terminate fails on the cursor rather than on the budget.
+  const hops = Math.ceil((first.body?.meta?.totalCount ?? 0) / 5) + 1;
+  const straight = await walk('sort=RECOMMENDED', hops);
   check('the walk reaches the end', straight.cursor === null, { seen: straight.seen.length, cursor: straight.cursor });
   check('and never repeats an item', new Set(straight.seen).size === straight.seen.length, straight.seen.length - new Set(straight.seen).size);
   check('and sees every item exactly once', straight.seen.length === first.body?.meta?.totalCount, { walked: straight.seen.length, total: first.body?.meta?.totalCount });
@@ -393,7 +400,7 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
 
   await prisma.storeItem.update({ where: { id: soldOff }, data: { deletedAt: null } });
 
-  const byPrice = await walk('sort=PRICE_LOW');
+  const byPrice = await walk('sort=PRICE_LOW', hops);
   check('a price walk also reaches the end without repeating',
     byPrice.cursor === null && new Set(byPrice.seen).size === byPrice.seen.length, byPrice.seen.length);
 
@@ -621,17 +628,37 @@ const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURD
   r = await api(buyer.token, 'GET', `/commerce/enquiries/${enquiryId}`);
   check('the enquiry keeps its own contents', r.body?.data?.lines?.length === 2 && r.body.data.lines[0].name === 'Egusi (ground melon seed)', r.body?.data?.lines);
 
-  r = await api(seller.token, 'GET', `/commerce/stores/${storeId}/demand-hints`);
+  // The hint is CITY-WIDE: it answers "what are people here looking for that you do not stock",
+  // so a shop in a city with recorded demand sees it on its first day. That makes it untestable
+  // against a city the demo seeds, where the top three are always somebody else's terms — so this
+  // runs in Bristol, which the dataset deliberately leaves empty.
+  const quiet = await makeUser('quiet-seller', { cityId: 'BRISTOL' });
+  const quietBuyer = await makeUser('quiet-buyer', { cityId: 'BRISTOL' });
+  r = await api(quiet.token, 'POST', '/commerce/stores', {
+    name: 'Quiet Corner Shop', area: 'Bedminster', cityId: 'BRISTOL', openingHours: allDay(),
+  });
+  const quietStore = r.body?.data?.id;
+
+  r = await api(quiet.token, 'GET', `/commerce/stores/${quietStore}/demand-hints`);
   check('no fabricated demand with no data', r.status === 200 && r.body?.data?.length === 0, r.body?.data);
 
   // Four real searches for the same thing should surface as a hint.
   for (let i = 0; i < 4; i++) {
-    await api(buyer.token, 'GET', '/commerce/items?q=plantain&cityId=MANCHESTER');
+    await api(quietBuyer.token, 'GET', '/commerce/items?q=plantain&cityId=BRISTOL');
   }
   await new Promise(res => setTimeout(res, 600));
-  r = await api(seller.token, 'GET', `/commerce/stores/${storeId}/demand-hints`);
+  r = await api(quiet.token, 'GET', `/commerce/stores/${quietStore}/demand-hints`);
   check('real searches surface as a demand hint', r.body?.data?.some(h => h.term === 'plantain' && h.searches >= 3), r.body?.data);
-  check('hint names the city so it is checkable', r.body?.data?.[0]?.cityName === 'Manchester', r.body?.data?.[0]);
+  check('hint names the city so it is checkable', r.body?.data?.[0]?.cityName === 'Bristol', r.body?.data?.[0]);
+  check('and every hint it does show has real searches behind it',
+    (r.body?.data ?? []).every(h => h.searches >= 3), r.body?.data);
+
+  // Where the demo HAS recorded demand, a new shop sees the city's terms rather than nothing,
+  // which is the feature working and not a leak: the rows are counts of searches, never of people.
+  r = await api(seller.token, 'GET', `/commerce/stores/${storeId}/demand-hints`);
+  check('a shop in a busy city sees that city\'s demand, each row above the floor',
+    r.status === 200 && (r.body?.data ?? []).every(h => h.searches >= 3 && h.cityName === 'Manchester'),
+    r.body?.data);
 
   console.log('\n── 4.3 / 4.8.4 Home, my store, insights ─────────────────────');
 

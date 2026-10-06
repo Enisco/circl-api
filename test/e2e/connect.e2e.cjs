@@ -144,10 +144,15 @@ const dobFor = years => {
   const everyone = await counted('');
   const banded = await counted('&minAge=25&maxAge=34');
 
-  check('totalCount matches the page it came with, unfiltered',
-    everyone.total === everyone.rows, everyone);
-  check('and still matches once an age band is applied',
-    banded.total === banded.rows, banded);
+  // The promise is that the count and the grid describe ONE set, not that the set fits on a page:
+  // a full page beside a larger count is an honest "more below". Asserting equality only held
+  // while the dataset was smaller than a page, which stopped being true.
+  const consistent = page => page.rows === Math.min(page.total, 50);
+
+  check('totalCount describes the same set the page came from, unfiltered',
+    consistent(everyone), everyone);
+  check('and still does once an age band is applied',
+    consistent(banded), banded);
   check('which is a narrower set, not the same one', banded.total < everyone.total, {
     everyone: everyone.total, banded: banded.total });
   check('both ends of the band are inclusive',

@@ -100,20 +100,31 @@ export const seedAvailability = async (ctx: DemoSeedContext) => {
       days += 1;
     }
 
-    for (const offset of rule.blocks) {
-      const date = new Date(daysAhead(offset).toISOString().slice(0, 10));
+    // A day cannot be both blocked and booked: it is contradictory data, and the availability view
+    // reports BLOCKED first, so a block landing on a booked day hides the booking entirely and the
+    // dataset stops demonstrating a BOOKED slot at all. The two use different rules for picking
+    // dates — blocks count days ahead, bookings find the next weekday — so whether they collide
+    // depends on what day the seed is run, which is exactly the kind of bug that appears one
+    // morning having changed nothing.
+    const wanted = rule.blocks
+      .map(offset => daysAhead(offset).toISOString().slice(0, 10))
+      .filter(iso => !bookedDates.has(`${listingId}|${iso}`));
 
-      // A day cannot be both blocked and booked: it is contradictory data, and the availability
-      // view reports BLOCKED first, so a block landing on a booked day hides the booking entirely
-      // and the dataset stops demonstrating a BOOKED slot at all. The two use different rules for
-      // picking dates — blocks count days ahead, bookings find the next weekday — so whether they
-      // collide depends on what day the seed is run, which is exactly the kind of bug that appears
-      // one morning having changed nothing.
-      if (bookedDates.has(`${listingId}|${date.toISOString().slice(0, 10)}`)) continue;
+    // Skipping the collision was not enough on its own. The offsets move with the run date, so a
+    // block written on an earlier day sits on a date this run does not want — and on the morning
+    // the booked weekday came round to one of those, the stale block hid the booking and the
+    // dataset quietly stopped having a BOOKED slot in it. The declaration has to be authoritative,
+    // not additive.
+    await prisma.listingAvailabilityBlock.deleteMany({
+      where: { listingId, date: { notIn: wanted.map(iso => new Date(iso)) } },
+    });
+
+    for (const iso of wanted) {
+      const date = new Date(iso);
 
       await prisma.listingAvailabilityBlock.upsert({
         where: { listingId_date: { listingId, date } },
-        update: {},
+        update: { reason: 'Away' },
         create: { listingId, date, reason: 'Away' },
       });
     }

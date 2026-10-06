@@ -14,6 +14,7 @@ import { seedAvailability } from './availability';
 import { seedModeration } from './moderation';
 import { seedCityFeeds } from './cities';
 import { seedSearchDemand } from './search-demand';
+import { PULSE_MEMBER_IDS, seedPulse } from './pulse';
 import { connectExtras, PEOPLE } from './people';
 import { hoursAgo, seedId } from './ids';
 import { MetricsService } from '../../../src/modules/platform/intelligence/services/metrics.service';
@@ -191,6 +192,16 @@ export const seedDemo = async (prisma: PrismaClient) => {
       `(${feeds.emptyCity} left empty on purpose)`,
   );
 
+  // What the four Pulse dashboards need before they will print anything (6.2). Runs before the
+  // metrics rebuild below, because that is what reads these rows.
+  const pulse = await seedPulse(ctx);
+  console.info(
+    `  ✅ ${pulse.members} more members, ${pulse.requests} requests (${pulse.replies} answered), ` +
+      `${pulse.listings} listings with ${pulse.jobs} finished jobs, ` +
+      `${pulse.stores} shops with ${pulse.items} items in ${pulse.categories} categories, ` +
+      `${pulse.grouped} group memberships`,
+  );
+
   const moderation = await seedModeration(ctx);
   console.info(
     `  ✅ ${moderation.blocks} blocks, ${moderation.reports} reports, ${moderation.searches} searches behind the demand card`,
@@ -230,7 +241,11 @@ export const seedDemo = async (prisma: PrismaClient) => {
 export const resetDemo = async (prisma: PrismaClient) => {
   assertNotProduction();
 
-  const ids = [...PEOPLE.map(p => p.n), ...connectExtras().map(p => p.n)].map(userId);
+  const ids = [
+    ...PEOPLE.map(p => p.n),
+    ...connectExtras().map(p => p.n),
+    ...PULSE_MEMBER_IDS,
+  ].map(userId);
   const storage = storageFor();
 
   const media = await prisma.media.findMany({

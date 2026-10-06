@@ -50,12 +50,10 @@ interface SeedTerm {
  * must be one nothing here answers, or the demo shows a seller a gap we already fill. Each one
  * below was checked against what the other seeders write.
  *
- * Product searches are seeded in London and not in Manchester, which is the same decision the
- * moderation seeder already took and for the same reason: the Add Item composer's demand hint is
- * city-wide, so seeded product demand in Manchester lands on every shop there, including one an
- * end-to-end run just created. Manchester keeps the other four boxes, and nationwide carries the
- * union, so only the Manchester product list is left empty — which is a state worth seeing drawn
- * anyway.
+ * Both cities carry all five boxes. Seeded product demand in Manchester does land on the Add Item
+ * composer's hint for every shop in the city, including one an end-to-end run has just created —
+ * which is correct, because that hint is city-wide by design — so the suite that checks it was
+ * given a city of its own rather than this data being bent around it.
  */
 const DEMAND: Record<string, SeedTerm[]> = {
   MANCHESTER: [
@@ -65,6 +63,15 @@ const DEMAND: Record<string, SeedTerm[]> = {
     { scope: SearchScope.PROFESSIONALS, typed: 'handyman', members: 6, thisWeek: 15, lastWeek: 15, misses: 0 },
     // No listing answers it: the gap a professional joining could fill.
     { scope: SearchScope.PROFESSIONALS, typed: 'mortgage broker', members: 6, thisWeek: 17, lastWeek: 5, misses: 17 },
+    // Resolves against something we hold — "Puna yam, whole", with its category, so the row is tappable.
+    { scope: SearchScope.PRODUCTS, typed: 'puna yam', members: 7, thisWeek: 26, lastWeek: 10, misses: 0 },
+    { scope: SearchScope.PRODUCTS, typed: 'red palm', members: 6, thisWeek: 18, lastWeek: 13, misses: 0 },
+    // Nothing in any shop answers this, which is the whole point of the unmet list.
+    { scope: SearchScope.PRODUCTS, typed: 'ogbono soup', members: 6, thisWeek: 15, lastWeek: 11, misses: 15 },
+    // A two-letter fragment, the case the resolution stage exists for: it completes against a real
+    // item — "Kohl liner" — and publishes under that name with its category. Nothing worked this
+    // out; it is a prefix match on a column we already index.
+    { scope: SearchScope.PRODUCTS, typed: 'ko', members: 6, thisWeek: 11, lastWeek: 4, misses: 0 },
     { scope: SearchScope.GUIDES, typed: 'bank account', members: 11, thisWeek: 41, lastWeek: 26, misses: 0 },
     // Nobody has written this one, which is the gap the unmet list exists to show a writer. Chosen
     // after checking it against the seeded guides: "council tax" was the obvious term and a guide
@@ -125,6 +132,23 @@ const spread = (index: number, total: number, from: number, span: number): Date 
 
 export const seedSearchDemand = async (ctx: DemoSeedContext) => {
   const { prisma } = ctx;
+
+  // The row ids are derived from city, scope and term, so the same triple twice is the same id
+  // twice. Said here, where the term can be named, rather than as a unique-constraint error from
+  // inside a bulk insert that cannot say which one it was.
+  for (const [cityId, terms] of Object.entries(DEMAND)) {
+    const seen = new Set<string>();
+
+    for (const term of terms) {
+      const key = `${term.scope}:${term.typed}`;
+
+      if (seen.has(key)) {
+        throw new Error(`Search demand seed lists ${cityId} ${term.scope} "${term.typed}" twice.`);
+      }
+
+      seen.add(key);
+    }
+  }
 
   // Everything this seeder owns is cleared first, and then written back from the table above, so
   // the table is the whole truth about the demo's search history. An earlier version only withdrew
