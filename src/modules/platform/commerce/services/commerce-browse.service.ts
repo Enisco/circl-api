@@ -1,13 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  ActivityVerb,
-  ItemAvailability,
-  Prisma,
-  SearchScope,
-  StoreFulfilment,
-  StoreStatus,
-  TaxonomyKind,
-} from '@prisma/client';
+import { ActivitySubject, ActivityVerb, ItemAvailability, Prisma, SearchScope, StoreFulfilment, StoreStatus, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import {
   buildPageMeta,
@@ -553,6 +545,11 @@ export class CommerceBrowseService {
       by: ['term'],
       where: {
         verb: ActivityVerb.SEARCH,
+        // Searches of the shop and nowhere else. Scoped by verb alone, this counted every search
+        // box on the platform: once the published lists began recording them, this card started
+        // telling a grocer to stock "immigration" and "bank account". The second arm is the older
+        // rows, which carry the subject and no scope.
+        OR: [{ scope: SearchScope.PRODUCTS }, { subject: ActivitySubject.STORE_ITEM }],
         cityId: store.cityId,
         term: { not: null },
         occurredAt: { gte: daysAgo(30) },

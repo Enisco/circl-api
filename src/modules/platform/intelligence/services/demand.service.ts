@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ActivityVerb, Prisma, SuggestionSurface, TaxonomyKind } from '@prisma/client';
+import { ActivitySubject, ActivityVerb, Prisma, SearchScope, SuggestionSurface, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { daysAgo } from '@/common';
 import { TaxonomyService } from '../../shared';
@@ -160,6 +160,10 @@ export class DemandService {
       where: {
         occurredAt: { gte: windowStart },
         verb: ActivityVerb.SEARCH,
+        // This signal is written against the STORE_ITEM surface, so it may only count searches of
+        // the shop. Scoped by verb alone it swept in every other search box, which suggested
+        // somebody list a product for a term typed into Guides.
+        OR: [{ scope: SearchScope.PRODUCTS }, { subject: ActivitySubject.STORE_ITEM }],
         term: { not: null },
       },
       _count: { _all: true },

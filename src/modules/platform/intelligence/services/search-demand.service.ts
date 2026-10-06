@@ -125,7 +125,18 @@ export class SearchDemandService {
       }
     }
 
-    this.logger.log(`Search demand rebuilt: ${written} snapshots`);
+    // Anything this run did not rewrite is a list whose searches have all aged out of the window
+    // — a city that went quiet, or a filter nobody used since. Every snapshot written above
+    // carries this run's `weekStart`, so an older one is by definition stale, and a stale
+    // leaderboard presented as this week's is worse than an empty one.
+    const stale = await this.database.metricSnapshot.deleteMany({
+      where: { section: SECTION, windowStart: { lt: weekStart } },
+    });
+
+    this.logger.log(
+      `Search demand rebuilt: ${written} snapshots` +
+        (stale.count ? `, ${stale.count} stale removed` : ''),
+    );
 
     return written;
   }
@@ -198,10 +209,15 @@ export class SearchDemandService {
 
     for (const { normalised, scope } of pairs.values()) {
       const resolved =
-        this.fromTaxonomy(normalised, labels) ?? (await this.fromContent(normalised, scope));
+        this.fromTaxonomy(normalised, scope, labels) ?? (await this.fromContent(normalised, scope));
 
       const verdict = {
-        canonical: resolved?.canonical ?? normalised,
+        // As typed, but with the first letter raised: the normalised form is lowercase, and a list
+        // mixing "suya spice" with "Immigration Advice" reads like a bug. Sentence case is a
+        // display decision and not a claim about what the words mean, which is the line a guess
+        // would cross.
+        canonical:
+          resolved?.canonical ?? normalised.charAt(0).toUpperCase() + normalised.slice(1),
         categoryCode: resolved?.code ?? null,
         // Whole enough to stand on its own, or not worth showing anybody. A fragment is not a
         // word: showing one is worse than showing a shorter list.
@@ -220,28 +236,54 @@ export class SearchDemandService {
     }
   }
 
-  /** Every code list whose labels are words a member might type. */
-  private async taxonomyLabels(): Promise<Array<{ code: string; label: string }>> {
+  /**
+   * Which code lists each search box actually filters on, most specific first.
+   *
+   * Ordered per scope rather than searched as one flat list, because the published `code` is what
+   * a tap re-runs the search with. Read flat, "childcare" typed into Requests came back with the
+   * profession code, and tapping it would have filtered requests by a code that is not a community
+   * category at all. The last two are in every scope because heritage and language are filters on
+   * more than one box.
+   */
+  private static readonly KINDS_FOR: Record<SearchScope, TaxonomyKind[]> = {
+    [SearchScope.PRODUCTS]: [TaxonomyKind.ITEM_CATEGORY, TaxonomyKind.ITEM_UNIT],
+    [SearchScope.PROFESSIONALS]: [TaxonomyKind.PROFESSION],
+    [SearchScope.GUIDES]: [TaxonomyKind.GUIDE_TOPIC],
+    [SearchScope.REQUESTS]: [TaxonomyKind.COMMUNITY_CATEGORY],
+    [SearchScope.COMMUNITY]: [TaxonomyKind.COMMUNITY_CATEGORY, TaxonomyKind.INTEREST],
+  };
+
+  private static readonly SHARED_KINDS = [TaxonomyKind.HERITAGE_TAG, TaxonomyKind.LANGUAGE];
+
+  /** Every code list whose labels are words a member might type, kept apart by kind. */
+  private async taxonomyLabels(): Promise<Map<TaxonomyKind, Array<{ code: string; label: string }>>> {
     const kinds = [
-      TaxonomyKind.ITEM_CATEGORY,
-      TaxonomyKind.PROFESSION,
-      TaxonomyKind.COMMUNITY_CATEGORY,
-      TaxonomyKind.GUIDE_TOPIC,
-      TaxonomyKind.ITEM_UNIT,
-      TaxonomyKind.HERITAGE_TAG,
-      TaxonomyKind.LANGUAGE,
-      TaxonomyKind.INTEREST,
+      ...new Set([
+        ...Object.values(SearchDemandService.KINDS_FOR).flat(),
+        ...SearchDemandService.SHARED_KINDS,
+      ]),
     ];
     const lists = await Promise.all(kinds.map(kind => this.taxonomy.list(kind, false)));
 
-    return lists.flat().map(term => ({ code: term.code, label: term.label }));
+    return new Map(
+      kinds.map((kind, index) => [
+        kind,
+        lists[index].map(term => ({ code: term.code, label: term.label })),
+      ]),
+    );
   }
 
-  /** An exact or prefix match on a label we already serve, which costs one pass over a small list. */
+  /** An exact or prefix match on a label this box already filters by, one pass over a small list. */
   private fromTaxonomy(
     normalised: string,
-    labels: Array<{ code: string; label: string }>,
+    scope: SearchScope,
+    byKind: Map<TaxonomyKind, Array<{ code: string; label: string }>>,
   ): { canonical: string; code: string | null; source: SearchTermSource } | null {
+    const labels = [
+      ...SearchDemandService.KINDS_FOR[scope],
+      ...SearchDemandService.SHARED_KINDS,
+    ].flatMap(kind => byKind.get(kind) ?? []);
+
     const exact = labels.find(row => row.label.toLowerCase() === normalised);
 
     if (exact) {
@@ -289,10 +331,22 @@ export class SearchDemandService {
             SELECT title AS canonical, topic_code AS code FROM guides
             WHERE deleted_at IS NULL AND title ILIKE ${like}
             ORDER BY view_count DESC LIMIT 1`
-            : await this.database.$queryRaw<Array<{ canonical: string; code: string | null }>>`
+            : scope === SearchScope.REQUESTS
+              ? await this.database.$queryRaw<Array<{ canonical: string; code: string | null }>>`
             SELECT title AS canonical, category_code AS code FROM community_requests
             WHERE deleted_at IS NULL AND title ILIKE ${like}
-            ORDER BY created_at DESC LIMIT 1`;
+            ORDER BY created_at DESC LIMIT 1`
+              // Offers and groups, because those are what the Community box searches. It used to
+              // fall through to requests here, which answered a search of one surface with the
+              // name of something on another.
+              : await this.database.$queryRaw<Array<{ canonical: string; code: string | null }>>`
+            SELECT canonical, code FROM (
+              SELECT title AS canonical, category_code AS code, view_count AS rank
+                FROM community_offers WHERE deleted_at IS NULL AND title ILIKE ${like}
+              UNION ALL
+              SELECT name AS canonical, category_code AS code, member_count AS rank
+                FROM groups WHERE deleted_at IS NULL AND name ILIKE ${like}
+            ) matches ORDER BY rank DESC LIMIT 1`;
 
     const hit = rows[0];
 
@@ -375,10 +429,10 @@ export class SearchDemandService {
       .filter(row => row.members >= MEMBER_FLOOR);
 
     const top = [...items].sort((a, b) => b.searches - a.searches);
-    const unmet = items
-      .filter(row => row.misses > 0)
-      .sort((a, b) => b.misses - a.misses)
-      .map(row => ({ ...row, searches: row.misses }));
+    // `searches` stays the real total and `misses` is what this list is ranked by. The two used to
+    // be collapsed into one field here, which left a row in this list reporting a `searches` count
+    // that was not the number of searches.
+    const unmet = items.filter(row => row.misses > 0).sort((a, b) => b.misses - a.misses);
     const rising = items
       .map(row => {
         const before = priorFolded.get(row.term.toLowerCase())?.searches ?? 0;

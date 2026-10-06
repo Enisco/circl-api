@@ -6,12 +6,8 @@ import { PrismaService } from '@/infrastructure';
 import { DemandService } from '../services/demand.service';
 import { MetricPeriod, MetricSection, MetricsService } from '../services/metrics.service';
 import { PULSE_FLOORS, PulseScope, PulseService } from '../services/pulse.service';
-import {
-  SEARCH_DEPTHS,
-  SEARCH_FILTERS,
-  SearchDemandService,
-  SearchFilter,
-} from '../services/search-demand.service';
+import { SEARCH_DEPTHS, SearchDemandService } from '../services/search-demand.service';
+import { SearchDemandQueryDto } from '../dtos/search-demand.dto';
 import { CityService } from '../../shared';
 
 @ApiBearerAuth()
@@ -45,22 +41,14 @@ export class PulseController {
       'Each row carries the term and the `code` it resolved to, so tapping it can run the ' +
       'ordinary search with that filter rather than guessing at one.',
   })
-  @ApiQuery({ name: 'filter', required: false, enum: [...SEARCH_FILTERS] })
-  @ApiQuery({ name: 'cityId', required: false, description: 'Omit for nationwide.' })
-  @ApiQuery({ name: 'limit', required: false, enum: [...SEARCH_DEPTHS] })
-  async searchDemandList(
-    @Query('filter') filter?: string,
-    @Query('cityId') cityId?: string,
-    @Query('limit') limit?: string,
-  ) {
-    const chosen = (SEARCH_FILTERS as readonly string[]).includes(filter ?? 'ALL')
-      ? ((filter ?? 'ALL') as SearchFilter)
-      : 'ALL';
-    const depth = Number(limit ?? SEARCH_DEPTHS[0]);
+  async searchDemandList(@Query() query: SearchDemandQueryDto) {
+    if (query.cityId) await this.cities.assertValid(query.cityId);
 
-    if (cityId) await this.cities.assertValid(cityId);
-
-    const data = await this.searchDemand.published(chosen, cityId ?? null, depth);
+    const data = await this.searchDemand.published(
+      query.filter ?? 'ALL',
+      query.cityId ?? null,
+      query.limit ?? SEARCH_DEPTHS[0],
+    );
 
     return { data, message: SuccessMessage.RESOURCE_FETCHED('Search demand') };
   }

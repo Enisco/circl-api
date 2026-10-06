@@ -13,9 +13,11 @@ import { seedAccountSettings } from './account';
 import { seedAvailability } from './availability';
 import { seedModeration } from './moderation';
 import { seedCityFeeds } from './cities';
+import { seedSearchDemand } from './search-demand';
 import { connectExtras, PEOPLE } from './people';
 import { hoursAgo, seedId } from './ids';
 import { MetricsService } from '../../../src/modules/platform/intelligence/services/metrics.service';
+import { SearchDemandService } from '../../../src/modules/platform/intelligence/services/search-demand.service';
 import { TaxonomyService } from '../../../src/modules/platform/shared/services/taxonomy.service';
 
 /** The demo dataset (Appendix B). */
@@ -194,6 +196,15 @@ export const seedDemo = async (prisma: PrismaClient) => {
     `  ✅ ${moderation.blocks} blocks, ${moderation.reports} reports, ${moderation.searches} searches behind the demand card`,
   );
 
+  // The published search lists (6.3). Written as ordinary activity events and then rebuilt through
+  // the real job, so every floor and every resolution rule applies to the demo exactly as it will
+  // apply to the first real week.
+  const demand = await seedSearchDemand(ctx);
+  console.info(
+    `  ✅ ${demand.events} searches on ${demand.terms} terms across ${demand.cities} cities` +
+      (demand.withdrawn !== demand.events ? ` (${demand.withdrawn} withdrawn)` : ''),
+  );
+
   const notifications = await seedNotifications(ctx);
   console.info(`  ✅ ${notifications.notifications} notifications`);
 
@@ -202,7 +213,14 @@ export const seedDemo = async (prisma: PrismaClient) => {
 
   await metrics.rebuild('MONTH');
   await metrics.rebuild('WEEK');
-  console.info('  ✅ Pulse snapshots rebuilt');
+
+  const searchDemand = new SearchDemandService(
+    prisma as never,
+    new TaxonomyService(prisma as never),
+  );
+  const lists = await searchDemand.rebuild();
+
+  console.info(`  ✅ Pulse snapshots rebuilt (${lists} search-demand lists)`);
 
   console.info('');
   console.info(`  Sign in as ${emailOf(1)} with the code 1111 (any seed1..seed10@circl.test).`);
