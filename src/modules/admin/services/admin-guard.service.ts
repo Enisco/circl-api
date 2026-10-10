@@ -2,8 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { GuardThreadState, Prisma, RiskLevel, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiException, buildPageMeta } from '@/common';
-import { MediaService, TaxonomyService, authorSelect, toAuthorView } from '../../shared';
-import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
+import { MediaService, TaxonomyService, authorSelect, toAuthorView } from '@/modules/platform/shared';
+import { ConversationFactoryService } from '@/modules/platform/messaging';
 import { ListGuardCasesDto, UpdateGuardCaseDto } from '../dtos/admin.dto';
 
 const RISK_ORDER: RiskLevel[] = [

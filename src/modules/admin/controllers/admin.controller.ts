@@ -28,7 +28,7 @@ import {
   UpsertRiskTermDto,
   UpsertTaxonomyTermDto,
 } from '../dtos/admin.dto';
-import { PlatformJobsService } from '../../jobs/platform-jobs.service';
+import { AdminJobRunnerService } from '../jobs/admin-job-runner.service';
 import { AdminGuardService } from '../services/admin-guard.service';
 import { AdminModerationService } from '../services/admin-moderation.service';
 import { AdminTaxonomyService } from '../services/admin-taxonomy.service';
@@ -49,7 +49,7 @@ export class AdminController {
     private readonly moderation: AdminModerationService,
     private readonly guard: AdminGuardService,
     private readonly taxonomy: AdminTaxonomyService,
-    private readonly jobs: PlatformJobsService,
+    private readonly jobs: AdminJobRunnerService,
   ) {}
 
   // ─── Moderation queue ──────────────────────────────────────────────────────
@@ -294,7 +294,7 @@ export class AdminController {
       'to end. Runs synchronously and returns when the job has finished.',
   })
   async runJob(@Param('name') name: string) {
-    const ran = await this.jobs.runNow(name);
+    const ran = await this.jobs.run(name);
 
     return { data: { job: ran }, message: `Ran ${ran}` };
   }

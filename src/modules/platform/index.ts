@@ -2,7 +2,6 @@
 // pulls in every platform module, and `SearchModule` imports `UsersModule`, so going through here
 // closes the cycle and Nest boots with one of the two undefined.
 import { AccountModule } from './account/account.module';
-import { AdminModule } from './admin/admin.module';
 import { CommerceModule } from './commerce/commerce.module';
 import { DealsModule } from './deals/deals.module';
 import { PlatformJobsModule } from './jobs/jobs.module';
@@ -40,8 +39,34 @@ export const PLATFORM_MODULES = [
   ModerationModule,
   CirclGuardModule,
   AccountModule,
-  AdminModule,
   PlatformJobsModule,
+];
+
+/**
+ * The member modules the admin API needs in its own process.
+ *
+ * Declared, rather than left to whatever a dependency graph happens to drag in, because this list
+ * IS the cost of splitting the two services: each entry is a member capability the staff API uses,
+ * and a split would have to replace it with a call over the wire or a shared library. Four
+ * entries, each for a reason that can be said in a sentence:
+ *
+ *  - shared: media signing, the taxonomy, and the serialisers every response shape is built from.
+ *  - messaging: staff reply in Guard cases and support threads, which is the same thread the
+ *    member is reading, so it has to be the same service writing to it.
+ *  - media: signed URLs for the images attached to whatever is being moderated.
+ *  - notifications: telling a member their content was removed.
+ *
+ * Keep it short. Every addition is a thing the two services would have to agree about forever —
+ * and the one that is deliberately NOT here is the job runner. It schedules every product
+ * section's work, so importing it would pull most of the member API into the admin process and
+ * make `APP_SURFACE=admin` serve every member route. The admin API reaches it by name instead
+ * (`AdminJobRunnerService`), and §5.22 replaces even that with a queued run.
+ */
+export const ADMIN_SURFACE_DEPENDENCIES = [
+  PlatformSharedModule,
+  NotificationsModule,
+  MessagingCoreModule,
+  MediaModule,
 ];
 
 export * from './notifications';

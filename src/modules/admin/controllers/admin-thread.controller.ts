@@ -15,8 +15,11 @@ import { ThreadContextType } from '@prisma/client';
 import { AdminJwtGuard } from '@/common/guards/admin-jwt.guard';
 import { ApiErrorCode, ApiException, CurrentUser, RateLimit, SuccessMessage } from '@/common';
 import { PrismaService } from '@/infrastructure';
-import { MessageService } from '../../messaging/services/message.service';
-import { ListMessagesDto, SendMessageDto } from '../../messaging/dtos/message.dto';
+import {
+  ListMessagesDto,
+  MessageService,
+  SendMessageDto,
+} from '@/modules/platform/messaging';
 import { AdminBffGuard } from '../common/admin-bff.guard';
 import { AdminPermissionGuard } from '../common/admin-permission.guard';
 import { AdminPermissions, AdminPrincipal } from '../common/admin-principal';

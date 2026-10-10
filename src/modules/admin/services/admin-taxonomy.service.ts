@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { RiskCategory, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta, toJsonOrUndefined } from '@/common';
-import { TaxonomyService } from '../../shared';
+import { TaxonomyService } from '@/modules/platform/shared';
 import { ListRiskTermsDto, UpsertRiskTermDto, UpsertTaxonomyTermDto } from '../dtos/admin.dto';
 
 /** Taxonomy and lexicon administration. */

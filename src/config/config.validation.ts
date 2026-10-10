@@ -49,6 +49,9 @@ export const configValidationSchema = Joi.object({
   // Scheduled jobs run per process.
   DISABLE_SCHEDULED_JOBS: Joi.string().valid('true', 'false', '').optional(),
 
+  /// Which API this process serves. Unset means both, which is the single-process deployment.
+  APP_SURFACE: Joi.string().valid('all', 'member', 'admin', '').optional(),
+
   // ── Member auth ─────────────────────────────────────────────────────────────
   // Read on every request and never validated until now: an unset access secret makes
   // `secretOrKey` undefined, which passport accepts and then fails on in a way that looks like a

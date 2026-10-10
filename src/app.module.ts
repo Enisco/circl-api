@@ -7,7 +7,7 @@ import {
   IdempotencyInterceptor,
   RATE_LIMITS,
 } from '@/common';
-import { MODULES } from '@/modules';
+import { MODULES, appSurface } from '@/modules';
 import {
   CityCompatMiddleware,
   ReportCompatMiddleware,
@@ -66,6 +66,11 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer) {
+    // All three read headers or rewrite parameters that only the member clients send. An
+    // admin-only process serves none of those routes, so applying them there would be three
+    // middlewares running on every staff request to do nothing.
+    if (appSurface() === 'admin') return;
+
     consumer
       .apply(DeviceInfoMiddleware, CityCompatMiddleware, TaxonomyCompatMiddleware)
       .forRoutes('*');

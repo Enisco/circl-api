@@ -3,8 +3,7 @@ import { DiscoveryModule, RouterModule } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { NotificationModule } from '@/modules/infrastructure/notification/notification.module';
-import { MessagingCoreModule } from '../messaging/messaging.module';
-import { PlatformJobsModule } from '../jobs/jobs.module';
+import { MessagingCoreModule } from '@/modules/platform/messaging';
 import { AdminController } from './controllers/admin.controller';
 import { AdminAuthController } from './controllers/admin-auth.controller';
 import { AdminMeController } from './controllers/admin-me.controller';
@@ -31,6 +30,7 @@ import { AdminClientContextMiddleware } from './common/admin-context';
 import { AdminPermissionGuard } from './common/admin-permission.guard';
 import { AdminPolicyService } from './common/admin-policy.service';
 import { AdminRouteAuditService } from './common/admin-route-audit.service';
+import { AdminJobRunnerService } from './jobs/admin-job-runner.service';
 
 const CONTROLLERS = [
   AdminAuthController,
@@ -54,7 +54,6 @@ const CONTROLLERS = [
     JwtModule.register({}),
     NotificationModule,
     MessagingCoreModule,
-    PlatformJobsModule,
     RouterModule.register([{ path: 'api/v1', module: AdminModule, children: CONTROLLERS }]),
   ],
   controllers: CONTROLLERS,
@@ -64,6 +63,7 @@ const CONTROLLERS = [
     AdminJwtStrategy,
     AdminPermissionGuard,
     AdminRouteAuditService,
+    AdminJobRunnerService,
 
     // Authentication.
     AdminAuthService,
