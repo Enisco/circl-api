@@ -13,7 +13,10 @@ const BODY = { title: 'A request' };
 /** The interceptor hashes the body to tell a retry from a different request sent under one key. */
 const hashOf = (body: unknown) => createHash('sha256').update(JSON.stringify(body)).digest('hex');
 
-const contextFor = (body: unknown = BODY): ExecutionContext =>
+const contextFor = (
+  body: unknown = BODY,
+  options: { path?: string } = {},
+): ExecutionContext =>
   ({
     getHandler: () => () => undefined,
     getClass: () => class {},
@@ -22,8 +25,10 @@ const contextFor = (body: unknown = BODY): ExecutionContext =>
         headers: { 'idempotency-key': 'key-1' },
         user: { id: 'user-1' },
         method: 'POST',
-        route: { path: '/api/v1/community/requests' },
-        path: '/api/v1/community/requests',
+        // The pattern and the concrete path differ on any route with a parameter, which is the
+        // whole of B5: the interceptor must key on the second.
+        route: { path: '/api/v1/admin/members/:id/suspend' },
+        path: options.path ?? '/api/v1/community/requests',
         body,
       }),
       getResponse: () => ({ statusCode: 201 }),
@@ -60,11 +65,19 @@ describe('IdempotencyInterceptor', () => {
   const run = (
     idempotencyRecord: Record<string, unknown>,
     handler: () => Observable<unknown> = () => of(RESPONSE),
-    body?: unknown,
-  ) =>
-    new IdempotencyInterceptor(reflector, { idempotencyRecord } as unknown as PrismaService)
-      .intercept(contextFor(body), { handle: handler } as CallHandler)
+    bodyOrOptions?: unknown,
+  ) => {
+    const options =
+      bodyOrOptions && typeof bodyOrOptions === 'object' && 'path' in bodyOrOptions
+        ? (bodyOrOptions as { path: string })
+        : undefined;
+
+    return new IdempotencyInterceptor(reflector, { idempotencyRecord } as unknown as PrismaService)
+      .intercept(contextFor(options ? BODY : bodyOrOptions, options ?? {}), {
+        handle: handler,
+      } as CallHandler)
       .toPromise();
+  };
 
   const caught = async (promise: Promise<unknown>) => {
     try {
@@ -197,12 +210,34 @@ describe('IdempotencyInterceptor', () => {
     expect(JSON.stringify(error)).toContain(ApiErrorCode.IDEMPOTENT_REQUEST_IN_PROGRESS);
   });
 
-  it('treats the same key with a different body as the different request it is', async () => {
+  it('refuses a key that already succeeded for a different request', async () => {
+    const handler = jest.fn(() => of(RESPONSE));
+
+    const error = await run(
+      {
+        findUnique: () => Promise.resolve(record({ requestHash: 'A DIFFERENT BODY' })),
+        updateMany: () => Promise.resolve({ count: 1 }),
+        update: () => Promise.resolve(undefined),
+        create: jest.fn(),
+      },
+      handler,
+    ).catch((caught: unknown) => caught);
+
+    // Not a retry — a retry sends what it sent before. Running it would apply a second, different
+    // action under a key the caller believes covers one, and hand back the first one's receipt.
+    expect(JSON.stringify(error)).toContain(ApiErrorCode.IDEMPOTENCY_KEY_REUSED);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('but lets a different body take over a key whose window has passed', async () => {
     const handler = jest.fn(() => of(RESPONSE));
 
     await run(
       {
-        findUnique: () => Promise.resolve(record({ requestHash: 'A DIFFERENT BODY' })),
+        findUnique: () =>
+          Promise.resolve(
+            record({ requestHash: 'A DIFFERENT BODY', expiresAt: new Date(Date.now() - 1000) }),
+          ),
         updateMany: () => Promise.resolve({ count: 1 }),
         update: () => Promise.resolve(undefined),
         create: jest.fn(),
@@ -211,6 +246,32 @@ describe('IdempotencyInterceptor', () => {
     );
 
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('keys on the concrete path, so one key cannot answer for two resources', async () => {
+    const seen: string[] = [];
+    const handler = jest.fn(() => of(RESPONSE));
+
+    for (const path of ['/api/v1/admin/members/aaa/suspend', '/api/v1/admin/members/bbb/suspend']) {
+      await run(
+        {
+          findUnique: () => Promise.resolve(null),
+          create: (args: { data: { endpoint: string } }) => {
+            seen.push(args.data.endpoint);
+
+            return Promise.resolve(undefined);
+          },
+          update: () => Promise.resolve(undefined),
+        },
+        handler,
+        { path },
+      );
+    }
+
+    // Keyed on the route PATTERN these were one endpoint, so the second call replayed the first
+    // member's response and the second suspension silently never happened (B5).
+    expect(new Set(seen).size).toBe(2);
+    expect(handler).toHaveBeenCalledTimes(2);
   });
 
   it('holds the response until the answer is recorded', async () => {

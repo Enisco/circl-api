@@ -32,6 +32,8 @@ import { NOTIFICATION_QUEUE } from '@/common';
     FcmService,
   ],
   // FcmService is exported because messaging pushes directly (5.6): the socket decides per recipient whether a message needs a push, which is a decision only that path can make.
-  exports: [NotificationService, NotificationQueue, FcmService],
+  // `ResendProvider` is exported for the staff notices in the admin module: four plain operational
+  // emails to colleagues, which do not belong in the member event/template registry.
+  exports: [NotificationService, NotificationQueue, FcmService, ResendProvider],
 })
 export class NotificationModule {}

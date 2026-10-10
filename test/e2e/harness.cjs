@@ -83,9 +83,14 @@ async function makeUser(tag, profile = {}) {
 
   return {
     id: user.id,
-    token: jwt.sign({ sub: user.id, sid: user.sessions[0].id }, process.env.JWT_ACCESS_SECRET, {
-      expiresIn: '1h',
-    }),
+    // The same claims the app mints. `type` and the audience are both checked now: without them a
+    // refresh token or an admin token would be accepted as an access token, which is what the
+    // member strategy used to do (B12).
+    token: jwt.sign(
+      { sub: user.id, sid: user.sessions[0].id, type: 'access' },
+      process.env.JWT_ACCESS_SECRET,
+      { expiresIn: '1h', audience: 'circl-app' },
+    ),
   };
 }
 
@@ -111,6 +116,10 @@ async function sweep(label = 'sweep') {
     await prisma.group.deleteMany({ where: { createdById: { in: ids } } });
     await prisma.user.deleteMany({ where: { id: { in: ids } } });
   }
+
+  // Admin invites carry no foreign key to the user — deliberately, so an invite survives the
+  // account it refers to — which means nothing cascades them away.
+  await prisma.adminInvite.deleteMany({ where: { email: { startsWith: E2E_PREFIX } } });
 
   // Runs whether or not this sweep found users of its own, because a suite that deletes its own
   // members first leaves the orphans behind for somebody else to find. `guides.authorId` is
@@ -319,12 +328,112 @@ async function uploadStubVideo(token, purpose) {
   return slot.key;
 }
 
+/**
+ * A staff account with a real admin session and a real admin access token.
+ *
+ * Member authentication now refuses `isStaff` rows, so the old trick — mint a member token for a
+ * staff user — stops working, and it should: that was the hole (B1). This signs a genuine admin
+ * token with the admin secret and the admin claims, so the suites exercise the real guard stack
+ * and the real strategy. There is no test-only bypass in application code.
+ */
+async function makeAdmin(tag, roleCode = 'super_admin') {
+  const role = await prisma.role.findUniqueOrThrow({ where: { code: roleCode } });
+  const stamp = Date.now() + Math.floor(Math.random() * 1000);
+  const user = await prisma.user.create({
+    data: {
+      firstName: 'E2E',
+      lastName: tag,
+      email: `${E2E_PREFIX}${tag}-${stamp}@example.test`,
+      username: `e2e_${tag}_${stamp}`,
+      status: 'ACTIVE',
+      isStaff: true,
+      userRole: { create: { roleId: role.id } },
+      adminCredential: {
+        create: {
+          // Not a usable password: these suites do not sign in through the password step, and a
+          // hash that verifies against a known string would be a credential sitting in a test file.
+          passwordHash: '$argon2id$v=19$m=19456,p=1,t=2$dGVzdC1vbmx5LW5vdC1hLWhhc2g$' + 'x'.repeat(43),
+          passwordUpdatedAt: new Date(),
+          totpEnabledAt: new Date(),
+        },
+      },
+    },
+  });
+
+  const session = await prisma.adminSession.create({
+    data: {
+      userId: user.id,
+      ip: '127.0.0.1',
+      userAgent: 'e2e',
+      absoluteExpiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000),
+    },
+  });
+
+  const token = jwt.sign(
+    { sub: user.id, sid: session.id, typ: 'admin_access', role: roleCode },
+    process.env.ADMIN_JWT_ACCESS_SECRET,
+    { expiresIn: '1h', issuer: 'circl-api', audience: 'circl-admin', algorithm: 'HS256' },
+  );
+
+  return { id: user.id, email: user.email, sessionId: session.id, token, role: roleCode };
+}
+
+/**
+ * Clears the throttler's tally.
+ *
+ * The admin limits are deliberately tight — five sign-ins in fifteen minutes — so a suite that
+ * exercises the sign-in flow several times trips them, which is the limit working. The suite
+ * asserts that it works once, on purpose, and then clears the counter rather than pretending the
+ * limit is looser than it is.
+ */
+async function clearRateLimits() {
+  const Redis = require('ioredis');
+  const redis = new Redis(process.env.REDIS_URL);
+
+  try {
+    // Both keys. Exceeding a limit sets a separate `:blocked` key holding the block duration, so
+    // clearing only `:hits` leaves the refusal in place and the next call still gets a 429 —
+    // which is exactly how this helper quietly did nothing the first time.
+    const keys = [...(await redis.keys('{*}:hits')), ...(await redis.keys('{*}:blocked'))];
+
+    if (keys.length) await redis.del(...keys);
+  } finally {
+    await redis.quit();
+  }
+}
+
+/** Drops a Redis key, for suites that need to simulate a short TTL having passed. */
+async function forgetCacheKeys(pattern) {
+  const Redis = require('ioredis');
+  const redis = new Redis(process.env.REDIS_URL);
+
+  try {
+    const keys = await redis.keys(pattern);
+
+    if (keys.length) await redis.del(...keys);
+
+    return keys.length;
+  } finally {
+    await redis.quit();
+  }
+}
+
+/** The headers an admin request needs: the bearer token, and the trusted-client credential. */
+const adminHeaders = admin => ({
+  Authorization: `Bearer ${admin.token}`,
+  ...(process.env.ADMIN_BFF_SECRET ? { 'X-Circl-Admin-Client': process.env.ADMIN_BFF_SECRET } : {}),
+});
+
 module.exports = {
+  adminHeaders,
   api,
+  clearRateLimits,
+  forgetCacheKeys,
   check,
   dobFor,
   fail,
   finish,
+  makeAdmin,
   makeUser,
   prisma,
   realPng,

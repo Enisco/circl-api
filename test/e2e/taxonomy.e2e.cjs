@@ -3,40 +3,22 @@
  * The client used to compile these lists in, send display labels where codes belonged, and pick a
  * feed filter by its position in a hardcoded row. Every check here is about the same thing: a chip
  * the app shows is a code some endpoint accepts, and nothing here is declared and then left empty. */
-const { api, check, finish, makeUser, prisma, sweep } = require('./harness.cjs');
+const {
+  adminHeaders,
+  api,
+  check,
+  finish,
+  makeAdmin,
+  makeUser,
+  prisma,
+  sweep,
+} = require('./harness.cjs');
 const jwt = require('jsonwebtoken');
 
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:4000/api/v1';
 
 const codes = list => (list ?? []).map(term => term.code);
 
-/** A staff account that may edit the vocabulary, which is what the admin portal will be. */
-async function makeAdmin(tag) {
-  const role = await prisma.role.findUniqueOrThrow({ where: { code: 'super_admin' } });
-  const stamp = Date.now() + Math.floor(Math.random() * 1000);
-  const user = await prisma.user.create({
-    data: {
-      firstName: 'E2E', lastName: tag, email: `e2e-${tag}-${stamp}@example.test`,
-      username: `e2e_${tag}_${stamp}`, status: 'ACTIVE', isStaff: true,
-      userRole: { create: { roleId: role.id } },
-      profile: { create: { cityId: 'MANCHESTER' } },
-      sessions: {
-        create: {
-          userAgent: 'e2e', deviceType: 'cli', browserName: 'cli', operatingSystem: 'cli',
-          ipAddress: '127.0.0.1', isActive: true, deviceFingerprint: `e2e-${tag}-${stamp}`,
-        },
-      },
-    },
-    include: { sessions: true },
-  });
-
-  return {
-    id: user.id,
-    token: jwt.sign({ sub: user.id, sid: user.sessions[0].id }, process.env.JWT_ACCESS_SECRET, {
-      expiresIn: '1h',
-    }),
-  };
-}
 
 (async () => {
   await sweep('taxonomy');
@@ -151,9 +133,9 @@ async function makeAdmin(tag) {
   const admin = await makeAdmin('taxadm');
   const term = (tax.itemCategories ?? []).find(t => t.isActive);
 
-  r = await api(admin.token, 'POST', '/admin/taxonomy', {
+  r = await api(null, 'POST', '/admin/taxonomy', {
     kind: 'ITEM_CATEGORY', code: term.code, label: 'Renamed for a moment', sort: term.sort,
-  });
+  }, adminHeaders(admin));
   check('an admin can reword a label', r.status === 200, r.body?.error);
 
   r = await api(member.token, 'GET', '/taxonomy');
@@ -168,7 +150,7 @@ async function makeAdmin(tag) {
   check('while a second read of the same catalogue does not move it',
     r.body?.data?.version === after?.version, r.body?.data?.version);
 
-  r = await api(admin.token, 'DELETE', `/admin/taxonomy/ITEM_CATEGORY/${term.code}`);
+  r = await api(null, 'DELETE', `/admin/taxonomy/ITEM_CATEGORY/${term.code}`, null, adminHeaders(admin));
   check('retiring a term → 200', r.status === 200, r.body?.error);
 
   r = await api(member.token, 'GET', '/taxonomy');
@@ -179,9 +161,9 @@ async function makeAdmin(tag) {
     retiredNow?.label === 'Renamed for a moment', retiredNow?.label);
 
   // Put it back the way it was.
-  await api(admin.token, 'POST', '/admin/taxonomy', {
+  await api(null, 'POST', '/admin/taxonomy', {
     kind: 'ITEM_CATEGORY', code: term.code, label: term.label, sort: term.sort, isActive: true,
-  });
+  }, adminHeaders(admin));
 
   r = await api(member.token, 'GET', '/taxonomy');
   const restored = (r.body?.data?.itemCategories ?? []).find(t => t.code === term.code);
@@ -207,7 +189,7 @@ async function makeAdmin(tag) {
   r = await api(holder.token, 'PATCH', '/users/profile', { interests: [doomed.code, 'TRAVEL'] });
   check('a member picks an interest while it is offered', r.status === 200, r.body?.error);
 
-  r = await api(admin.token, 'DELETE', `/admin/taxonomy/INTEREST/${doomed.code}`);
+  r = await api(null, 'DELETE', `/admin/taxonomy/INTEREST/${doomed.code}`, null, adminHeaders(admin));
   check('staff retire it', r.status === 200, r.body?.error);
 
   r = await api(holder.token, 'GET', '/taxonomy');
@@ -239,9 +221,9 @@ async function makeAdmin(tag) {
   check('which reads differently from a code that never existed',
     r.status === 422 && /is not a valid interest/.test(r.body?.error?.message ?? ''), r.body?.error?.message);
 
-  await api(admin.token, 'POST', '/admin/taxonomy', {
+  await api(null, 'POST', '/admin/taxonomy', {
     kind: 'INTEREST', code: doomed.code, label: doomed.label, sort: doomed.sort, isActive: true,
-  });
+  }, adminHeaders(admin));
 
   await sweep('taxonomy');
   await finish();

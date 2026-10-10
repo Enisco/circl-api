@@ -1,7 +1,7 @@
 import * as bcrypt from 'bcryptjs';
 import { ulid } from 'ulid';
 import { v4 as uuidv4 } from 'uuid';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 
 export class Util {
   static generateHash = async (plainText: string): Promise<string> => {
@@ -12,6 +12,25 @@ export class Util {
 
   static validateHash = async (plainText: string, hash: string): Promise<boolean> => {
     return bcrypt.compare(plainText, hash);
+  };
+
+  /**
+   * SHA-256 hex, for secrets that are already random.
+   *
+   * Not interchangeable with `generateHash`: bcrypt is for things a person chose, where slowness
+   * is the point. For a token the server generated, slowness buys nothing — and bcrypt actively
+   * breaks it, because bcrypt reads only the first 72 bytes. Two refresh JWTs for the same session
+   * share a header and the start of their payload, so they agreed on those 72 bytes and an old
+   * token kept validating after rotation had supposedly replaced it (B3).
+   */
+  static tokenHash = (token: string): string =>
+    createHash('sha256').update(token, 'utf8').digest('hex');
+
+  /** Compares two hex digests without leaking, through timing, how much of one was right. */
+  static hashesMatch = (a: string | null | undefined, b: string | null | undefined): boolean => {
+    if (!a || !b || a.length !== b.length) return false;
+
+    return timingSafeEqual(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
   };
 
   static randomBytes = (len = 16) => {

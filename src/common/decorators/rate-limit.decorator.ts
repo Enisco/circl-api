@@ -16,6 +16,23 @@ export const RATE_LIMITS = {
   MESSAGE_HOUR: { limit: 300, ttl: 3_600_000 },
   /** Anything that sends a six-digit code to an inbox. 5 an hour. */
   OTP: { limit: 5, ttl: 3_600_000 },
+
+  // ─── Admin portal (§3.3) ───────────────────────────────────────────────────
+  // Tighter than anything a member meets, because what is behind these is every member's data.
+  /** Staff sign-in. 5 in 15 minutes; the account lock behind it does the rest. */
+  ADMIN_LOGIN: { limit: 5, ttl: 900_000 },
+  /** The second factor. Looser than the password step, which has already been passed. */
+  ADMIN_MFA: { limit: 10, ttl: 900_000 },
+  /** Refresh. One session should need four an hour; sixty leaves room for a retry storm. */
+  ADMIN_REFRESH: { limit: 60, ttl: 60_000 },
+  /** Invite inspection: an unauthenticated endpoint that takes a token. */
+  ADMIN_INVITE_INSPECT: { limit: 20, ttl: 3_600_000 },
+  /** Invite acceptance and enrolment. */
+  ADMIN_SETUP: { limit: 10, ttl: 3_600_000 },
+  /** Re-authentication on own-account changes. */
+  ADMIN_REAUTH: { limit: 5, ttl: 900_000 },
+  /** Admin writes. */
+  ADMIN_WRITE: { limit: 120, ttl: 60_000 },
 } as const;
 
 type LimitName = keyof typeof RATE_LIMITS;

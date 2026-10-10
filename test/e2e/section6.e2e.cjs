@@ -5,27 +5,18 @@
  * from four people and must never name anybody, and a member's support thread
  * must stay one thread however many times they reach for it. */
 const jwt = require('jsonwebtoken');
-const { api, check, finish, makeUser, prisma, sweep } = require('./harness.cjs');
+const {
+  adminHeaders,
+  api,
+  check,
+  finish,
+  makeAdmin,
+  makeUser,
+  prisma,
+  sweep,
+} = require('./harness.cjs');
 
 /** A staff account holding exactly one role's permissions. */
-async function makeStaff(tag, roleCode) {
-  const role = await prisma.role.findUniqueOrThrow({ where: { code: roleCode } });
-  const stamp = Date.now() + Math.floor(Math.random() * 1000);
-  const user = await prisma.user.create({
-    data: {
-      firstName: 'E2E', lastName: tag, email: `e2e-${tag}-${stamp}@example.test`,
-      username: `e2e_${tag}_${stamp}`, status: 'ACTIVE', isStaff: true,
-      userRole: { create: { roleId: role.id } },
-      profile: { create: { cityId: 'MANCHESTER' } },
-      sessions: { create: { userAgent: 'e2e', deviceType: 'cli', browserName: 'cli',
-        operatingSystem: 'cli', ipAddress: '127.0.0.1', isActive: true,
-        deviceFingerprint: `e2e-${tag}-${stamp}` } },
-    },
-    include: { sessions: true },
-  });
-  return { id: user.id, token: jwt.sign({ sub: user.id, sid: user.sessions[0].id },
-    process.env.JWT_ACCESS_SECRET, { expiresIn: '1h' }) };
-}
 
 (async () => {
   await sweep();
@@ -210,7 +201,7 @@ async function makeStaff(tag, roleCode) {
   check('an unresolvable city falls back rather than erroring', r.status === 200, r.status);
 
   console.log('\n── 6.2.1 above the floor ────────────────────────────────────');
-const admin = await makeStaff('pladm', 'super_admin');
+const admin = await makeAdmin('pladm', 'super_admin');
   const fixtureCats = ['ACCOMMODATION', 'JOBS', 'VISA_DOCS', 'BANK_ACCOUNT'];
   const fixtureUsers = [];
 
@@ -226,13 +217,16 @@ const admin = await makeStaff('pladm', 'super_admin');
     }
   }
 
-  const ran = await api(admin.token, 'POST', '/admin/jobs/intelligence.metrics/run');
+  const ran = await api(null, 'POST', '/admin/jobs/intelligence.metrics/run', null, adminHeaders(admin));
   check('an admin can run a job on demand', ran.status === 200, { s: ran.status, b: ran.body });
 
   const denied = await api(fixtureUsers[0].token, 'POST', '/admin/jobs/intelligence.metrics/run');
-  check('a member cannot', denied.status === 403, denied.status);
+  // 401, not 403. A member token is not an admin token, so it fails authentication rather than
+  // authorisation — it used to be accepted here and then merely checked for a permission, which is
+  // how a member account holding a staff role reached every admin route (B1).
+  check('a member cannot', denied.status === 401, denied.status);
 
-  const bad = await api(admin.token, 'POST', '/admin/jobs/not.a.job/run');
+  const bad = await api(null, 'POST', '/admin/jobs/not.a.job/run', null, adminHeaders(admin));
   check('an unknown job name → 404', bad.status === 404, bad.status);
 
   r = await api(fixtureUsers[0].token, 'GET', '/pulse/community?cityId=Manchester');
@@ -321,7 +315,7 @@ const admin = await makeStaff('pladm', 'super_admin');
     });
   }
 
-  await api(admin.token, 'POST', '/admin/jobs/intelligence.metrics/run');
+  await api(null, 'POST', '/admin/jobs/intelligence.metrics/run', null, adminHeaders(admin));
 
   const connect = await api(fixtureUsers[0].token, 'GET', '/pulse/connect?cityId=BRISTOL');
   check('six contributors are counted',

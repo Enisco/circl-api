@@ -1,39 +1,26 @@
 /* Circl Guard and the admin endpoints. */
-const { api, check, fail, finish, makeUser, prisma, sweep, uploadPng } = require('./harness.cjs');
+const {
+  adminHeaders,
+  api,
+  check,
+  fail,
+  finish,
+  makeAdmin,
+  makeUser,
+  prisma,
+  sweep,
+  uploadPng,
+} = require('./harness.cjs');
 const jwt = require('jsonwebtoken');
 
 /** Creates a staff account holding exactly one role's permissions. */
-async function makeStaff(tag, roleCode) {
-  const role = await prisma.role.findUniqueOrThrow({ where: { code: roleCode } });
-  const stamp = Date.now() + Math.floor(Math.random() * 1000);
-  const user = await prisma.user.create({
-    data: {
-      firstName: 'E2E', lastName: tag, email: `e2e-${tag}-${stamp}@example.test`,
-      username: `e2e_${tag}_${stamp}`, status: 'ACTIVE', isStaff: true,
-      userRole: { create: { roleId: role.id } },
-      profile: { create: { cityId: 'MANCHESTER' } },
-      sessions: {
-        create: {
-          userAgent: 'e2e', deviceType: 'cli', browserName: 'cli', operatingSystem: 'cli',
-          ipAddress: '127.0.0.1', isActive: true, deviceFingerprint: `e2e-${tag}-${stamp}`,
-        },
-      },
-    },
-    include: { sessions: true },
-  });
-
-  return {
-    id: user.id,
-    token: jwt.sign({ sub: user.id, sid: user.sessions[0].id }, process.env.JWT_ACCESS_SECRET, { expiresIn: '1h' }),
-  };
-}
 
 (async () => {
   await sweep('pre-run');
 
   const member = await makeUser('member');
-  const moderator = await makeStaff('mod', 'moderator');
-  const safeguarding = await makeStaff('safe', 'safeguarding');
+  const moderator = await makeAdmin('mod', 'trust_safety');
+  const safeguarding = await makeAdmin('safe', 'trust_safety');
 
   console.log('\n── 1.9 Private to Circl ─────────────────────────────────────');
 
@@ -92,13 +79,20 @@ async function makeStaff(tag, roleCode) {
   console.log('\n── Admin: the Guard queue ───────────────────────────────────');
 
   r = await api(member.token, 'GET', '/admin/guard/cases');
-  check('a member cannot read the Guard queue → 403', r.status === 403, r.status);
+  // 401, not 403: a member token is not an admin token at all, so it never reaches authorisation.
+  check('a member cannot read the Guard queue', r.status === 401, r.status);
 
-  r = await api(moderator.token, 'GET', '/admin/guard/cases');
-  check('a MODERATOR cannot read it either — different job, different permission', r.status === 403, r.status);
+  // The separation moved rather than disappeared. `moderator` and `safeguarding` are now one role
+  // — trust & safety, who do both jobs — so the line that matters is the one between them and
+  // everybody else with admin access: support holds no `guard:read` and never sees a disclosure.
+  const supportStaff = await makeAdmin('guardsupport', 'support');
 
-  r = await api(safeguarding.token, 'GET', '/admin/guard/cases');
-  check('safeguarding staff can → 200', r.status === 200, r.body?.error);
+  r = await api(null, 'GET', '/admin/guard/cases', null, adminHeaders(supportStaff));
+  check('support staff cannot read the Guard queue — a disclosure is not their job',
+    r.status === 403 && r.body?.data?.requires?.includes('guard:read'), r.body);
+
+  r = await api(null, 'GET', '/admin/guard/cases', null, adminHeaders(safeguarding));
+  check('trust & safety can → 200', r.status === 200, r.body?.error);
   check('both of this run\'s cases are listed',
     [guardThreadId, quietThreadId].every(id => r.body?.data?.some(c => c.id === id)),
     r.body?.data?.length);
@@ -107,9 +101,9 @@ async function makeStaff(tag, roleCode) {
   check('meta.urgentCount surfaces the number that should never sit', r.body?.meta?.urgentCount >= 1, r.body?.meta);
   check('the reviewer sees the matched phrases', r.body?.data?.[0]?.risk?.signals?.length >= 2, r.body?.data?.[0]?.risk);
 
-  r = await api(safeguarding.token, 'PATCH', `/admin/guard/cases/${guardThreadId}`, {
+  r = await api(null, 'PATCH', `/admin/guard/cases/${guardThreadId}`, {
     state: 'IN_PROGRESS', assignedToId: safeguarding.id,
-  });
+  }, adminHeaders(safeguarding));
   check('assign → 200', r.status === 200 && r.body?.data?.state === 'IN_PROGRESS', r.body?.error);
 
   const participants = await prisma.conversationParticipant.findMany({
@@ -117,10 +111,27 @@ async function makeStaff(tag, roleCode) {
   });
   check('assigning joins the staff member to the thread', participants.some(p => p.userId === safeguarding.id), participants.map(p => p.userId));
 
+  // Through the admin endpoint, not the member one. Staff cannot sign in to the app any more —
+  // that was the hole — so the reply has its own route, which records who read and who answered.
   r = await api(safeguarding.token, 'POST', `/messages/${guardConversationId}/messages`, {
-    clientId: 'staff-1', body: 'I have read this. Let me find you somewhere safe to stay tonight.',
+    clientId: 'staff-1', body: 'Replying with a member token should not work.',
   });
-  check('assigned staff can reply in the thread', r.status === 201, r.body?.error);
+  check('staff cannot reply through the member app', r.status === 401, r.status);
+
+  r = await api(null, 'POST', `/admin/guard/cases/${guardThreadId}/messages`, {
+    clientId: 'staff-1', body: 'I have read this. Let me find you somewhere safe to stay tonight.',
+  }, adminHeaders(safeguarding));
+  check('assigned staff can reply through the admin endpoint', r.status === 201, r.body?.error);
+
+  r = await api(member.token, 'GET', `/messages/${guardConversationId}/messages`);
+  check('and the member sees it in the thread they already had open',
+    (r.body?.data ?? []).some(m => /somewhere safe/.test(m.body ?? '')), r.body?.data?.length);
+
+  r = await api(null, 'GET', `/admin/guard/cases/${guardThreadId}/messages`, null, adminHeaders(supportStaff));
+  check('support cannot read the case thread either', r.status === 403, r.status);
+
+  r = await api(null, 'GET', `/admin/guard/cases/${guardThreadId}/messages`, null, adminHeaders(safeguarding));
+  check('trust & safety can read it', r.status === 200, r.body?.error);
 
   console.log('\n── Admin: anonymous posts are still moderated ───────────────');
 
@@ -132,25 +143,25 @@ async function makeStaff(tag, roleCode) {
   check('anonymous post created', r.status === 201, r.body?.error);
 
   await new Promise(res => setTimeout(res, 600));
-  r = await api(moderator.token, 'GET', '/admin/moderation/queue?type=ANONYMOUS_POST');
+  r = await api(null, 'GET', '/admin/moderation/queue?type=ANONYMOUS_POST', null, adminHeaders(moderator));
   check('it lands in the approval queue even though nobody reported it', r.body?.data?.some(i => i.targetId === anonUpdateId), r.body?.data?.length);
   const anonQueueId = r.body?.data?.find(i => i.targetId === anonUpdateId)?.id;
   check('the row carries the content, so no second screen is needed', !!r.body?.data?.find(i => i.id === anonQueueId)?.content?.content, r.body?.data?.[0]?.content);
 
-  r = await api(moderator.token, 'POST', `/admin/moderation/queue/${anonQueueId}/claim`);
+  r = await api(null, 'POST', `/admin/moderation/queue/${anonQueueId}/claim`, null, adminHeaders(moderator));
   check('claim → 200', r.status === 200, r.body?.error);
-  r = await api(safeguarding.token, 'POST', `/admin/moderation/queue/${anonQueueId}/claim`);
+  r = await api(null, 'POST', `/admin/moderation/queue/${anonQueueId}/claim`, null, adminHeaders(safeguarding));
   check('a second claimer → 409, so two people do not work one item', r.status === 409, r.body?.error);
 
-  r = await api(moderator.token, 'POST', `/admin/moderation/queue/${anonQueueId}/decide`, {
+  r = await api(null, 'POST', `/admin/moderation/queue/${anonQueueId}/decide`, {
     decision: 'APPROVE', reason: 'Nothing wrong with it.',
-  });
+  }, adminHeaders(moderator));
   check('approve → 200 RESOLVED', r.status === 200 && r.body?.data?.state === 'RESOLVED', r.body?.error);
 
-  r = await api(moderator.token, 'POST', `/admin/moderation/queue/${anonQueueId}/decide`, { decision: 'APPROVE' });
+  r = await api(null, 'POST', `/admin/moderation/queue/${anonQueueId}/decide`, { decision: 'APPROVE' }, adminHeaders(moderator));
   check('deciding twice → 409', r.status === 409, r.body?.error);
 
-  r = await api(moderator.token, 'GET', `/admin/moderation/actions/UPDATE/${anonUpdateId}`);
+  r = await api(null, 'GET', `/admin/moderation/actions/UPDATE/${anonUpdateId}`, null, adminHeaders(moderator));
   check('the decision is on an append-only audit trail', r.body?.data?.length === 1 && r.body.data[0].decision === 'APPROVE', r.body?.data);
   check('and names who made it', r.body?.data?.[0]?.actor?.id === moderator.id, r.body?.data?.[0]?.actor);
 
@@ -166,14 +177,14 @@ async function makeStaff(tag, roleCode) {
   // Past the default page of 20, because the queue is ordered oldest-first and a long-lived
   // database accumulates: on a developer machine this suite was failing not because the report
   // never landed but because it landed on page three.
-  r = await api(moderator.token, 'GET', '/admin/moderation/queue?type=REPORTED_CONTENT&limit=50');
+  r = await api(null, 'GET', '/admin/moderation/queue?type=REPORTED_CONTENT&limit=50', null, adminHeaders(moderator));
   const spamQueueId = r.body?.data?.find(i => i.targetId === spamId)?.id;
   check('a report lands in the queue', !!spamQueueId,
     { returned: r.body?.data?.length, total: r.body?.meta?.totalCount });
 
-  r = await api(moderator.token, 'POST', `/admin/moderation/queue/${spamQueueId}/decide`, {
+  r = await api(null, 'POST', `/admin/moderation/queue/${spamQueueId}/decide`, {
     decision: 'REMOVE_CONTENT', reason: 'Advertising.',
-  });
+  }, adminHeaders(moderator));
   check('remove → 200', r.status === 200, r.body?.error);
   r = await api(quiet.token, 'GET', `/community/updates/${spamId}`);
   check('the post now tombstones for readers', r.status === 404 && r.body?.error?.code === 'RESOURCE_DELETED', r.body?.error);
@@ -214,14 +225,14 @@ async function makeStaff(tag, roleCode) {
   });
   check('a reported item names the member who sells it, read through the shop', itemReport?.targetUserId === seller.id, itemReport);
 
-  r = await api(moderator.token, 'GET', '/admin/moderation/queue?type=REPORTED_CONTENT&limit=50');
+  r = await api(null, 'GET', '/admin/moderation/queue?type=REPORTED_CONTENT&limit=50', null, adminHeaders(moderator));
   const itemQueue = r.body?.data?.find(i => i.targetId === guardItem);
   // Which is what SUSPEND_AUTHOR acts on: a shop id here would have been nobody to suspend.
   check('and the queue row carries the same member, so there is somebody to act against', itemQueue?.subject?.id === seller.id, { subject: itemQueue?.subject });
 
-  r = await api(moderator.token, 'POST', `/admin/moderation/queue/${itemQueue?.id}/decide`, {
+  r = await api(null, 'POST', `/admin/moderation/queue/${itemQueue?.id}/decide`, {
     decision: 'REMOVE_CONTENT', reason: 'Advertising.',
-  });
+  }, adminHeaders(moderator));
   check('removing it → 200', r.status === 200, r.body?.error);
 
   r = await api(quiet.token, 'GET', `/commerce/stores/${guardStore}/items`);
@@ -248,13 +259,13 @@ async function makeStaff(tag, roleCode) {
   });
   await new Promise(res => setTimeout(res, 400));
 
-  r = await api(moderator.token, 'GET', '/admin/moderation/queue?type=REPORTED_CONTENT&limit=50');
+  r = await api(null, 'GET', '/admin/moderation/queue?type=REPORTED_CONTENT&limit=50', null, adminHeaders(moderator));
   const photoQueue = r.body?.data?.find(i => i.targetId === guardPhotos[0]);
   check('a reported photo reaches the queue against its uploader', !!photoQueue, { found: !!photoQueue });
 
-  r = await api(moderator.token, 'POST', `/admin/moderation/queue/${photoQueue?.id}/decide`, {
+  r = await api(null, 'POST', `/admin/moderation/queue/${photoQueue?.id}/decide`, {
     decision: 'REMOVE_CONTENT', reason: 'Not appropriate here.',
-  });
+  }, adminHeaders(moderator));
   check('taking it down → 200', r.status === 200, r.body?.error);
 
   r = await api(seller.token, 'GET', '/connect/me');
@@ -268,26 +279,29 @@ async function makeStaff(tag, roleCode) {
   });
   await new Promise(res => setTimeout(res, 400));
 
-  r = await api(moderator.token, 'GET', '/admin/moderation/queue?type=REPORTED_CONTENT&limit=50');
+  r = await api(null, 'GET', '/admin/moderation/queue?type=REPORTED_CONTENT&limit=50', null, adminHeaders(moderator));
   const lastQueue = r.body?.data?.find(i => i.targetId === guardPhotos[1]);
 
-  await api(moderator.token, 'POST', `/admin/moderation/queue/${lastQueue?.id}/decide`, {
+  await api(null, 'POST', `/admin/moderation/queue/${lastQueue?.id}/decide`, {
     decision: 'REMOVE_CONTENT', reason: 'Not appropriate here.',
-  });
+  }, adminHeaders(moderator));
 
   r = await api(seller.token, 'GET', '/connect/me');
   check('taking the last one takes the post, because an empty post is not a post', !(r.body?.data?.profile?.posts ?? []).some(post => post.id === guardPost), (r.body?.data?.profile?.posts ?? []).map(p => p.id));
 
   console.log('\n── Admin: suspending a member ───────────────────────────────');
 
-  r = await api(moderator.token, 'PATCH', `/admin/users/${member.id}/status`, { status: 'SUSPENDED' });
-  check('a moderator lacks users:manage → 403', r.status === 403, r.status);
+  r = await api(null, 'PATCH', `/admin/users/${member.id}/status`, { status: 'SUSPENDED' }, adminHeaders(supportStaff));
+  check('support cannot suspend — they escalate instead, which leaves a different trail',
+    r.status === 403 && r.body?.data?.requires?.includes('members:suspend'), r.body);
 
-  const superAdmin = await makeStaff('root', 'super_admin');
-  r = await api(superAdmin.token, 'PATCH', `/admin/users/${member.id}/status`, {
+  const superAdmin = await makeAdmin('root', 'super_admin');
+  r = await api(null, 'PATCH', `/admin/users/${member.id}/status`, {
     status: 'SUSPENDED', reason: 'Repeated advertising.',
-  });
-  check('manage:all short-circuits every permission → 200', r.status === 200, r.body?.error);
+  }, adminHeaders(superAdmin));
+  // Granted explicitly rather than by a wildcard: `manage:all` used to short-circuit every check
+  // and has been deleted, so a super admin holds each permission by name.
+  check('a super admin holds members:suspend by name → 200', r.status === 200, r.body?.error);
 
   const sessions = await prisma.userSession.findMany({ where: { userId: member.id } });
   check('every session revoked immediately', sessions.every(s => !s.isActive && s.revokedAt !== null), sessions.map(s => s.isActive));
@@ -334,9 +348,9 @@ async function makeStaff(tag, roleCode) {
 
   console.log('\n── Admin: the Guard lexicon is editable ─────────────────────');
 
-  r = await api(safeguarding.token, 'POST', '/admin/guard/risk-terms', {
+  r = await api(null, 'POST', '/admin/guard/risk-terms', {
     category: 'SCAM', pattern: 'e2e-brand-new-scam-phrase', weight: 70,
-  });
+  }, adminHeaders(safeguarding));
   check('safeguarding staff can add a phrase → 200', r.status === 200, r.body?.error);
   const newTermId = r.body?.data?.id;
 
@@ -344,13 +358,16 @@ async function makeStaff(tag, roleCode) {
   const stored = await prisma.riskTerm.findUnique({ where: { id: newTermId } });
   check('stored lowercase and active', stored?.pattern === 'e2e-brand-new-scam-phrase' && stored?.isActive === true, stored);
 
-  r = await api(moderator.token, 'POST', '/admin/guard/risk-terms', { category: 'SCAM', pattern: 'nope' });
-  check('a moderator cannot edit the lexicon → 403', r.status === 403, r.status);
+  // Trust & safety own the lexicon now — tuning it is the same job as working the queue it feeds.
+  // Support do not: a false positive is a safety decision, not a support one.
+  r = await api(null, 'POST', '/admin/guard/risk-terms', { category: 'SCAM', pattern: 'nope' }, adminHeaders(supportStaff));
+  check('support cannot edit the lexicon',
+    r.status === 403 && r.body?.data?.requires?.includes('risk_terms:manage'), r.body);
 
-  r = await api(safeguarding.token, 'POST', '/admin/guard/risk-terms', { category: 'NOT_A_CATEGORY', pattern: 'x' });
+  r = await api(null, 'POST', '/admin/guard/risk-terms', { category: 'NOT_A_CATEGORY', pattern: 'x' }, adminHeaders(safeguarding));
   check('an unknown risk category → 422', r.status === 422, r.body?.error);
 
-  r = await api(safeguarding.token, 'DELETE', `/admin/guard/risk-terms/${newTermId}`);
+  r = await api(null, 'DELETE', `/admin/guard/risk-terms/${newTermId}`, null, adminHeaders(safeguarding));
   check('turning one off → 200, deactivated not deleted', r.status === 200 && r.body?.data?.isActive === false, r.body?.error);
 
   console.log('\n── Cleanup ──────────────────────────────────────────────────');

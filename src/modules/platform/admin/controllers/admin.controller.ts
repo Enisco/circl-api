@@ -11,15 +11,13 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiExcludeController, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ReportTargetType, TaxonomyKind } from '@prisma/client';
-import {
-  CurrentUserId,
-  JwtAuthGuard,
-  PermissionGuard,
-  Permissions,
-  SuccessMessage,
-} from '@/common';
+import { CurrentUserId, SuccessMessage } from '@/common';
+import { AdminJwtGuard } from '@/common/guards/admin-jwt.guard';
+import { AdminBffGuard } from '../common/admin-bff.guard';
+import { AdminPermissionGuard } from '../common/admin-permission.guard';
+import { AdminPermissions } from '../common/admin-principal';
 import {
   DecideQueueItemDto,
   ListGuardCasesDto,
@@ -35,11 +33,17 @@ import { AdminGuardService } from '../services/admin-guard.service';
 import { AdminModerationService } from '../services/admin-moderation.service';
 import { AdminTaxonomyService } from '../services/admin-taxonomy.service';
 
-/** Staff endpoints. */
-@ApiBearerAuth()
+/**
+ * The staff endpoints that existed before the admin portal, moved onto the admin guard stack.
+ *
+ * They used to sit behind the **member** guard, so any member token belonging to a user with a
+ * staff role worked here — and a staff row could obtain one through the member email-code flow,
+ * which has no password and no second factor. A phished inbox was an administrator (B1).
+ */
+@ApiExcludeController()
 @Controller('admin')
 @ApiTags('Admin')
-@UseGuards(JwtAuthGuard, PermissionGuard)
+@UseGuards(AdminBffGuard, AdminJwtGuard, AdminPermissionGuard)
 export class AdminController {
   constructor(
     private readonly moderation: AdminModerationService,
@@ -51,7 +55,7 @@ export class AdminController {
   // ─── Moderation queue ──────────────────────────────────────────────────────
 
   @Get('moderation/queue')
-  @Permissions('moderation:read')
+  @AdminPermissions('moderation:read')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'The moderation queue',
@@ -68,7 +72,7 @@ export class AdminController {
   }
 
   @Post('moderation/queue/:id/claim')
-  @Permissions('moderation:read')
+  @AdminPermissions('moderation:read')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Claim a queue item',
@@ -82,7 +86,7 @@ export class AdminController {
   }
 
   @Post('moderation/queue/:id/decide')
-  @Permissions('moderation:decide')
+  @AdminPermissions('moderation:decide')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Approve, remove, or act on the author',
@@ -101,7 +105,7 @@ export class AdminController {
   }
 
   @Get('moderation/actions/:targetType/:targetId')
-  @Permissions('moderation:read')
+  @AdminPermissions('moderation:read')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'The audit trail for one piece of content or one member',
@@ -120,7 +124,7 @@ export class AdminController {
   // ─── Circl Guard ───────────────────────────────────────────────────────────
 
   @Get('guard/cases')
-  @Permissions('guard:read')
+  @AdminPermissions('guard:read')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'The Guard case queue',
@@ -135,7 +139,7 @@ export class AdminController {
   }
 
   @Get('guard/cases/:id')
-  @Permissions('guard:read')
+  @AdminPermissions('guard:read')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'One Guard case',
@@ -150,7 +154,7 @@ export class AdminController {
   }
 
   @Patch('guard/cases/:id')
-  @Permissions('guard:manage')
+  @AdminPermissions('guard:manage')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Assign or move a Guard case',
@@ -168,7 +172,7 @@ export class AdminController {
   }
 
   @Get('guard/risk-terms')
-  @Permissions('guard:read')
+  @AdminPermissions('risk_terms:manage')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: "Guard's risk lexicon",
@@ -184,7 +188,7 @@ export class AdminController {
   }
 
   @Post('guard/risk-terms')
-  @Permissions('guard:manage')
+  @AdminPermissions('risk_terms:manage')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Add or retune a risk phrase',
@@ -199,7 +203,7 @@ export class AdminController {
   }
 
   @Delete('guard/risk-terms/:id')
-  @Permissions('guard:manage')
+  @AdminPermissions('risk_terms:manage')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Turn a risk phrase off',
@@ -214,7 +218,7 @@ export class AdminController {
   // ─── Taxonomy ──────────────────────────────────────────────────────────────
 
   @Get('taxonomy/:kind')
-  @Permissions('taxonomy:manage')
+  @AdminPermissions('config:taxonomy')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Every term of one kind, active or not',
@@ -228,7 +232,7 @@ export class AdminController {
   }
 
   @Post('taxonomy')
-  @Permissions('taxonomy:manage')
+  @AdminPermissions('config:taxonomy')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Add a term, reword a label, or activate one',
@@ -244,7 +248,7 @@ export class AdminController {
   }
 
   @Delete('taxonomy/:kind/:code')
-  @Permissions('taxonomy:manage')
+  @AdminPermissions('config:taxonomy')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Deactivate a term',
@@ -261,7 +265,7 @@ export class AdminController {
   // ─── Members ───────────────────────────────────────────────────────────────
 
   @Patch('users/:id/status')
-  @Permissions('users:manage')
+  @AdminPermissions('members:suspend')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Suspend or restore a member',
@@ -281,7 +285,7 @@ export class AdminController {
 
   @Post('jobs/:name/run')
   @HttpCode(HttpStatus.OK)
-  @Permissions('jobs:run')
+  @AdminPermissions('jobs:run')
   @ApiOperation({
     summary: 'Run a scheduled job now',
     description:

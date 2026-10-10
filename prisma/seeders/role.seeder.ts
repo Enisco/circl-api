@@ -9,121 +9,196 @@ interface RoleData {
   permissions: string[];
 }
 
+/**
+ * The four staff roles, exactly as the admin spec defines them (§4.13), plus the member role.
+ *
+ * `super_admin` is granted every code explicitly rather than a wildcard. It is more lines, and it
+ * is the point: a new permission is not silently granted to anybody by existing, so adding one is
+ * a decision about who gets it rather than a decision that was already made.
+ */
+const ALL_ADMIN_PERMISSIONS = [
+  'analytics:read',
+  'analytics:safety',
+  'members:read',
+  'members:edit',
+  'members:sessions',
+  'members:suspend',
+  'members:delete',
+  'members:data_export',
+  'members:pii_reveal',
+  'messages:read',
+  'content:read',
+  'content:moderate',
+  'guides:publish',
+  'moderation:read',
+  'moderation:decide',
+  'moderation:assign',
+  'reports:read',
+  'reports:escalate',
+  'guard:read',
+  'guard:manage',
+  'risk_terms:manage',
+  'support:read',
+  'support:manage',
+  'managed:manage',
+  'disputes:manage',
+  'communications:manage',
+  'config:read',
+  'config:taxonomy',
+  'config:system',
+  'jobs:run',
+  'team:read',
+  'team:manage',
+  'audit:read',
+  'audit:read_area',
+  'audit:read_self',
+  'exports:csv',
+  'exports:read_all',
+];
+
 const defaultRoles: RoleData[] = [
   {
     name: 'Super Admin',
     code: 'super_admin',
-    description: 'Has full access to all system features and data',
+    description: 'Everything, including platform configuration and the team',
     isSystem: true,
     isAdmin: true,
-    permissions: ['manage:all'],
+    permissions: ALL_ADMIN_PERMISSIONS,
   },
   {
-    name: 'Moderator',
-    code: 'moderator',
-    description: 'Works the moderation queue: reported content and anonymous posts',
+    name: 'Manager',
+    code: 'manager',
+    description: 'Everything except platform limits, scheduled jobs and the full audit trail',
     isSystem: true,
     isAdmin: true,
-    permissions: ['moderation:read', 'moderation:decide', 'users:read', 'guides:publish'],
+    permissions: ALL_ADMIN_PERMISSIONS.filter(
+      code => !['config:system', 'jobs:run'].includes(code),
+    ),
   },
   {
-    // Deliberately separate from Moderator.
-    name: 'Safeguarding',
-    code: 'safeguarding',
-    description: 'Works Circl Guard cases: the private admin channel and the risk queue',
+    name: 'Trust & Safety',
+    code: 'trust_safety',
+    description: 'Moderation, reports, Guard cases, risk terms and enforcement',
     isSystem: true,
     isAdmin: true,
-    permissions: ['guard:read', 'guard:manage', 'users:read', 'moderation:read'],
+    permissions: [
+      'analytics:safety',
+      'members:read',
+      'members:sessions',
+      'members:suspend',
+      'messages:read',
+      'content:read',
+      'content:moderate',
+      'guides:publish',
+      'moderation:read',
+      'moderation:decide',
+      'reports:read',
+      'guard:read',
+      'guard:manage',
+      'risk_terms:manage',
+      // Read-only on managed work, so an escalation can be understood without being acted on.
+      'support:read',
+      'disputes:manage',
+      'audit:read_area',
+      'audit:read_self',
+    ],
   },
   {
     name: 'Support',
     code: 'support',
-    description: 'Works managed requests and disputes',
+    description: 'The support inbox, managed requests, disputes and member help',
     isSystem: true,
     isAdmin: true,
-    permissions: ['managed:manage', 'users:read'],
+    permissions: [
+      'members:read',
+      'members:edit',
+      'members:sessions',
+      'members:data_export',
+      'members:pii_reveal',
+      'messages:read',
+      'content:read',
+      'reports:read',
+      // Support cannot suspend. Where a case needs enforcement they escalate to trust & safety,
+      // which is a decision with a different trail behind it.
+      'reports:escalate',
+      'support:read',
+      'support:manage',
+      'managed:manage',
+      'disputes:manage',
+      'audit:read_self',
+    ],
   },
   {
     name: 'User',
     code: 'user',
-    description: 'Basic user role',
+    description: 'A member of Circl',
     isSystem: true,
     isAdmin: false,
     permissions: [],
   },
 ];
 
+/** The roles the four above replace, and who each becomes. */
+const MIGRATIONS: Record<string, string> = {
+  moderator: 'trust_safety',
+  safeguarding: 'trust_safety',
+};
+
 export const seedRoles = async (prisma: PrismaClient) => {
   console.info('Seeding roles...');
 
-  try {
-    // Step 1: Gather all required permission codes from all roles
-    const allNeededPermissionCodes = Array.from(
-      new Set(defaultRoles.flatMap(role => role.permissions)),
-    );
+  const allNeeded = Array.from(new Set(defaultRoles.flatMap(role => role.permissions)));
+  const found = await prisma.permission.findMany({ where: { code: { in: allNeeded } } });
+  const idByCode = new Map(found.map(permission => [permission.code, permission.id]));
 
-    // Step 2: Fetch all permissions at once
-    const allPermissions = await prisma.permission.findMany({
-      where: { code: { in: allNeededPermissionCodes } },
-    });
-
-    // Step 3: Validate that we have all required permissions
-    const foundCodes = new Set(allPermissions.map(p => p.code));
-
-    for (const role of defaultRoles) {
-      for (const neededCode of role.permissions) {
-        if (!foundCodes.has(neededCode)) {
-          throw new Error(`Permission "${neededCode}" not found for role "${role.code}".`);
-        }
-      }
+  for (const code of allNeeded) {
+    if (!idByCode.has(code)) {
+      throw new Error(`Permission "${code}" is referenced by a role but was never seeded.`);
     }
-
-    // Step 4: Create a map from code to permission ID for quick lookup
-    const permissionIdByCode: Record<string, string> = {};
-
-    for (const perm of allPermissions) {
-      permissionIdByCode[perm.code] = perm.id;
-    }
-
-    // Step 5: Run updates in a transaction
-    await prisma.$transaction(
-      async tx => {
-        for (const roleData of defaultRoles) {
-          const { permissions: permissionCodes, ...roleInfo } = roleData;
-
-          // Upsert the role (create or update if exists)
-          const role = await tx.role.upsert({
-            where: { code: roleInfo.code },
-            update: { ...roleInfo },
-            create: { ...roleInfo },
-          });
-
-          // Delete existing role permissions in one go
-          await tx.rolePermission.deleteMany({
-            where: { roleId: role.id },
-          });
-
-          // Prepare data for createMany
-          const rolePermissionsData = permissionCodes.map(code => ({
-            roleId: role.id,
-            permissionId: permissionIdByCode[code],
-          }));
-
-          // Insert all role permissions at once
-          await tx.rolePermission.createMany({
-            data: rolePermissionsData,
-          });
-        }
-      },
-      {
-        timeout: 30000,
-        maxWait: 35000,
-      },
-    );
-
-    console.info('Role seeding completed');
-  } catch (error) {
-    console.error('Error seeding roles:', error);
-    throw error;
   }
+
+  await prisma.$transaction(
+    async tx => {
+      for (const { permissions: codes, ...roleInfo } of defaultRoles) {
+        const role = await tx.role.upsert({
+          where: { code: roleInfo.code },
+          update: roleInfo,
+          create: roleInfo,
+        });
+
+        await tx.rolePermission.deleteMany({ where: { roleId: role.id } });
+        await tx.rolePermission.createMany({
+          data: codes.map(code => ({ roleId: role.id, permissionId: idByCode.get(code)! })),
+        });
+      }
+
+      // Move anybody on a retired role before deleting it, or they would be left pointing at
+      // nothing — and a staff account with no role cannot sign in to put itself right.
+      for (const [from, to] of Object.entries(MIGRATIONS)) {
+        const [oldRole, newRole] = await Promise.all([
+          tx.role.findUnique({ where: { code: from }, select: { id: true } }),
+          tx.role.findUniqueOrThrow({ where: { code: to }, select: { id: true } }),
+        ]);
+
+        if (!oldRole) continue;
+
+        const moved = await tx.userRole.updateMany({
+          where: { roleId: oldRole.id },
+          data: { roleId: newRole.id },
+        });
+
+        if (moved.count) console.info(`  ↪ Moved ${moved.count} staff from ${from} to ${to}`);
+
+        await tx.adminInvite.updateMany({
+          where: { roleId: oldRole.id, acceptedAt: null, revokedAt: null },
+          data: { roleId: newRole.id },
+        });
+        await tx.rolePermission.deleteMany({ where: { roleId: oldRole.id } });
+        await tx.role.delete({ where: { id: oldRole.id } });
+      }
+    },
+    { timeout: 30000, maxWait: 35000 },
+  );
+
+  console.info(`  ✅ Seeded ${defaultRoles.length} roles`);
 };

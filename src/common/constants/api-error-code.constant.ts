@@ -114,6 +114,83 @@ export const ApiErrorCode = {
   EMAIL_TAKEN: 'EMAIL_TAKEN',
   CODE_EXPIRED: 'CODE_EXPIRED',
   EXPORT_ALREADY_PENDING: 'EXPORT_ALREADY_PENDING',
+
+  // ═══ Admin portal ═══════════════════════════════════════════════════════════
+  //
+  // ─── Staff authentication ──────────────────────────────────────────────────
+  /// Every login failure, whatever the cause: unknown email, non-staff account, deactivated
+  /// account, wrong password, locked account, MFA not enrolled. One body and one timing, because
+  /// telling an attacker which of those it was tells them whose inbox to go after next.
+  INVALID_CREDENTIALS: 'INVALID_CREDENTIALS',
+  MFA_TOKEN_INVALID: 'MFA_TOKEN_INVALID',
+  SESSION_REVOKED: 'SESSION_REVOKED',
+  MFA_ALREADY_ENROLLED: 'MFA_ALREADY_ENROLLED',
+  PASSWORD_POLICY: 'PASSWORD_POLICY',
+  /// One code for every invalid invite state — unknown, expired, used, revoked, superseded — so
+  /// the response cannot be used to discover which addresses have been invited.
+  INVITE_INVALID: 'INVITE_INVALID',
+  RESEND_LIMIT: 'RESEND_LIMIT',
+  /// The admin surface is answered with 404 rather than 403 when the trusted-client credential is
+  /// missing: a 403 confirms the route exists.
+  BFF_REQUIRED: 'BFF_REQUIRED',
+
+  // ─── Object-level rules (§3.6) ─────────────────────────────────────────────
+  TARGET_PROTECTED: 'TARGET_PROTECTED',
+  LAST_SUPER_ADMIN: 'LAST_SUPER_ADMIN',
+  CANNOT_ACT_ON_SELF: 'CANNOT_ACT_ON_SELF',
+  ROLE_ESCALATION_FORBIDDEN: 'ROLE_ESCALATION_FORBIDDEN',
+  APPEAL_REVIEWER_CONFLICT: 'APPEAL_REVIEWER_CONFLICT',
+
+  // ─── Admin mutations ───────────────────────────────────────────────────────
+  REASON_REQUIRED: 'REASON_REQUIRED',
+  REASON_NOT_ALLOWED: 'REASON_NOT_ALLOWED',
+  FIELD_NOT_EDITABLE: 'FIELD_NOT_EDITABLE',
+  ALREADY_DECIDED: 'ALREADY_DECIDED',
+  CLAIMED_BY_OTHER: 'CLAIMED_BY_OTHER',
+  CLAIM_REQUIRED: 'CLAIM_REQUIRED',
+  INVALID_DECISION: 'INVALID_DECISION',
+  MEMBER_MESSAGE_REQUIRED: 'MEMBER_MESSAGE_REQUIRED',
+  ALREADY_SUSPENDED: 'ALREADY_SUSPENDED',
+  CONFIRMATION_MISMATCH: 'CONFIRMATION_MISMATCH',
+  RESTORE_NOT_ALLOWED: 'RESTORE_NOT_ALLOWED',
+  IMMUTABLE_FIELD: 'IMMUTABLE_FIELD',
+  ALREADY_EXISTS: 'ALREADY_EXISTS',
+  JOB_ALREADY_RUNNING: 'JOB_ALREADY_RUNNING',
+
+  // ─── Private threads and PII ───────────────────────────────────────────────
+  THREAD_ACCESS_REQUIRED: 'THREAD_ACCESS_REQUIRED',
+  LINK_REQUIRED: 'LINK_REQUIRED',
+  USE_SUPPORT_INBOX: 'USE_SUPPORT_INBOX',
+
+  // ─── Enforcement and appeals ───────────────────────────────────────────────
+  ACCOUNT_SUSPENDED: 'ACCOUNT_SUSPENDED',
+  APPEAL_WINDOW_CLOSED: 'APPEAL_WINDOW_CLOSED',
+  APPEAL_SUBJECT_INVALID: 'APPEAL_SUBJECT_INVALID',
+
+  // ─── Lists, analytics and exports ──────────────────────────────────────────
+  PAGE_TOO_DEEP: 'PAGE_TOO_DEEP',
+  FILTER_RANGE_TOO_LARGE: 'FILTER_RANGE_TOO_LARGE',
+  ANALYTICS_TIMEOUT: 'ANALYTICS_TIMEOUT',
+  // `UNKNOWN_CITY` and `UNKNOWN_TAXONOMY_CODE` already exist above and are reused here: 400 in a
+  // filter (query validation), 422 on an edit (a well-formed request breaking a rule).
+  EXPORT_LIMIT: 'EXPORT_LIMIT',
+  NOT_READY: 'NOT_READY',
+  LINK_EXPIRED: 'LINK_EXPIRED',
+
+  // ─── Communications ────────────────────────────────────────────────────────
+  STALE_AUDIENCE: 'STALE_AUDIENCE',
+  AUDIENCE_TOO_SMALL: 'AUDIENCE_TOO_SMALL',
+
+  // ─── Idempotency (§2.9) ────────────────────────────────────────────────────
+  IDEMPOTENCY_KEY_REQUIRED: 'IDEMPOTENCY_KEY_REQUIRED',
+  IDEMPOTENCY_KEY_REUSED: 'IDEMPOTENCY_KEY_REUSED',
+
+  // ─── Shipping in a later milestone ─────────────────────────────────────────
+  /// A request field whose pipeline has not shipped. Deliberately only ever a 400 on a request
+  /// field: a chart that cannot be computed returns 200 and says so inside the payload, because
+  /// one absent future feature must not fail a whole dashboard.
+  NOT_AVAILABLE_YET: 'NOT_AVAILABLE_YET',
+  APP_UPDATE_REQUIRED: 'APP_UPDATE_REQUIRED',
 } as const;
 
 export type ApiErrorCode = (typeof ApiErrorCode)[keyof typeof ApiErrorCode];

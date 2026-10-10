@@ -6,7 +6,15 @@
  * that all say "not enough activity". Each of those looks like a design choice
  * on screen, so each one is asserted here. */
 const jwt = require('jsonwebtoken');
-const { api, check, finish, prisma, verifyEmailCode } = require('./harness.cjs');
+const {
+  adminHeaders,
+  api,
+  check,
+  finish,
+  makeAdmin,
+  prisma,
+  verifyEmailCode,
+} = require('./harness.cjs');
 
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:4000/api/v1';
 
@@ -231,36 +239,9 @@ async function objectExists(url) {
   // Pulse reads precomputed snapshots, and they are derived state that any suite may legitimately clear.
   const role = await prisma.role.findUniqueOrThrow({ where: { code: 'super_admin' } });
   const stamp = Date.now();
-  const admin = await prisma.user.create({
-    data: {
-      firstName: 'E2E',
-      lastName: 'pulse',
-      email: `e2e-pulse-${stamp}@example.test`,
-      username: `e2e_pulse_${stamp}`,
-      status: 'ACTIVE',
-      isStaff: true,
-      userRole: { create: { roleId: role.id } },
-      sessions: {
-        create: {
-          userAgent: 'e2e',
-          deviceType: 'cli',
-          browserName: 'cli',
-          operatingSystem: 'cli',
-          ipAddress: '127.0.0.1',
-          isActive: true,
-          deviceFingerprint: `e2e-pulse-${stamp}`,
-        },
-      },
-    },
-    include: { sessions: true },
-  });
-  const adminToken = jwt.sign(
-    { sub: admin.id, sid: admin.sessions[0].id },
-    process.env.JWT_ACCESS_SECRET,
-    { expiresIn: '1h' },
-  );
+  const admin = await makeAdmin('pulse-rebuild', 'super_admin');
 
-  const rebuilt = await api(adminToken, 'POST', '/admin/jobs/intelligence.metrics/run');
+  const rebuilt = await api(null, 'POST', '/admin/jobs/intelligence.metrics/run', null, adminHeaders(admin));
   check('the Pulse rollup can be rebuilt on demand', rebuilt.status === 200, rebuilt.status);
 
   const pulses = {};

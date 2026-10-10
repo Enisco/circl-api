@@ -746,3 +746,58 @@ enum SuggestionSurface {
   PROFESSIONAL_SERVICE
   STORE_ITEM
 }
+
+// ═══════════════════════════════════════════════════════════════════ Admin portal
+//
+// The staff-facing enums. Separate from the member vocabulary on purpose: nothing a member sends
+// should ever validate against one of these.
+
+/// Which part of the portal an audit entry belongs to, so a reader with scoped audit access
+/// (`audit:read_area`) can be filtered in the query rather than after it.
+enum AuditArea {
+  AUTH
+  TEAM
+  MEMBERS
+  CONTENT
+  SAFETY
+  SUPPORT
+  COMMS
+  CONFIG
+  EXPORTS
+  ANALYTICS
+}
+
+/// Why a staff member did something. Mandatory on every enforcement, edit and destructive action:
+/// an audit trail that records what happened and not why is a list, not an account.
+enum AdminReasonCode {
+  MEMBER_REQUEST
+  CORRECTION
+  /// Carries a `policySubtype` naming which rule.
+  POLICY_VIOLATION
+  SAFETY_CONCERN
+  SCAM_FRAUD
+  LEGAL_GDPR
+  OTHER
+}
+
+/// How a member's account came to exist. Recorded at sign-up because it cannot be worked out
+/// afterwards: a member who later links a social account looks identical to one who started there.
+enum SignupMethod {
+  EMAIL
+  GOOGLE
+  APPLE
+}
+
+/// Why an admin session stopped being usable. Kept so a staff member logged out mid-shift can be
+/// told which of the several possible reasons it was.
+enum AdminSessionRevokeReason {
+  LOGOUT
+  EXPIRED
+  IDLE
+  ADMIN_REVOKED
+  DEACTIVATED
+  ROLE_CHANGED
+  CREDENTIAL_RESET
+  REFRESH_REUSE
+  SESSION_LIMIT
+}

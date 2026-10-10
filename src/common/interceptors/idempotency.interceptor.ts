@@ -7,7 +7,10 @@ import { createHash } from 'crypto';
 import { PrismaError, PrismaService } from '@/infrastructure';
 import { ApiErrorCode } from '../constants/api-error-code.constant';
 import { ApiException } from '../exceptions/api.exception';
-import { IDEMPOTENT_KEY } from '../decorators/idempotent.decorator';
+import {
+  IDEMPOTENT_KEY,
+  IDEMPOTENT_REQUIRED_KEY,
+} from '../decorators/idempotent.decorator';
 import { AuthenticatedUser } from '../decorators/current-user.decorator';
 import { toJson } from '../utils/json.util';
 
@@ -28,6 +31,17 @@ const inProgress = () =>
   );
 
 type Reservation = { replay: Prisma.JsonValue } | { replay: null };
+
+/**
+ * The same key, after a success, with a different body. Not a retry: a retry sends what it sent
+ * before. Re-running it would apply a second, different action under a key the caller believes
+ * covers one.
+ */
+const reused = () =>
+  ApiException.unprocessable(
+    ApiErrorCode.IDEMPOTENCY_KEY_REUSED,
+    'That idempotency key has already been used for a different request. Use a new key.',
+  );
 
 /**
  * Honours `Idempotency-Key` on the creates that declare `@Idempotent()` (spec 0.12).
@@ -57,9 +71,33 @@ export class IdempotencyInterceptor implements NestInterceptor {
     const key = request.headers['idempotency-key'];
     const userId = (request.user as AuthenticatedUser | undefined)?.id;
 
-    if (typeof key !== 'string' || !key || !userId) return next.handle();
+    if (typeof key !== 'string' || !key) {
+      const isRequired = this.reflector.getAllAndOverride<boolean>(IDEMPOTENT_REQUIRED_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]);
 
-    const endpoint = `${request.method} ${request.route?.path ?? request.path}`;
+      // Only once we know who is asking: a caller with no access must get 401 or 403, never a
+      // complaint about a header they were never going to be allowed to use.
+      if (isRequired && userId) {
+        return throwError(() =>
+          ApiException.badRequest(
+            ApiErrorCode.IDEMPOTENCY_KEY_REQUIRED,
+            'This action needs an Idempotency-Key header so a retry cannot apply it twice.',
+          ),
+        );
+      }
+
+      return next.handle();
+    }
+
+    if (!userId) return next.handle();
+
+    // The CONCRETE path, not the route pattern. Keyed on the pattern, the same key and body sent
+    // for two different members replayed the first member's response and silently skipped the
+    // second action — so a suspension could be recorded against one person and quietly not applied
+    // to the other (B5).
+    const endpoint = `${request.method} ${request.path}`;
     const requestHash = createHash('sha256')
       .update(JSON.stringify(request.body ?? {}))
       .digest('hex');
@@ -124,12 +162,20 @@ export class IdempotencyInterceptor implements NestInterceptor {
     });
 
     if (existing) {
-      // A key sent again with a different body is a different request, and the member editing the
-      // text of a post that failed is exactly that. Same body within the window is the retry.
-      const same = existing.expiresAt > now && existing.requestHash === requestHash;
+      const live = existing.expiresAt > now;
+      const succeeded = existing.statusCode !== null;
+      const same = existing.requestHash === requestHash;
 
-      if (same && existing.statusCode !== null) return { replay: existing.responseBody };
-      if (same && existing.startedAt.getTime() > now.getTime() - IN_FLIGHT_TTL_MS)
+      // Only 2xx results are ever stored — a failure deletes the row below — so a live record with
+      // a status code is a success, and the right answer to the same request is the same answer.
+      if (live && succeeded && same) return { replay: existing.responseBody };
+
+      // A different body under a key that already succeeded is a second action wearing the first
+      // one's receipt. Refused by name so the caller can mint a new key, rather than silently
+      // replaying an answer about something else.
+      if (live && succeeded) throw reused();
+
+      if (live && existing.startedAt.getTime() > now.getTime() - IN_FLIGHT_TTL_MS)
         throw inProgress();
 
       // Expired, a different body, or abandoned by a process that died. Taking it over is a write

@@ -97,10 +97,16 @@ model ModerationQueueItem {
 }
 
 // An append-only record of what staff did and why.
+/// A record of a decision somebody made.
+///
+/// No relation to `User`, deliberately — the same reasoning as `AuditLog`. The table is
+/// append-only, and `actorId` carried a cascading foreign key, so deleting a staff account would
+/// have deleted the record of every decision they ever made. Worse, the delete would be refused by
+/// the append-only trigger, which meant the account could not be deleted at all. The id is kept
+/// and the actor's name is resolved from the live row when the trail is read.
 model ModerationAction {
   id      String @id @default(uuid())
   actorId String @map("actor_id")
-  actor   User   @relation("ModerationActor", fields: [actorId], references: [id], onDelete: Cascade)
 
   targetType ReportTargetType   @map("target_type")
   targetId   String             @map("target_id")

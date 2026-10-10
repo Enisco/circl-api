@@ -11,6 +11,7 @@ model Role {
   updatedAt       DateTime         @updatedAt @map("updated_at")
 
   @@map("roles")
+  adminInvites    AdminInvite[]
 }
 
 model Permission {

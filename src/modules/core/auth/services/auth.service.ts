@@ -29,7 +29,13 @@ export class AuthService {
       throw new UnauthorizedException(ErrorMessage.SESSION_EXPIRED);
     }
 
-    const isValid = await Util.validateHash(refreshToken, validSession.session.refreshToken);
+    // Compared as digests of the whole token. bcrypt stopped at 72 bytes, and two refresh JWTs for
+    // one session agree on their first 72, so every superseded token for a session still passed
+    // this check until it expired — thirty days of rotation that rotated nothing (B3).
+    const isValid = Util.hashesMatch(
+      Util.tokenHash(refreshToken),
+      validSession.session.refreshToken,
+    );
 
     if (!isValid) {
       throw new UnauthorizedException(ErrorMessage.SESSION_EXPIRED);
@@ -40,7 +46,7 @@ export class AuthService {
       this.tokenService.generateRefreshToken({ userId, sessionId }),
     ]);
 
-    const newRefreshTokenHash = await Util.generateHash(newRefreshToken);
+    const newRefreshTokenHash = Util.tokenHash(newRefreshToken);
 
     await this.sessionService.rotateRefreshToken(sessionId, newRefreshTokenHash);
 

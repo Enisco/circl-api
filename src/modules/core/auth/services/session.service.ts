@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PinoLogger } from 'nestjs-pino';
 import { CacheService, PrismaService } from '@/infrastructure';
-import { DeviceInfo, Util } from '@/common';
+import { ApiException, DeviceInfo, ErrorMessage, Util } from '@/common';
 import { UserSession } from '@prisma/client';
 import { TokenService } from './token.service';
 import {
@@ -30,6 +30,7 @@ export class SessionService {
   async createSession(params: CreateSessionParams): Promise<CreateSessionResponse> {
     const { deviceInfo, userId, sessionId } = params;
 
+    await this.assertNotStaff(userId);
     await this.enforceSessionLimit(userId);
 
     const finalSessionId = sessionId ?? Util.generateUuid();
@@ -62,19 +63,43 @@ export class SessionService {
         isActive: true,
         lastActiveAt: new Date(),
         revokedAt: null,
-        refreshToken: await Util.generateHash(tokenPair.refreshToken),
+        refreshToken: Util.tokenHash(tokenPair.refreshToken),
       },
       create: {
         id: finalSessionId,
         user: { connect: { id: userId } },
         ...deviceData,
-        refreshToken: await Util.generateHash(tokenPair.refreshToken),
+        refreshToken: Util.tokenHash(tokenPair.refreshToken),
         isActive: true,
         lastActiveAt: new Date(),
       },
     });
 
     return { sessionId: session.id, tokenPair };
+  }
+
+  /**
+   * A staff account may not hold a member session.
+   *
+   * Here rather than in each caller because there are three — email code, social sign-in and
+   * registration — and the one that gets added next would be the one that forgot. Member sign-in
+   * is an emailed code with no password and no second factor, so a staff account reachable through
+   * it is an administrator login protected by an inbox (B1, S3.2). Staff who use Circl as members
+   * do so with a separate personal account; `User.email` is unique, which is what makes that work.
+   */
+  private async assertNotStaff(userId: string): Promise<void> {
+    const user = await this.database.user.findUnique({
+      where: { id: userId },
+      select: { isStaff: true },
+    });
+
+    if (user?.isStaff) {
+      this.logger.warn({ securityEvent: 'staff_member_signin_refused', userId });
+
+      // Deliberately the generic refusal: which accounts are staff is not something a sign-in
+      // response should be able to tell anybody.
+      throw ApiException.unauthorized(ErrorMessage.UNAUTHORIZED);
+    }
   }
 
   async findSessionByFingerprint(userId: string, deviceFingerprint: string): Promise<UserSession> {
@@ -93,12 +118,15 @@ export class SessionService {
         where: { userId, isActive: true },
       });
 
+      // Spread, not nested. Passed as one array element these writes were never awaited and their
+      // failures never surfaced, so a revoke-everything could report success while leaving live
+      // access tokens working until they expired (B9).
       await Promise.all([
         this.database.userSession.updateMany({
           where: { userId },
           data: { isActive: false, refreshToken: null, revokedAt: now },
         }),
-        sessions.map(s => this.blacklistSession(s.id)),
+        ...sessions.map(session => this.blacklistSession(session.id)),
       ]);
     } else {
       await Promise.all([

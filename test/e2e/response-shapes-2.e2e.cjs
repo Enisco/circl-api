@@ -29,7 +29,7 @@ async function staff(tag, roleCode) {
     },
     include: { sessions: true },
   });
-  return { id: user.id, token: jwt.sign({ sub: user.id, sid: user.sessions[0].id },
+  return { id: user.id, token: jwt.sign({ sub: user.id, sid: user.sessions[0].id, type: 'access' },
     process.env.JWT_ACCESS_SECRET, { expiresIn: '1h' }) };
 }
 

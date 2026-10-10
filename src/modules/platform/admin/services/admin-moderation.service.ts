@@ -225,13 +225,21 @@ export class AdminModerationService {
   async actionsFor(targetType: ReportTargetType, targetId: string) {
     const actions = await this.database.moderationAction.findMany({
       where: { targetType, targetId },
-      include: { actor: { select: authorSelect } },
       orderBy: { createdAt: 'desc' },
     });
 
+    // Resolved separately rather than joined: the table deliberately holds no foreign key to the
+    // user, so the record of a decision survives the deletion of the account that made it. An
+    // actor who no longer exists reads as null rather than taking the record with them.
+    const actors = await this.database.user.findMany({
+      where: { id: { in: [...new Set(actions.map(action => action.actorId))] } },
+      select: authorSelect,
+    });
+    const byId = new Map(actors.map(actor => [actor.id, actor]));
+
     return actions.map(action => ({
       id: action.id,
-      actor: toAuthorView(action.actor, { sign: this.media.sign }),
+      actor: toAuthorView(byId.get(action.actorId) ?? null, { sign: this.media.sign }),
       decision: action.decision,
       reason: action.reason,
       createdAt: action.createdAt.toISOString(),

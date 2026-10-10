@@ -8,6 +8,7 @@ import {
   TokenPair,
   TokenValidationResult,
 } from '../types';
+import { MEMBER_TOKEN_AUDIENCE } from '../constants';
 
 @Injectable()
 export class TokenService {
@@ -39,6 +40,7 @@ export class TokenService {
     return this.jwtService.signAsync(payload, {
       secret: this.configService.get('JWT_ACCESS_SECRET'),
       expiresIn: this.configService.get('JWT_ACCESS_EXPIRY'),
+      audience: MEMBER_TOKEN_AUDIENCE,
     });
   }
 
@@ -55,6 +57,7 @@ export class TokenService {
     return this.jwtService.signAsync(payload, {
       secret: this.configService.get('JWT_REFRESH_SECRET'),
       expiresIn: this.configService.get('JWT_REFRESH_EXPIRY'),
+      audience: MEMBER_TOKEN_AUDIENCE,
     });
   }
 
@@ -62,6 +65,9 @@ export class TokenService {
     try {
       const decoded = await this.jwtService.verifyAsync(refreshToken, {
         secret: this.configService.get('JWT_REFRESH_SECRET'),
+        // Not pinned: tokens minted before the audience existed are still in circulation and must
+        // keep working until they expire. The access path logs each one it sees (`jwt.strategy.ts`)
+        // so the day the last one goes can be read off the logs rather than guessed at.
       });
 
       if (!this.isValidRefreshTokenPayload(decoded)) {

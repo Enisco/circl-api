@@ -11,6 +11,10 @@ model User {
   /// A plain URL from a social provider, which is NOT Circl's media and is therefore never signed (0.11.3).
   profileImageUrl String?           @map("profile_image_url")
   isStaff         Boolean           @default(false) @map("is_staff")
+  /// How the account was created. Recorded at sign-up because it cannot be recovered later: a
+  /// member who links Google afterwards is indistinguishable from one who started there. Null for
+  /// staff accounts, which are created by invitation and never sign up.
+  signupMethod    SignupMethod?     @map("signup_method")
   email           String            @unique @map("email")
   status          UserAccountStatus @default(PENDING) @map("status")
   createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
@@ -23,6 +27,8 @@ model User {
   deletedEmailHash String?   @unique @map("deleted_email_hash")
 
   userAuth          UserAuth?
+  adminCredential   AdminCredential?
+  adminSessions     AdminSession[]
   profile           UserProfile?
   adminProfile      AdminProfile?
   sessions          UserSession[]
@@ -64,7 +70,6 @@ model User {
   reportsAbout      Report[]              @relation("ReportSubject")
   blocksMade        Block[]               @relation("Blocker")
   blocksReceived    Block[]               @relation("Blocked")
-  moderationActions ModerationAction[]    @relation("ModerationActor")
   queueSubjectOf    ModerationQueueItem[] @relation("QueueSubject")
   queueAssignedTo   ModerationQueueItem[] @relation("QueueAssignee")
   guardThreads      GuardThread[]

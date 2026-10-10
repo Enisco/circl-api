@@ -25,3 +25,9 @@ export const SESSION_CONSTANTS = {
 } as const;
 
 export const JWT_BLACKLIST_PREFIX = 'jwt_blacklist_';
+
+/**
+ * The audience on member tokens. Admin tokens carry `circl-admin` and a different signing secret;
+ * the audience is checked as well, so a mix-up has to defeat two things rather than one.
+ */
+export const MEMBER_TOKEN_AUDIENCE = 'circl-app';

@@ -1,7 +1,7 @@
 {
   "name": "circl-api",
   "version": "1.0.0",
-  "description": "Circl API — backend for the Circl platform",
+  "description": "Circl API \u2014 backend for the Circl platform",
   "author": "Circl",
   "private": true,
   "license": "UNLICENSED",
@@ -33,11 +33,13 @@
     "db:seed": "npx prisma db seed",
     "db:seed-demo": "ts-node --transpile-only prisma/seed-demo.ts",
     "db:reset-demo": "ts-node --transpile-only prisma/seed-demo.ts --reset-only",
-    "prisma:studio": "npx prisma studio"
+    "prisma:studio": "npx prisma studio",
+    "admin:bootstrap": "ts-node --transpile-only scripts/admin-bootstrap.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.991.0",
     "@aws-sdk/s3-request-presigner": "^3.1116.0",
+    "@nest-lab/throttler-storage-redis": "^1.2.0",
     "@nestjs-modules/ioredis": "^2.0.2",
     "@nestjs/axios": "^4.0.1",
     "@nestjs/bullmq": "^11.0.4",
@@ -58,6 +60,7 @@
     "@prisma/client": "7.4.0",
     "@types/geoip-lite": "^1.4.4",
     "add": "^2.0.6",
+    "argon2": "^0.45.1",
     "axios": "^1.13.5",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.69.3",
@@ -80,6 +83,7 @@
     "jwks-rsa": "^4.0.1",
     "nestjs-pino": "^4.5.0",
     "openai": "^6.38.0",
+    "otplib": "^13.5.0",
     "passport-jwt": "^4.0.1",
     "passport-local": "^1.0.0",
     "pg": "^8.18.0",

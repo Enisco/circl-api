@@ -1,0 +1,191 @@
+// ═══════════════════════════════════════════════════════════════════ Admin portal — staff identity
+//
+// A staff member is an ordinary `User` row with `isStaff = true` and a staff role, plus the three
+// models here. Not a separate table: staff already appear as foreign keys in a dozen places
+// (`ModerationQueueItem.assignedTo`, `GuardThread.assignedTo`, `ModerationAction.actor`,
+// `ConversationParticipant`), and a parallel admin table would break every one of those relations.
+//
+// The corollary is that member authentication must refuse `isStaff` rows and admin authentication
+// must refuse everything else. Both directions are enforced, because either gap alone is a way in.
+
+/// Everything needed to prove a staff member is who they say they are. One row per staff account,
+/// keyed by the user: there is no such thing as two sets of credentials for one person.
+model AdminCredential {
+  userId String @id @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// argon2id, PHC string format — so the parameters travel with the hash and can be raised later
+  /// without invalidating anybody's password.
+  passwordHash      String   @map("password_hash")
+  passwordUpdatedAt DateTime @map("password_updated_at") @db.Timestamptz
+
+  /// base64(iv | tag | ciphertext), AES-256-GCM. `keyId` travels with it so the key can rotate
+  /// without a migration that would have to decrypt every row at once.
+  totpSecretEnc String?   @map("totp_secret_enc")
+  totpKeyId     String?   @map("totp_key_id")
+  totpEnabledAt DateTime? @map("totp_enabled_at") @db.Timestamptz
+  /// The last time step accepted. A code is refused if its step is not greater, which is what stops
+  /// a code read over somebody's shoulder being used again inside its own 30-second window.
+  totpLastUsedStep BigInt? @map("totp_last_used_step")
+
+  failedAttempts    Int       @default(0) @map("failed_attempts")
+  failedMfaAttempts Int       @default(0) @map("failed_mfa_attempts")
+  /// Drives the lock duration: each lock doubles the last one, so a patient attacker gets slower
+  /// rather than merely interrupted.
+  lockCount   Int       @default(0) @map("lock_count")
+  lockedUntil DateTime? @map("locked_until") @db.Timestamptz
+
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz
+  lastLoginIp  String?   @map("last_login_ip")
+  lastActiveAt DateTime? @map("last_active_at") @db.Timestamptz
+
+  deactivatedAt   DateTime? @map("deactivated_at") @db.Timestamptz
+  deactivatedById String?   @map("deactivated_by_id")
+  invitedById     String?   @map("invited_by_id")
+
+  /// Bumped by every credential reset, deactivation, reactivation, role change and invite
+  /// acceptance. Setup tokens carry the epoch they were issued under, so a token obtained before a
+  /// "reset both" for a suspected compromise cannot still activate the account afterwards.
+  credentialEpoch Int @default(0) @map("credential_epoch")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  recoveryCodes AdminRecoveryCode[]
+
+  @@map("admin_credentials")
+}
+
+/// Ten single-use codes, shown once. Hashed with argon2id like a password, because that is what
+/// they are: a second credential that gets written on paper and photographed.
+model AdminRecoveryCode {
+  id         String          @id @default(uuid())
+  userId     String          @map("user_id")
+  credential AdminCredential @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  codeHash String    @map("code_hash")
+  usedAt   DateTime? @map("used_at") @db.Timestamptz
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userId])
+  @@map("admin_recovery_codes")
+}
+
+/// One sign-in. The refresh token is opaque and stored as a SHA-256 hash — a high-entropy secret,
+/// so a fast hash is the right one, and a slow one would be a lie about what is being protected.
+model AdminSession {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  refreshTokenHash String? @unique @map("refresh_token_hash")
+  /// The hash rotation replaced, kept for the grace window and for reuse detection: a token that
+  /// matches this outside the window means somebody is replaying a stolen one, and the session goes.
+  previousRefreshTokenHash String?   @map("previous_refresh_token_hash")
+  rotatedAt                DateTime? @map("rotated_at") @db.Timestamptz
+
+  ip        String @map("ip")
+  userAgent String @map("user_agent")
+
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  lastUsedAt DateTime @default(now()) @map("last_used_at") @db.Timestamptz
+  /// Twelve hours from the second factor, never extended by a refresh. A shift, not a tenancy.
+  absoluteExpiresAt DateTime @map("absolute_expires_at") @db.Timestamptz
+
+  revokedAt     DateTime?                 @map("revoked_at") @db.Timestamptz
+  revokedReason AdminSessionRevokeReason? @map("revoked_reason")
+  revokedById   String?                   @map("revoked_by_id")
+
+  @@index([userId, revokedAt])
+  @@index([previousRefreshTokenHash])
+  @@map("admin_sessions")
+}
+
+/// The only way a staff account comes into existence. There is no self-service sign-up and no
+/// password reset by email: both would make a staff inbox sufficient to become an administrator.
+model AdminInvite {
+  id     String @id @default(uuid())
+  email  String @map("email")
+  roleId String @map("role_id")
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  tokenHash   String   @unique @map("token_hash")
+  invitedById String   @map("invited_by_id")
+  expiresAt   DateTime @map("expires_at") @db.Timestamptz
+
+  /// The first send plus at most two resends. An invite that has been sent three times and not
+  /// accepted is a conversation to have in person, not a fourth email.
+  sendCount  Int      @default(1) @map("send_count")
+  lastSentAt DateTime @default(now()) @map("last_sent_at") @db.Timestamptz
+
+  acceptedAt     DateTime? @map("accepted_at") @db.Timestamptz
+  acceptedUserId String?   @map("accepted_user_id")
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz
+  revokedById    String?   @map("revoked_by_id")
+
+  /// Set by reactivate and reset-credentials: the existing account this invite restores. An invite
+  /// without one may only ever create a new account, so a stray invite cannot be aimed at somebody
+  /// else's staff row.
+  staffUserId String? @map("staff_user_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([email])
+  @@index([staffUserId])
+  @@map("admin_invites")
+}
+
+// ═══════════════════════════════════════════════════════════════════ Admin portal — audit
+//
+// Deliberately has no relation to `User`. The rows must outlive any account change and must never
+// cascade: an audit trail that a deletion can edit is not one.
+
+/// One row per staff action. Written in the same transaction as the change it describes, so there
+/// is no state in which the change happened and the record of it did not.
+model AuditLog {
+  id         String   @id @default(uuid())
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz
+
+  /// Null only for events with no authenticated actor: a failed login, a scheduled job, the
+  /// bootstrap CLI.
+  actorId        String? @map("actor_id")
+  actorRole      String? @map("actor_role")
+  actorSessionId String? @map("actor_session_id")
+
+  action String    @map("action")
+  area   AuditArea @map("area")
+
+  targetType String? @map("target_type")
+  targetId   String? @map("target_id")
+  /// A display snapshot for non-member targets. Null for members: their name is resolved from the
+  /// live row at read time, so anonymising an account does not require rewriting history that
+  /// must not be rewritable.
+  targetLabel String? @map("target_label")
+
+  before Json? @map("before")
+  after  Json? @map("after")
+
+  reasonCode    AdminReasonCode? @map("reason_code")
+  policySubtype String?          @map("policy_subtype")
+  reason        String?          @map("reason")
+
+  metadata Json? @map("metadata")
+
+  ip             String? @map("ip")
+  userAgent      String? @map("user_agent")
+  requestId      String? @map("request_id")
+  idempotencyKey String? @map("idempotency_key")
+
+  /// Optional tamper-evidence chain. Populated from M4; the append-only trigger is the control
+  /// that does the work before then.
+  prevHash String? @map("prev_hash")
+  hash     String? @map("hash")
+
+  @@index([occurredAt])
+  @@index([actorId, occurredAt])
+  @@index([targetType, targetId, occurredAt])
+  @@index([area, occurredAt])
+  @@index([action, occurredAt])
+  @@map("audit_logs")
+}

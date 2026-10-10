@@ -18,6 +18,7 @@ import { MessageService } from '../services/message.service';
 import { MessagePushService } from '../services/message-push.service';
 import { SendMessageDto } from '../dtos/message.dto';
 import { PresenceRegistry } from '../services/presence.registry';
+import { MEMBER_TOKEN_AUDIENCE } from '@/modules/core/auth/constants';
 
 interface AuthedSocket extends Socket {
   data: { userId?: string };
@@ -85,18 +86,38 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
     if (!token) throw new Error('No token');
 
-    const payload = await this.jwt.verifyAsync<{ sub: string }>(token, {
-      secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
-    });
+    const payload = await this.jwt.verifyAsync<{ sub: string; type?: string; aud?: string }>(
+      token,
+      {
+        secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
+        algorithms: ['HS256'],
+      },
+    );
+
+    // The same two checks the HTTP strategy makes. The socket reads and writes private messages,
+    // so it is the one door where skipping them would matter most: a refresh token or an admin
+    // token presented here used to be accepted as an access token because only the signature was
+    // examined (B12).
+    if (payload.type !== 'access') throw new Error('Not an access token');
+
+    const audience = Array.isArray(payload.aud) ? payload.aud : payload.aud ? [payload.aud] : [];
+
+    if (audience.length && !audience.includes(MEMBER_TOKEN_AUDIENCE)) {
+      throw new Error('Wrong audience');
+    }
 
     const user = await this.database.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, status: true, isAnonymised: true },
+      select: { id: true, status: true, isAnonymised: true, isStaff: true },
     });
 
     if (!user || user.isAnonymised || user.status === 'SUSPENDED') {
       throw new Error('Not permitted');
     }
+
+    // Staff read member conversations through the audited admin endpoints, never by joining the
+    // room: reading here would add read receipts and presence to somebody else's thread.
+    if (user.isStaff) throw new Error('Not permitted');
 
     socket.data.userId = user.id;
   }

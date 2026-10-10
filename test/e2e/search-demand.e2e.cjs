@@ -92,9 +92,11 @@ const rowFor = (list, term) => (list ?? []).find(row => row.term.toLowerCase() =
   await searched(common, 'PRODUCTS', city, { members: 6, searches: 18, misses: 11 });
   await searched(common, 'PRODUCTS', city, { members: 6, searches: 5, week: 'last' });
 
-  r = await api(staff ? viewer.token : viewer.token, 'POST', '/admin/jobs/intelligence.search-demand/run');
-  const admin = await prisma.user.findFirst({ where: { isStaff: true }, select: { id: true } });
-  check('a member cannot force the rebuild', r.status === 401 || r.status === 403, r.status);
+  r = await api(viewer.token, 'POST', '/admin/jobs/intelligence.search-demand/run');
+  // 401 rather than 403 now: a member token is not an admin token at all, so it is refused at
+  // authentication rather than at authorisation. It used to be accepted and then checked for a
+  // permission, which is why a member with a staff role reached admin routes (B1).
+  check('a member cannot force the rebuild', r.status === 401, r.status);
 
   const { SearchDemandService } = require('../../dist/src/modules/platform/intelligence/services/search-demand.service');
   const { TaxonomyService } = require('../../dist/src/modules/platform/shared/services/taxonomy.service');
