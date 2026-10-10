@@ -271,6 +271,34 @@ async function inviteFor(email, roleCode = 'super_admin') {
   check('the revoked session\'s access token fails on the very next request',
     r.status === 401 && r.body?.error?.code === 'SESSION_REVOKED', r.body?.error);
 
+  console.log('\n── Invitations that must not restore the wrong account ─────');
+
+  // An invitation bound to an account that has since gone is not a licence to create a new one
+  // with that address and that role.
+  const orphanTarget = await makeAdmin('orphan', 'support');
+  const orphanRole = await prisma.role.findUniqueOrThrow({ where: { code: 'support' } });
+  const orphanToken = require('crypto').randomBytes(32).toString('base64url');
+
+  await prisma.adminInvite.create({
+    data: {
+      email: orphanTarget.email,
+      roleId: orphanRole.id,
+      tokenHash: require('crypto').createHash('sha256').update(orphanToken, 'utf8').digest('hex'),
+      invitedById: '00000000-0000-0000-0000-000000000000',
+      expiresAt: new Date(Date.now() + 72 * 3_600_000),
+      staffUserId: orphanTarget.id,
+    },
+  });
+  await prisma.user.delete({ where: { id: orphanTarget.id } });
+
+  r = await api(null, 'POST', '/admin/auth/invites/accept',
+    { token: orphanToken, firstName: 'Ghost', lastName: 'Account', password: PASSWORD }, bff);
+  check('an invite bound to an account that no longer exists is refused',
+    r.status === 404 && r.body?.error?.code === 'INVITE_INVALID', r.body?.error);
+
+  const recreated = await prisma.user.findUnique({ where: { email: orphanTarget.email } });
+  check('and no account was created from it', recreated === null, recreated?.id);
+
   console.log('\n── The doors that used to be open ──────────────────────────');
 
   const admin = await makeAdmin('guardcheck', 'super_admin');

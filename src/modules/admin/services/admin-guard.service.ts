@@ -2,7 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { GuardThreadState, Prisma, RiskLevel, TaxonomyKind } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiException, buildPageMeta } from '@/common';
-import { MediaService, TaxonomyService, authorSelect, toAuthorView } from '@/modules/platform/shared';
+import {
+  MediaService,
+  TaxonomyService,
+  authorSelect,
+  toAuthorView,
+} from '@/modules/platform/shared';
 import { ConversationFactoryService } from '@/modules/platform/messaging';
 import { ListGuardCasesDto, UpdateGuardCaseDto } from '../dtos/admin.dto';
 

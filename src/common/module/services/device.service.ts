@@ -18,6 +18,30 @@ export class DeviceService {
     return { ...parsedUserAgent, deviceFingerprint };
   }
 
+  /**
+   * Which platform this is, preferring what the client said and falling back to the user agent.
+   *
+   * `x-client-platform` has historically carried `mobile` or `web`, which does not distinguish the
+   * two app stores — so "mobile" is resolved from the operating system the user agent reports.
+   * Once the apps send `IOS`/`ANDROID` directly (mobile M6) the header is believed as sent, and
+   * this fallback simply stops being reached.
+   */
+  private resolvePlatform(
+    clientPlatform: string | null | undefined,
+    os: string,
+  ): ParsedDeviceInfo['devicePlatform'] {
+    const declared = (clientPlatform ?? '').trim().toUpperCase();
+
+    if (declared === 'IOS' || declared === 'ANDROID' || declared === 'WEB') return declared;
+
+    const platform = os.toLowerCase();
+
+    if (platform.includes('ios') || platform.includes('mac os')) return 'IOS';
+    if (platform.includes('android')) return 'ANDROID';
+
+    return 'WEB';
+  }
+
   private generateDeviceFingerprint(parsedUserAgent: ParsedDeviceInfo) {
     const fingerprintString = `${parsedUserAgent.browser}|${parsedUserAgent.os}|${parsedUserAgent.deviceType}|${parsedUserAgent.deviceId}`;
 
@@ -42,6 +66,7 @@ export class DeviceService {
     const parser = new UAParser(userAgent);
     const browser = parser.getBrowser().name || 'unknown';
     const os = parser.getOS().name || 'unknown';
+    const osVersion = parser.getOS().version || null;
     const rawType = parser.getDevice().type as DeviceInfo['deviceType'];
     const deviceType: DeviceInfo['deviceType'] = rawType || 'desktop';
     const cleanedIp = this.normalizeIp(ipAddress);
@@ -63,6 +88,8 @@ export class DeviceService {
     return {
       browser,
       os,
+      osVersion,
+      devicePlatform: this.resolvePlatform(deviceHeaders.clientPlatform, os),
       deviceType,
       fullIp: cleanedIp,
       timezone: resolvedTimezone,

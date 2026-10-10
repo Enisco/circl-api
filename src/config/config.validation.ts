@@ -98,7 +98,8 @@ export const configValidationSchema = Joi.object({
 
   if (config.ADMIN_BFF_SECRET === config.ADMIN_BFF_SECRET_PREVIOUS) {
     return helpers.message({
-      custom: 'ADMIN_BFF_SECRET_PREVIOUS must differ from ADMIN_BFF_SECRET (it is the rotated-out value).',
+      custom:
+        'ADMIN_BFF_SECRET_PREVIOUS must differ from ADMIN_BFF_SECRET (it is the rotated-out value).',
     } as never);
   }
 

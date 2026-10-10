@@ -67,10 +67,7 @@ export class AdminMeController {
       'somebody walked away from, where the old password is already in the password manager. ' +
       'Signs out every other session and emails the account owner.',
   })
-  async changePassword(
-    @CurrentUser() actor: AdminPrincipal,
-    @Body() dto: AdminChangePasswordDto,
-  ) {
+  async changePassword(@CurrentUser() actor: AdminPrincipal, @Body() dto: AdminChangePasswordDto) {
     const { auditId } = await this.me.changePassword(actor, dto);
 
     return { data: { changed: true }, meta: { auditId }, message: 'Password changed.' };

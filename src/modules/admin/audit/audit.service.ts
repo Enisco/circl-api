@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AdminReasonCode, Prisma } from '@prisma/client';
+import { AdminReasonCode, AuditArea, Prisma } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { toJson } from '@/common';
 import { AuditAction, areaOf } from './audit-actions';
@@ -24,6 +24,15 @@ export interface AuditDraft {
   metadata?: Record<string, unknown> | null;
   /** Overrides the context actor. Only for events with no authenticated actor: jobs, the CLI. */
   actorId?: string | null;
+  /**
+   * Overrides the action's registered area.
+   *
+   * For the handful of actions whose area is a property of the *target* rather than the action:
+   * one note table serves every subject (§4.7), and who may read the entry about it follows the
+   * subject — a note on a Guard case belongs with safety work, not with member administration.
+   * Everything else leaves this unset, so the registry stays the single answer.
+   */
+  area?: AuditArea;
 }
 
 type Tx = Prisma.TransactionClient;
@@ -46,13 +55,20 @@ export class AuditService {
    * Returns the audit id alongside the result because every mutation response carries it, so the
    * portal can link a confirmation straight to the entry that recorded it (§5.0).
    */
-  async mutate<T>(draft: AuditDraft, work: (tx: Tx) => Promise<T>): Promise<{
+  async mutate<T>(
+    draft: AuditDraft | ((result: T) => AuditDraft),
+    work: (tx: Tx) => Promise<T>,
+  ): Promise<{
     result: T;
     auditId: string;
   }> {
     return this.database.$transaction(async tx => {
       const result = await work(tx);
-      const auditId = await this.record(tx, draft);
+      // A draft may be a function of the result, because `after` is usually the row the mutation
+      // just produced and no caller can know it in advance. Passing it as a plain object and
+      // leaving `after` out is how an entry comes to record what was asked for rather than what
+      // happened — which is the one difference worth having the trail for.
+      const auditId = await this.record(tx, typeof draft === 'function' ? draft(result) : draft);
 
       return { result, auditId };
     });
@@ -69,7 +85,7 @@ export class AuditService {
     const row = await tx.auditLog.create({
       data: {
         action: draft.action,
-        area: areaOf(draft.action),
+        area: draft.area ?? areaOf(draft.action),
         actorId: draft.actorId !== undefined ? draft.actorId : (context?.actorId ?? null),
         actorRole: context?.actorRole ?? null,
         actorSessionId: context?.actorSessionId ?? null,

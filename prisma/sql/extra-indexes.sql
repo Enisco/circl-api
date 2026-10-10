@@ -46,3 +46,11 @@ CREATE INDEX IF NOT EXISTS "media_derived_at_idx"
 CREATE UNIQUE INDEX IF NOT EXISTS "reviews_one_prior_work_per_pair_idx"
   ON "reviews" ("reviewer_id", "subject_user_id")
   WHERE "context" = 'PRIOR_WORK' AND "deleted_at" IS NULL;
+
+-- One live invitation per email address. Partial, so an address may be invited again once the
+-- first invite was used or revoked, but never have two outstanding at the same time: two live
+-- tokens for one staff account are two ways into it, and the second would outlive whatever made
+-- the first one suspect.
+CREATE UNIQUE INDEX IF NOT EXISTS "admin_invites_live_email_idx"
+  ON "admin_invites" ("email")
+  WHERE "accepted_at" IS NULL AND "revoked_at" IS NULL;

@@ -36,7 +36,8 @@
     "prisma:studio": "npx prisma studio",
     "admin:bootstrap": "ts-node --transpile-only scripts/admin-bootstrap.ts",
     "start:admin": "APP_SURFACE=admin nest start",
-    "start:member": "APP_SURFACE=member nest start"
+    "start:member": "APP_SURFACE=member nest start",
+    "backfill:country-codes": "ts-node --transpile-only scripts/backfill-country-codes.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.991.0",

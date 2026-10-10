@@ -17,6 +17,16 @@ export interface DeviceHeaders {
 export interface ParsedDeviceInfo {
   browser: string; // e.g. "Chrome"
   os: string; // e.g. "Windows"
+  /**
+   * `IOS`, `ANDROID` or `WEB`, which is what the analytics group by.
+   *
+   * Separate from `os`, which is a free string from a user-agent parser and has spelled the same
+   * platform several ways. Taken from `x-client-platform` where the client sends something usable,
+   * and from the user agent otherwise — the apps only began sending `IOS`/`ANDROID` with mobile
+   * M6, and a column that is null for every release before that is not worth grouping by.
+   */
+  devicePlatform: 'IOS' | 'ANDROID' | 'WEB';
+  osVersion: string | null;
   deviceType: 'mobile' | 'tablet' | 'desktop' | 'unknown';
   fullIp: string; // e.g. "192.168.1.1"
   timezone: string; // e.g. "Africa/Lagos"

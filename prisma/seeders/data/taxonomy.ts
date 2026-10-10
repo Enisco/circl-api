@@ -324,7 +324,7 @@ const helpTags: Array<[string, string]> = [
 ];
 
 // ─── Notification categories (spec 6.1.4, D38) ────────────────────────────────
-// The nine rows of the preference matrix.
+// The rows of the preference matrix.
 const notificationCategories: Array<[string, string, boolean, boolean, boolean]> = [
   // code, label, default push, default email, locked
   ['REPLIES', 'Replies to my posts', true, false, false],
@@ -335,6 +335,10 @@ const notificationCategories: Array<[string, string, boolean, boolean, boolean]>
   ['BOOKINGS', 'Bookings & orders', true, true, false],
   ['COMPLIANCE', 'Verification & payments', true, true, true],
   ['ANNOUNCEMENTS', 'News from Circl', true, false, false],
+  // Warnings, removals, suspensions and the appeal route (§7.3). Locked, like COMPLIANCE: a member
+  // who has turned everything off still has to be told what was done to their account and how to
+  // dispute it. A notice somebody can switch off is not a notice.
+  ['ACCOUNT', 'Your account', true, true, true],
   // Likes and saves. The most mutable notification on the platform, so it is never locked, and
   // email defaults off because an email per like is how people turn off email entirely.
   ['REACTIONS', 'Likes and saves', true, false, false],

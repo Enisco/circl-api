@@ -83,6 +83,8 @@ async function makeUser(tag, profile = {}) {
 
   return {
     id: user.id,
+    email: user.email,
+    username: user.username,
     // The same claims the app mints. `type` and the audience are both checked now: without them a
     // refresh token or an admin token would be accepted as an access token, which is what the
     // member strategy used to do (B12).
@@ -114,12 +116,22 @@ async function sweep(label = 'sweep') {
       where: { participants: { some: { userId: { in: ids } } } },
     });
     await prisma.group.deleteMany({ where: { createdById: { in: ids } } });
+    // Internal notes hold a subject type and an id rather than a foreign key — deliberately, so a
+    // note survives the member being anonymised — so nothing cascades them away either.
+    await prisma.internalNote.deleteMany({
+      where: { OR: [{ subjectId: { in: ids } }, { authorId: { in: ids } }] },
+    });
     await prisma.user.deleteMany({ where: { id: { in: ids } } });
   }
 
   // Admin invites carry no foreign key to the user — deliberately, so an invite survives the
   // account it refers to — which means nothing cascades them away.
   await prisma.adminInvite.deleteMany({ where: { email: { startsWith: E2E_PREFIX } } });
+
+  // Risk terms, for the same reason and with a sharper edge: the lexicon is *reference* data, so a
+  // phrase a suite added and never removed sits beside the real crisis vocabulary and is scanned
+  // against every message. One had been there for hours reading as though somebody had seeded it.
+  await prisma.riskTerm.deleteMany({ where: { pattern: { startsWith: 'e2e' } } });
 
   // Runs whether or not this sweep found users of its own, because a suite that deletes its own
   // members first leaves the orphans behind for somebody else to find. `guides.authorId` is

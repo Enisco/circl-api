@@ -15,6 +15,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
 } from 'class-validator';
@@ -172,6 +173,54 @@ export class UpsertRiskTermDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    maxLength: 500,
+    description: 'Why this phrase is here, for whoever inherits the lexicon.',
+  })
+  @Trim()
+  @IsString()
+  @MaxLength(500)
+  @IsOptional()
+  notes?: string;
+}
+
+/**
+ * Retuning one term.
+ *
+ * **There is no `pattern` field, deliberately.** The global validation pipe runs with
+ * `forbidNonWhitelisted`, so sending one is a 400 naming the field rather than a value silently
+ * ignored. A phrase's hit count and false-positive rate are evidence about that exact phrase;
+ * editing the words in place would hand one phrase's record to another, and that record is what
+ * staff use to judge whether a term is worth keeping (§5.13 addendum).
+ */
+export class PatchRiskTermDto {
+  @ApiPropertyOptional({ description: 'A RiskCategory code.' })
+  @Trim()
+  @IsString()
+  @IsOptional()
+  category?: string;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 100 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  @IsOptional()
+  weight?: number;
+
+  @ApiPropertyOptional()
+  @Bool()
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
+
+  @ApiPropertyOptional({ maxLength: 500 })
+  @Trim()
+  @IsString()
+  @MaxLength(500)
+  @IsOptional()
+  notes?: string;
 }
 
 export class SuspendUserDto {

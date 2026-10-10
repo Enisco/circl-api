@@ -5,6 +5,7 @@ export * from './role.decorator';
 export * from './permissions.decorator';
 export * from './sanitize.decorator';
 export * from './to-boolean.decorator';
+export * from './csv-array.decorator';
 export * from './current-user.decorator';
 export * from './idempotent.decorator';
 export * from './rate-limit.decorator';

@@ -15,9 +15,12 @@ const names = (modules: unknown[]) =>
 describe('app surfaces', () => {
   const productModules = PLATFORM_MODULES.filter(
     module =>
-      !['PlatformSharedModule', 'NotificationsModule', 'MessagingCoreModule', 'MediaModule'].includes(
-        (module as { name: string }).name,
-      ),
+      ![
+        'PlatformSharedModule',
+        'NotificationsModule',
+        'MessagingCoreModule',
+        'MediaModule',
+      ].includes((module as { name: string }).name),
   );
 
   it('serves both APIs by default, which is the single-process deployment', () => {

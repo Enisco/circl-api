@@ -37,11 +37,19 @@ const storageFor = (): StorageProvider => {
   return new S3Storage(config);
 };
 
-/** The one thing this must never do. */
+/**
+ * The one thing this must never do.
+ *
+ * Refuses if **either** signal says production. `NODE_ENV ?? APP_ENV` was wrong in a way that only
+ * shows up in the one configuration that matters: `??` falls through on *unset*, not on
+ * *different*, so a deployment running `NODE_ENV=staging` alongside `APP_ENV=production` read as
+ * staging and the guard did not fire. Invented members in a production database is not a mistake
+ * anybody can undo.
+ */
 const assertNotProduction = () => {
-  const environment = process.env.NODE_ENV ?? process.env.APP_ENV;
+  const signals = [process.env.NODE_ENV, process.env.APP_ENV];
 
-  if (environment === 'production') {
+  if (signals.includes('production')) {
     throw new Error(
       'The demo dataset refuses to run in production. It is invented data and must never be ' +
         'mistaken for real. There is deliberately no flag to override this.',
@@ -54,8 +62,17 @@ const seedGuard = async (ctx: DemoSeedContext) => {
   const { prisma } = ctx;
   const conversationId = seedId('thread:support:1');
   const owner = userId(1);
+  // The **oldest** staff account, and never a throwaway one.
+  //
+  // `findFirst({ isStaff: true })` picked whichever row came back first, which on a machine that
+  // has run the end-to-end suites is often a test admin — and the suites' sweep deletes every
+  // conversation a test account is a participant in. So this fixture, which is supposed to be
+  // permanent demo data, was being wired to an account that would be deleted within minutes,
+  // taking the support thread with it. The symptom was a seeded thread that silently stopped
+  // existing; the cause was a fixture holding a reference to somebody else's temporary data.
   const staff = await prisma.user.findFirst({
-    where: { isStaff: true },
+    where: { isStaff: true, NOT: { email: { startsWith: 'e2e-' } } },
+    orderBy: { createdAt: 'asc' },
     select: { id: true },
   });
 
@@ -241,11 +258,9 @@ export const seedDemo = async (prisma: PrismaClient) => {
 export const resetDemo = async (prisma: PrismaClient) => {
   assertNotProduction();
 
-  const ids = [
-    ...PEOPLE.map(p => p.n),
-    ...connectExtras().map(p => p.n),
-    ...PULSE_MEMBER_IDS,
-  ].map(userId);
+  const ids = [...PEOPLE.map(p => p.n), ...connectExtras().map(p => p.n), ...PULSE_MEMBER_IDS].map(
+    userId,
+  );
   const storage = storageFor();
 
   const media = await prisma.media.findMany({

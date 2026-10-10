@@ -31,7 +31,10 @@ export class AdminRecoveryCodeService {
     await client.adminRecoveryCode.deleteMany({ where: { userId } });
     await client.adminRecoveryCode.createMany({
       data: await Promise.all(
-        codes.map(async code => ({ userId, codeHash: await this.passwords.hash(this.normalise(code)) })),
+        codes.map(async code => ({
+          userId,
+          codeHash: await this.passwords.hash(this.normalise(code)),
+        })),
       ),
     });
 

@@ -16,11 +16,7 @@ import {
   ADMIN_REFRESH_GRACE_MS,
   AdminSessionService,
 } from './admin-session.service';
-import {
-  ADMIN_TOKEN_AUDIENCE,
-  ADMIN_TOKEN_ISSUER,
-  ADMIN_TOKEN_TYPE,
-} from './admin-jwt.strategy';
+import { ADMIN_TOKEN_AUDIENCE, ADMIN_TOKEN_ISSUER, ADMIN_TOKEN_TYPE } from './admin-jwt.strategy';
 
 /** How long the half-finished login lives. Long enough to find a phone, short enough to be no use later. */
 const MFA_TOKEN_TTL_SECONDS = 300;
@@ -433,13 +429,15 @@ export class AdminAuthService {
         throw this.sessionRevoked();
       }
 
-      if (this.sessions.expiryReason({
-        id: session.id,
-        userId: session.userId,
-        revoked: false,
-        absoluteExpiresAt: session.absoluteExpiresAt.toISOString(),
-        lastUsedAt: session.lastUsedAt.toISOString(),
-      })) {
+      if (
+        this.sessions.expiryReason({
+          id: session.id,
+          userId: session.userId,
+          revoked: false,
+          absoluteExpiresAt: session.absoluteExpiresAt.toISOString(),
+          lastUsedAt: session.lastUsedAt.toISOString(),
+        })
+      ) {
         await this.sessions.revoke(session.id, AdminSessionRevokeReason.EXPIRED);
 
         throw this.sessionRevoked();
@@ -645,7 +643,9 @@ export class AdminAuthService {
     const context = adminContext.current();
     const value = part === 'ip' ? context?.clientIp : context?.userAgent;
 
-    return createHash('sha256').update(value ?? 'unknown').digest('hex');
+    return createHash('sha256')
+      .update(value ?? 'unknown')
+      .digest('hex');
   }
 
   /** Never stored in the clear: an audit trail of failed logins should not be a list of addresses. */

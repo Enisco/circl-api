@@ -1,8 +1,12 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { AdminReasonCode } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { ApiErrorCode } from '../constants/api-error-code.constant';
 import { ApiException } from '../exceptions/api.exception';
+
+/** The reason codes, as a list, because `@IsIn` needs one and the enum is not one. */
+const ADMIN_REASON_CODES = Object.values(AdminReasonCode);
 
 /** Beyond this, `OFFSET` stops being cheap and the answer stops being useful. */
 const MAX_DEPTH = 10_000;
@@ -31,7 +35,7 @@ export class AdminPageOptionsDto {
   @IsOptional()
   perPage?: number = 25;
 
-  @ApiPropertyOptional({ description: 'A field from the endpoint\'s own allowlist.' })
+  @ApiPropertyOptional({ description: "A field from the endpoint's own allowlist." })
   @IsOptional()
   @IsString()
   @MaxLength(40)
@@ -42,7 +46,9 @@ export class AdminPageOptionsDto {
   @IsIn(['asc', 'desc'])
   order?: 'asc' | 'desc';
 
-  @ApiPropertyOptional({ description: 'Free text. Each endpoint documents which columns it searches.' })
+  @ApiPropertyOptional({
+    description: 'Free text. Each endpoint documents which columns it searches.',
+  })
   @IsOptional()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
@@ -77,9 +83,13 @@ export class AdminPageOptionsDto {
     if (!this.sort) return fallback;
 
     if (!(allowed as readonly string[]).includes(this.sort)) {
-      throw ApiException.badRequest(ApiErrorCode.VALIDATION_FAILED, 'That is not a sortable field.', {
-        details: [{ field: 'sort', message: `One of: ${allowed.join(', ')}.` }],
-      });
+      throw ApiException.badRequest(
+        ApiErrorCode.VALIDATION_FAILED,
+        'That is not a sortable field.',
+        {
+          details: [{ field: 'sort', message: `One of: ${allowed.join(', ')}.` }],
+        },
+      );
     }
 
     return this.sort as T;
@@ -92,32 +102,23 @@ export class AdminPageOptionsDto {
  * An audit trail that records what happened and not why is a list of events, not an account of
  * decisions — and the person who has to answer for a decision six months later is rarely the one
  * who made it.
+ *
+ * `reasonCode` is declared **optional and then demanded by `assertReasoned`**, which looks
+ * backwards and is not. Left as a required field, an omitted reason is a 400 `VALIDATION_FAILED`
+ * from the validation pipe, indistinguishable from a malformed body; the spec gives it its own 422
+ * `REASON_REQUIRED` (§2.8) because it is a different thing — the request was well formed and the
+ * rule it broke is a policy. The same method enforces the rule that `POLICY_VIOLATION` has to name
+ * which policy, which no decorator can express at all.
  */
 export class ReasonedDto {
-  @ApiPropertyOptional({
-    enum: [
-      'MEMBER_REQUEST',
-      'CORRECTION',
-      'POLICY_VIOLATION',
-      'SAFETY_CONCERN',
-      'SCAM_FRAUD',
-      'LEGAL_GDPR',
-      'OTHER',
-    ],
-  })
-  @IsIn([
-    'MEMBER_REQUEST',
-    'CORRECTION',
-    'POLICY_VIOLATION',
-    'SAFETY_CONCERN',
-    'SCAM_FRAUD',
-    'LEGAL_GDPR',
-    'OTHER',
-  ])
-  reasonCode: string;
+  @ApiPropertyOptional({ enum: ADMIN_REASON_CODES })
+  @IsOptional()
+  @IsIn([...ADMIN_REASON_CODES])
+  reasonCode?: AdminReasonCode;
 
   @ApiPropertyOptional({ description: 'Required when reasonCode is POLICY_VIOLATION.' })
   @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @MaxLength(40)
   policySubtype?: string;
@@ -128,4 +129,38 @@ export class ReasonedDto {
   @IsString()
   @MaxLength(2000)
   note?: string;
+
+  /**
+   * The reason, as the audit entry needs it — or a 422 saying what is missing.
+   *
+   * Returns the three fields together so a caller cannot take the code and forget the subtype:
+   * "policy violation" with no rule named is the reason that looks recorded and explains nothing.
+   */
+  assertReasoned(): {
+    reasonCode: AdminReasonCode;
+    policySubtype: string | null;
+    note: string | null;
+  } {
+    if (!this.reasonCode) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.REASON_REQUIRED,
+        'Say why. Every action a member can be affected by is recorded with its reason.',
+        { details: [{ field: 'reasonCode', message: 'Required.' }] },
+      );
+    }
+
+    if (this.reasonCode === AdminReasonCode.POLICY_VIOLATION && !this.policySubtype?.trim()) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.REASON_REQUIRED,
+        'Name the policy. "Policy violation" on its own is not a reason anybody can review.',
+        { details: [{ field: 'policySubtype', message: 'Required for POLICY_VIOLATION.' }] },
+      );
+    }
+
+    return {
+      reasonCode: this.reasonCode,
+      policySubtype: this.policySubtype?.trim() || null,
+      note: this.note?.trim() || null,
+    };
+  }
 }

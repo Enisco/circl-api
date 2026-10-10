@@ -1,17 +1,8 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { FeedFeedbackReason, FeedItemType, RequestStatus } from '@prisma/client';
-import { Transform, Type } from 'class-transformer';
+import { Type } from 'class-transformer';
 import { IsArray, IsEnum, IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
-
-const CsvArray = () =>
-  Transform(({ value }) =>
-    typeof value === 'string'
-      ? value
-          .split(',')
-          .map(v => v.trim())
-          .filter(Boolean)
-      : value,
-  );
+import { CsvArray } from '@/common';
 
 export class FeedQueryDto {
   @ApiPropertyOptional({ description: 'Opaque cursor. Omit for the first page (0.5).' })

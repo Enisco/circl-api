@@ -64,6 +64,34 @@ export class AdminMailService {
     ]);
   }
 
+  /**
+   * Tells the address a member used to have that it has changed (plan §2.4).
+   *
+   * Sent to the **old** address on purpose, and out of band from the member's own notification
+   * preferences, because the whole point is to reach somebody whose account may just have been
+   * taken from them. A notice delivered only to the new address tells the wrong person.
+   */
+  async memberContactChanged(to: string, changed: string[], supportEmail: string): Promise<void> {
+    await this.send(to, 'A change to your Circl account', [
+      `Someone at Circl updated your account: ${changed.join(', ')}.`,
+      ``,
+      `If you asked us to do this, nothing more is needed.`,
+      ``,
+      `If you did not, reply to this email or write to ${supportEmail} straight away.`,
+    ]);
+  }
+
+  /** Asks a member to confirm an address staff changed on their behalf. */
+  async memberEmailChanged(to: string, supportEmail: string): Promise<void> {
+    await this.send(to, 'Confirm your Circl email address', [
+      `Someone at Circl set this address on your account.`,
+      ``,
+      `Open the Circl app and confirm it when asked — until then this address is unverified.`,
+      ``,
+      `If you were not expecting this, write to ${supportEmail}.`,
+    ]);
+  }
+
   private async send(to: string, subject: string, lines: string[]): Promise<void> {
     const text = lines.join('\n');
 

@@ -72,4 +72,15 @@ export class ApiException extends HttpException {
   static rateLimited(code: ApiErrorCode, message: string, options?: ApiExceptionOptions) {
     return new ApiException(HttpStatus.TOO_MANY_REQUESTS, code, message, options);
   }
+
+  /**
+   * 503: the request was fine and we could not answer it in time.
+   *
+   * Distinct from a 429, which says "you are asking too often", and from a 500, which says "we are
+   * broken". An analytics query that hits its statement timeout is neither — the honest answer is
+   * "ask for less", and the status has to say retrying later might work.
+   */
+  static unavailable(code: ApiErrorCode, message: string, options?: ApiExceptionOptions) {
+    return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, code, message, options);
+  }
 }

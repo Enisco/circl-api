@@ -24,22 +24,13 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { PageOptionsDto, ToBoolean } from '@/common';
+import { CsvArray, PageOptionsDto, ToBoolean } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 const Bool = ToBoolean;
 /** Number(), except that it leaves null alone: `Number(null)` is 0, and here those differ. */
 const NullableNumber = () =>
   Transform(({ value }) => (value === null || value === undefined ? value : Number(value)));
-const CsvArray = () =>
-  Transform(({ value }) =>
-    typeof value === 'string'
-      ? value
-          .split(',')
-          .map(v => v.trim())
-          .filter(Boolean)
-      : value,
-  );
 
 /** The sort keys marketplace browse accepts, and the codes `taxonomy.commerceSortOptions` carries. */
 export const COMMERCE_SORTS = [
@@ -363,7 +354,7 @@ export class ItemDto {
     description:
       'Which of the three an item is. `OUT_OF_STOCK` stays on the shelf — it says what this shop ' +
       'sells, and "when is this back?" is a fair reason to write. `DRAFT` is returned to the ' +
-      'shop\'s owner and to nobody else. **Absent leaves it as it is**, which is what every edit ' +
+      "shop's owner and to nobody else. **Absent leaves it as it is**, which is what every edit " +
       'that is not about availability wants.',
   })
   @IsEnum(ItemAvailability)

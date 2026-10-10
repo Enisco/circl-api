@@ -139,7 +139,7 @@ export class AdminTeamController {
   @Idempotent({ required: true })
   @RateLimit('ADMIN_WRITE')
   @ApiOperation({
-    summary: 'Change somebody\'s role',
+    summary: "Change somebody's role",
     description:
       'Signs them out, so the new role takes effect at their next sign-in rather than whenever ' +
       'their session happened to end. Refuses to demote the last active super admin.',
@@ -149,7 +149,10 @@ export class AdminTeamController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ChangeRoleDto,
   ) {
-    const { staff, auditId } = await this.team.changeRole(actor, id, dto);
+    const { staff, auditId } = await this.team.changeRole(actor, id, {
+      ...dto.assertReasoned(),
+      role: dto.role,
+    });
 
     return { data: staff, meta: { auditId }, message: 'Role changed.' };
   }
@@ -171,7 +174,11 @@ export class AdminTeamController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ChangeRoleDto,
   ) {
-    const { staff, auditId, released } = await this.team.deactivate(actor, id, dto);
+    const { staff, auditId, released } = await this.team.deactivate(
+      actor,
+      id,
+      dto.assertReasoned(),
+    );
 
     return {
       data: staff,
@@ -196,7 +203,7 @@ export class AdminTeamController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ChangeRoleDto,
   ) {
-    const { staff, invite, auditId } = await this.team.reactivate(actor, id, dto);
+    const { staff, invite, auditId } = await this.team.reactivate(actor, id, dto.assertReasoned());
 
     return { data: { ...staff, invite }, meta: { auditId }, message: 'Account reactivated.' };
   }
@@ -218,7 +225,10 @@ export class AdminTeamController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ResetCredentialsDto,
   ) {
-    const { invite, auditId } = await this.team.resetCredentials(actor, id, dto);
+    const { invite, auditId } = await this.team.resetCredentials(actor, id, {
+      ...dto.assertReasoned(),
+      scope: dto.scope,
+    });
 
     return { data: { invite }, meta: { auditId }, message: 'Credentials reset.' };
   }

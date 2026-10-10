@@ -20,7 +20,8 @@ export const SEARCH_SCOPES = ['ALL', 'COMMUNITY', 'PROFESSIONALS', 'CONNECT', 'C
 export type SearchScope = (typeof SEARCH_SCOPES)[number];
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
-const CsvArray = () =>
+/** Like the shared `CsvArray`, but upper-cases: these are codes a client may send in any case. */
+const CsvUpperArray = () =>
   Transform(({ value }) =>
     typeof value === 'string'
       ? value
@@ -48,7 +49,7 @@ export class SearchDto {
       `Known codes: ${SEARCH_TYPES.join(', ')}.`,
     example: 'REQUEST,GUIDE,GROUP,PERSON',
   })
-  @CsvArray()
+  @CsvUpperArray()
   @IsArray()
   @IsString({ each: true })
   @IsOptional()

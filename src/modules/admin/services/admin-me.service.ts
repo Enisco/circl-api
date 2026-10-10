@@ -96,7 +96,10 @@ export class AdminMeService {
         targetType: 'STAFF',
         targetId: actor.id,
         before,
-        after: { firstName: input.firstName ?? before.firstName, lastName: input.lastName ?? before.lastName },
+        after: {
+          firstName: input.firstName ?? before.firstName,
+          lastName: input.lastName ?? before.lastName,
+        },
       },
       async tx =>
         tx.user.update({
@@ -123,13 +126,16 @@ export class AdminMeService {
     actor: AdminPrincipal,
     input: { currentPassword: string; newPassword: string; code: string },
   ): Promise<{ auditId: string }> {
-    const credential = await this.reauthenticate(actor, input.currentPassword, input.code);
-
+    // The new password is judged before the authenticator code is spent. The other way round, a
+    // password that broke the policy burned the code with it, so every correction needed a fresh
+    // thirty-second window — a punishment for mistyping.
     await this.passwords.assertAcceptable(input.newPassword, {
       email: actor.email,
       firstName: actor.firstName,
       lastName: actor.lastName,
     });
+
+    await this.reauthenticate(actor, input.currentPassword, input.code);
 
     const passwordHash = await this.passwords.hash(input.newPassword);
     const { auditId } = await this.audit.mutate(
@@ -137,11 +143,7 @@ export class AdminMeService {
       async tx => {
         await tx.adminCredential.update({
           where: { userId: actor.id },
-          data: {
-            passwordHash,
-            passwordUpdatedAt: new Date(),
-            totpLastUsedStep: credential.totpLastUsedStep,
-          },
+          data: { passwordHash, passwordUpdatedAt: new Date() },
         });
 
         // Keeps the current one: signing yourself out of the change you just made is not a
@@ -210,7 +212,9 @@ export class AdminMeService {
     return { auditId };
   }
 
-  async revokeOtherSessions(actor: AdminPrincipal): Promise<{ revokedCount: number; auditId: string }> {
+  async revokeOtherSessions(
+    actor: AdminPrincipal,
+  ): Promise<{ revokedCount: number; auditId: string }> {
     const { result, auditId } = await this.audit.mutate(
       {
         action: 'auth.sessions_revoked',
@@ -263,7 +267,11 @@ export class AdminMeService {
    * 422 rather than 401 on failure: a 401 would make the portal think the session had gone and log
    * the person out mid-dialog, when what actually happened is that they mistyped.
    */
-  private async reauthenticate(actor: AdminPrincipal, password: string, code: string) {
+  private async reauthenticate(
+    actor: AdminPrincipal,
+    password: string,
+    code: string,
+  ): Promise<void> {
     const credential = await this.database.adminCredential.findUnique({
       where: { userId: actor.id },
     });
@@ -283,8 +291,6 @@ export class AdminMeService {
       where: { userId: actor.id },
       data: { totpLastUsedStep: result.step !== null ? BigInt(result.step) : undefined },
     });
-
-    return { ...credential, totpLastUsedStep: result.step !== null ? BigInt(result.step) : credential.totpLastUsedStep };
   }
 
   private wrongCredentials() {

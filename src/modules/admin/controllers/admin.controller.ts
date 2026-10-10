@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -13,13 +14,14 @@ import {
 } from '@nestjs/common';
 import { ApiExcludeController, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ReportTargetType, TaxonomyKind } from '@prisma/client';
-import { CurrentUserId, SuccessMessage } from '@/common';
+import { CurrentUserId, RateLimit, SuccessMessage } from '@/common';
 import { AdminJwtGuard } from '@/common/guards/admin-jwt.guard';
 import { AdminBffGuard } from '../common/admin-bff.guard';
 import { AdminPermissionGuard } from '../common/admin-permission.guard';
 import { AdminPermissions } from '../common/admin-principal';
 import {
   DecideQueueItemDto,
+  PatchRiskTermDto,
   ListGuardCasesDto,
   ListQueueDto,
   ListRiskTermsDto,
@@ -171,7 +173,13 @@ export class AdminController {
     return { data, message: SuccessMessage.RESOURCE_UPDATED('Case') };
   }
 
-  @Get('guard/risk-terms')
+  // ─── The Guard lexicon ───────────────────────────────────────────────────
+  //
+  // Served at `admin/risk-terms`, with the older `admin/guard/risk-terms` paths kept as
+  // aliases until the portal has switched (§5.13). One handler per verb, two routes each: a
+  // second copy of each handler would be a second place for the rules to drift.
+
+  @Get(['risk-terms', 'guard/risk-terms'])
   @AdminPermissions('risk_terms:manage')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -187,29 +195,54 @@ export class AdminController {
     return { data, meta, message: SuccessMessage.RESOURCE_FETCHED('Risk terms') };
   }
 
-  @Post('guard/risk-terms')
+  @Post(['risk-terms', 'guard/risk-terms'])
   @AdminPermissions('risk_terms:manage')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Add or retune a risk phrase',
     description:
-      'The scanner reloads within a couple of minutes, so a phrase added the moment staff see it ' +
-      'used is matching this afternoon rather than at the next deploy.',
+      'The phrase is stored in the same normalised form the scanner applies to member text — ' +
+      'NFKC, lowercased, invisible characters stripped, leetspeak folded, whitespace collapsed — ' +
+      'and its length is checked after that. A pattern that was only lowercased could contain a ' +
+      'zero-width character or a leetspeak digit and never match anything, and nothing said so: ' +
+      'it sat in the list looking active with a hit count of zero.\n\n' +
+      'Every instance is told its copy is stale, so a phrase added the moment staff see it used ' +
+      'is matching within seconds rather than within two minutes.',
   })
+  @RateLimit('ADMIN_WRITE')
   async upsertRiskTerm(@Body() dto: UpsertRiskTermDto) {
     const data = await this.taxonomy.upsertRiskTerm(dto);
 
     return { data, message: SuccessMessage.RESOURCE_UPDATED('Risk term') };
   }
 
-  @Delete('guard/risk-terms/:id')
+  @Patch(['risk-terms/:id', 'guard/risk-terms/:id'])
+  @AdminPermissions('risk_terms:manage')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit('ADMIN_WRITE')
+  @ApiOperation({
+    summary: 'Retune one phrase: weight, category, notes, on or off',
+    description:
+      "`pattern` is **not** accepted, and sending it is a 400 naming the field. A term's hit " +
+      'count and false-positive rate are evidence about one exact phrase, and that evidence is ' +
+      'what staff use to judge whether it is worth keeping — editing the words in place would ' +
+      "quietly hand one phrase's record to another. To change a phrase, turn this one off and " +
+      'add a new one.',
+  })
+  async patchRiskTerm(@Param('id', ParseUUIDPipe) id: string, @Body() dto: PatchRiskTermDto) {
+    const data = await this.taxonomy.patchRiskTerm(id, dto);
+
+    return { data, message: SuccessMessage.RESOURCE_UPDATED('Risk term') };
+  }
+
+  @Delete(['risk-terms/:id', 'guard/risk-terms/:id'])
   @AdminPermissions('risk_terms:manage')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Turn a risk phrase off',
     description: 'Deactivated rather than deleted, so it stays off through the next seed run.',
   })
-  async removeRiskTerm(@Param('id') id: string) {
+  async removeRiskTerm(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.taxonomy.removeRiskTerm(id);
 
     return { data, message: 'Risk term deactivated' };

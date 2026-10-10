@@ -239,9 +239,7 @@ export class AdminPasswordService {
 
       const body = await response.text();
 
-      return body
-        .split('\n')
-        .some(line => line.split(':')[0]?.trim().toUpperCase() === suffix);
+      return body.split('\n').some(line => line.split(':')[0]?.trim().toUpperCase() === suffix);
     } catch (error) {
       this.logger.warn({
         securityEvent: 'hibp_check_unavailable',

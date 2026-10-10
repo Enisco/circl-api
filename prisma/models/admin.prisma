@@ -189,3 +189,35 @@ model AuditLog {
   @@index([action, occurredAt])
   @@map("audit_logs")
 }
+
+// ═══════════════════════════════════════════════════════════════════ Admin portal — notes
+//
+/// A note staff leave each other about a member, a case, a thread or a deal.
+///
+/// Generic on purpose: one table and one pair of endpoints serve every subject, because the
+/// alternative is six near-identical tables that drift. The subject is a type and an id rather than
+/// a foreign key for the same reason the audit log has none — a note about a member must survive
+/// that member being anonymised, and a note about a case must survive the case being closed.
+///
+/// Soft-deleted and audited. A note is somebody's judgement about a person, recorded where that
+/// person cannot see it; a hard delete would make the record of who wrote what unrecoverable, and
+/// that record is the only thing keeping the practice accountable.
+model InternalNote {
+  id          String          @id @default(uuid())
+  subjectType NoteSubjectType @map("subject_type")
+  subjectId   String          @map("subject_id")
+  authorId    String          @map("author_id")
+
+  /// Plain text, ≤ 4000. Never rendered as HTML: this is evidence, not content, and transforming
+  /// it would alter evidence.
+  body     String  @map("body")
+  isPinned Boolean @default(false) @map("is_pinned")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  @@index([subjectType, subjectId, createdAt])
+  @@index([authorId])
+  @@map("internal_notes")
+}

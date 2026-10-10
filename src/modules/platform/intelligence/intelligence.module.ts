@@ -9,8 +9,11 @@ import { MetricsService } from './services/metrics.service';
 import { PulseService } from './services/pulse.service';
 import { SearchDemandService } from './services/search-demand.service';
 import { SmartMatchService } from './services/smart-match.service';
+import { MemberActivityService } from './activity/member-activity.service';
+import { MemberActivityInterceptor } from './activity/member-activity.interceptor';
 
 const SERVICES = [
+  MemberActivityService,
   FeedRankerService,
   SearchDemandService,
   GuideMatcherService,
@@ -30,7 +33,7 @@ const SERVICES = [
     ]),
   ],
   controllers: [PulseController],
-  providers: SERVICES,
-  exports: SERVICES,
+  providers: [...SERVICES, MemberActivityInterceptor],
+  exports: [...SERVICES, MemberActivityInterceptor],
 })
 export class IntelligenceModule {}

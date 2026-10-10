@@ -6,4 +6,7 @@ export * from './city.service';
 export * from './connect-visibility';
 export * from './media.service';
 export * from './risk-scanner.service';
+export * from './text-normalisation';
+export * from './session-revocation.service';
+export * from './system-config.service';
 export * from './taxonomy.service';

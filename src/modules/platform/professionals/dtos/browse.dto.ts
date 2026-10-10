@@ -12,19 +12,10 @@ import {
   Max,
   Min,
 } from 'class-validator';
-import { PageOptionsDto, ToBoolean } from '@/common';
+import { CsvArray, PageOptionsDto, ToBoolean } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 const Bool = ToBoolean;
-const CsvArray = () =>
-  Transform(({ value }) =>
-    typeof value === 'string'
-      ? value
-          .split(',')
-          .map(v => v.trim())
-          .filter(Boolean)
-      : value,
-  );
 
 /** The sort keys browse accepts, and the codes `taxonomy.professionalSortOptions` carries. One list, so a chip the app renders is always one the endpoint takes. */
 export const PROFESSIONAL_SORTS = [

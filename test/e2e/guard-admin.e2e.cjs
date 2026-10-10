@@ -133,6 +133,35 @@ const jwt = require('jsonwebtoken');
   r = await api(null, 'GET', `/admin/guard/cases/${guardThreadId}/messages`, null, adminHeaders(safeguarding));
   check('trust & safety can read it', r.status === 200, r.body?.error);
 
+  // The colleague who is NOT the assignee. Reading has to work for them: a case whose assignee is
+  // away would otherwise be unreadable by the people whose job it is, and R7 grants reading to
+  // anybody holding guard:read rather than to whoever happens to be on the thread.
+  const colleague = await makeAdmin('guardcolleague', 'trust_safety');
+
+  r = await api(null, 'GET', `/admin/guard/cases/${guardThreadId}/messages`, null, adminHeaders(colleague));
+  check('and so can a colleague who was never assigned to it', r.status === 200, r.body?.error);
+
+  const beforeRead = await prisma.conversationParticipant.count({
+    where: { conversationId: guardConversationId },
+  });
+
+  await api(null, 'GET', `/admin/guard/cases/${guardThreadId}/messages`, null, adminHeaders(colleague));
+  const afterRead = await prisma.conversationParticipant.count({
+    where: { conversationId: guardConversationId },
+  });
+  check('reading leaves nothing behind in the member\'s thread', beforeRead === afterRead,
+    { beforeRead, afterRead });
+
+  r = await api(null, 'POST', `/admin/guard/cases/${guardThreadId}/messages`, {
+    clientId: 'staff-colleague-1', body: 'Covering while my colleague is away.',
+  }, adminHeaders(colleague));
+  check('and replying works, because answering a case is taking it', r.status === 201, r.body?.error);
+
+  const joined = await prisma.conversationParticipant.findFirst({
+    where: { conversationId: guardConversationId, userId: colleague.id },
+  });
+  check('which is what the participant row says', joined?.role === 'STAFF', joined?.role);
+
   console.log('\n── Admin: anonymous posts are still moderated ───────────────');
 
   r = await api(member.token, 'POST', '/community/updates', {
@@ -360,15 +389,141 @@ const jwt = require('jsonwebtoken');
 
   // Trust & safety own the lexicon now — tuning it is the same job as working the queue it feeds.
   // Support do not: a false positive is a safety decision, not a support one.
-  r = await api(null, 'POST', '/admin/guard/risk-terms', { category: 'SCAM', pattern: 'nope' }, adminHeaders(supportStaff));
+  r = await api(null, 'POST', '/admin/guard/risk-terms', { category: 'SCAM', pattern: 'e2e-nope' }, adminHeaders(supportStaff));
   check('support cannot edit the lexicon',
     r.status === 403 && r.body?.data?.requires?.includes('risk_terms:manage'), r.body);
 
-  r = await api(null, 'POST', '/admin/guard/risk-terms', { category: 'NOT_A_CATEGORY', pattern: 'x' }, adminHeaders(safeguarding));
+  r = await api(null, 'POST', '/admin/guard/risk-terms', { category: 'NOT_A_CATEGORY', pattern: 'e2e-x' }, adminHeaders(safeguarding));
   check('an unknown risk category → 422', r.status === 422, r.body?.error);
+
+  console.log('\n── Admin: a pattern is stored the way the scanner reads text ──');
+
+  // The scanner normalises the text it scans. A pattern that is only lowercased can hold a
+  // zero-width character, a leetspeak digit or a double space and never match anything — and it
+  // fails silently, sitting in the list looking active with a hit count of zero.
+  const zeroWidth = String.fromCharCode(0x200b);
+
+  r = await api(null, 'POST', '/admin/risk-terms', {
+    category: 'SCAM', pattern: `  E2E  C4$H${zeroWidth} UPFRONT  `, weight: 40,
+  }, adminHeaders(safeguarding));
+  check('a phrase is stored normalised, not as typed',
+    r.status === 200 && r.body?.data?.pattern === 'e2e cash upfront', r.body?.data?.pattern);
+  const normalisedId = r.body?.data?.id;
+
+  r = await api(null, 'POST', '/admin/risk-terms', {
+    category: 'SCAM', pattern: 'e2e cash upfront', weight: 55,
+  }, adminHeaders(safeguarding));
+  check('and a differently-typed spelling of it is the same term, not a second one',
+    r.status === 200 && r.body?.data?.id === normalisedId && r.body?.data?.weight === 55,
+    { id: r.body?.data?.id, weight: r.body?.data?.weight });
+
+  r = await api(null, 'POST', '/admin/risk-terms', {
+    category: 'SCAM', pattern: zeroWidth.repeat(30), weight: 40,
+  }, adminHeaders(safeguarding));
+  check('a phrase that collapses to nothing is refused, and says what it collapsed to',
+    r.status === 400 && /normalises to/.test(JSON.stringify(r.body?.error?.details ?? [])),
+    r.body?.error);
+
+  r = await api(null, 'POST', '/admin/risk-terms', {
+    category: 'SCAM', pattern: 'e2e ' + 'x'.repeat(130), weight: 40,
+  }, adminHeaders(safeguarding));
+  check('and so is one over 120 characters', r.status === 400, r.status);
+
+  console.log('\n── Admin: the phrase itself cannot be edited ────────────────');
+
+  r = await api(null, 'PATCH', `/admin/risk-terms/${normalisedId}`, {
+    weight: 80, notes: 'Seen in three reports this week.',
+  }, adminHeaders(safeguarding));
+  check('weight and notes can be retuned',
+    r.status === 200 && r.body?.data?.weight === 80 && /three reports/.test(r.body?.data?.notes ?? ''),
+    r.body?.data);
+
+  r = await api(null, 'PATCH', `/admin/risk-terms/${normalisedId}`, {
+    pattern: 'something else entirely',
+  }, adminHeaders(safeguarding));
+  check('but the phrase cannot: its hit count is evidence about those exact words',
+    r.status === 400 && /pattern/.test(JSON.stringify(r.body)), r.body?.error);
+
+  r = await api(null, 'PATCH', `/admin/risk-terms/${normalisedId}`, {
+    notes: 'x'.repeat(520),
+  }, adminHeaders(safeguarding));
+  check('notes are capped at 500 characters', r.status === 400, r.status);
+
+  console.log('\n── Admin: moving a phrase into an occupied slot ─────────────');
+
+  r = await api(null, 'POST', '/admin/risk-terms', {
+    category: 'EXPLOITATION', pattern: 'e2e cash upfront', weight: 20,
+  }, adminHeaders(safeguarding));
+  const otherCategoryId = r.body?.data?.id;
+  check('the same phrase can exist under another category', r.status === 200, r.body?.error);
+
+  r = await api(null, 'PATCH', `/admin/risk-terms/${otherCategoryId}`, {
+    category: 'SCAM',
+  }, adminHeaders(safeguarding));
+  check('moving it onto one that is taken is a conflict, not a 500',
+    r.status === 409 && r.body?.error?.code === 'CONFLICT', r.body?.error);
+
+  await prisma.riskTerm.deleteMany({ where: { pattern: { startsWith: 'e2e ' } } });
 
   r = await api(null, 'DELETE', `/admin/guard/risk-terms/${newTermId}`, null, adminHeaders(safeguarding));
   check('turning one off → 200, deactivated not deleted', r.status === 200 && r.body?.data?.isActive === false, r.body?.error);
+
+  r = await api(null, 'GET', '/admin/risk-terms', null, adminHeaders(safeguarding));
+  check('and the lexicon is readable at the new path as well as the old',
+    r.status === 200 && Array.isArray(r.body?.data), r.status);
+  check('a listed term carries no internal history in the response',
+    (r.body?.data ?? []).every(term => !('before' in term)), Object.keys(r.body?.data?.[0] ?? {}));
+
+  console.log('\n── Admin: a number in a phrase survives ─────────────────────');
+
+  // Folding every digit turned "working 16 hours" into "working i6 hours" and "£500 deposit" into
+  // "£soo deposit". Matching still worked, because both sides normalise — what broke was what a
+  // person reads back. One of the seeded risk terms was affected.
+  r = await api(null, 'POST', '/admin/risk-terms', {
+    category: 'EXPLOITATION', pattern: 'e2e working 16 hours for £500', weight: 30,
+  }, adminHeaders(safeguarding));
+  check('a phrase with numbers in it is stored as written',
+    r.status === 200 && r.body?.data?.pattern === 'e2e working 16 hours for £500',
+    r.body?.data?.pattern);
+
+  r = await api(null, 'POST', '/admin/risk-terms', {
+    category: 'SCAM', pattern: 'e2e c4$h 1n h4nd', weight: 30,
+  }, adminHeaders(safeguarding));
+  check('while a substitution inside a word is still folded',
+    r.status === 200 && r.body?.data?.pattern === 'e2e cash in hand', r.body?.data?.pattern);
+
+  console.log('\n── Admin: lexicon changes are audited ──────────────────────');
+
+  const auditFrom = new Date();
+
+  r = await api(null, 'POST', '/admin/risk-terms', {
+    category: 'SCAM', pattern: 'e2e audited phrase', weight: 25,
+  }, adminHeaders(safeguarding));
+  const auditedId = r.body?.data?.id;
+
+  await api(null, 'PATCH', `/admin/risk-terms/${auditedId}`, { weight: 65 }, adminHeaders(safeguarding));
+  await api(null, 'DELETE', `/admin/risk-terms/${auditedId}`, null, adminHeaders(safeguarding));
+
+  const lexiconEntries = await prisma.auditLog.findMany({
+    where: { occurredAt: { gte: auditFrom }, action: { startsWith: 'risk_term.' } },
+    orderBy: { occurredAt: 'asc' },
+  });
+  check('adding, retuning and turning off a phrase are each recorded',
+    lexiconEntries.length >= 3, lexiconEntries.map(e => e.action));
+  check('under the safety area, so trust & safety can read each other\'s work',
+    lexiconEntries.every(e => e.area === 'SAFETY'), lexiconEntries.map(e => e.area));
+  check('naming the staff member who did it',
+    lexiconEntries.every(e => e.actorId === safeguarding.id), lexiconEntries.map(e => e.actorId));
+
+  const retune = lexiconEntries.find(e => e.before?.weight === 25);
+  check('with what it was before and what it became',
+    retune?.before?.weight === 25 && retune?.after?.weight === 65,
+    { before: retune?.before, after: retune?.after });
+
+  const off = lexiconEntries.find(e => e.action === 'risk_term.deactivated');
+  check('and a deactivation shows the phrase going inactive',
+    off?.before?.isActive === true && off?.after?.isActive === false,
+    { before: off?.before?.isActive, after: off?.after?.isActive });
 
   console.log('\n── Cleanup ──────────────────────────────────────────────────');
   await prisma.riskTerm.deleteMany({ where: { pattern: { startsWith: 'e2e-' } } });

@@ -13,7 +13,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { PageOptionsDto } from '@/common';
+import { CsvArray, PageOptionsDto } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 
@@ -24,16 +24,6 @@ const Rules = () =>
   );
 
 /** Repeated or comma-separated, because both are sent and neither is wrong. */
-const CsvArray = () =>
-  Transform(({ value }) =>
-    typeof value === 'string'
-      ? value
-          .split(',')
-          .map(part => part.trim())
-          .filter(Boolean)
-      : value,
-  );
-
 export class CreateGroupDto {
   @ApiProperty({ minLength: 3, maxLength: 60 })
   @Trim()

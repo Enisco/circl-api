@@ -5,7 +5,7 @@ import { RegisterUserDto } from '../dtos';
 import { SessionService } from './session.service';
 import { SignupTokenService } from './signup-token.service';
 import { LoginResponse } from '../types';
-import { Prisma, SocialProvider, UserAccountStatus } from '@prisma/client';
+import { Prisma, SignupMethod, SocialProvider, UserAccountStatus } from '@prisma/client';
 
 @Injectable()
 export class RegisterService {
@@ -46,6 +46,14 @@ export class RegisterService {
             firstName,
             lastName,
             status: UserAccountStatus.ACTIVE,
+            // Recorded here because it cannot be worked out afterwards: a member who links Google
+            // later is indistinguishable from one who started there, so "how do people arrive"
+            // has exactly one chance to be answered truthfully.
+            signupMethod: !isSocial
+              ? SignupMethod.EMAIL
+              : provider === SocialProvider.APPLE
+                ? SignupMethod.APPLE
+                : SignupMethod.GOOGLE,
             userAuth: {
               create: { emailVerifiedAt: new Date() },
             },

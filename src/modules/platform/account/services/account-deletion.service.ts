@@ -107,6 +107,36 @@ export class AccountDeletionService {
     await this.cache.delete(codeKey(userId), attemptsKey(userId));
   }
 
+  /**
+   * Anonymisation carried out by staff, on a member's behalf (§5.5).
+   *
+   * The same destruction as the member's own path, minus the emailed confirmation code — which
+   * exists to prove the person asking is the account holder, and cannot be satisfied by somebody
+   * else. The authorisation is the staff permission (`members:delete`) and the typed username
+   * confirmation at the endpoint, and the audit entry is what makes it answerable afterwards.
+   *
+   * Public, and deliberately named so that nothing reads as the member's own request: there is one
+   * copy of the field-by-field destruction below, and a second implementation of it in the admin
+   * module would be a second place for a column to be forgotten.
+   */
+  async anonymiseOnBehalf(userId: string): Promise<void> {
+    const user = await this.database.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, isAnonymised: true },
+    });
+
+    if (!user) throw ApiException.notFound('That account could not be found.');
+
+    if (user.isAnonymised) {
+      throw ApiException.gone(
+        ApiErrorCode.ACCOUNT_ALREADY_DELETED,
+        'This account has already been deleted.',
+      );
+    }
+
+    await this.anonymise(userId, user.email);
+  }
+
   /** The anonymisation itself, field by field (0.15.2). */
   private async anonymise(userId: string, email: string): Promise<void> {
     const now = new Date();

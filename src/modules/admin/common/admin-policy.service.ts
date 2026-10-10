@@ -95,14 +95,21 @@ export class AdminPolicyService {
     }
   }
 
-  /** R5: member endpoints refuse staff targets — staff are managed only through Team. */
+  /**
+   * R5: member endpoints refuse staff targets — staff are managed only through Team.
+   *
+   * An anonymised or deleted account is refused by the same rule, and for the same reason the
+   * member list excludes them (§5.5): there is no personal data left to act on, and serving the
+   * husk of one invites somebody to suspend, warn or edit a person who no longer exists. A 404
+   * rather than a 403 in every case, because a 403 confirms the id belongs to somebody.
+   */
   async assertIsMember(userId: string): Promise<void> {
     const user = await this.database.user.findUnique({
       where: { id: userId },
-      select: { isStaff: true },
+      select: { isStaff: true, isAnonymised: true, deletedAt: true },
     });
 
-    if (!user || user.isStaff) {
+    if (!user || user.isStaff || user.isAnonymised || user.deletedAt) {
       throw ApiException.notFound('No such member.');
     }
   }

@@ -1,6 +1,7 @@
 // From a core module import the leaf barrels (`@/modules/platform/shared`), never this one: it
 // pulls in every platform module, and `SearchModule` imports `UsersModule`, so going through here
 // closes the cycle and Nest boots with one of the two undefined.
+import { AccountCoreModule } from './account/account-core.module';
 import { AccountModule } from './account/account.module';
 import { CommerceModule } from './commerce/commerce.module';
 import { DealsModule } from './deals/deals.module';
@@ -55,6 +56,8 @@ export const PLATFORM_MODULES = [
  *    member is reading, so it has to be the same service writing to it.
  *  - media: signed URLs for the images attached to whatever is being moderated.
  *  - notifications: telling a member their content was removed.
+ *  - account (core only): the member's own anonymisation and data-export paths, which staff run on
+ *    their behalf for a legal request. One copy of the field-by-field destruction, not two.
  *
  * Keep it short. Every addition is a thing the two services would have to agree about forever —
  * and the one that is deliberately NOT here is the job runner. It schedules every product
@@ -67,6 +70,10 @@ export const ADMIN_SURFACE_DEPENDENCIES = [
   NotificationsModule,
   MessagingCoreModule,
   MediaModule,
+  // Account deletion and data export, for the two §5.5 actions staff take on a member's behalf.
+  // The *core* module, not `AccountModule`: that one mounts three member controllers, and a staff
+  // process serving `DELETE /account` would be a member-facing endpoint nobody is looking for.
+  AccountCoreModule,
 ];
 
 export * from './notifications';

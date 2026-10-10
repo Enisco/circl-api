@@ -18,19 +18,10 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { PageOptionsDto, ToBoolean } from '@/common';
+import { CsvArray, PageOptionsDto, ToBoolean } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 const Bool = ToBoolean;
-const CsvArray = () =>
-  Transform(({ value }) =>
-    typeof value === 'string'
-      ? value
-          .split(',')
-          .map(v => v.trim())
-          .filter(Boolean)
-      : value,
-  );
 
 /** One idempotent upsert for both create and edit, because the setup screen is the same screen either way (3.3.1). */
 export class UpsertConnectProfileDto {

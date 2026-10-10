@@ -1,0 +1,78 @@
+// ═══════════════════════════════════════════════════════════════════ Enforcement
+//
+// What was done to a member, and why, as a record rather than a state. `User.status` says whether
+// somebody is suspended right now; these tables say what happened, who decided it, what it was
+// about, and — because an appeal can overturn it — whether it still stands.
+
+/// One recorded breach. A warning is a strike plus a notification to the member: the same record,
+/// the difference being whether anybody told them.
+///
+/// Active means `revokedAt IS NULL AND expiresAt > now()`. Strikes expire because a platform that
+/// counts somebody's first month against them forever is not moderating, it is remembering.
+model Strike {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation("StrikeSubject", fields: [userId], references: [id], onDelete: Cascade)
+
+  reasonCode    AdminReasonCode @map("reason_code")
+  policySubtype String?         @map("policy_subtype")
+  note          String?         @map("note")
+
+  /// What this came out of — a report case, a flagged post, a decision on the content page. The
+  /// target type is kept beside the id because content ids are only unique within their own type.
+  sourceType       EnforcementSourceType @map("source_type")
+  sourceId         String?               @map("source_id")
+  sourceTargetType ReportTargetType?     @map("source_target_type")
+
+  issuedById String   @map("issued_by_id")
+  issuedAt   DateTime @default(now()) @map("issued_at") @db.Timestamptz
+  expiresAt  DateTime @map("expires_at") @db.Timestamptz
+
+  /// Set when an appeal is upheld, or when staff got it wrong. The row stays: the fact that a
+  /// strike was issued and then withdrawn is itself part of the account.
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz
+  revokedById  String?   @map("revoked_by_id")
+  revokeReason String?   @map("revoke_reason")
+
+  /// When the member was told. Null means the strike was recorded and they do not know, which is
+  /// a state worth being able to see rather than one to be inferred.
+  notifiedAt DateTime? @map("notified_at") @db.Timestamptz
+
+  @@index([userId, expiresAt])
+  @@map("strikes")
+}
+
+/// A period during which somebody may not use the platform.
+///
+/// `endsAt` null means permanent. Lifted early sets `liftedAt` with the staff member who did it;
+/// `liftedAt` set with no `liftedById` is the expiry job, which is how an appeal that succeeded is
+/// told apart from a sentence that simply ran out.
+model Suspension {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation("SuspensionSubject", fields: [userId], references: [id], onDelete: Cascade)
+
+  startsAt DateTime  @default(now()) @map("starts_at") @db.Timestamptz
+  endsAt   DateTime? @map("ends_at") @db.Timestamptz
+
+  reasonCode    AdminReasonCode @map("reason_code")
+  policySubtype String?         @map("policy_subtype")
+  note          String?         @map("note")
+
+  sourceType       EnforcementSourceType @map("source_type")
+  sourceId         String?               @map("source_id")
+  sourceTargetType ReportTargetType?     @map("source_target_type")
+
+  issuedById String @map("issued_by_id")
+
+  liftedAt   DateTime? @map("lifted_at") @db.Timestamptz
+  liftedById String?   @map("lifted_by_id")
+  liftReason String?   @map("lift_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userId, createdAt])
+  /// The expiry job's query: live suspensions whose end has passed.
+  @@index([liftedAt, endsAt])
+  @@map("suspensions")
+}

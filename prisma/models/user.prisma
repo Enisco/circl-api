@@ -15,6 +15,32 @@ model User {
   /// member who links Google afterwards is indistinguishable from one who started there. Null for
   /// staff accounts, which are created by invitation and never sign up.
   signupMethod    SignupMethod?     @map("signup_method")
+
+  /// The last time this member did anything, to the nearest fifteen minutes.
+  ///
+  /// Not exact on purpose: writing a row on every request would make reading the feed a write, and
+  /// nothing this feeds — "active in the last 7 days", a staff member asking when somebody was
+  /// last here — can tell the difference. `UserSession.lastActiveAt` is not a substitute: it moves
+  /// only when a session is created or refreshed, so a member using the app all day looked idle.
+  lastActiveAt    DateTime?         @map("last_active_at") @db.Timestamptz
+
+  /// When a suspension ends. Null with `status = SUSPENDED` means permanent — which is why the
+  /// column cannot be read as "suspended until, or not suspended": the status says which.
+  suspendedUntil  DateTime?         @map("suspended_until") @db.Timestamptz
+
+  /// The platform and build this member was last seen on.
+  ///
+  /// Denormalised from `UserSession`, written by the same fifteen-minute gate that moves
+  /// `lastActiveAt` and by session create and refresh. The session rows stay the history — which
+  /// build was in use on which day — and these two answer "what are they on now".
+  ///
+  /// A column rather than a join because of what the portal asks of it. Every member row shows the
+  /// platform and version; every filter and every breakdown is by the *current* one. Over the
+  /// session table that is `DISTINCT ON (user_id) … ORDER BY last_active_at DESC`, which cannot be
+  /// a `WHERE` clause, cannot be an index lookup, and would be a correlated subquery per row of
+  /// every page. As columns, the filter and the display are both free.
+  lastPlatform    DevicePlatform?   @map("last_platform")
+  lastAppVersion  String?           @map("last_app_version")
   email           String            @unique @map("email")
   status          UserAccountStatus @default(PENDING) @map("status")
   createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
@@ -29,6 +55,9 @@ model User {
   userAuth          UserAuth?
   adminCredential   AdminCredential?
   adminSessions     AdminSession[]
+  dailyActivity     UserDailyActivity[]
+  strikes           Strike[]               @relation("StrikeSubject")
+  suspensions       Suspension[]           @relation("SuspensionSubject")
   profile           UserProfile?
   adminProfile      AdminProfile?
   sessions          UserSession[]
@@ -119,6 +148,10 @@ model User {
 
   @@index([email])
   @@index([username])
+  // The member list's two default sorts, and the date axis of every signup and activity chart
+  // (§8.5). Without them a sorted page of a hundred thousand members is a full sort every time.
+  @@index([createdAt])
+  @@index([lastActiveAt])
   // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
   @@index([firstName(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_first_name_trgm_idx")
   @@index([lastName(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_last_name_trgm_idx")
@@ -182,6 +215,13 @@ model UserProfile {
   cityId          String? @map("city_id")
   city            City?   @relation(fields: [cityId], references: [id])
   countryOfOrigin String? @map("country_of_origin")
+  /// The same country as an ISO 3166-1 alpha-2 code.
+  ///
+  /// `countryOfOrigin` holds whatever the member's client sent — sometimes a code, sometimes a
+  /// name, sometimes a name spelled a second way — which cannot be grouped. Written from the same
+  /// value on every profile save, so a filter by country is a filter rather than a guess. `OTHER`
+  /// stays null: "somewhere else" is not a country and must not become a bucket.
+  countryOfOriginCode String? @map("country_of_origin_code") @db.Char(2)
 
   // D10 / D15 / D16.
   //
@@ -211,10 +251,29 @@ model UserProfile {
   onboardingStep      Int     @default(0) @map("onboarding_step")
   onboardingCompleted Boolean @default(false) @map("onboarding_completed")
 
+  /// When each step of the funnel happened, rather than only whether it did.
+  ///
+  /// A boolean answers "did they finish"; these answer "where do people stop, and how long do
+  /// they take" — which is the question worth asking, and the one that cannot be reconstructed
+  /// from a flag after the fact. `firstActionAt` is the first thing they did that was not setting
+  /// themselves up: posting, replying, enquiring or booking.
+  onboardingCompletedAt DateTime? @map("onboarding_completed_at") @db.Timestamptz
+  profileCompletedAt    DateTime? @map("profile_completed_at") @db.Timestamptz
+  arrivalSetAt          DateTime? @map("arrival_set_at") @db.Timestamptz
+  interestsSetAt        DateTime? @map("interests_set_at") @db.Timestamptz
+  firstActionAt         DateTime? @map("first_action_at") @db.Timestamptz
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   @@index([cityId])
+  @@index([countryOfOriginCode])
+  // `interests` and `languages` are filtered with `@>` ("holds any of these codes"), which is a
+  // sequential scan over every profile without these (§8.5). `JsonbPathOps` rather than the
+  // default: it indexes paths rather than every key and value, which is smaller and is all a
+  // containment test needs.
+  @@index([interests(ops: JsonbPathOps)], type: Gin, map: "user_profile_interests_idx")
+  @@index([languages(ops: JsonbPathOps)], type: Gin, map: "user_profile_languages_idx")
   // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
   @@index([bio(ops: raw("gin_trgm_ops"))], type: Gin, map: "user_profile_bio_trgm_idx")
   @@index([canHelpWith(ops: raw("gin_trgm_ops"))], type: Gin, map: "user_profile_can_help_with_trgm_idx")
@@ -233,6 +292,12 @@ model UserSession {
   isActive          Boolean   @default(false) @map("is_active")
   deviceFingerprint String    @map("device_fingerprint")
   refreshToken      String?   @map("refresh_token")
+
+  /// Which build and which platform, from `x-app-version` and `x-client-platform`. Recorded on
+  /// create and on refresh, because "how many people are still on 2.1" cannot be answered later.
+  appVersion        String?         @map("app_version")
+  platform          DevicePlatform? @map("platform")
+  osVersion         String?         @map("os_version")
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
   lastActiveAt      DateTime  @default(now()) @map("last_active_at") @db.Timestamptz
   revokedAt         DateTime? @map("revoked_at") @db.Timestamptz
@@ -241,6 +306,30 @@ model UserSession {
   @@index([userId])
   @@index([userId, isActive])
   @@map("user_sessions")
+}
+
+/// One row per member per day they were active.
+///
+/// The source of truth for daily, weekly and monthly actives, stickiness, retention and the
+/// new/returning/reactivated split. A derived table rather than a query over the activity stream
+/// because that stream is enormous and a "distinct members per day" over a year of it is not a
+/// query anybody wants on a dashboard — and because the city and the app build are snapshotted
+/// here, as they were on the day, which the live profile cannot tell you afterwards.
+model UserDailyActivity {
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The London calendar day. Every bucket in the admin portal is London-local.
+  day    DateTime @map("day") @db.Date
+
+  firstSeenAt DateTime        @default(now()) @map("first_seen_at") @db.Timestamptz
+  platform    DevicePlatform? @map("platform")
+  appVersion  String?         @map("app_version")
+  /// Where they were that day, not where they are now.
+  cityId      String?         @map("city_id")
+
+  @@id([userId, day])
+  @@index([day])
+  @@map("user_daily_activity")
 }
 
 model UserNotificationPrefs {

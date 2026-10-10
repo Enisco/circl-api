@@ -13,10 +13,7 @@ const BODY = { title: 'A request' };
 /** The interceptor hashes the body to tell a retry from a different request sent under one key. */
 const hashOf = (body: unknown) => createHash('sha256').update(JSON.stringify(body)).digest('hex');
 
-const contextFor = (
-  body: unknown = BODY,
-  options: { path?: string } = {},
-): ExecutionContext =>
+const contextFor = (body: unknown = BODY, options: { path?: string } = {}): ExecutionContext =>
   ({
     getHandler: () => () => undefined,
     getClass: () => class {},

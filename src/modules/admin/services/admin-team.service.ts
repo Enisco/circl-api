@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { AdminSessionRevokeReason, Prisma } from '@prisma/client';
+import { AdminReasonCode, AdminSessionRevokeReason, Prisma } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta } from '@/common';
 import { AuditService } from '../audit/audit.service';
@@ -36,6 +36,15 @@ interface ListQuery {
   role?: string;
   q?: string;
 }
+
+/**
+ * The reason a staff action was taken, already checked (`ReasonedDto.assertReasoned`).
+ *
+ * Taken as a checked value rather than as the raw DTO so that the service cannot be called without
+ * one: a signature of `{ reasonCode?: string }` is a signature that compiles with the reason left
+ * out, and the entry it writes then looks complete and explains nothing.
+ */
+type Reason = { reasonCode: AdminReasonCode; policySubtype: string | null; note: string | null };
 
 @Injectable()
 export class AdminTeamService {
@@ -113,7 +122,10 @@ export class AdminTeamService {
     };
   }
 
-  async get(actor: AdminPrincipal, id: string): Promise<StaffMember & { sessions: AdminSessionView[] }> {
+  async get(
+    actor: AdminPrincipal,
+    id: string,
+  ): Promise<StaffMember & { sessions: AdminSessionView[] }> {
     const row = await this.database.user.findFirst({
       where: { id, isStaff: true },
       select: this.selection(),
@@ -167,7 +179,7 @@ export class AdminTeamService {
   async changeRole(
     actor: AdminPrincipal,
     targetId: string,
-    input: { role: string; reasonCode: string; note?: string },
+    input: { role: string } & Reason,
   ): Promise<{ staff: StaffMember; auditId: string }> {
     const target = await this.staffOrThrow(targetId);
 
@@ -175,11 +187,9 @@ export class AdminTeamService {
     this.policy.assertMayGrant(actor, input.role);
 
     if (target.roleCode === input.role) {
-      throw ApiException.badRequest(
-        ApiErrorCode.VALIDATION_FAILED,
-        'That is already their role.',
-        { details: [{ field: 'role', message: 'No change.' }] },
-      );
+      throw ApiException.badRequest(ApiErrorCode.VALIDATION_FAILED, 'That is already their role.', {
+        details: [{ field: 'role', message: 'No change.' }],
+      });
     }
 
     if (target.deactivatedAt) {
@@ -201,8 +211,9 @@ export class AdminTeamService {
         targetLabel: target.email,
         before: { role: target.roleCode },
         after: { role: input.role },
-        reasonCode: input.reasonCode as never,
-        reason: input.note ?? null,
+        reasonCode: input.reasonCode,
+        policySubtype: input.policySubtype,
+        reason: input.note,
       },
       async tx => {
         // Demoting the last super admin would leave nobody able to put it back. Locked inside the
@@ -244,7 +255,7 @@ export class AdminTeamService {
   async deactivate(
     actor: AdminPrincipal,
     targetId: string,
-    input: { reasonCode: string; note?: string },
+    input: Reason,
   ): Promise<{ staff: StaffMember; auditId: string; released: number }> {
     const target = await this.staffOrThrow(targetId);
 
@@ -263,8 +274,9 @@ export class AdminTeamService {
         targetType: 'STAFF',
         targetId,
         targetLabel: target.email,
-        reasonCode: input.reasonCode as never,
-        reason: input.note ?? null,
+        reasonCode: input.reasonCode,
+        policySubtype: input.policySubtype,
+        reason: input.note,
       },
       async tx => {
         if (target.roleCode === 'super_admin') {
@@ -298,7 +310,7 @@ export class AdminTeamService {
   async reactivate(
     actor: AdminPrincipal,
     targetId: string,
-    input: { reasonCode: string; note?: string },
+    input: Reason,
   ): Promise<{ staff: StaffMember; invite: InviteView; auditId: string }> {
     const target = await this.staffOrThrow(targetId);
 
@@ -318,8 +330,9 @@ export class AdminTeamService {
         targetType: 'STAFF',
         targetId,
         targetLabel: target.email,
-        reasonCode: input.reasonCode as never,
-        reason: input.note ?? null,
+        reasonCode: input.reasonCode,
+        policySubtype: input.policySubtype,
+        reason: input.note,
       },
       async tx => {
         // Credentials are not restored, only the account. Coming back needs a fresh password and a
@@ -344,7 +357,7 @@ export class AdminTeamService {
   async resetCredentials(
     actor: AdminPrincipal,
     targetId: string,
-    input: { scope: 'password' | 'mfa' | 'both'; reasonCode: string; note?: string },
+    input: { scope: 'password' | 'mfa' | 'both' } & Reason,
   ): Promise<{ invite: InviteView | null; auditId: string }> {
     const target = await this.staffOrThrow(targetId);
 
@@ -364,8 +377,9 @@ export class AdminTeamService {
         targetId,
         targetLabel: target.email,
         metadata: { scope: input.scope },
-        reasonCode: input.reasonCode as never,
-        reason: input.note ?? null,
+        reasonCode: input.reasonCode,
+        policySubtype: input.policySubtype,
+        reason: input.note,
       },
       async tx => {
         if (target.roleCode === 'super_admin') {
@@ -550,9 +564,14 @@ export class AdminTeamService {
   private async counts() {
     const [active, deactivated, pendingAccounts, liveInvites] = await Promise.all([
       this.database.user.count({
-        where: { isStaff: true, adminCredential: { deactivatedAt: null, totpEnabledAt: { not: null } } },
+        where: {
+          isStaff: true,
+          adminCredential: { deactivatedAt: null, totpEnabledAt: { not: null } },
+        },
       }),
-      this.database.user.count({ where: { isStaff: true, adminCredential: { deactivatedAt: { not: null } } } }),
+      this.database.user.count({
+        where: { isStaff: true, adminCredential: { deactivatedAt: { not: null } } },
+      }),
       this.database.user.count({
         where: { isStaff: true, adminCredential: { deactivatedAt: null, totpEnabledAt: null } },
       }),

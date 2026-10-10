@@ -112,7 +112,9 @@ export class AdminChangePasswordDto {
   @Length(1, 256)
   newPassword: string;
 
-  @ApiProperty({ description: 'A current authenticator code: a password change is re-authenticated.' })
+  @ApiProperty({
+    description: 'A current authenticator code: a password change is re-authenticated.',
+  })
   @Trim()
   @IsString()
   @Length(6, 20)

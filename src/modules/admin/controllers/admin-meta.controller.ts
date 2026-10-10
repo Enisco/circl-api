@@ -40,8 +40,7 @@ const labelOf = (code: string): string =>
     .replace(/_/g, ' ')
     .replace(/^./, first => first.toUpperCase());
 
-const codes = (values: readonly string[]) =>
-  values.map(code => ({ code, label: labelOf(code) }));
+const codes = (values: readonly string[]) => values.map(code => ({ code, label: labelOf(code) }));
 
 /**
  * The vocabularies the portal renders.

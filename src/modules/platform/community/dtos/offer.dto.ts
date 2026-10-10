@@ -13,19 +13,10 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { PageOptionsDto, ToBoolean } from '@/common';
+import { CsvArray, PageOptionsDto, ToBoolean } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 const Bool = ToBoolean;
-const CsvArray = () =>
-  Transform(({ value }) =>
-    typeof value === 'string'
-      ? value
-          .split(',')
-          .map(v => v.trim())
-          .filter(Boolean)
-      : value,
-  );
 
 /** Two composers post here: "Post a Request" in "I can help" mode (short form) and "Post a Service" (full form with delivery and price) — they differ only in which optional fields they fill (1.4.3). */
 export class CreateOfferDto {

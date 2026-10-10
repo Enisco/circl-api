@@ -15,19 +15,10 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { PageOptionsDto, ToBoolean } from '@/common';
+import { CsvArray, PageOptionsDto, ToBoolean } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 const Bool = ToBoolean;
-const CsvArray = () =>
-  Transform(({ value }) =>
-    typeof value === 'string'
-      ? value
-          .split(',')
-          .map(v => v.trim())
-          .filter(Boolean)
-      : value,
-  );
 
 export class CreateBriefDto {
   @ApiProperty({ description: 'A managed category code.' })

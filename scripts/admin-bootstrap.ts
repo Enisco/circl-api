@@ -71,7 +71,10 @@ const main = async () => {
       );
     }
 
-    const taken = await prisma.user.findUnique({ where: { email: email! }, select: { isStaff: true } });
+    const taken = await prisma.user.findUnique({
+      where: { email: email! },
+      select: { isStaff: true },
+    });
 
     if (taken) {
       fail(

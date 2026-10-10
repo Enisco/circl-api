@@ -144,7 +144,7 @@ export class AdminAuthController {
     summary: 'Confirm the authenticator and finish setting up',
     description:
       'Returns the ten recovery codes **once**: this is the only moment they exist outside the ' +
-      'holder\'s own notes. Stored as hashes, so they cannot be shown again.',
+      "holder's own notes. Stored as hashes, so they cannot be shown again.",
   })
   async enrol(@Body() dto: AdminEnrolMfaDto) {
     const data = await this.auth.enrol(dto.mfaSetupToken, dto.code);

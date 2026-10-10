@@ -31,8 +31,7 @@ const metadata = (declared: Record<string, unknown>) =>
   ({ getAllAndOverride: (key: string) => declared[key] }) as unknown as Reflector;
 
 /** `ApiException` carries the code as a property and inside its response body. */
-const codeOf = (thrown: unknown): string | undefined =>
-  (thrown as { code?: string })?.code;
+const codeOf = (thrown: unknown): string | undefined => (thrown as { code?: string })?.code;
 
 /**
  * The guard this replaces allowed any route that declared nothing, and short-circuited on a
@@ -43,7 +42,9 @@ describe('AdminPermissionGuard', () => {
   it('refuses a route that declares nothing, even to a staff member who holds everything', () => {
     const guard = new AdminPermissionGuard(metadata({}));
 
-    expect(() => guard.canActivate(contextFor(principal(['members:read', 'team:manage'])))).toThrow();
+    expect(() =>
+      guard.canActivate(contextFor(principal(['members:read', 'team:manage']))),
+    ).toThrow();
   });
 
   it('refuses a route that declares nothing even when the declaration is an empty list', () => {
@@ -66,9 +67,9 @@ describe('AdminPermissionGuard', () => {
     );
 
     expect(() => guard.canActivate(contextFor(principal(['members:read'])))).toThrow();
-    expect(
-      guard.canActivate(contextFor(principal(['members:read', 'members:pii_reveal']))),
-    ).toBe(true);
+    expect(guard.canActivate(contextFor(principal(['members:read', 'members:pii_reveal'])))).toBe(
+      true,
+    );
   });
 
   it('accepts any one where the route says any', () => {
@@ -93,9 +94,7 @@ describe('AdminPermissionGuard', () => {
   });
 
   it('names what was needed, which helps the portal and tells an attacker nothing new', () => {
-    const guard = new AdminPermissionGuard(
-      metadata({ [ADMIN_PERMISSIONS_KEY]: ['team:manage'] }),
-    );
+    const guard = new AdminPermissionGuard(metadata({ [ADMIN_PERMISSIONS_KEY]: ['team:manage'] }));
 
     let thrown: unknown = null;
 

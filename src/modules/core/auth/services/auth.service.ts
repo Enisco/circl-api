@@ -48,7 +48,7 @@ export class AuthService {
 
     const newRefreshTokenHash = Util.tokenHash(newRefreshToken);
 
-    await this.sessionService.rotateRefreshToken(sessionId, newRefreshTokenHash);
+    await this.sessionService.rotateRefreshToken(sessionId, newRefreshTokenHash, deviceInfo);
 
     return {
       sessionId,

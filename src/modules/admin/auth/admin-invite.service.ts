@@ -56,9 +56,13 @@ export class AdminInviteService {
     const role = await this.database.role.findUnique({ where: { code: input.role } });
 
     if (!role?.isAdmin) {
-      throw ApiException.unprocessable(ApiErrorCode.VALIDATION_FAILED, 'That is not a staff role.', {
-        details: [{ field: 'role', message: 'Unknown staff role.' }],
-      });
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'That is not a staff role.',
+        {
+          details: [{ field: 'role', message: 'Unknown staff role.' }],
+        },
+      );
     }
 
     const existing = await this.database.user.findUnique({
@@ -120,7 +124,10 @@ export class AdminInviteService {
     return { invite: await this.view(result), auditId };
   }
 
-  async resend(actor: AdminPrincipal, inviteId: string): Promise<{ invite: InviteView; auditId: string }> {
+  async resend(
+    actor: AdminPrincipal,
+    inviteId: string,
+  ): Promise<{ invite: InviteView; auditId: string }> {
     const invite = await this.database.adminInvite.findUnique({
       where: { id: inviteId },
       include: { role: true },
@@ -167,7 +174,10 @@ export class AdminInviteService {
     return { invite: await this.view(result), auditId };
   }
 
-  async revoke(actor: AdminPrincipal, inviteId: string): Promise<{ invite: InviteView; auditId: string }> {
+  async revoke(
+    actor: AdminPrincipal,
+    inviteId: string,
+  ): Promise<{ invite: InviteView; auditId: string }> {
     const invite = await this.database.adminInvite.findUnique({
       where: { id: inviteId },
       include: { role: true },
@@ -195,7 +205,9 @@ export class AdminInviteService {
   }
 
   /** What the invite page shows before anybody types a password. */
-  async inspect(token: string): Promise<{ email: string; role: string; inviterName: string; expiresAt: string }> {
+  async inspect(
+    token: string,
+  ): Promise<{ email: string; role: string; inviterName: string; expiresAt: string }> {
     const invite = await this.liveByToken(token);
     const inviter = await this.database.user.findUnique({
       where: { id: invite.invitedById },
@@ -234,15 +246,16 @@ export class AdminInviteService {
 
     return this.database.$transaction(async tx => {
       const existing = invite.staffUserId
-        ? await tx.user.findUnique({
-            where: { id: invite.staffUserId },
-            select: { id: true, email: true, userRole: { select: { roleId: true } } },
-          })
+        ? await tx.user.findUnique({ where: { id: invite.staffUserId }, select: { id: true } })
         : await tx.user.findUnique({ where: { email: invite.email }, select: { id: true } });
 
-      // An unbound invite whose address has since become a staff account is not a way into it: the
-      // only invite that may restore an existing account is one issued for that account (R10).
+      // An unbound invite whose address has since become an account is not a way into it: the only
+      // invite that may restore an existing account is one issued for that account (R10).
       if (existing && !invite.staffUserId) throw this.invalid();
+
+      // A bound invite whose account has since gone is not a licence to create a new one with that
+      // address and that role — it is an invite with nothing left to restore.
+      if (invite.staffUserId && !existing) throw this.invalid();
 
       const userId = existing?.id ?? Util.generateUuid();
 
@@ -273,16 +286,11 @@ export class AdminInviteService {
         });
       }
 
-      // A role change made while the invitation was outstanding is never undone by accepting it:
-      // the invite restores access, it does not restore the role it was issued with (R10).
-      if (existing && !invite.staffUserId) {
-        await tx.userRole.upsert({
-          where: { userId },
-          update: { roleId: invite.roleId },
-          create: { userId, roleId: invite.roleId },
-        });
-      }
-
+      // Nothing touches `userRole` for an existing account, which is R10: the invite restores
+      // access, not the role it happened to be issued with, so a role change made while it was
+      // outstanding is never undone. (There was a block here that re-applied the invite's role; it
+      // sat behind the same condition that throws above, so it could never run — and would have
+      // been wrong if it had.)
       const credential = await tx.adminCredential.upsert({
         where: { userId },
         update: {
@@ -370,8 +378,12 @@ export class AdminInviteService {
   async view(invite: AdminInvite & { role?: { code: string } }): Promise<InviteView> {
     const role =
       invite.role?.code ??
-      (await this.database.role.findUnique({ where: { id: invite.roleId }, select: { code: true } }))
-        ?.code ??
+      (
+        await this.database.role.findUnique({
+          where: { id: invite.roleId },
+          select: { code: true },
+        })
+      )?.code ??
       'unknown';
     const inviter = await this.database.user.findUnique({
       where: { id: invite.invitedById },

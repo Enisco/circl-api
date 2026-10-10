@@ -16,6 +16,7 @@ import { AdminJwtGuard } from '@/common/guards/admin-jwt.guard';
 import { ApiErrorCode, ApiException, CurrentUser, RateLimit, SuccessMessage } from '@/common';
 import { PrismaService } from '@/infrastructure';
 import {
+  ConversationFactoryService,
   ListMessagesDto,
   MessageService,
   SendMessageDto,
@@ -45,6 +46,7 @@ export class AdminThreadController {
   constructor(
     private readonly database: PrismaService,
     private readonly messages: MessageService,
+    private readonly conversations: ConversationFactoryService,
     private readonly audit: AuditService,
   ) {}
 
@@ -62,7 +64,10 @@ export class AdminThreadController {
     @Query() query: ListMessagesDto,
   ) {
     const conversationId = await this.guardConversation(id);
-    const result = await this.messages.history(actor.id, conversationId, query);
+    // Not `history`: that requires being a participant of the thread, which for a Guard case is
+    // the assignee alone. R7 grants reading to anybody holding `guard:read`, and it has to —
+    // a case whose assignee is away must still be readable by their colleagues.
+    const result = await this.messages.pageWithoutAuthorisation(actor.id, conversationId, query);
 
     // One entry per page read, naming the conversation. Reading somebody's private disclosure is
     // an act, and an act that leaves no trace is one nobody can be asked about.
@@ -90,6 +95,16 @@ export class AdminThreadController {
     @Body() dto: SendMessageDto,
   ) {
     const conversationId = await this.guardConversation(id);
+
+    // Replying attaches them to the thread if they are not already on it.
+    //
+    // Sending requires participation, and for a Guard case that was the assignee alone — so an
+    // unassigned case could not be answered by anybody, and a case whose assignee was away could
+    // not be answered at all. Answering it is taking it, which is what a participant row says.
+    // Reading, above, deliberately does not do this: reading somebody's disclosure must leave
+    // nothing behind in their thread.
+    await this.conversations.addStaff(conversationId, [actor.id]);
+
     const sent = await this.messages.send(actor.id, conversationId, dto);
 
     await this.audit.note({
@@ -112,7 +127,7 @@ export class AdminThreadController {
   ) {
     await this.assertSupportThread(conversationId);
 
-    const result = await this.messages.history(actor.id, conversationId, query);
+    const result = await this.messages.pageWithoutAuthorisation(actor.id, conversationId, query);
 
     await this.audit.note({
       action: 'thread.read',
@@ -135,6 +150,7 @@ export class AdminThreadController {
     @Body() dto: SendMessageDto,
   ) {
     await this.assertSupportThread(conversationId);
+    await this.conversations.addStaff(conversationId, [actor.id]);
 
     const sent = await this.messages.send(actor.id, conversationId, dto);
 

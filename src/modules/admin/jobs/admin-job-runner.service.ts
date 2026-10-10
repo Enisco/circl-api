@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { ApiErrorCode, ApiException } from '@/common';
 import { PlatformJobsService } from '@/modules/platform/jobs';
+import { AdminJobsService } from './admin-jobs.service';
 
 /**
  * Runs a scheduled job on demand, without the admin API depending on the job runner.
@@ -23,9 +24,16 @@ import { PlatformJobsService } from '@/modules/platform/jobs';
 export class AdminJobRunnerService {
   private readonly logger = new Logger(AdminJobRunnerService.name);
 
-  constructor(private readonly moduleRef: ModuleRef) {}
+  constructor(
+    private readonly moduleRef: ModuleRef,
+    private readonly adminJobs: AdminJobsService,
+  ) {}
 
   async run(name: string): Promise<string> {
+    // The admin surface's own jobs first: they are in this process whatever the deployment, and
+    // the lookup below cannot find them because they are not registered with the platform runner.
+    if (await this.adminJobs.runNow(name)) return name;
+
     const jobs = this.resolve();
 
     if (!jobs) {

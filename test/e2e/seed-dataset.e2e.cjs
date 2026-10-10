@@ -190,8 +190,8 @@ async function objectExists(url) {
 
   r = await api(token, 'GET', '/users/notification-preferences');
   check(
-    'the preference matrix is the nine rows',
-    (r.body?.data?.categories ?? []).length === 9,
+    'the preference matrix is the ten rows',
+    (r.body?.data?.categories ?? []).length === 10,
     r.body?.data?.categories?.length,
   );
   check(
@@ -384,7 +384,7 @@ async function objectExists(url) {
 
   const prefs = await api(token, 'GET', '/users/notification-preferences');
   const categories = prefs.body?.data?.categories ?? [];
-  check('the preference matrix has its nine rows', categories.length === 9, categories.length);
+  check('the preference matrix has its ten rows', categories.length === 10, categories.length);
   check(
     'with COMPLIANCE locked on',
     categories.some(c => c.code === 'COMPLIANCE' && c.isLocked),

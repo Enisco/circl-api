@@ -691,6 +691,12 @@ enum NotificationKind {
   BOOKING
   /// A step somebody ticked on a deal. Shares the BOOKINGS row: it is the same kind of business.
   DEAL
+  /// A warning, a removal, a suspension — anything staff did that the member has to be told about.
+  ///
+  /// Its own kind because it cannot be muted: it sits in the locked `ACCOUNT` preference category,
+  /// so a member who has turned every notification off still hears that their post was removed and
+  /// how to appeal. A notification somebody can switch off is not a notice (§7.3).
+  MODERATION
 }
 
 /**
@@ -800,4 +806,29 @@ enum AdminSessionRevokeReason {
   CREDENTIAL_RESET
   REFRESH_REUSE
   SESSION_LIMIT
+}
+
+/// What an enforcement decision came out of, so the record points back at the thing it was about.
+enum EnforcementSourceType {
+  REPORT_CASE
+  FLAGGED_CONTENT
+  QUEUE_ITEM
+  MANUAL
+  GUARD_CASE
+  /// Acted on from the content page; `sourceId` is the content's id and `sourceTargetType` says
+  /// which kind, because content ids are only unique within their own type.
+  CONTENT
+}
+
+/// What an internal note is about. One note table serves every subject, so the kinds live here.
+enum NoteSubjectType {
+  MEMBER
+  SUPPORT_THREAD
+  REPORT_CASE
+  GUARD_CASE
+  DISPUTE
+  MANAGED_REQUEST
+  BRIEF
+  DEAL
+  ESCALATION
 }

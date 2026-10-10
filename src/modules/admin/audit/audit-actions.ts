@@ -50,7 +50,9 @@ export const AUDIT_ACTIONS = {
   'member.pii_reveal': AuditArea.MEMBERS,
   'member.sessions_revoked': AuditArea.MEMBERS,
   'member.login_unlocked': AuditArea.MEMBERS,
-  'member.data_export': AuditArea.MEMBERS,
+  /// `triggered/ready/failed`, so the three read as one lifecycle in the trail. The spec names the
+  /// first one `member.data_export_triggered` (§5.5) and the portal filters on these strings.
+  'member.data_export_triggered': AuditArea.MEMBERS,
   'member.data_export_ready': AuditArea.MEMBERS,
   'member.data_export_failed': AuditArea.MEMBERS,
   'member.anonymised': AuditArea.MEMBERS,
@@ -132,7 +134,14 @@ export const AUDIT_ACTIONS = {
   'analytics.exported': AuditArea.ANALYTICS,
 
   // ─── Notes take the area of what they are about ────────────────────────────
-  'note.added': AuditArea.MEMBERS,
+  //
+  // One note table serves members, cases, threads, disputes and deals (§4.7), so the area these
+  // three register here is only the default — the note service passes the subject's own area, and
+  // a note about a Guard case is a SAFETY entry rather than a MEMBERS one. Registered at MEMBERS
+  // because that is the commonest subject and because an action needs *an* area to be a legal
+  // action at all.
+  'note.created': AuditArea.MEMBERS,
+  'note.updated': AuditArea.MEMBERS,
   'note.deleted': AuditArea.MEMBERS,
 } as const;
 

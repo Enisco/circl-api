@@ -159,9 +159,20 @@ model GuardThread {
 model RiskTerm {
   id        String       @id @default(uuid())
   category  RiskCategory @map("category")
-  pattern   String       @map("pattern") // lowercase phrase, matched on word boundaries
+  /// The phrase, stored in the SAME normalised form the scanner applies to member text: NFKC,
+  /// lowercased, invisible characters stripped, leetspeak folded, whitespace collapsed. Stored
+  /// normalised rather than as typed because the comparison is only meaningful if both sides were
+  /// made comparable — a pattern holding a zero-width character or a leetspeak digit could never
+  /// match anything, and said so by never firing.
+  ///
+  /// Immutable once written. To change a phrase, deactivate the term and add a new one: the hit
+  /// count and false-positive rate are evidence about one exact phrase, and editing it in place
+  /// would quietly hand one phrase's record to another.
+  pattern   String       @map("pattern")
   weight    Int          @default(10) @map("weight")
   isActive  Boolean      @default(true) @map("is_active")
+  /// Why this phrase is here, for whoever inherits the lexicon. ≤ 500 characters.
+  notes     String?      @map("notes")
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz
 

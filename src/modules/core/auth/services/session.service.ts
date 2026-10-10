@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PinoLogger } from 'nestjs-pino';
 import { CacheService, PrismaService } from '@/infrastructure';
 import { ApiException, DeviceInfo, ErrorMessage, Util } from '@/common';
-import { UserSession } from '@prisma/client';
+import { DevicePlatform, UserSession } from '@prisma/client';
 import { TokenService } from './token.service';
 import {
   CreateSessionParams,
@@ -11,18 +11,18 @@ import {
   SessionValidationReason,
   ValidateSessionResponse,
 } from '../types';
+import { SessionRevocationService } from '@/modules/platform/shared';
 import { SESSION_CONSTANTS } from '../constants';
 
 @Injectable()
 export class SessionService {
-  private readonly blacklistCacheKey = 'blacklisted:sessions';
-
   constructor(
     private readonly logger: PinoLogger,
     private readonly configService: ConfigService,
     private readonly database: PrismaService,
     private readonly tokenService: TokenService,
     private readonly cacheService: CacheService,
+    private readonly revocation: SessionRevocationService,
   ) {
     this.logger.setContext(SessionService.name);
   }
@@ -47,7 +47,24 @@ export class SessionService {
       operatingSystem: deviceInfo.os,
       ipAddress: deviceInfo.fullIp,
       deviceFingerprint: deviceInfo.deviceFingerprint,
+      // Which build and which platform. "How many people are still on 2.1" is a question that can
+      // only be answered from what was recorded at the time.
+      appVersion: deviceInfo.appVersion ?? null,
+      platform: deviceInfo.devicePlatform as DevicePlatform,
+      osVersion: deviceInfo.osVersion ?? null,
     };
+
+    // The member's current platform and build, denormalised onto the account. Written here as
+    // well as by the activity gate because sign-in is the one moment a brand-new member has no
+    // activity row yet, and a list row with an empty platform column on the day somebody joined
+    // reads as "unknown" rather than "not yet asked".
+    await this.database.user.update({
+      where: { id: userId },
+      data: {
+        lastPlatform: deviceData.platform ?? null,
+        lastAppVersion: deviceData.appVersion,
+      },
+    });
 
     const session = await this.database.userSession.upsert({
       where: {
@@ -110,33 +127,15 @@ export class SessionService {
     });
   }
 
+  /**
+   * Signs a member out of one session, or all of them.
+   *
+   * Delegated to `SessionRevocationService`, which is shared with the staff API: a suspension has
+   * to revoke sessions exactly the way a sign-out does, and two copies of the blacklist key would
+   * mean a revoked session that still works with nothing to show it.
+   */
   async revoke(sessionId: string, userId: string, revokeAll = false): Promise<void> {
-    const now = new Date();
-
-    if (revokeAll) {
-      const sessions = await this.database.userSession.findMany({
-        where: { userId, isActive: true },
-      });
-
-      // Spread, not nested. Passed as one array element these writes were never awaited and their
-      // failures never surfaced, so a revoke-everything could report success while leaving live
-      // access tokens working until they expired (B9).
-      await Promise.all([
-        this.database.userSession.updateMany({
-          where: { userId },
-          data: { isActive: false, refreshToken: null, revokedAt: now },
-        }),
-        ...sessions.map(session => this.blacklistSession(session.id)),
-      ]);
-    } else {
-      await Promise.all([
-        this.database.userSession.update({
-          where: { id: sessionId, userId },
-          data: { isActive: false, refreshToken: null, revokedAt: now },
-        }),
-        this.blacklistSession(sessionId),
-      ]);
-    }
+    await this.revocation.revoke(userId, revokeAll ? undefined : sessionId);
   }
 
   async validateSession(
@@ -179,15 +178,32 @@ export class SessionService {
     });
   }
 
-  async rotateRefreshToken(sessionId: string, newRefreshTokenHash: string): Promise<void> {
+  async rotateRefreshToken(
+    sessionId: string,
+    newRefreshTokenHash: string,
+    deviceInfo?: DeviceInfo,
+  ): Promise<void> {
     await this.database.userSession.update({
       where: { id: sessionId },
-      data: { refreshToken: newRefreshTokenHash, lastActiveAt: new Date() },
+      data: {
+        refreshToken: newRefreshTokenHash,
+        lastActiveAt: new Date(),
+        // Refreshed too, not only set at sign-in. A member who updates the app keeps the same
+        // session for thirty days, so without this the recorded build is the one they installed
+        // a month ago and "who is still on the old version" answers the wrong question.
+        ...(deviceInfo
+          ? {
+              appVersion: deviceInfo.appVersion ?? null,
+              platform: deviceInfo.devicePlatform as DevicePlatform,
+              osVersion: deviceInfo.osVersion ?? null,
+            }
+          : {}),
+      },
     });
   }
 
   async isSessionBlacklisted(sessionId: string): Promise<boolean> {
-    return !!(await this.cacheService.get(`${this.blacklistCacheKey}:${sessionId}`));
+    return this.revocation.isBlacklisted(sessionId);
   }
 
   async getSession(sessionId: string) {
@@ -235,10 +251,6 @@ export class SessionService {
   }
 
   private async blacklistSession(sessionId: string): Promise<void> {
-    const ttl = Util.parseDurationToSeconds(
-      this.configService.getOrThrow<string>('JWT_ACCESS_EXPIRY'),
-    );
-
-    await this.cacheService.set(`${this.blacklistCacheKey}:${sessionId}`, true, ttl);
+    await this.revocation.blacklist(sessionId);
   }
 }

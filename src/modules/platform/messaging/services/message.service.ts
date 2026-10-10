@@ -67,6 +67,31 @@ export class MessageService {
     // Sending, the read cursor and everything else below still require participation.
     await this.conversations.requireReadable(userId, conversationId);
 
+    return this.page(userId, conversationId, query);
+  }
+
+  /**
+   * The same page, with **no authorisation of its own**.
+   *
+   * For the admin API, where the right to read is a permission and a recorded reason rather than
+   * membership of the thread. Participation is the wrong test there: a Guard case assigned to
+   * somebody on holiday has to be readable by their colleague, and R7 grants that to anybody
+   * holding `guard:read` — so requiring participation made an unassigned or unattended case
+   * unreadable by the people whose job it is.
+   *
+   * The caller is responsible for the permission check, the reason, and the audit entry. Named at
+   * length on purpose: nothing should reach for this casually, and nothing on the member side has
+   * any business calling it at all.
+   */
+  async pageWithoutAuthorisation(viewerId: string, conversationId: string, query: ListMessagesDto) {
+    return this.page(viewerId, conversationId, query);
+  }
+
+  /**
+   * Reads a page and nothing else: no read receipts, no unread counts, no presence, no participant
+   * row. Staff reading a member's thread must not change anything the member can see (S9.4).
+   */
+  private async page(userId: string, conversationId: string, query: ListMessagesDto) {
     // `since` pages with `after`. `before` would ask for changes older than the window itself.
     if (query.since && query.before) {
       throw ApiException.badRequest(

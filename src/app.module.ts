@@ -8,6 +8,7 @@ import {
   RATE_LIMITS,
 } from '@/common';
 import { MODULES, appSurface } from '@/modules';
+import { MemberActivityInterceptor } from '@/modules/platform/intelligence';
 import {
   CityCompatMiddleware,
   ReportCompatMiddleware,
@@ -15,6 +16,7 @@ import {
 } from '@/modules/platform/shared';
 import { configValidationSchema } from '@/config';
 import { AppCacheModule, AppLoggerModule, AppQueueModule, PrismaModule } from '@/infrastructure';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
@@ -29,6 +31,12 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
       },
     }),
     CommonModule,
+    // Registered once, here, rather than inside a feature module. The admin surface runs its own
+    // scheduled work (ending suspensions) and does not import the platform jobs module, so a
+    // registration living in there would mean an admin-only process had a cron decorator and no
+    // scheduler to honour it — a suspension that never ends, and nothing in the logs about it.
+    // Two `forRoot()` calls would register two schedulers and run every job twice.
+    ScheduleModule.forRoot(),
     PrismaModule,
     AppCacheModule,
     AppLoggerModule,
@@ -62,6 +70,16 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
       provide: APP_INTERCEPTOR,
       useClass: IdempotencyInterceptor,
     },
+    // Notes that a member was here, at most once every fifteen minutes. The source of every
+    // active-user and retention number, and a day somebody was present cannot be recovered
+    // afterwards — so it is recorded as it happens rather than derived later.
+    //
+    // Only where member routes are served. An admin-only process has no member requests to
+    // count, and registering it there would mean depending on a module that process does not
+    // have — which is the boundary telling the truth rather than getting in the way.
+    ...(appSurface() === 'admin'
+      ? []
+      : [{ provide: APP_INTERCEPTOR, useClass: MemberActivityInterceptor }]),
   ],
 })
 export class AppModule {

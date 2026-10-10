@@ -14,6 +14,8 @@ import {
   CityService,
   MediaService,
   RiskScannerService,
+  SessionRevocationService,
+  SystemConfigService,
   TaxonomyService,
 } from './services';
 
@@ -25,6 +27,8 @@ const SERVICES = [
   MediaDerivationService,
   MediaService,
   RiskScannerService,
+  SessionRevocationService,
+  SystemConfigService,
   TaxonomyService,
 ];
 

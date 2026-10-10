@@ -16,20 +16,10 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { PageOptionsDto, ToBoolean } from '@/common';
+import { CsvArray, PageOptionsDto, ToBoolean } from '@/common';
 
 /** All string fields are trimmed before validation, and a whitespace-only value counts as empty (1.11). */
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
-
-const CsvArray = () =>
-  Transform(({ value }) =>
-    typeof value === 'string'
-      ? value
-          .split(',')
-          .map(part => part.trim())
-          .filter(Boolean)
-      : value,
-  );
 
 export class CreateRequestDto {
   @ApiProperty({ example: 'VISA_DOCS', description: 'A code from `communityCategories`.' })
