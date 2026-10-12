@@ -290,6 +290,108 @@ const { api, check, finish, makeUser, prisma, sweep } = require('./harness.cjs')
     { status: r.status, error: r.body?.error?.code },
   );
 
+  // ── The open-inbox setting (BACKEND-OPEN-INBOX-SETTING, 2026-10-12) ───────
+  console.log('\n── The open inbox: one field, one name, and no guessing ─────');
+
+  const inboxOwner = await makeUser('inbox-contract');
+  const inboxRow = () =>
+    prisma.userProfile
+      .findUnique({ where: { userId: inboxOwner.id }, select: { openInbox: true } })
+      .then(row => row?.openInbox);
+
+  const firstRead = await api(inboxOwner.token, 'GET', '/users/profile');
+
+  check(
+    'a new account is open to messages by default',
+    firstRead.body?.data?.profile?.isOpenToMessages === true,
+    firstRead.body?.data?.profile?.isOpenToMessages,
+  );
+  // The public profile has always published `isOpenToMessages`; your own profile only carried
+  // `openInbox`, so a client reading the published name found nothing and concluded the setting
+  // did not exist. Both names, same value, on both endpoints.
+  check(
+    'and carries both names, so one accessor works on either profile',
+    firstRead.body?.data?.profile?.isOpenToMessages === firstRead.body?.data?.profile?.openInbox,
+    {
+      isOpenToMessages: firstRead.body?.data?.profile?.isOpenToMessages,
+      openInbox: firstRead.body?.data?.profile?.openInbox,
+    },
+  );
+
+  const closed = await api(inboxOwner.token, 'PATCH', '/users/profile', {
+    isOpenToMessages: false,
+  });
+
+  check(
+    'it saves under the published name',
+    closed.status === 200 && (await inboxRow()) === false,
+    { status: closed.status, row: await inboxRow() },
+  );
+
+  const viewer = await makeUser('inbox-contract-viewer');
+  const asSeen = await api(viewer.token, 'GET', `/users/${inboxOwner.id}/profile`);
+
+  check(
+    'and the public profile agrees immediately',
+    asSeen.body?.data?.isOpenToMessages === false,
+    asSeen.body?.data?.isOpenToMessages,
+  );
+
+  // Enforced, not decorative: a closed inbox refuses an unsolicited DM from a stranger.
+  const refused = await api(viewer.token, 'POST', '/messages', {
+    recipientUserId: inboxOwner.id,
+  });
+
+  check('a closed inbox actually refuses a stranger', refused.status === 403, {
+    status: refused.status,
+    code: refused.body?.error?.code,
+  });
+
+  const oldName = await api(inboxOwner.token, 'PATCH', '/users/profile', { openInbox: true });
+
+  check(
+    'the older name still works, so nothing that already sends it breaks',
+    oldName.status === 200 && (await inboxRow()) === true,
+    { status: oldName.status, row: await inboxRow() },
+  );
+
+  const untouched = await api(inboxOwner.token, 'PATCH', '/users/profile', {
+    headline: 'Something unrelated',
+  });
+
+  check(
+    'absent means unchanged, like every other field there',
+    untouched.status === 200 && (await inboxRow()) === true,
+    await inboxRow(),
+  );
+
+  // The one that matters. With the global pipe's implicit conversion, a declared boolean takes
+  // JavaScript truthiness, so the **string** "false" arrived as `true` and opened an inbox the
+  // member had closed — a 200, and nothing to notice.
+  const stringFalse = await api(inboxOwner.token, 'PATCH', '/users/profile', {
+    isOpenToMessages: 'false',
+  });
+
+  check(
+    'the string "false" closes the inbox rather than opening it',
+    stringFalse.status === 200 && (await inboxRow()) === false,
+    { status: stringFalse.status, row: await inboxRow() },
+  );
+
+  await api(inboxOwner.token, 'PATCH', '/users/profile', { isOpenToMessages: true });
+
+  for (const nonsense of ['no', '0', 0, '']) {
+    const sent = await api(inboxOwner.token, 'PATCH', '/users/profile', {
+      isOpenToMessages: nonsense,
+    });
+
+    check(
+      `${JSON.stringify(nonsense)} is refused by name rather than guessed at`,
+      sent.status === 400 && (await inboxRow()) === true,
+      { value: nonsense, status: sent.status, row: await inboxRow() },
+    );
+  }
+
   await sweep();
   await finish();
 })();

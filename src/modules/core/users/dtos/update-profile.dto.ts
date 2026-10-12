@@ -1,4 +1,4 @@
-import { Sanitize } from '@/common';
+import { Sanitize, StrictBoolean } from '@/common';
 import { ApiProperty } from '@nestjs/swagger';
 import { Gender } from '@prisma/client';
 import {
@@ -168,12 +168,37 @@ export class UpdateProfileDto {
 
   @ApiProperty({
     example: true,
-    description: 'When true, anyone can message the user directly.',
+    description:
+      'When true, anyone can message the member directly; when false an unsolicited DM is ' +
+      'refused unless the two are already connected (§3.5). Defaults to **true**.\n\n' +
+      'Accepted under either name: `isOpenToMessages` is what the profile endpoints publish, and ' +
+      '`openInbox` is the older name this field has always taken here.',
     required: false,
   })
-  @IsBoolean({ message: 'openInbox must be a boolean' })
+  @StrictBoolean()
   @IsOptional()
   openInbox?: boolean;
+
+  /**
+   * The same field under the name the read endpoints publish.
+   *
+   * `GET /users/:id/profile` has always returned this as `isOpenToMessages` while this endpoint
+   * only accepted `openInbox` — one field with two names depending on which door you came
+   * through. A client that read the published name and sent it back got a 400 for an unknown
+   * field, and reasonably concluded the setting could not be saved at all.
+   *
+   * Both are accepted rather than renaming one: `openInbox` is in the API's own Swagger examples
+   * and may already be in use, and a rename to tidy a name is not worth a client breaking.
+   * `isOpenToMessages` wins if somebody sends both, because it is the name we publish.
+   */
+  @ApiProperty({
+    example: true,
+    description: 'Alias of `openInbox`, matching what the profile endpoints return.',
+    required: false,
+  })
+  @StrictBoolean()
+  @IsOptional()
+  isOpenToMessages?: boolean;
 
   // ── The four shared fields (D15) ─────────────────────────────────────────── These live on the user rather than on a Connect profile or a professional listing, because Connect, Professionals and Commerce all read them and a second copy is guaranteed to disagree with the first.
 

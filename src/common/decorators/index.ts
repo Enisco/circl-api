@@ -9,3 +9,4 @@ export * from './csv-array.decorator';
 export * from './current-user.decorator';
 export * from './idempotent.decorator';
 export * from './rate-limit.decorator';
+export * from './strict-boolean.decorator';

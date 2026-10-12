@@ -105,6 +105,12 @@ export class ProfileService {
         profile: profile
           ? {
               ...profile,
+              // The same value under the name the **public** profile has always published
+              // (`GET /users/:id/profile` → `isOpenToMessages`). Until now your own profile only
+              // carried `openInbox`, so a client reading the published name found nothing here and
+              // concluded the setting did not exist. Both are returned rather than renaming one,
+              // because `openInbox` is in this endpoint's own Swagger examples.
+              isOpenToMessages: profile.openInbox,
               dateOfBirth: toDateOnly(profile.dateOfBirth),
               // Derived, never stored as a number: a number cannot be re-validated later, and someone who typed 18 last year is still 18 forever (3.1.2).
               age: ageFromDateOfBirth(profile.dateOfBirth),
@@ -278,6 +284,7 @@ export class ProfileService {
       bio,
       canHelpWith,
       openInbox,
+      isOpenToMessages,
       onboardingCompleted,
       onboardingStep,
       dateOfBirth,
@@ -296,7 +303,13 @@ export class ProfileService {
       ...(headline !== undefined && { headline }),
       ...(bio !== undefined && { bio }),
       ...(canHelpWith !== undefined && { canHelpWith }),
-      ...(openInbox !== undefined && { openInbox }),
+      // One field, either name. `isOpenToMessages` is what the read endpoints publish and wins when
+      // both arrive; `openInbox` is the older name and keeps working.
+      ...(isOpenToMessages !== undefined
+        ? { openInbox: isOpenToMessages }
+        : openInbox !== undefined
+          ? { openInbox }
+          : {}),
       ...(onboardingCompleted !== undefined && { onboardingCompleted }),
       ...(onboardingStep !== undefined && { onboardingStep }),
       ...(dateOfBirth !== undefined && {
