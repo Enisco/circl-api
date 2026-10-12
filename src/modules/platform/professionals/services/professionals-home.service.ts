@@ -10,6 +10,7 @@ import { daysAgo, money } from '@/common';
 import {
   authorSelect,
   MediaService,
+  PUBLIC_VISIBILITY,
   TaxonomyService,
   toAuthorView,
   toCityView,
@@ -46,6 +47,8 @@ export class ProfessionalsHomeService {
           where: {
             listing: {
               deletedAt: null,
+              // A category tile has to count what the grid behind it will show.
+              ...PUBLIC_VISIBILITY,
               verificationStatus: { not: ListingVerificationStatus.DRAFT },
               // Their own listing is excluded from browse, so counting it here would leave a
               // category tile reading one and opening on an empty grid.
@@ -58,6 +61,7 @@ export class ProfessionalsHomeService {
         this.database.professionalListing.findMany({
           where: {
             deletedAt: null,
+            ...PUBLIC_VISIBILITY,
             isAcceptingWork: true,
             userId: { not: userId },
             verificationStatus: { not: ListingVerificationStatus.DRAFT },
@@ -70,6 +74,8 @@ export class ProfessionalsHomeService {
           },
           take: 10,
         }),
+        // visibility: the caller's own listing, for the "your listing" card. A held listing is
+        // still theirs to see — this is the screen where they would learn it is under review.
         this.database.professionalListing.findUnique({
           where: { userId },
           include: { categories: true, services: { where: { isActive: true } } },
@@ -175,6 +181,8 @@ export class ProfessionalsHomeService {
 
     // A thread about one of their services counts as their work too, and most now are: the client
     // asks which service before it opens one.
+    // visibility: the caller's own services, to find the threads waiting on them. Work does not
+    // stop being theirs because a service description is under review.
     const services = await this.database.professionalService.findMany({
       where: { listingId },
       select: { id: true },
@@ -191,7 +199,8 @@ export class ProfessionalsHomeService {
     const [verifiedCount, ratedCount, vouchedCount] = await Promise.all([
       this.database.trustCheck.count({ where: { status: 'VERIFIED', check: { not: 'EMAIL' } } }),
       this.database.reputationSummary.count({ where: { countedTotal: { gt: 0 } } }),
-      this.database.review.count({ where: { deletedAt: null } }),
+      // The trust strip counts reviews a member could read.
+      this.database.review.count({ where: { deletedAt: null, ...PUBLIC_VISIBILITY } }),
     ]);
 
     return { verifiedCount, vouchedCount, ratedCount };
@@ -201,6 +210,7 @@ export class ProfessionalsHomeService {
 
   /** `agreedTotal` is the sum of amounts the two parties agreed, not money Circl holds, owes, or has paid. */
   async dashboard(userId: string) {
+    // visibility: the caller's own listing and their own numbers.
     const listing = await this.database.professionalListing.findUnique({ where: { userId } });
 
     if (!listing) return null;
@@ -266,6 +276,8 @@ export class ProfessionalsHomeService {
 
   /** Median minutes from the first client message to the professional's first reply, over the last 30 days (2.11). */
   async recomputeResponseTimes(): Promise<number> {
+    // visibility: a maintenance job recomputing response times for every listing. A held listing
+    // still has a response time, and it will need it when it is published again.
     const listings = await this.database.professionalListing.findMany({
       where: { deletedAt: null },
       select: { id: true, userId: true },

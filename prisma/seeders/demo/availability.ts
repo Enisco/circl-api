@@ -8,7 +8,10 @@ import { daysAhead, hoursAgo, seedId } from './ids';
  * the difference between a real calendar and the hardcoded six days and eight times the app used
  * to offer for everyone.
  */
-const WEEKS: Record<string, { days: Partial<Record<Weekday, [number, number, number]>>; blocks: number[] }> = {
+const WEEKS: Record<
+  string,
+  { days: Partial<Record<Weekday, [number, number, number]>>; blocks: number[] }
+> = {
   // Blessing: weekdays, office hours, hour-long consultations.
   blessing: {
     days: {
@@ -68,7 +71,7 @@ const OCCUPIED: Array<{
 const nextWeekday = (weekday: number): Date => {
   const today = new Date();
   const start = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
-  const ahead = ((weekday - new Date(start).getUTCDay() + 7) % 7) || 7;
+  const ahead = (weekday - new Date(start).getUTCDay() + 7) % 7 || 7;
 
   return new Date(start + ahead * 86_400_000);
 };

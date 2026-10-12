@@ -1,3 +1,4 @@
+import { ContentVisibilityState } from '@prisma/client';
 import { connectVisibility } from '../connect-visibility';
 
 const visible = { isVisible: true, deletedAt: null };
@@ -9,6 +10,35 @@ const visible = { isVisible: true, deletedAt: null };
  */
 describe('connectVisibility', () => {
   it('lets a member of Connect see a visible profile', () => {
+    expect(
+      connectVisibility({ viewerHasProfile: true, target: visible, isBlockedEitherWay: false }),
+    ).toBe('VISIBLE');
+  });
+
+  it.each([ContentVisibilityState.HELD, ContentVisibilityState.REJECTED])(
+    'refuses a profile whose own words are %s — the same answer hidden gets (§6.5)',
+    visibilityState => {
+      expect(
+        connectVisibility({
+          viewerHasProfile: true,
+          target: { ...visible, visibilityState },
+          isBlockedEitherWay: false,
+        }),
+      ).toBe('NOT_FOUND');
+    },
+  );
+
+  it('still shows a limited profile: it is out of the grid, not out of existence', () => {
+    expect(
+      connectVisibility({
+        viewerHasProfile: true,
+        target: { ...visible, visibilityState: ContentVisibilityState.LIMITED },
+        isBlockedEitherWay: false,
+      }),
+    ).toBe('VISIBLE');
+  });
+
+  it('treats a caller that has not loaded the column as it behaved before §6.5', () => {
     expect(
       connectVisibility({ viewerHasProfile: true, target: visible, isBlockedEitherWay: false }),
     ).toBe('VISIBLE');

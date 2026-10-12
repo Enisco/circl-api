@@ -2,6 +2,7 @@ import * as bcrypt from 'bcryptjs';
 import { ulid } from 'ulid';
 import { v4 as uuidv4 } from 'uuid';
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
+import { fixedOtp } from './constants/dev-otp.constant';
 
 export class Util {
   static generateHash = async (plainText: string): Promise<string> => {
@@ -38,6 +39,13 @@ export class Util {
   };
 
   static generateOtp(length = 6): string {
+    // Outside production, a known code — there is no mail provider yet, so a random one is a code
+    // nobody can read. Deliberately here, where the code is *made*, rather than as a branch in the
+    // comparison: see `dev-otp.constant.ts`.
+    const fixed = fixedOtp(length);
+
+    if (fixed) return fixed;
+
     const digits = '0123456789';
     let otp = '';
     const bytes = randomBytes(length);

@@ -3,8 +3,8 @@ import {
   ActivitySubject,
   ActivityVerb,
   CommunityRequest,
+  ContentScanTrigger,
   Media,
-  ModerationQueueType,
   NotificationKind,
   PostVisibility,
   Prisma,
@@ -21,17 +21,22 @@ import {
   escapeLike,
   excerpt,
   Paginated,
-  toJson,
 } from '@/common';
 import {
   ActivityService,
   BlockingService,
+  AuthorReviewView,
   CityService,
+  ContentReviewService,
+  ContentSafetyService,
   MediaService,
+  PUBLIC_VISIBILITY,
   RiskScannerService,
   TaxonomyService,
   authorSelect,
+  isReachable,
   withoutAllCategories,
+  DIRECT_VISIBILITY,
 } from '../../shared';
 import { NotificationFeedService } from '../../notifications';
 import {
@@ -67,6 +72,8 @@ export class RequestService {
     private readonly activity: ActivityService,
     private readonly risk: RiskScannerService,
     private readonly notifications: NotificationFeedService,
+    private readonly safety: ContentSafetyService,
+    private readonly review: ContentReviewService,
   ) {}
 
   // ─── 1.2.1 List ────────────────────────────────────────────────────────────
@@ -105,6 +112,7 @@ export class RequestService {
   ): Promise<Prisma.CommunityRequestWhereInput> {
     const where: Prisma.CommunityRequestWhereInput = {
       deletedAt: null,
+      ...PUBLIC_VISIBILITY,
       // A private-to-Circl request is not a post. It never appears in any list.
       visibility: { not: PostVisibility.PRIVATE_TO_CIRCL },
     };
@@ -190,7 +198,10 @@ export class RequestService {
 
   // ─── 1.2.2 Detail ──────────────────────────────────────────────────────────
 
-  async findOne(viewerId: string, id: string): Promise<RequestDetailView> {
+  async findOne(
+    viewerId: string,
+    id: string,
+  ): Promise<RequestDetailView & Partial<AuthorReviewView>> {
     const request = await this.database.communityRequest.findUnique({
       where: { id },
       include: requestInclude,
@@ -201,6 +212,13 @@ export class RequestService {
 
     // A private-to-Circl thread is not a post and is not readable here even by its author — it lives in Guard.
     if (request.visibility === PostVisibility.PRIVATE_TO_CIRCL && request.authorId !== viewerId) {
+      throw ApiException.notFound('This request could not be found.');
+    }
+
+    // Held, rejected and awaiting-approval content is nobody's to read but its author's (§6.5),
+    // and the answer is a 404 rather than a 403: "this exists and you may not see it" tells a
+    // reporter that their report landed, and tells anybody else that something was here.
+    if (!isReachable(request.visibilityState) && request.authorId !== viewerId) {
       throw ApiException.notFound('This request could not be found.');
     }
 
@@ -239,7 +257,14 @@ export class RequestService {
           }
         : null;
 
-    return toRequestDetail(request, context, resolution);
+    // §6.5: the author of held content is told that it is held, and at the critical tier is
+    // offered the crisis lines rather than a policy notice. Everybody else got a 404 above.
+    const review =
+      request.authorId === viewerId
+        ? await this.review.forAuthor(ReportTargetType.REQUEST, id, request.visibilityState)
+        : null;
+
+    return { ...toRequestDetail(request, context, resolution), ...(review ?? {}) };
   }
 
   // ─── 1.2.3 Create ──────────────────────────────────────────────────────────
@@ -282,6 +307,18 @@ export class RequestService {
 
       await this.media.attach(tx, media, REQUEST_MEDIA_OWNER, request.id);
 
+      // Inside the transaction, so a post the lexicon holds is never briefly readable (§6.7).
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.REQUEST,
+        targetId: request.id,
+        authorId: request.authorId,
+        fields: { title: request.title, description: request.description },
+        mediaKeys: media.map(item => item.storageKey),
+        isAnonymous: request.visibility === PostVisibility.ANONYMOUS,
+        trigger: ContentScanTrigger.CREATE,
+        summary: request.title,
+      });
+
       return request;
     });
 
@@ -316,9 +353,15 @@ export class RequestService {
     const patchCity = dto.cityId ? await this.cities.assertValid(dto.cityId) : null;
 
     const media = dto.mediaKeys ? await this.media.validate(dto.mediaKeys, userId) : null;
+    // The keys that will be attached once this edit lands — the patched set, or the set already
+    // there. The content hash covers media, so handing it an empty list for an edit that did not
+    // touch the photos would make every edit look like new content and re-queue it (§6.2).
+    const mediaKeys = (media ?? (await this.media.forOwner(REQUEST_MEDIA_OWNER, id))).map(
+      item => item.storageKey,
+    );
 
     await this.database.$transaction(async tx => {
-      await tx.communityRequest.update({
+      const patched = await tx.communityRequest.update({
         where: { id },
         data: {
           categoryCode: dto.categoryCode,
@@ -334,6 +377,19 @@ export class RequestService {
         await this.media.releaseOwner(tx, REQUEST_MEDIA_OWNER, id);
         await this.media.attach(tx, media, REQUEST_MEDIA_OWNER, id);
       }
+
+      // Edits are scanned too (§6.1). The hash decides whether anything actually changed, so a
+      // patch that only moves a date is not a second trip through the queue.
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.REQUEST,
+        targetId: id,
+        authorId: patched.authorId,
+        fields: { title: patched.title, description: patched.description },
+        mediaKeys,
+        isAnonymous: patched.visibility === PostVisibility.ANONYMOUS,
+        trigger: ContentScanTrigger.EDIT,
+        summary: patched.title,
+      });
     });
 
     return this.findOne(userId, id);
@@ -358,6 +414,9 @@ export class RequestService {
     const helperIds = [...new Set(dto.helperUserIds ?? [])];
 
     if (helperIds.length) {
+      // visibility: an eligibility check — did these people actually reply? — not a read of their
+      // words. Somebody whose reply was held still replied, and refusing to credit them for it
+      // would be a second penalty decided by a scanner.
       const responders = await this.database.requestResponse.findMany({
         where: { requestId: id, authorId: { in: helperIds }, deletedAt: null },
         select: { authorId: true },
@@ -451,6 +510,9 @@ export class RequestService {
     if (outcome === 'NO_LONGER_NEEDED' && !creditedIds.length) return;
 
     const credited = new Set([...creditedIds, ownerId]);
+    // visibility: who to tell that the request they offered to help with is resolved. The content
+    // referenced by the notification is the request, not the reply, so a held reply does not take
+    // away its author's interest in the outcome.
     const offers = await this.database.requestResponse.findMany({
       where: { requestId, isHelpOffer: true, deletedAt: null },
       select: { authorId: true },
@@ -516,6 +578,8 @@ export class RequestService {
 
     if (viewerId && ids.length) {
       // viewer.hasOffered drives whether the sticky bar reads "I can help" or "Just replying".
+      // visibility: the viewer's own replies. Hiding one from the person who wrote it would make
+      // the bar offer to reply again.
       const responses = await this.database.requestResponse.findMany({
         where: { requestId: { in: ids }, authorId: viewerId, deletedAt: null },
         select: { requestId: true, isHelpOffer: true },
@@ -529,9 +593,16 @@ export class RequestService {
       const ownIds = rows.filter(row => row.authorId === viewerId).map(row => row.id);
 
       if (ownIds.length) {
+        // The owner's count of private replies has to match the replies they can open, so it
+        // follows the same rule the reply list does (§6.5).
         const privateCounts = await this.database.requestResponse.groupBy({
           by: ['requestId'],
-          where: { requestId: { in: ownIds }, isPrivate: true, deletedAt: null },
+          where: {
+            requestId: { in: ownIds },
+            isPrivate: true,
+            deletedAt: null,
+            ...DIRECT_VISIBILITY,
+          },
           _count: { _all: true },
         });
 
@@ -556,6 +627,8 @@ export class RequestService {
   }
 
   private async load(id: string): Promise<CommunityRequest> {
+    // visibility: loaded to check who owns it before a write. An author must be able to edit or
+    // delete their own held post — that is the one thing they can still usefully do with it.
     const request = await this.database.communityRequest.findUnique({ where: { id } });
 
     if (!request) throw ApiException.notFound('This request could not be found.');
@@ -616,34 +689,10 @@ export class RequestService {
       weight: 3,
     });
 
-    const assessment = await this.risk.scan(request.title, request.description);
-    const isAnonymous = request.visibility === PostVisibility.ANONYMOUS;
-
-    if (!this.risk.isUrgent(assessment) && !isAnonymous) return;
-
-    await this.database.moderationQueueItem
-      .upsert({
-        where: {
-          type_targetType_targetId: {
-            type: isAnonymous ? ModerationQueueType.ANONYMOUS_POST : ModerationQueueType.GUARD_RISK,
-            targetType: ReportTargetType.REQUEST,
-            targetId: request.id,
-          },
-        },
-        update: {},
-        create: {
-          type: isAnonymous ? ModerationQueueType.ANONYMOUS_POST : ModerationQueueType.GUARD_RISK,
-          targetType: ReportTargetType.REQUEST,
-          targetId: request.id,
-          subjectUserId: request.authorId,
-          riskLevel: assessment.level,
-          riskCategory: assessment.category,
-          riskScore: assessment.score,
-          riskSignals: toJson(assessment.signals),
-          summary: request.title,
-        },
-      })
-      .catch(() => undefined);
+    // The scan, the verdict and the queue item are `ContentSafetyService`'s (§6.2). This hook used
+    // to carry its own copy of them, which is what that service replaces: the version here scanned
+    // a title and a description, the one in `update.service.ts` scanned a body, and neither wrote
+    // down what it found.
   }
 
   /**
@@ -667,5 +716,4 @@ export class RequestService {
       hadResults: total > 0,
     });
   }
-
 }

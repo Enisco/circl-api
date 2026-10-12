@@ -480,6 +480,7 @@ export class DealService {
     track: DealTrack,
   ): Promise<Array<{ type: ThreadContextType; ids: string[] }>> {
     if (track === DealTrack.COMMERCE) {
+      // visibility: the caller's own shop, to decide which deals are theirs.
       const store = await this.database.store.findFirst({
         where: { ownerId: userId, deletedAt: null },
         select: { id: true },
@@ -490,6 +491,7 @@ export class DealService {
       }
 
       const [items, enquiries] = await Promise.all([
+        // visibility: the caller's own items, as deal contexts.
         this.database.storeItem.findMany({ where: { storeId: store.id }, select: { id: true } }),
         this.database.enquiry.findMany({ where: { sellerId: userId }, select: { id: true } }),
       ]);
@@ -501,6 +503,7 @@ export class DealService {
       ];
     }
 
+    // visibility: the caller's own listing, to decide which deals are theirs.
     const listing = await this.database.professionalListing.findFirst({
       where: { userId, deletedAt: null },
       select: { id: true },
@@ -509,6 +512,7 @@ export class DealService {
     if (!listing) throw ApiException.notFound('You do not have a listing yet.');
 
     const [services, bookings] = await Promise.all([
+      // visibility: the caller's own services, as deal contexts.
       this.database.professionalService.findMany({
         where: { listingId: listing.id },
         select: { id: true },
@@ -741,11 +745,14 @@ export class DealService {
 
     switch (conversation.contextType) {
       case ThreadContextType.STORE: {
+        // visibility: who the other party to an existing deal is, by id. A deal in progress
+        // survives its subject being held — the work was agreed before the scan.
         const store = await this.database.store.findUnique({ where: { id } });
 
         return store?.ownerId ?? '';
       }
       case ThreadContextType.ITEM: {
+        // visibility: as above — the counterparty behind an existing deal.
         const item = await this.database.storeItem.findUnique({
           where: { id },
           select: { store: { select: { ownerId: true } } },
@@ -759,11 +766,13 @@ export class DealService {
         return enquiry?.sellerId ?? '';
       }
       case ThreadContextType.PROFESSIONAL: {
+        // visibility: as above — the counterparty behind an existing deal.
         const listing = await this.database.professionalListing.findUnique({ where: { id } });
 
         return listing?.userId ?? '';
       }
       case ThreadContextType.SERVICE: {
+        // visibility: as above — the counterparty behind an existing deal.
         const service = await this.database.professionalService.findUnique({
           where: { id },
           select: { listing: { select: { userId: true } } },

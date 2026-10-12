@@ -6,8 +6,8 @@ import { SessionService } from '../services';
 import { MEMBER_TOKEN_AUDIENCE } from '../constants';
 import { AccessTokenPayload } from '../types';
 import { PrismaService } from '@/infrastructure';
+import { AccountStateService } from '../services/account-state.service';
 import { ApiErrorCode, ApiException, ErrorMessage } from '@/common';
-import { UserAccountStatus } from '@prisma/client';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -17,6 +17,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     configService: ConfigService,
     private readonly sessionService: SessionService,
     private readonly database: PrismaService,
+    private readonly accountState: AccountStateService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -67,7 +68,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         id: true,
         email: true,
         status: true,
+        suspendedUntil: true,
         isAnonymised: true,
+        anonymisedAt: true,
         isStaff: true,
         userRole: {
           select: {
@@ -98,11 +101,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       );
     }
 
-    if (!user || user.status === UserAccountStatus.SUSPENDED) {
+    if (!user) {
       throw new ForbiddenException(
         `${ErrorMessage.ACCESS_DENIED}. Please, contact support for assistance.`,
       );
     }
+
+    // Suspended, on a token minted before the suspension revoked the session. The window is the
+    // seconds between the two, but the refusal has to say which refusal it is: a generic 403 on
+    // every screen at once is indistinguishable from "you may not do that", and the app showed it
+    // as a failed action rather than as an account that has been stopped (§13.2).
+    await this.accountState.assertUsable(user);
 
     // Staff do not use the member app with their staff account, and the member sign-in flow is an
     // email code with no password and no second factor. Allowing both meant a staff inbox was an

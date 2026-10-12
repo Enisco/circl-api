@@ -19,7 +19,7 @@ import {
   Paginated,
   toDateOnly,
 } from '@/common';
-import { AuthorView, MediaService, authorSelect, toAuthorView } from '../../shared';
+import { AuthorView, MediaService, authorSelect, isReachable, toAuthorView } from '../../shared';
 import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
 import { NotificationFeedService } from '../../notifications';
 import {
@@ -92,6 +92,15 @@ export class BookingService {
       );
     }
 
+    // A listing under review is not open for business (§6.5). Refused with the same 404 the
+    // profile gives, so a stale screen cannot be turned into a booking against it.
+    if (!isReachable(listing.visibilityState)) {
+      throw ApiException.notFound(
+        'That listing could not be found.',
+        ApiErrorCode.LISTING_NOT_FOUND,
+      );
+    }
+
     if (listing.userId === clientId) {
       throw ApiException.unprocessable(
         ApiErrorCode.CANNOT_BOOK_YOURSELF,
@@ -125,6 +134,10 @@ export class BookingService {
       });
 
       if (!service || service.listingId !== listing.id) {
+        throw ApiException.notFound('That service could not be found.');
+      }
+
+      if (!isReachable(service.visibilityState)) {
         throw ApiException.notFound('That service could not be found.');
       }
 
@@ -242,6 +255,8 @@ export class BookingService {
 
     if (role === 'PROFESSIONAL') {
       // What gates the second tab (2.9.3): having a published listing, NOT being verified.
+      // visibility: does the caller have a listing at all? Theirs counts whatever state it is
+      // in — somebody whose listing is under review still has jobs in progress to manage.
       const listing = await this.database.professionalListing.findFirst({
         where: { userId, deletedAt: null },
         select: { id: true },

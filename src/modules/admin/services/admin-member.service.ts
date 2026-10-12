@@ -21,11 +21,31 @@ import {
   AdminMemberSource,
   AgeBand,
   maskedPhoneOf,
+  phoneOf,
   toAdminMemberView,
 } from '../serializers/admin-member.serializer';
 import { maskIp } from '../serializers/pii.serializer';
 import { AdminNoteService, InternalNoteView } from './admin-note.service';
 import { EnforcementService } from './enforcement.service';
+
+/**
+ * The population an export covers, resolved once and handed to every page of it (§5.26).
+ *
+ * `applied` is the same list of filter names the list's `meta` carries, so the audit entry for an
+ * export records which filters were in force in the same vocabulary the screen used.
+ */
+export interface MemberExportScope {
+  where: Prisma.Sql;
+  context: AdminMemberContext;
+  applied: string[];
+}
+
+/** One row of a MEMBERS export: the list's own view, plus the contact details it masks. */
+export interface MemberExportRow {
+  view: AdminMemberRowView;
+  email: string;
+  phone: string | null;
+}
 
 /** What the list may be sorted by (§5.4). Anything else is a 400 naming the field. */
 const SORTS = ['createdAt', 'lastActiveAt', 'name', 'strikes', 'reportsReceived'] as const;
@@ -104,7 +124,7 @@ export class AdminMemberService {
       dateField: 'createdAt',
     });
 
-    const search = this.searchPredicate(actor, dto.q);
+    const search = this.searchPredicate(dto.q, actor.permissions.has('members:pii_reveal'));
 
     // An email query from somebody without `members:pii_reveal` matches nothing (§5.4), so that
     // the list cannot be used to confirm which address an account holds. Answered here rather than
@@ -119,8 +139,7 @@ export class AdminMemberService {
       };
     }
 
-    const predicates = [filter.sql, ...this.listPredicates(dto, now), ...(search ? [search] : [])];
-    const where = Prisma.join(predicates, ' AND ');
+    const where = this.populationWhere(dto, filter.sql, search, now);
     const offset = (dto.currentPage - 1) * dto.size;
 
     const rows = await this.database.$queryRaw<
@@ -281,12 +300,7 @@ export class AdminMemberService {
 
     if (fields.includes('email')) data.email = member.email;
 
-    if (fields.includes('phone')) {
-      const code = member.profile?.phoneNumberDiallingCode ?? '';
-      const number = member.profile?.phoneNumber ?? null;
-
-      data.phone = number ? `${code}${number}` : null;
-    }
+    if (fields.includes('phone')) data.phone = phoneOf(member);
 
     if (fields.includes('dateOfBirth')) {
       data.dateOfBirth = member.profile?.dateOfBirth?.toISOString().slice(0, 10) ?? null;
@@ -446,7 +460,10 @@ export class AdminMemberService {
    * name, username and the two names joined, because a staff member typing "ama o" is looking for
    * one person and should not have to know which column holds which half.
    */
-  private searchPredicate(actor: AdminPrincipal, q?: string): Prisma.Sql | null | 'DENIED' {
+  private searchPredicate(
+    q: string | undefined,
+    mayMatchEmail: boolean,
+  ): Prisma.Sql | null | 'DENIED' {
     const term = q?.trim();
 
     if (!term) return null;
@@ -454,7 +471,7 @@ export class AdminMemberService {
     if (UUID.test(term)) return Prisma.sql`u."id" = ${term}`;
 
     if (LOOKS_LIKE_EMAIL.test(term)) {
-      if (!actor.permissions.has('members:pii_reveal')) return 'DENIED';
+      if (!mayMatchEmail) return 'DENIED';
 
       return Prisma.sql`lower(u."email") = lower(${term})`;
     }
@@ -467,6 +484,98 @@ export class AdminMemberService {
       OR u."username" ILIKE ${like}
       OR (u."first_name" || ' ' || COALESCE(u."last_name", '')) ILIKE ${like}
     )`;
+  }
+
+  /**
+   * Who the list is about, as one `WHERE`.
+   *
+   * Factored out for the export (§5.26), which has to cover **exactly** the rows the list showed:
+   * a CSV built from a second, similar predicate is the kind of near-miss nobody notices until a
+   * staff member counts the rows and gets a different number from the screen they exported.
+   */
+  private populationWhere(
+    dto: ListMembersDto,
+    filterSql: Prisma.Sql,
+    search: Prisma.Sql | null,
+    now: Date,
+  ): Prisma.Sql {
+    return Prisma.join(
+      [filterSql, ...this.listPredicates(dto, now), ...(search ? [search] : [])],
+      ' AND ',
+    );
+  }
+
+  /**
+   * The population an export covers, resolved once (§5.26).
+   *
+   * `mayMatchEmail` is settled by the caller at request time rather than carried into the worker:
+   * the service refuses an email `q` from somebody without `members:pii_reveal` before the job is
+   * ever queued, so by the time this runs the question has already been answered.
+   */
+  async exportScope(
+    dto: ListMembersDto,
+    mayMatchEmail: boolean,
+  ): Promise<MemberExportScope | 'DENIED'> {
+    const filter = await this.filters.resolve(dto, { defaultRange: false, dateField: 'createdAt' });
+    const search = this.searchPredicate(dto.q, mayMatchEmail);
+
+    if (search === 'DENIED') return 'DENIED';
+
+    return {
+      where: this.populationWhere(dto, filter.sql, search, new Date()),
+      context: await this.context(filter.range?.to),
+      applied: filter.applied,
+    };
+  }
+
+  /**
+   * One batch of export rows, keyset-paged by id.
+   *
+   * Keyset rather than `OFFSET`, because an export of sixty thousand members is sixty pages and
+   * the last one would re-scan the whole table to skip it. Ordered by id — not by sign-up date,
+   * which is what the list orders by — because the file is sorted by the caller or by the
+   * spreadsheet, and the only thing the paging needs from the order is that it never repeats or
+   * skips a row while members are signing up underneath it.
+   *
+   * Rows are serialised by the list's own serialiser, so "the city column" means in the file what
+   * it means on the screen. The two aggregate columns the view carries are not exportable (§13.18
+   * lists neither), so they are passed as zero rather than counted for every row in the file;
+   * `export-kinds.spec.ts` holds the MEMBERS allowlist to that, so a column added later cannot
+   * quietly export a zero.
+   */
+  async exportPage(
+    scope: MemberExportScope,
+    after: string | null,
+    size: number,
+  ): Promise<{ rows: MemberExportRow[]; lastId: string | null }> {
+    const cursor = after ? Prisma.sql`AND u."id" > ${after}` : Prisma.empty;
+    const ids = await this.database.$queryRaw<Array<{ id: string }>>`
+      SELECT u."id"
+      FROM "users" u
+      LEFT JOIN "user_profile" p ON p."user_id" = u."id"
+      WHERE ${scope.where} ${cursor}
+      ORDER BY u."id" ASC
+      LIMIT ${size}
+    `;
+
+    if (!ids.length) return { rows: [], lastId: null };
+
+    const sources = await this.sourcesFor(ids.map(row => row.id));
+
+    return {
+      rows: ids
+        .map(({ id }) => sources.get(id))
+        .filter((source): source is AdminMemberSource => source !== undefined)
+        .map(source => ({
+          view: toAdminMemberView(source, { activeStrikes: 0, reportsReceived: 0 }, scope.context),
+          email: source.email,
+          phone: phoneOf(source),
+        })),
+      // The last id **queried**, not the last row serialised: a member deleted between the two
+      // queries would otherwise move the cursor backwards and the export would loop on that page
+      // for ever.
+      lastId: ids[ids.length - 1].id,
+    };
   }
 
   /** The list's own filters, which are not part of the shared member filter. */

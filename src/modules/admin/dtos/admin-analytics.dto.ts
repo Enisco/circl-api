@@ -87,6 +87,72 @@ export interface CommunityFilters {
   joinPolicy?: string[];
 }
 
+/** The Professionals tab's own filters (§5.25). */
+export interface ProfessionalFilters {
+  cityIds?: string[];
+  professions?: string[];
+  /** From `TaxonomyTerm.metadata.isRegulated` — a vocabulary fact, not a column. */
+  regulated?: boolean;
+  experienceLevels?: string[];
+  urgency?: string[];
+}
+
+/** The Trust & Safety tab's own filters (§5.25). */
+export interface SafetyFilters {
+  reasonCodes?: string[];
+  targetTypes?: string[];
+  riskLevels?: string[];
+  riskCategories?: string[];
+  queueTypes?: string[];
+  states?: string[];
+  /**
+   * Whether any member-attribute filter is in force.
+   *
+   * Carried because the safety tables join to the member as a **nullable** column, so the right
+   * join depends on whether anybody asked to narrow by member. With no member filter the join is
+   * skipped rather than made permissive: `mv_member_dimensions` excludes anonymised accounts, and
+   * joining to it unconditionally would drop every report about somebody who has since deleted
+   * their account — rewriting what March looked like because of something that happened in April.
+   */
+  hasMemberFilters?: boolean;
+}
+
+/** The Support tab's own filters (§5.25). */
+export interface SupportFilters {
+  threadTypes?: string[];
+  assigneeIds?: string[];
+  hasMemberFilters?: boolean;
+}
+
+/** The Search & Demand tab's own filters (§5.25). */
+export interface SearchFilters {
+  scopes?: string[];
+  cityIds?: string[];
+}
+
+/** The Connect tab's own filters (§5.25). */
+export interface ConnectFilters {
+  connectionTypes?: string[];
+  dmPolicy?: string[];
+  isVisible?: boolean;
+}
+
+/** The Commerce tab's own filters (§5.25). `cityIds` narrows the shop's city, not the owner's. */
+export interface CommerceFilters {
+  cityIds?: string[];
+  storeTypes?: string[];
+  itemCategories?: string[];
+  storeStatus?: string[];
+  complianceState?: string[];
+  fulfilment?: string[];
+}
+
+/** The Deals tab's own filters (§5.25). */
+export interface DealFilters {
+  track?: string[];
+  timing?: string[];
+}
+
 /** The tabs §5.25 defines. One endpoint each, and an unknown name is a 400 rather than an empty tab. */
 export const ANALYTICS_TABS = [
   'overview',
@@ -100,7 +166,6 @@ export const ANALYTICS_TABS = [
   'search',
   'trust-safety',
   'support',
-  'staff',
 ] as const;
 
 export type AnalyticsTab = (typeof ANALYTICS_TABS)[number];
@@ -118,5 +183,4 @@ export const TAB_PERMISSIONS: Record<AnalyticsTab, string[]> = {
   search: ['analytics:read'],
   'trust-safety': ['analytics:read', 'analytics:safety'],
   support: ['analytics:read'],
-  staff: ['analytics:read'],
 };

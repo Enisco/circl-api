@@ -5,6 +5,7 @@ import { ApiErrorCode, ApiException, toJson } from '@/common';
 import {
   BlockingService,
   MediaService,
+  MessageSafetyQueue,
   authorSelect,
   displayNameOf,
   toAuthorView,
@@ -54,6 +55,7 @@ export class MessageService {
     private readonly conversations: ConversationService,
     private readonly media: MediaService,
     private readonly blocking: BlockingService,
+    private readonly messageSafety: MessageSafetyQueue,
   ) {}
 
   // ─── 5.3.3 History ─────────────────────────────────────────────────────────
@@ -366,6 +368,10 @@ export class MessageService {
 
       return created;
     });
+
+    // §6.8: after the message is persisted, never before and never blocking. Delivery does not
+    // wait for a scanner, and the scan changes nothing a member can see.
+    await this.messageSafety.enqueue(message.id);
 
     return this.toView(message, userId);
   }

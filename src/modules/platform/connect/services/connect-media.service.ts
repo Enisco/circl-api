@@ -1,11 +1,21 @@
 import { Injectable } from '@nestjs/common';
-import { ConnectPostKind, MediaType, Prisma, TaxonomyKind } from '@prisma/client';
+import {
+  ConnectPostKind,
+  ContentScanTrigger,
+  MediaType,
+  Prisma,
+  ReportTargetType,
+  TaxonomyKind,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException } from '@/common';
 import {
   AuthorView,
   BlockingService,
+  ContentSafetyService,
+  DIRECT_VISIBILITY,
   MediaService,
+  PUBLIC_VISIBILITY,
   TaxonomyService,
   authorSelect,
   toAuthorView,
@@ -84,6 +94,7 @@ export class ConnectMediaService {
     private readonly blocking: BlockingService,
     private readonly derivation: MediaDerivationService,
     private readonly taxonomy: TaxonomyService,
+    private readonly safety: ContentSafetyService,
   ) {}
 
   // ─── 3.2 Posts ─────────────────────────────────────────────────────────────
@@ -97,6 +108,8 @@ export class ConnectMediaService {
     const keys = dto.keys;
 
     const [posts, items] = await Promise.all([
+      // visibility: the author's own photo count, against the five-photo limit. A held photo
+      // still occupies a slot — it is still theirs and it may come back.
       this.database.connectPost.count({ where: { profileId, deletedAt: null } }),
       // Looser here than the five-photo rule on purpose: `assertShape` is the authority, so a
       // sixth photo answers `409 CONNECT_POST_LIMIT` with the limit in `data` rather than a
@@ -154,6 +167,16 @@ export class ConnectMediaService {
           data: { thumbnailKey: poster.storageKey },
         });
       }
+
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.CONNECT_POST,
+        targetId: created.id,
+        authorId: userId,
+        fields: { caption: created.caption },
+        mediaKeys: items.map(item => item.storageKey),
+        trigger: ContentScanTrigger.CREATE,
+        summary: created.caption,
+      });
 
       return created;
     });
@@ -347,6 +370,8 @@ export class ConnectMediaService {
    * client holding a stale gallery cannot drop a post by omitting it.
    */
   async reorderPosts(profileId: string, dto: ReorderPostsDto) {
+    // visibility: the owner's own gallery, and the whole set has to be sent back. Filtering here
+    // would make a held photo impossible to reorder around.
     const posts = await this.database.connectPost.findMany({
       where: { profileId, deletedAt: null },
       select: { id: true },
@@ -382,8 +407,11 @@ export class ConnectMediaService {
   async postsFor(profileIds: string[]): Promise<Map<string, ConnectPostView[]>> {
     if (!profileIds.length) return new Map();
 
+    // A photo is read on a profile, which is a direct read: a limited one still shows to
+    // somebody standing in front of the profile, a held one shows to nobody (§6.5). The owner's
+    // own held photo is handled where the owner is known — see `reorderPosts`.
     const posts = await this.database.connectPost.findMany({
-      where: { profileId: { in: profileIds }, deletedAt: null },
+      where: { profileId: { in: profileIds }, deletedAt: null, ...DIRECT_VISIBILITY },
       orderBy: [{ position: 'asc' }, { postedAt: 'asc' }],
     });
 
@@ -454,6 +482,7 @@ export class ConnectMediaService {
   }
 
   private async postView(postId: string): Promise<ConnectPostView> {
+    // visibility: the photo this call just created or changed, read back for the response.
     const post = await this.database.connectPost.findUniqueOrThrow({
       where: { id: postId },
       select: { profileId: true },
@@ -467,6 +496,7 @@ export class ConnectMediaService {
   }
 
   private async requirePost(profileId: string, postId: string) {
+    // visibility: an ownership check before a write. The owner may still delete a held photo.
     const post = await this.database.connectPost.findUnique({ where: { id: postId } });
 
     if (!post || post.profileId !== profileId || post.deletedAt) {
@@ -533,6 +563,35 @@ export class ConnectMediaService {
       });
     });
 
+    // An answer has no visibility state of its own (§4.5 gives the column to the profile), so
+    // rewriting the answers re-scans the profile they belong to. `assess` hashes the fields, so a
+    // reorder that changes no words is not a second trip through the queue.
+    //
+    // visibility: the owner's own profile, read to re-scan it. Filtering here would skip the
+    // re-scan on exactly the profiles that most need one — the ones already held.
+    const owner = await this.database.connectProfile.findUnique({
+      where: { id: profileId },
+      select: { userId: true, lookingFor: true },
+    });
+
+    if (owner) {
+      await this.database.$transaction(tx =>
+        this.safety.assess(tx, {
+          targetType: ReportTargetType.CONNECT_PROFILE,
+          targetId: profileId,
+          authorId: owner.userId,
+          fields: {
+            lookingFor: owner.lookingFor,
+            ...Object.fromEntries(
+              answers.map(answer => [`prompt ${answer.code}`, answer.answer.trim()]),
+            ),
+          },
+          trigger: ContentScanTrigger.EDIT,
+          summary: owner.lookingFor,
+        }),
+      );
+    }
+
     return (await this.promptsFor([profileId])).get(profileId) ?? [];
   }
 
@@ -580,6 +639,7 @@ export class ConnectMediaService {
    * story must never reach somebody who could not see the profile.
    */
   async stories(viewerId: string): Promise<ConnectStoryRowView[]> {
+    // visibility: the caller's own profile, for the reciprocity gate on the story tray.
     const own = await this.database.connectProfile.findFirst({
       where: { userId: viewerId, deletedAt: null },
       select: { id: true },
@@ -595,6 +655,10 @@ export class ConnectMediaService {
       where: {
         deletedAt: null,
         expiresAt: { gt: now },
+        // A story is distribution — it arrives in a tray at the top of the screen without being
+        // asked for — so a limited one is out of it as well as a held one (§6.5). The caller's
+        // own story is the exception, as it is for a hidden profile just below.
+        OR: [{ ...PUBLIC_VISIBILITY }, { profileId: own.id }],
         profile: {
           deletedAt: null,
           // The caller's own row is the one exception to "visible only": a member who has hidden
@@ -674,6 +738,7 @@ export class ConnectMediaService {
   /** Expiry is stamped here. The client never sends it, and never decides it. */
   async createStory(profileId: string, userId: string, dto: CreateConnectStoryDto) {
     const [live, items] = await Promise.all([
+      // visibility: the owner's own live stories, against the limit.
       this.database.connectStory.count({
         where: { profileId, deletedAt: null, expiresAt: { gt: new Date() } },
       }),
@@ -741,6 +806,16 @@ export class ConnectMediaService {
 
       await this.media.attach(tx, [media], CONNECT_STORY_OWNER, created.id);
 
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.CONNECT_STORY,
+        targetId: created.id,
+        authorId: userId,
+        fields: { caption: created.caption },
+        mediaKeys: [media.storageKey],
+        trigger: ContentScanTrigger.CREATE,
+        summary: created.caption,
+      });
+
       return created;
     });
 
@@ -762,8 +837,15 @@ export class ConnectMediaService {
 
   /** Idempotent, one call per item as it is viewed. */
   async markStorySeen(viewerId: string, storyId: string) {
+    // A story nobody may see cannot be marked seen: the id came from a tray that has since been
+    // filtered, so the honest answer is the same "no longer there" an expired story gets.
     const story = await this.database.connectStory.findFirst({
-      where: { id: storyId, deletedAt: null, expiresAt: { gt: new Date() } },
+      where: {
+        id: storyId,
+        deletedAt: null,
+        expiresAt: { gt: new Date() },
+        ...PUBLIC_VISIBILITY,
+      },
       select: { id: true },
     });
 
@@ -780,6 +862,8 @@ export class ConnectMediaService {
 
   /** The owner taking one down early. It vanishes from every other reader's next load. */
   async removeStory(profileId: string, storyId: string): Promise<void> {
+    // visibility: an ownership check before a delete. Taking a held story down early is the one
+    // thing left to do with it.
     const story = await this.database.connectStory.findUnique({ where: { id: storyId } });
 
     if (!story || story.deletedAt) throw ApiException.notFound('That story could not be found.');
@@ -798,11 +882,14 @@ export class ConnectMediaService {
   async hasStoryFor(profileIds: string[]): Promise<Set<string>> {
     if (!profileIds.length) return new Set();
 
+    // The ring says "there is a story here". It has to agree with the tray, or it opens on
+    // nothing.
     const rows = await this.database.connectStory.groupBy({
       by: ['profileId'],
       where: {
         profileId: { in: profileIds },
         deletedAt: null,
+        ...PUBLIC_VISIBILITY,
         expiresAt: { gt: new Date() },
       },
     });
@@ -887,6 +974,7 @@ export class ConnectMediaService {
 
   /** The item has to belong to that profile, or `about` is a way to quote somebody else's photo. */
   async ownedMedia(profileId: string, mediaId: string) {
+    // visibility: whether this media is the caller's own, before letting a message quote it.
     const posts = await this.database.connectPost.findMany({
       where: { profileId, deletedAt: null },
       select: { id: true },

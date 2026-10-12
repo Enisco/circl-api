@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, ReviewContext } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
+import { PUBLIC_VISIBILITY } from '../../shared';
 
 /** The United Kingdom's code in the countriesOfOrigin taxonomy. */
 const UK_CODE = 'GB';
@@ -18,8 +19,10 @@ export class ReputationService {
   async recompute(userId: string, tx?: Prisma.TransactionClient): Promise<void> {
     const client = tx ?? this.database;
 
+    // A rating is a published number, so a held review does not move it. If a review is restored
+    // after a human looks, `recompute` runs again and it counts from then.
     const reviews = await client.review.findMany({
-      where: { subjectUserId: userId, deletedAt: null },
+      where: { subjectUserId: userId, deletedAt: null, ...PUBLIC_VISIBILITY },
       select: {
         rating: true,
         context: true,

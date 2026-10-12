@@ -57,11 +57,41 @@ export const SYSTEM_CONFIG_DEFAULTS = {
   'limits.nearMeRadiusKm': 25,
 
   'safety.tierThresholds': { low: 1, medium: 30, high: 55, critical: 90 },
+  /**
+   * `enabled` is **false until the classifier ships** (M2 stage 17), where the spec's default is
+   * true.
+   *
+   * It is not a preference, it is a statement about what exists: with it on, §6.5 holds every
+   * lexicon-clean post as `LIMITED` for the second or two until the classifier answers, so that
+   * nothing the classifier would hold reaches a feed first. Switched on before anything answers,
+   * that second becomes for ever and the platform disappears from its own feeds. Off, the lexicon
+   * verdict is final and recorded `DEGRADED`, which is exactly what §6.7 prescribes for a
+   * classifier that is not available.
+   *
+   * A stored override flips it without a deploy, which is how it will be turned on.
+   */
   'safety.classifier': {
-    enabled: true,
+    enabled: false,
     model: 'omni-moderation-latest',
     timeoutMs: 4000,
     weight: 0.6,
+    /**
+     * §6.3's per-category multipliers, which are what turn a raw moderation score into a Circl
+     * one. They are here rather than in code because they are the judgement in the whole
+     * arrangement: `sexual/minors` at 1.5 says a model that is half sure about a child is already
+     * past our threshold, and that is a decision for the people who answer the queue.
+     *
+     * Any category not listed multiplies by 1.
+     */
+    multipliers: {
+      'self-harm/intent': 1.2,
+      'self-harm/instructions': 1.2,
+      'sexual/minors': 1.5,
+      'hate/threatening': 1.1,
+      'harassment/threatening': 1.1,
+      'violence/graphic': 1.0,
+      'illicit/violent': 1.1,
+    } as Record<string, number>,
   },
   'safety.criticalCategories': [
     'SELF_HARM',

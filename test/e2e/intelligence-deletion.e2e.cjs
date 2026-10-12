@@ -41,7 +41,8 @@ async function plantCode(userId, code) {
     let r = await api(asker.token, 'POST', '/community/requests', {
       categoryCode: 'BANK_ACCOUNT',
       title: `How do I open a bank account without proof of address? (${i})`,
-      description: 'Every branch keeps asking me for a utility bill and I have only just arrived here.',
+      description:
+        'Every branch keeps asking me for a utility bill and I have only just arrived here.',
       cityId: 'MANCHESTER',
     });
     const requestId = r.body?.data?.id;
@@ -60,9 +61,21 @@ async function plantCode(userId, code) {
   }
   check('three members asked the same thing and were helped', requestIds.length === 3);
 
-  const { AutoGuideService } = require('../../dist/src/modules/platform/intelligence/services/auto-guide.service.js');
-  // Driving the job directly, which is how it runs in production (on a cron).
-  const autoGuides = new AutoGuideService(prisma);
+  const {
+    AutoGuideService,
+  } = require('../../dist/src/modules/platform/intelligence/services/auto-guide.service.js');
+  // Driving the job directly rather than through the container, which is what makes it the one
+  // place a new constructor argument is not supplied for us: adding `QueueDeadlineService` in §5.9
+  // left this `new` one short, and the job threw `Cannot read properties of undefined` the first
+  // time it drafted anything. The stub is the deadline every queue item gets — the band and the
+  // clock are `queue-priority`'s to test, not this suite's.
+  const deadlines = {
+    stamp: async () => ({
+      priority: 'NORMAL',
+      dueAt: new Date(Date.now() + 24 * 3_600_000),
+    }),
+  };
+  const autoGuides = new AutoGuideService(prisma, deadlines);
   const result = await autoGuides.run();
   check('the clusterer found the repeated question', result.clusters >= 1, result);
   check('and drafted a guide from it', result.drafted >= 1, result);
@@ -73,14 +86,34 @@ async function plantCode(userId, code) {
     orderBy: { createdAt: 'desc' },
   });
   check('the draft exists', drafted !== null);
-  check('it is NOT published — a human approves first', drafted?.publishedAt === null, drafted?.publishedAt);
+  check(
+    'it is NOT published — a human approves first',
+    drafted?.publishedAt === null,
+    drafted?.publishedAt,
+  );
   check('it cites its sources', drafted?.sources?.length >= 2, drafted?.sources?.length);
-  check('provenance names how many answers it came from', /\d+ community answers/.test(drafted?.provenanceSummary ?? ''), drafted?.provenanceSummary);
-  check('sources name the people who wrote them', /Reply by E2E h/.test(drafted?.sources?.[0]?.label ?? ''), drafted?.sources?.[0]?.label);
-  check('the steps are the real answers, not a paraphrase', /Book an appointment online/.test(JSON.stringify(drafted?.blocks)), drafted?.blocks?.[0]);
+  check(
+    'provenance names how many answers it came from',
+    /\d+ community answers/.test(drafted?.provenanceSummary ?? ''),
+    drafted?.provenanceSummary,
+  );
+  check(
+    'sources name the people who wrote them',
+    /Reply by E2E h/.test(drafted?.sources?.[0]?.label ?? ''),
+    drafted?.sources?.[0]?.label,
+  );
+  check(
+    'the steps are the real answers, not a paraphrase',
+    /Book an appointment online/.test(JSON.stringify(drafted?.blocks)),
+    drafted?.blocks?.[0],
+  );
 
   let r = await api(helper.token, 'GET', '/community/guides');
-  check('an unapproved draft is invisible to members', !r.body?.data?.some(g => g.id === drafted.id), r.body?.data?.length);
+  check(
+    'an unapproved draft is invisible to members',
+    !r.body?.data?.some(g => g.id === drafted.id),
+    r.body?.data?.length,
+  );
 
   const queued = await prisma.moderationQueueItem.findFirst({
     where: { targetId: drafted.id, type: 'AUTO_GUIDE' },
@@ -92,14 +125,26 @@ async function plantCode(userId, code) {
 
   await autoGuides.publish(drafted.id, helper.id);
   r = await api(helper.token, 'GET', '/community/guides');
-  check('once approved it is live', r.body?.data?.some(g => g.id === drafted.id), r.body?.data?.length);
+  check(
+    'once approved it is live',
+    r.body?.data?.some(g => g.id === drafted.id),
+    r.body?.data?.length,
+  );
   r = await api(helper.token, 'GET', `/community/guides/${drafted.id}`);
-  check('and carries visible provenance', !!r.body?.data?.provenance?.summary && r.body?.data?.provenance?.sources?.length >= 2, r.body?.data?.provenance);
+  check(
+    'and carries visible provenance',
+    !!r.body?.data?.provenance?.summary && r.body?.data?.provenance?.sources?.length >= 2,
+    r.body?.data?.provenance,
+  );
 
   console.log('\n── Guided Creation: real, local demand ──────────────────────');
 
-  const { DemandService } = require('../../dist/src/modules/platform/intelligence/services/demand.service.js');
-  const { TaxonomyService } = require('../../dist/src/modules/platform/shared/services/taxonomy.service.js');
+  const {
+    DemandService,
+  } = require('../../dist/src/modules/platform/intelligence/services/demand.service.js');
+  const {
+    TaxonomyService,
+  } = require('../../dist/src/modules/platform/shared/services/taxonomy.service.js');
   const demand = new DemandService(prisma, new TaxonomyService(prisma));
 
   // Cleared first, because the scheduled rollup runs every two hours: on a server that has been up
@@ -109,47 +154,92 @@ async function plantCode(userId, code) {
   await prisma.demandSignal.deleteMany({});
 
   r = await api(helper.token, 'GET', '/pulse/suggestions?surface=COMMUNITY_OFFER');
-  check('nothing suggested before the rollup has run', r.status === 200 && r.body?.data?.length === 0, r.body?.data);
+  check(
+    'nothing suggested before the rollup has run',
+    r.status === 200 && r.body?.data?.length === 0,
+    r.body?.data,
+  );
 
   await demand.rebuild();
-  r = await api(helper.token, 'GET', '/pulse/suggestions?surface=COMMUNITY_OFFER&cityId=MANCHESTER');
+  r = await api(
+    helper.token,
+    'GET',
+    '/pulse/suggestions?surface=COMMUNITY_OFFER&cityId=MANCHESTER',
+  );
   check('after the rebuild, a real gap surfaces', r.body?.data?.length >= 1, r.body?.data);
   const suggestion = r.body?.data?.[0];
-  check('the reason names a count and a place, so it is checkable', /\d+ people in Manchester/.test(suggestion?.reason ?? ''), suggestion?.reason);
+  check(
+    'the reason names a count and a place, so it is checkable',
+    /\d+ people in Manchester/.test(suggestion?.reason ?? ''),
+    suggestion?.reason,
+  );
   console.log(`    (${suggestion?.label}: ${suggestion?.reason})`);
 
-  r = await api(helper.token, 'GET', '/pulse/suggestions?surface=COMMUNITY_OFFER&cityId=MANCHESTER&exclude=BANK_ACCOUNT');
-  check('a category the member already covers is never suggested back', !r.body?.data?.some(s => s.code === 'BANK_ACCOUNT'), r.body?.data?.map(s => s.code));
+  r = await api(
+    helper.token,
+    'GET',
+    '/pulse/suggestions?surface=COMMUNITY_OFFER&cityId=MANCHESTER&exclude=BANK_ACCOUNT',
+  );
+  check(
+    'a category the member already covers is never suggested back',
+    !r.body?.data?.some(s => s.code === 'BANK_ACCOUNT'),
+    r.body?.data?.map(s => s.code),
+  );
 
   console.log('\n── Pulse: one engine, four views ────────────────────────────');
 
-  const { MetricsService } = require('../../dist/src/modules/platform/intelligence/services/metrics.service.js');
+  const {
+    MetricsService,
+  } = require('../../dist/src/modules/platform/intelligence/services/metrics.service.js');
   const metrics = new MetricsService(prisma, new TaxonomyService(prisma));
   await metrics.rebuild('MONTH');
 
   r = await api(helper.token, 'GET', '/pulse/raw/COMMUNITY?cityId=MANCHESTER');
   check('community dashboard → 200', r.status === 200, r.body?.error);
-  check('topRequests reflects what was actually asked', r.body?.data?.metrics?.topRequests?.some(m => m.code === 'BANK_ACCOUNT'), r.body?.data?.metrics?.topRequests);
+  check(
+    'topRequests reflects what was actually asked',
+    r.body?.data?.metrics?.topRequests?.some(m => m.code === 'BANK_ACCOUNT'),
+    r.body?.data?.metrics?.topRequests,
+  );
   // Assert the label is RENDERED rather than which category happens to lead: the ordering depends on whatever else the run created.
   const bankRow = r.body?.data?.metrics?.topRequests?.find(m => m.code === 'BANK_ACCOUNT');
   check('labels are rendered, not raw codes', bankRow?.label === 'Bank Account', bankRow);
 
-  check('the suppression thresholds ship with the payload', r.body?.data?.suppression?.peopleFloor === 20, r.body?.data?.suppression);
-  check('so an empty list reads as "too few to publish"', /suppressed rather than rounded/.test(r.body?.data?.suppression?.note ?? ''), r.body?.data?.suppression?.note);
+  check(
+    'the suppression thresholds ship with the payload',
+    r.body?.data?.suppression?.peopleFloor === 20,
+    r.body?.data?.suppression,
+  );
+  check(
+    'so an empty list reads as "too few to publish"',
+    /suppressed rather than rounded/.test(r.body?.data?.suppression?.note ?? ''),
+    r.body?.data?.suppression?.note,
+  );
 
   // D19 is the one to get right: a handful of people must never be published. Looked for in
   // Bristol, which the dataset leaves empty on purpose, so the bucket under test really is one
   // person. Asserted against Manchester it only ever passed while Manchester was thin, and it
   // stopped meaning anything the moment the city had members.
   await api(helper.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP', lookingFor: 'Meeting people who have been through the same move.',
-    dateOfBirth: '1994-03-11', isVisible: true, heritageTag: 'WEST_AFRICAN',
+    typeCode: 'FRIENDSHIP',
+    lookingFor: 'Meeting people who have been through the same move.',
+    dateOfBirth: '1994-03-11',
+    isVisible: true,
+    heritageTag: 'WEST_AFRICAN',
     cityIdOverride: 'BRISTOL',
   });
   await metrics.rebuild('MONTH');
   r = await api(helper.token, 'GET', '/pulse/raw/CONNECT?cityId=BRISTOL');
-  check('D19: a bucket of one person is SUPPRESSED, not rounded', (r.body?.data?.metrics?.trendingTypes?.length ?? 0) === 0, r.body?.data?.metrics?.trendingTypes);
-  check('and heritage — the re-identifiable one — is suppressed too', (r.body?.data?.metrics?.demandByBackground?.length ?? 0) === 0, r.body?.data?.metrics?.demandByBackground);
+  check(
+    'D19: a bucket of one person is SUPPRESSED, not rounded',
+    (r.body?.data?.metrics?.trendingTypes?.length ?? 0) === 0,
+    r.body?.data?.metrics?.trendingTypes,
+  );
+  check(
+    'and heritage — the re-identifiable one — is suppressed too',
+    (r.body?.data?.metrics?.demandByBackground?.length ?? 0) === 0,
+    r.body?.data?.metrics?.demandByBackground,
+  );
 
   r = await api(helper.token, 'GET', '/pulse/raw/COMMERCE?cityId=MANCHESTER');
   check('commerce dashboard → 200', r.status === 200, r.body?.error);
@@ -160,7 +250,8 @@ async function plantCode(userId, code) {
 
   // Content that must SURVIVE, and identity that must not.
   r = await api(leaver.token, 'POST', '/community/requests', {
-    categoryCode: 'JOBS', title: 'Looking for warehouse work near Trafford Park',
+    categoryCode: 'JOBS',
+    title: 'Looking for warehouse work near Trafford Park',
     description: 'I have a forklift licence from home and I am trying to work out if it transfers.',
     cityId: 'MANCHESTER',
   });
@@ -169,50 +260,80 @@ async function plantCode(userId, code) {
   r = await api(other.token, 'POST', '/messages', { recipientUserId: leaver.id });
   const threadId = r.body?.data?.id;
   await api(leaver.token, 'POST', `/messages/${threadId}/messages`, {
-    clientId: 'keep-1', body: 'Yes, I can meet you at two on Thursday.',
+    clientId: 'keep-1',
+    body: 'Yes, I can meet you at two on Thursday.',
   });
 
   await api(leaver.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP', lookingFor: 'New here and would like to meet people from home.',
-    dateOfBirth: '1993-05-02', isVisible: true,
+    typeCode: 'FRIENDSHIP',
+    lookingFor: 'New here and would like to meet people from home.',
+    dateOfBirth: '1993-05-02',
+    isVisible: true,
   });
 
   const listing = await prisma.professionalListing.create({
     data: {
-      userId: leaver.id, professionTitle: 'Translator', experienceLevel: 'MID_LEVEL',
+      userId: leaver.id,
+      professionTitle: 'Translator',
+      experienceLevel: 'MID_LEVEL',
       about: 'I translate Yoruba and English documents and have done for six years.',
-      cityId: 'MANCHESTER', consentAccepted: true,
+      cityId: 'MANCHESTER',
+      consentAccepted: true,
       services: { create: [{ name: 'Document translation', price: 4000 }] },
     },
     include: { services: true },
   });
   r = await api(other.token, 'POST', '/bookings', {
-    listingId: listing.id, serviceId: listing.services[0].id,
+    listingId: listing.id,
+    serviceId: listing.services[0].id,
   });
   const openBookingId = r.body?.data?.id;
   const bookingThread = r.body?.data?.conversationId;
   check('an open booking exists at the moment of deletion', r.status === 201, r.body?.error);
 
   r = await api(leaver.token, 'POST', '/users/me/deletion/confirm', { code: '000000' });
-  check('a wrong code → 422 INVALID_CODE', r.status === 422 && r.body?.error?.code === 'INVALID_CODE', r.body?.error);
+  check(
+    'a wrong code → 422 INVALID_CODE',
+    r.status === 422 && r.body?.error?.code === 'INVALID_CODE',
+    r.body?.error,
+  );
 
   r = await api(leaver.token, 'POST', '/users/me/deletion/request');
-  check('request → 200 with a 10-minute window', r.status === 200 && r.body?.data?.expiresInSeconds === 600, r.body?.error);
+  check(
+    'request → 200 with a 10-minute window',
+    r.status === 200 && r.body?.data?.expiresInSeconds === 600,
+    r.body?.error,
+  );
 
   const hashedCode = await storedCodeHash(leaver.id);
   check('a code was issued to the account, not to a supplied address', hashedCode !== null);
-  check('and only its hash is kept', typeof hashedCode === 'string' && hashedCode.startsWith('$2'), hashedCode?.slice(0, 4));
+  check(
+    'and only its hash is kept',
+    typeof hashedCode === 'string' && hashedCode.startsWith('$2'),
+    hashedCode?.slice(0, 4),
+  );
 
   await plantCode(leaver.id, '424242');
 
   r = await api(leaver.token, 'POST', '/users/me/deletion/confirm', { code: '424242' });
   check('confirm → 204, anonymised immediately', r.status === 204, r.body);
 
-  const gone = await prisma.user.findUnique({ where: { id: leaver.id }, include: { profile: true } });
-  check('identity DESTROYED, not flagged: name is a tombstone', gone?.firstName === 'Deleted' && gone?.lastName === 'account', { first: gone?.firstName });
+  const gone = await prisma.user.findUnique({
+    where: { id: leaver.id },
+    include: { profile: true },
+  });
+  check(
+    'identity DESTROYED, not flagged: name is a tombstone',
+    gone?.firstName === 'Deleted' && gone?.lastName === 'account',
+    { first: gone?.firstName },
+  );
   check('username gone', gone?.username === null);
   check('avatar gone', gone?.profileImageUrl === null);
-  check('email replaced by a one-way hash', gone?.email?.endsWith('@circl.invalid') && !!gone?.deletedEmailHash, gone?.email);
+  check(
+    'email replaced by a one-way hash',
+    gone?.email?.endsWith('@circl.invalid') && !!gone?.deletedEmailHash,
+    gone?.email,
+  );
   check('date of birth destroyed', gone?.profile?.dateOfBirth === null);
   check('country of origin destroyed', gone?.profile?.countryOfOrigin === null);
   check('heritage destroyed', gone?.profile?.heritageTag === null);
@@ -222,32 +343,77 @@ async function plantCode(userId, code) {
   check('Connect profile deleted outright', connectGone === null);
 
   const sessionsGone = await prisma.userSession.findMany({ where: { userId: leaver.id } });
-  check('every session revoked — a second device stops on its next request', sessionsGone.every(s => !s.isActive), sessionsGone.map(s => s.isActive));
+  check(
+    'every session revoked — a second device stops on its next request',
+    sessionsGone.every(s => !s.isActive),
+    sessionsGone.map(s => s.isActive),
+  );
 
-  const survivingRequest = await prisma.communityRequest.findUnique({ where: { id: survivingRequestId } });
-  check('their POSTS are kept, re-attributed', survivingRequest !== null && survivingRequest.authorId === leaver.id);
+  const survivingRequest = await prisma.communityRequest.findUnique({
+    where: { id: survivingRequestId },
+  });
+  check(
+    'their POSTS are kept, re-attributed',
+    survivingRequest !== null && survivingRequest.authorId === leaver.id,
+  );
 
-  const survivingMessage = await prisma.message.findFirst({ where: { conversationId: threadId, clientId: 'keep-1' } });
-  check('their MESSAGES are kept, bodies not erased', survivingMessage?.body === 'Yes, I can meet you at two on Thursday.', survivingMessage?.body);
+  const survivingMessage = await prisma.message.findFirst({
+    where: { conversationId: threadId, clientId: 'keep-1' },
+  });
+  check(
+    'their MESSAGES are kept, bodies not erased',
+    survivingMessage?.body === 'Yes, I can meet you at two on Thursday.',
+    survivingMessage?.body,
+  );
 
   r = await api(other.token, 'GET', `/messages/${threadId}/messages`);
-  check('the other person keeps a readable conversation', r.body?.data?.some(m => /Thursday/.test(m.body ?? '')), r.body?.data?.length);
+  check(
+    'the other person keeps a readable conversation',
+    r.body?.data?.some(m => /Thursday/.test(m.body ?? '')),
+    r.body?.data?.length,
+  );
   const authorView = r.body?.data?.find(m => /Thursday/.test(m.body ?? ''))?.sender;
-  check('but the author now renders as "Deleted account"', authorView?.displayName === 'Deleted account', authorView);
-  check('with no username or avatar to trace', authorView?.username === null && authorView?.avatarUrl === null, authorView);
+  check(
+    'but the author now renders as "Deleted account"',
+    authorView?.displayName === 'Deleted account',
+    authorView,
+  );
+  check(
+    'with no username or avatar to trace',
+    authorView?.username === null && authorView?.avatarUrl === null,
+    authorView,
+  );
 
   const cancelledBooking = await prisma.booking.findUnique({ where: { id: openBookingId } });
-  check('an open booking is CANCELLED rather than blocking the deletion', cancelledBooking?.state === 'CANCELLED', cancelledBooking?.state);
+  check(
+    'an open booking is CANCELLED rather than blocking the deletion',
+    cancelledBooking?.state === 'CANCELLED',
+    cancelledBooking?.state,
+  );
   const notice = await prisma.message.findFirst({
     where: { conversationId: bookingThread, systemType: 'ACCOUNT_DELETED' },
   });
-  check('and the counterpart is TOLD, in the thread', /closed their account/.test(notice?.body ?? ''), notice?.body);
+  check(
+    'and the counterpart is TOLD, in the thread',
+    /closed their account/.test(notice?.body ?? ''),
+    notice?.body,
+  );
 
-  const listingAfter = await prisma.professionalListing.findUnique({ where: { userId: leaver.id } });
-  check('their listing is withdrawn from browse', listingAfter?.deletedAt !== null && listingAfter?.isAcceptingWork === false, listingAfter?.isAcceptingWork);
+  const listingAfter = await prisma.professionalListing.findUnique({
+    where: { userId: leaver.id },
+  });
+  check(
+    'their listing is withdrawn from browse',
+    listingAfter?.deletedAt !== null && listingAfter?.isAcceptingWork === false,
+    listingAfter?.isAcceptingWork,
+  );
 
   r = await api(leaver.token, 'POST', '/users/me/deletion/request');
-  check('a second attempt → 410 ACCOUNT_ALREADY_DELETED, not a confusing 404', r.status === 410 && r.body?.error?.code === 'ACCOUNT_ALREADY_DELETED', r.body?.error);
+  check(
+    'a second attempt → 410 ACCOUNT_ALREADY_DELETED, not a confusing 404',
+    r.status === 410 && r.body?.error?.code === 'ACCOUNT_ALREADY_DELETED',
+    r.body?.error,
+  );
 
   console.log('\n── Cleanup ──────────────────────────────────────────────────');
   await prisma.guide.deleteMany({ where: { isAutoGenerated: true } });

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ApiErrorCode, ApiException, escapeLike } from '@/common';
 import { PrismaService } from '@/infrastructure';
 import { UserDirectoryService } from '@/modules/core/users/services';
+import { PUBLIC_VISIBILITY, TRADING_STORE } from '../../shared';
 import { GuideService } from '../../community/services/guide.service';
 import { GroupService } from '../../community/services/group.service';
 import { RequestService } from '../../community/services/request.service';
@@ -292,9 +293,20 @@ export class SearchService {
     const rows = await this.database.storeItem.findMany({
       where: {
         deletedAt: null,
+        // A completion offering a word only a held listing uses is a search that finds nothing.
+        ...PUBLIC_VISIBILITY,
         name: { contains: escapeLike(term), mode: 'insensitive' },
-        // This one filters: a completion the member cannot act on is noise.
-        ...(cityId ? { store: { cityId } } : {}),
+        // The shop has to be visible as well as the item, which is what the grid requires — a
+        // completion whose only match sits in a held shop is a search that finds nothing.
+        // This one also filters by city: a completion the member cannot act on is noise.
+        // Trading as well as visible (§5.7): a completion whose only match sits in a suspended
+        // shop is a search that finds nothing.
+        store: {
+          deletedAt: null,
+          ...PUBLIC_VISIBILITY,
+          ...TRADING_STORE,
+          ...(cityId ? { cityId } : {}),
+        },
       },
       select: { name: true },
       distinct: ['name'],

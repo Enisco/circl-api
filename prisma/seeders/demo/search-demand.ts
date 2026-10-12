@@ -58,71 +58,302 @@ interface SeedTerm {
 const DEMAND: Record<string, SeedTerm[]> = {
   MANCHESTER: [
     // A profession label, exactly.
-    { scope: SearchScope.PROFESSIONALS, typed: 'immigration', members: 9, thisWeek: 34, lastWeek: 20, misses: 0 },
+    {
+      scope: SearchScope.PROFESSIONALS,
+      typed: 'immigration',
+      members: 9,
+      thisWeek: 34,
+      lastWeek: 20,
+      misses: 0,
+    },
     // Flat week on week: in `top`, deliberately absent from `rising`.
-    { scope: SearchScope.PROFESSIONALS, typed: 'handyman', members: 6, thisWeek: 15, lastWeek: 15, misses: 0 },
+    {
+      scope: SearchScope.PROFESSIONALS,
+      typed: 'handyman',
+      members: 6,
+      thisWeek: 15,
+      lastWeek: 15,
+      misses: 0,
+    },
     // No listing answers it: the gap a professional joining could fill.
-    { scope: SearchScope.PROFESSIONALS, typed: 'mortgage broker', members: 6, thisWeek: 17, lastWeek: 5, misses: 17 },
+    {
+      scope: SearchScope.PROFESSIONALS,
+      typed: 'mortgage broker',
+      members: 6,
+      thisWeek: 17,
+      lastWeek: 5,
+      misses: 17,
+    },
     // Resolves against something we hold — "Puna yam, whole", with its category, so the row is tappable.
-    { scope: SearchScope.PRODUCTS, typed: 'puna yam', members: 7, thisWeek: 26, lastWeek: 10, misses: 0 },
-    { scope: SearchScope.PRODUCTS, typed: 'red palm', members: 6, thisWeek: 18, lastWeek: 13, misses: 0 },
+    {
+      scope: SearchScope.PRODUCTS,
+      typed: 'puna yam',
+      members: 7,
+      thisWeek: 26,
+      lastWeek: 10,
+      misses: 0,
+    },
+    {
+      scope: SearchScope.PRODUCTS,
+      typed: 'red palm',
+      members: 6,
+      thisWeek: 18,
+      lastWeek: 13,
+      misses: 0,
+    },
     // Nothing in any shop answers this, which is the whole point of the unmet list.
-    { scope: SearchScope.PRODUCTS, typed: 'ogbono soup', members: 6, thisWeek: 15, lastWeek: 11, misses: 15 },
+    {
+      scope: SearchScope.PRODUCTS,
+      typed: 'ogbono soup',
+      members: 6,
+      thisWeek: 15,
+      lastWeek: 11,
+      misses: 15,
+    },
     // A two-letter fragment, the case the resolution stage exists for: it completes against a real
     // item — "Kohl liner" — and publishes under that name with its category. Nothing worked this
     // out; it is a prefix match on a column we already index.
     { scope: SearchScope.PRODUCTS, typed: 'ko', members: 6, thisWeek: 11, lastWeek: 4, misses: 0 },
-    { scope: SearchScope.GUIDES, typed: 'bank account', members: 11, thisWeek: 41, lastWeek: 26, misses: 0 },
+    {
+      scope: SearchScope.GUIDES,
+      typed: 'bank account',
+      members: 11,
+      thisWeek: 41,
+      lastWeek: 26,
+      misses: 0,
+    },
     // Nobody has written this one, which is the gap the unmet list exists to show a writer. Chosen
     // after checking it against the seeded guides: "council tax" was the obvious term and a guide
     // already answers it, so seeding misses against it would have invented a gap we fill.
-    { scope: SearchScope.GUIDES, typed: 'childcare vouchers', members: 7, thisWeek: 20, lastWeek: 6, misses: 20 },
+    {
+      scope: SearchScope.GUIDES,
+      typed: 'childcare vouchers',
+      members: 7,
+      thisWeek: 20,
+      lastWeek: 6,
+      misses: 20,
+    },
     // Falling, so it sits in `top` and not in `rising`.
-    { scope: SearchScope.GUIDES, typed: 'housing', members: 7, thisWeek: 18, lastWeek: 23, misses: 0 },
-    { scope: SearchScope.REQUESTS, typed: 'airport pickup', members: 8, thisWeek: 27, lastWeek: 9, misses: 0 },
-    { scope: SearchScope.REQUESTS, typed: 'moving help', members: 6, thisWeek: 14, lastWeek: 8, misses: 5 },
-    { scope: SearchScope.COMMUNITY, typed: 'make friends', members: 10, thisWeek: 29, lastWeek: 21, misses: 0 },
+    {
+      scope: SearchScope.GUIDES,
+      typed: 'housing',
+      members: 7,
+      thisWeek: 18,
+      lastWeek: 23,
+      misses: 0,
+    },
+    {
+      scope: SearchScope.REQUESTS,
+      typed: 'airport pickup',
+      members: 8,
+      thisWeek: 27,
+      lastWeek: 9,
+      misses: 0,
+    },
+    {
+      scope: SearchScope.REQUESTS,
+      typed: 'moving help',
+      members: 6,
+      thisWeek: 14,
+      lastWeek: 8,
+      misses: 5,
+    },
+    {
+      scope: SearchScope.COMMUNITY,
+      typed: 'make friends',
+      members: 10,
+      thisWeek: 29,
+      lastWeek: 21,
+      misses: 0,
+    },
     // No taxonomy label and no content behind it, so it publishes as typed — which is right: it is
     // a whole thought, and a group that does not exist yet is demand worth showing.
-    { scope: SearchScope.COMMUNITY, typed: 'nigerian mums manchester', members: 6, thisWeek: 13, lastWeek: 0, misses: 13 },
+    {
+      scope: SearchScope.COMMUNITY,
+      typed: 'nigerian mums manchester',
+      members: 6,
+      thisWeek: 13,
+      lastWeek: 0,
+      misses: 13,
+    },
 
     // ── The two below are seeded to be refused, so the rules are visible rather than claimed ──
     // Carries a digit, so it is somebody's own business whatever the counts say.
-    { scope: SearchScope.PROFESSIONALS, typed: 'tier 2 sponsor lawyer', members: 6, thisWeek: 12, lastWeek: 3, misses: 12 },
+    {
+      scope: SearchScope.PROFESSIONALS,
+      typed: 'tier 2 sponsor lawyer',
+      members: 6,
+      thisWeek: 12,
+      lastWeek: 3,
+      misses: 12,
+    },
     // Two people. Rare enough to identify whoever typed it, so the floor keeps it off the screen.
-    { scope: SearchScope.PROFESSIONALS, typed: 'solicitor for an asylum appeal', members: 2, thisWeek: 4, lastWeek: 1, misses: 4 },
+    {
+      scope: SearchScope.PROFESSIONALS,
+      typed: 'solicitor for an asylum appeal',
+      members: 2,
+      thisWeek: 4,
+      lastWeek: 1,
+      misses: 4,
+    },
   ],
   LONDON: [
     // Resolves against something we hold — "Puna yam, whole", with its category, so the row is tappable.
-    { scope: SearchScope.PRODUCTS, typed: 'puna yam', members: 8, thisWeek: 31, lastWeek: 12, misses: 0 },
-    { scope: SearchScope.PRODUCTS, typed: 'red palm', members: 6, thisWeek: 19, lastWeek: 14, misses: 0 },
+    {
+      scope: SearchScope.PRODUCTS,
+      typed: 'puna yam',
+      members: 8,
+      thisWeek: 31,
+      lastWeek: 12,
+      misses: 0,
+    },
+    {
+      scope: SearchScope.PRODUCTS,
+      typed: 'red palm',
+      members: 6,
+      thisWeek: 19,
+      lastWeek: 14,
+      misses: 0,
+    },
     // Nothing in any shop answers these, which is the whole point of the unmet list.
-    { scope: SearchScope.PRODUCTS, typed: 'suya spice', members: 7, thisWeek: 24, lastWeek: 6, misses: 24 },
-    { scope: SearchScope.PRODUCTS, typed: 'ogbono soup', members: 6, thisWeek: 15, lastWeek: 11, misses: 15 },
+    {
+      scope: SearchScope.PRODUCTS,
+      typed: 'suya spice',
+      members: 7,
+      thisWeek: 24,
+      lastWeek: 6,
+      misses: 24,
+    },
+    {
+      scope: SearchScope.PRODUCTS,
+      typed: 'ogbono soup',
+      members: 6,
+      thisWeek: 15,
+      lastWeek: 11,
+      misses: 15,
+    },
     // A two-letter fragment, which is the case the whole resolution stage exists for: it completes
     // against a real item — "Kohl liner" — and publishes under that name with its category, so the
     // row is tappable. Nothing worked this out; it is a prefix match on a column we already index.
     { scope: SearchScope.PRODUCTS, typed: 'ko', members: 6, thisWeek: 11, lastWeek: 4, misses: 0 },
-    { scope: SearchScope.PRODUCTS, typed: 'ankara', members: 9, thisWeek: 33, lastWeek: 11, misses: 0 },
-    { scope: SearchScope.PRODUCTS, typed: 'henna', members: 6, thisWeek: 16, lastWeek: 12, misses: 0 },
-    { scope: SearchScope.PRODUCTS, typed: 'whiting fish', members: 8, thisWeek: 26, lastWeek: 7, misses: 26 },
-    { scope: SearchScope.PROFESSIONALS, typed: 'translation', members: 7, thisWeek: 21, lastWeek: 13, misses: 0 },
-    { scope: SearchScope.PROFESSIONALS, typed: 'childcare', members: 6, thisWeek: 17, lastWeek: 17, misses: 0 },
-    { scope: SearchScope.PROFESSIONALS, typed: 'dentist', members: 7, thisWeek: 19, lastWeek: 6, misses: 19 },
-    { scope: SearchScope.GUIDES, typed: 'visa', members: 12, thisWeek: 44, lastWeek: 25, misses: 0 },
-    { scope: SearchScope.GUIDES, typed: 'reading a tenancy', members: 6, thisWeek: 12, lastWeek: 4, misses: 0 },
-    { scope: SearchScope.GUIDES, typed: 'driving licence exchange', members: 6, thisWeek: 15, lastWeek: 4, misses: 15 },
-    { scope: SearchScope.REQUESTS, typed: 'accommodation', members: 10, thisWeek: 31, lastWeek: 22, misses: 9 },
-    { scope: SearchScope.REQUESTS, typed: 'beauty', members: 6, thisWeek: 13, lastWeek: 10, misses: 0 },
-    { scope: SearchScope.COMMUNITY, typed: 'language help', members: 8, thisWeek: 23, lastWeek: 10, misses: 0 },
-    { scope: SearchScope.COMMUNITY, typed: 'somali community london', members: 7, thisWeek: 19, lastWeek: 0, misses: 19 },
+    {
+      scope: SearchScope.PRODUCTS,
+      typed: 'ankara',
+      members: 9,
+      thisWeek: 33,
+      lastWeek: 11,
+      misses: 0,
+    },
+    {
+      scope: SearchScope.PRODUCTS,
+      typed: 'henna',
+      members: 6,
+      thisWeek: 16,
+      lastWeek: 12,
+      misses: 0,
+    },
+    {
+      scope: SearchScope.PRODUCTS,
+      typed: 'whiting fish',
+      members: 8,
+      thisWeek: 26,
+      lastWeek: 7,
+      misses: 26,
+    },
+    {
+      scope: SearchScope.PROFESSIONALS,
+      typed: 'translation',
+      members: 7,
+      thisWeek: 21,
+      lastWeek: 13,
+      misses: 0,
+    },
+    {
+      scope: SearchScope.PROFESSIONALS,
+      typed: 'childcare',
+      members: 6,
+      thisWeek: 17,
+      lastWeek: 17,
+      misses: 0,
+    },
+    {
+      scope: SearchScope.PROFESSIONALS,
+      typed: 'dentist',
+      members: 7,
+      thisWeek: 19,
+      lastWeek: 6,
+      misses: 19,
+    },
+    {
+      scope: SearchScope.GUIDES,
+      typed: 'visa',
+      members: 12,
+      thisWeek: 44,
+      lastWeek: 25,
+      misses: 0,
+    },
+    {
+      scope: SearchScope.GUIDES,
+      typed: 'reading a tenancy',
+      members: 6,
+      thisWeek: 12,
+      lastWeek: 4,
+      misses: 0,
+    },
+    {
+      scope: SearchScope.GUIDES,
+      typed: 'driving licence exchange',
+      members: 6,
+      thisWeek: 15,
+      lastWeek: 4,
+      misses: 15,
+    },
+    {
+      scope: SearchScope.REQUESTS,
+      typed: 'accommodation',
+      members: 10,
+      thisWeek: 31,
+      lastWeek: 22,
+      misses: 9,
+    },
+    {
+      scope: SearchScope.REQUESTS,
+      typed: 'beauty',
+      members: 6,
+      thisWeek: 13,
+      lastWeek: 10,
+      misses: 0,
+    },
+    {
+      scope: SearchScope.COMMUNITY,
+      typed: 'language help',
+      members: 8,
+      thisWeek: 23,
+      lastWeek: 10,
+      misses: 0,
+    },
+    {
+      scope: SearchScope.COMMUNITY,
+      typed: 'somali community london',
+      members: 7,
+      thisWeek: 19,
+      lastWeek: 0,
+      misses: 19,
+    },
 
     // The other half of the fragment rule: nothing in the catalogue or the vocabulary starts with
     // this, so it stays JUNK and is never published. It is retried every run, and the day somebody
     // lists akara it stops being junk on its own.
     { scope: SearchScope.PRODUCTS, typed: 'ak', members: 6, thisWeek: 10, lastWeek: 2, misses: 10 },
     // Refused: a digit.
-    { scope: SearchScope.REQUESTS, typed: 'flat 2 bed shepherds bush', members: 6, thisWeek: 14, lastWeek: 5, misses: 14 },
+    {
+      scope: SearchScope.REQUESTS,
+      typed: 'flat 2 bed shepherds bush',
+      members: 6,
+      thisWeek: 14,
+      lastWeek: 5,
+      misses: 14,
+    },
   ],
 };
 
@@ -220,5 +451,10 @@ export const seedSearchDemand = async (ctx: DemoSeedContext) => {
 
   const terms = Object.values(DEMAND).reduce((total, list) => total + list.length, 0);
 
-  return { events: rows.length, terms, withdrawn: withdrawn.count, cities: Object.keys(DEMAND).length };
+  return {
+    events: rows.length,
+    terms,
+    withdrawn: withdrawn.count,
+    cities: Object.keys(DEMAND).length,
+  };
 };

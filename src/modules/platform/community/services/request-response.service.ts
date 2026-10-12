@@ -2,8 +2,10 @@ import { Injectable } from '@nestjs/common';
 import {
   ActivitySubject,
   ActivityVerb,
+  ContentScanTrigger,
   NotificationKind,
   Prisma,
+  ReportTargetType,
   RequestStatus,
   ThreadContextType,
 } from '@prisma/client';
@@ -20,8 +22,13 @@ import {
 import {
   ActivityService,
   AuthorView,
+  ContentSafetyService,
+  DIRECT_VISIBILITY,
   MediaService,
+  ReviewStatus,
   authorSelect,
+  isReachable,
+  reviewStatusOf,
   toAuthorView,
 } from '../../shared';
 import { NotificationFeedService } from '../../notifications';
@@ -45,6 +52,14 @@ export interface ResponseView {
      */
     conversationId: string | null;
   };
+  /**
+   * Set on the author's own reply when it is not public (§6.5).
+   *
+   * On the row rather than fetched: the state is already on the row the list read, and a member
+   * whose reply is invisible to everybody else should not have to guess why. Absent for everybody
+   * else's replies, and absent for a published one.
+   */
+  reviewStatus?: Exclude<ReviewStatus, null>;
   createdAt: string;
 }
 
@@ -61,6 +76,7 @@ export class RequestResponseService {
     private readonly activity: ActivityService,
     private readonly media: MediaService,
     private readonly notifications: NotificationFeedService,
+    private readonly safety: ContentSafetyService,
   ) {}
 
   // ─── 1.3.1 List ────────────────────────────────────────────────────────────
@@ -70,14 +86,22 @@ export class RequestResponseService {
     requestId: string,
     query: ListResponsesDto,
   ): Promise<Paginated<ResponseView>> {
-    const request = await this.loadRequest(requestId);
+    const request = await this.loadVisibleRequest(viewerId, requestId);
     const isRequestOwner = request.authorId === viewerId;
 
-    // Private responses are returned only to the request's owner and their author.
+    // Two rules, both of which narrow who sees a reply, so they go in an `AND` rather than
+    // competing for the one `OR` an object can hold.
+    //
+    // Private responses are returned only to the request's owner and their author. And a reply
+    // that was held or rejected is shown to nobody but its author (§6.5) — including the request's
+    // owner, who would otherwise be the one person guaranteed to read it.
     const where: Prisma.RequestResponseWhereInput = {
       requestId,
       deletedAt: null,
-      ...(isRequestOwner ? {} : { OR: [{ isPrivate: false }, { authorId: viewerId }] }),
+      AND: [
+        { OR: [{ ...DIRECT_VISIBILITY }, { authorId: viewerId }] },
+        ...(isRequestOwner ? [] : [{ OR: [{ isPrivate: false }, { authorId: viewerId }] }]),
+      ],
     };
 
     const orderBy: Prisma.RequestResponseOrderByWithRelationInput[] = isRequestOwner
@@ -112,7 +136,7 @@ export class RequestResponseService {
     requestId: string,
     dto: CreateResponseDto,
   ): Promise<{ response: ResponseView; requestCounts: RequestCountsView }> {
-    const request = await this.loadRequest(requestId);
+    const request = await this.loadVisibleRequest(userId, requestId);
 
     if (request.status !== RequestStatus.OPEN) {
       throw ApiException.forbidden(
@@ -134,6 +158,7 @@ export class RequestResponseService {
 
     if (isHelpOffer) {
       // A user may post multiple replies, but only one may be a help offer.
+      // visibility: whether the caller has already replied, to refuse a second reply.
       const existing = await this.database.requestResponse.findFirst({
         where: { requestId, authorId: userId, isHelpOffer: true, deletedAt: null },
         select: { id: true },
@@ -169,6 +194,15 @@ export class RequestResponseService {
           replyCount: { increment: 1 },
           ...(isHelpOffer ? { helperCount: { increment: 1 } } : {}),
         },
+      });
+
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.RESPONSE,
+        targetId: response.id,
+        authorId: userId,
+        fields: { content: response.content },
+        trigger: ContentScanTrigger.CREATE,
+        summary: excerpt(response.content, 120),
       });
 
       return response;
@@ -214,6 +248,7 @@ export class RequestResponseService {
   // ─── 1.3.3 Delete ──────────────────────────────────────────────────────────
 
   async remove(userId: string, requestId: string, responseId: string): Promise<RequestCountsView> {
+    // visibility: the caller's own reply, before a delete.
     const response = await this.database.requestResponse.findUnique({
       where: { id: responseId },
       include: { request: { select: { authorId: true } } },
@@ -251,6 +286,7 @@ export class RequestResponseService {
   // ─── Internals ─────────────────────────────────────────────────────────────
 
   private async counts(requestId: string): Promise<RequestCountsView> {
+    // visibility: the parent request, read back for its counts.
     const request = await this.database.communityRequest.findUniqueOrThrow({
       where: { id: requestId },
       select: { viewCount: true, helperCount: true, replyCount: true },
@@ -263,7 +299,26 @@ export class RequestResponseService {
     };
   }
 
+  /**
+   * The request, refused to anybody it is not visible to (§6.5).
+   *
+   * `loadRequest` answers "does it exist", which is what deleting your own reply needs. Reading
+   * the thread and adding to it both need this one instead: a held request is nobody's to read,
+   * and a reply to one would be written into a conversation that is not happening.
+   */
+  private async loadVisibleRequest(viewerId: string, requestId: string) {
+    const request = await this.loadRequest(requestId);
+
+    if (!isReachable(request.visibilityState) && request.authorId !== viewerId) {
+      throw ApiException.notFound('This request could not be found.');
+    }
+
+    return request;
+  }
+
   private async loadRequest(requestId: string) {
+    // visibility: the parent request, for the reply's own rules. Callers that serve the thread or
+    // add to it use `loadVisibleRequest`.
     const request = await this.database.communityRequest.findUnique({
       where: { id: requestId },
       select: {
@@ -274,6 +329,7 @@ export class RequestResponseService {
         cityId: true,
         categoryCode: true,
         deletedAt: true,
+        visibilityState: true,
       },
     });
 
@@ -315,6 +371,7 @@ export class RequestResponseService {
     conversationId: string | undefined,
   ): ResponseView {
     const isOwner = row.authorId === viewerId;
+    const reviewStatus = isOwner ? reviewStatusOf(row.visibilityState) : null;
 
     return {
       id: row.id,
@@ -331,6 +388,7 @@ export class RequestResponseService {
         // no button there, so there is nothing for an id to mean.
         conversationId: row.isHelpOffer ? (conversationId ?? null) : null,
       },
+      ...(reviewStatus ? { reviewStatus } : {}),
       createdAt: row.createdAt.toISOString(),
     };
   }

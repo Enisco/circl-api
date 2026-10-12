@@ -47,6 +47,10 @@ const permissions: Permission[] = [
   { name: 'Read Guard cases', code: 'guard:read', group: 'safety' },
   { name: 'Work Guard cases', code: 'guard:manage', group: 'safety' },
   { name: 'Manage risk terms', code: 'risk_terms:manage', group: 'safety' },
+  // §2.9: which professions hold their listings until somebody approves them. Its own code
+  // rather than `config:taxonomy`, which would have handed Trust & Safety every vocabulary on
+  // the platform — cities, interests, price bands — to grant them this one list.
+  { name: 'Gate professions for review', code: 'professions:gate', group: 'safety' },
 
   // ── Support ─────────────────────────────────────────────────────────────────
   { name: 'Read the support inbox', code: 'support:read', group: 'support' },
@@ -76,7 +80,7 @@ const permissions: Permission[] = [
 
   // ── Exports ─────────────────────────────────────────────────────────────────
   { name: 'Export CSV', code: 'exports:csv', group: 'exports' },
-  { name: 'Read everybody\'s exports', code: 'exports:read_all', group: 'exports' },
+  { name: "Read everybody's exports", code: 'exports:read_all', group: 'exports' },
 ];
 
 /**

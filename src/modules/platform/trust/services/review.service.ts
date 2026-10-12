@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import {
+  ContentScanTrigger,
   DealStage,
   DealTrack,
   JobState,
   NotificationKind,
   Prisma,
+  ReportTargetType,
   RequestStatus,
   Review,
   ReviewContext,
@@ -15,6 +17,8 @@ import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta, excerpt, toJsonOrUndefined } from '@/common';
 import {
   AuthorView,
+  ContentSafetyService,
+  DIRECT_VISIBILITY,
   MediaService,
   TaxonomyService,
   authorSelect,
@@ -85,15 +89,21 @@ export class ReviewService {
     private readonly taxonomy: TaxonomyService,
     private readonly media: MediaService,
     private readonly notifications: NotificationFeedService,
+    private readonly safety: ContentSafetyService,
   ) {}
 
   // ─── 2.5.1 List ────────────────────────────────────────────────────────────
 
   /** The reputation block on a professional profile, the standalone Reviews screen, and the community profile all read this one endpoint — which is the "reviews travel with the user" promise made literal. */
   async listForUser(viewerId: string | null, subjectUserId: string, query: ListReviewsDto) {
+    // Somebody's reviews are read on their profile, which is a direct read: a limited review is
+    // still shown there, and a held or rejected one is not shown to anybody (§6.5). A review is
+    // about a person, so the one it is about is not given the power to hide it — only its own
+    // author sees it while it is held.
     const where: Prisma.ReviewWhereInput = {
       subjectUserId,
       deletedAt: null,
+      OR: [{ ...DIRECT_VISIBILITY }, { reviewerId: viewerId }],
       ...(query.context && query.context !== 'ALL' ? { context: query.context } : {}),
     };
 
@@ -222,6 +232,17 @@ export class ReviewService {
         },
       });
 
+      // §6.1 scans a review's comment. Before the rating is recomputed, because a held review does
+      // not count towards it (`ReputationService.recompute` filters on visibility).
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.REVIEW,
+        targetId: review.id,
+        authorId: reviewerId,
+        fields: { comment: review.comment },
+        trigger: ContentScanTrigger.CREATE,
+        summary: excerpt(review.comment, 120),
+      });
+
       await this.reputation.recompute(dto.subjectUserId, tx);
 
       return review;
@@ -247,6 +268,7 @@ export class ReviewService {
   }
 
   async update(reviewerId: string, id: string, dto: UpdateReviewDto): Promise<ReviewView> {
+    // visibility: the caller's own review, before an edit.
     const review = await this.database.review.findUnique({ where: { id } });
 
     if (!review || review.deletedAt) throw ApiException.notFound('That review could not be found.');
@@ -277,6 +299,15 @@ export class ReviewService {
         },
       });
 
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.REVIEW,
+        targetId: id,
+        authorId: reviewerId,
+        fields: { comment: dto.comment ?? review.comment },
+        trigger: ContentScanTrigger.EDIT,
+        summary: excerpt(dto.comment ?? review.comment, 120),
+      });
+
       await this.reputation.recompute(review.subjectUserId, tx);
     });
 
@@ -292,6 +323,7 @@ export class ReviewService {
 
   /** The subject may reply once, publicly, to a review about them. */
   async reply(subjectUserId: string, id: string, dto: ReviewReplyDto): Promise<ReviewView> {
+    // visibility: the caller's own review, before a delete.
     const review = await this.database.review.findUnique({ where: { id } });
 
     if (!review || review.deletedAt) throw ApiException.notFound('That review could not be found.');
@@ -311,11 +343,25 @@ export class ReviewService {
       );
     }
 
-    await this.database.review.update({
-      where: { id },
-      data: {
-        reply: toJsonOrUndefined({ comment: dto.comment, createdAt: new Date().toISOString() }),
-      },
+    await this.database.$transaction(async tx => {
+      await tx.review.update({
+        where: { id },
+        data: {
+          reply: toJsonOrUndefined({ comment: dto.comment, createdAt: new Date().toISOString() }),
+        },
+      });
+
+      // The reply is published under the review, so it is scanned with it. The whole row is
+      // re-scanned rather than the reply alone: the signals a reviewer reads should name both
+      // fields, and the state belongs to the row either way.
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.REVIEW,
+        targetId: id,
+        authorId: review.reviewerId,
+        fields: { comment: review.comment, reply: dto.comment },
+        trigger: ContentScanTrigger.EDIT,
+        summary: excerpt(review.comment, 120),
+      });
     });
 
     return this.toView(
@@ -370,6 +416,8 @@ export class ReviewService {
       case ReviewContext.COMMUNITY: {
         this.assertSourceId(dto);
 
+        // visibility: the request a community review is about, to check the reviewer was actually
+        // helped by them.
         const request = await this.database.communityRequest.findUnique({
           where: { id: dto.sourceId },
           include: { helpers: { select: { userId: true } } },
@@ -597,6 +645,8 @@ export class ReviewService {
     if (!conversation?.contextId) return null;
 
     if (conversation.contextType === ThreadContextType.PROFESSIONAL) {
+      // visibility: who a thread's listing belongs to, so a review is filed against the right
+      // member.
       return this.database.professionalListing.findUnique({
         where: { id: conversation.contextId },
         select: { userId: true },
@@ -604,6 +654,7 @@ export class ReviewService {
     }
 
     if (conversation.contextType === ThreadContextType.SERVICE) {
+      // visibility: as above — the service behind a thread.
       const service = await this.database.professionalService.findUnique({
         where: { id: conversation.contextId },
         select: { listing: { select: { userId: true } } },
@@ -628,6 +679,8 @@ export class ReviewService {
   }
 
   private async findExisting(reviewerId: string, dto: CreateReviewDto) {
+    // visibility: whether the caller has already reviewed this record. Their own review counts
+    // whatever state it is in.
     return this.database.review.findFirst({
       where: {
         reviewerId,
@@ -643,6 +696,7 @@ export class ReviewService {
   }
 
   private async withReviewer(id: string) {
+    // visibility: the review this call just wrote, read back with its author.
     return this.database.review.findUniqueOrThrow({
       where: { id },
       include: { reviewer: { select: authorSelect }, conversation: REVIEW_CONVERSATION },

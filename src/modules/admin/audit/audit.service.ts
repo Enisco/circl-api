@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AdminReasonCode, AuditArea, Prisma } from '@prisma/client';
-import { PrismaService } from '@/infrastructure';
+import { CacheService, PrismaService } from '@/infrastructure';
 import { toJson } from '@/common';
 import { AuditAction, areaOf } from './audit-actions';
 import { adminContext } from '../common/admin-context';
@@ -41,7 +41,10 @@ type Tx = Prisma.TransactionClient;
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
 
-  constructor(private readonly database: PrismaService) {}
+  constructor(
+    private readonly database: PrismaService,
+    private readonly cache: CacheService,
+  ) {}
 
   /**
    * Runs a change and records it, or does neither.
@@ -117,6 +120,39 @@ export class AuditService {
    * refusing it could not be written would turn a logging fault into an outage. Logged loudly
    * instead, because a silent gap in an audit trail is the worst of the three outcomes.
    */
+  /**
+   * The same, but at most once per window for a given key (§5.12).
+   *
+   * A read is worth recording and a *poll* is not. The portal refreshes the Guard thread every
+   * thirty seconds, so one entry per request is roughly 2,800 rows per staff member per case per
+   * day — a trail in which every genuine act is buried in noise, which is the same as not having
+   * one. §5.12 asks for once per staff member per case per day, and this is that rule.
+   *
+   * Keyed in the cache rather than queried out of the audit table: "has this person already been
+   * recorded today" is a question about a counter, and asking it of an append-only log on every
+   * poll is a scan of the thing we are trying to keep small.
+   *
+   * A cache that is down means the window cannot be established, and this writes the entry rather
+   * than dropping it — a duplicated audit row is noise, a missing one is a gap, and the two are
+   * not equally bad.
+   */
+  async noteOncePer(key: string, windowSeconds: number, draft: AuditDraft): Promise<string | null> {
+    try {
+      const seen = await this.cache.get<boolean>(key);
+
+      if (seen) return null;
+    } catch (error) {
+      this.logger.warn(`Audit throttle unavailable, recording anyway: ${(error as Error).message}`);
+    }
+
+    const id = await this.note(draft);
+
+    // After the write, so a failed write does not open the window and swallow the next read too.
+    await this.cache.set(key, true, windowSeconds).catch(() => undefined);
+
+    return id;
+  }
+
   async note(draft: AuditDraft): Promise<string | null> {
     try {
       return await this.record(this.database, draft);

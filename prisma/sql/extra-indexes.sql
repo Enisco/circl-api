@@ -33,6 +33,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS "request_responses_one_offer_per_author_idx"
   ON "request_responses" ("request_id", "author_id")
   WHERE "is_help_offer" AND "deleted_at" IS NULL;
 
+-- The §2.9 retention sweep's query: superseded supporting documents whose ninety days are up.
+-- Partial, because the rows it wants are a handful out of every file on the platform.
+--
+-- Created by `20261011181827_listing_documents` and then left out of this file, which is the one
+-- mistake this file exists to prevent: `migrate diff` cannot see a partial index, so the next
+-- migration generated after it proposed a `DROP INDEX` for it. Caught by reading that migration
+-- before applying it.
+CREATE INDEX IF NOT EXISTS "media_superseded_at_idx"
+  ON "media" ("superseded_at")
+  WHERE "superseded_at" IS NOT NULL;
+
 -- What the derivation sweep reads to find the media it has not measured yet. Partial, because the
 -- rows it wants are the ones with no measurement, and without it that is a scan of the whole table
 -- every hour.
@@ -54,3 +65,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS "reviews_one_prior_work_per_pair_idx"
 CREATE UNIQUE INDEX IF NOT EXISTS "admin_invites_live_email_idx"
   ON "admin_invites" ("email")
   WHERE "accepted_at" IS NULL AND "revoked_at" IS NULL;
+
+-- The filter bar asks "which builds are still in the wild" every ten minutes, and that is a
+-- DISTINCT over every session row. Leading on the two projected columns so the DISTINCT comes free
+-- from index order rather than a sort, and partial because a session with no recorded build is not
+-- an answer -- which also keeps the index to the rows the query wants. Sessions grow as members
+-- times devices, so this is a sequential scan that gets slower every week it is left alone.
+CREATE INDEX IF NOT EXISTS "user_sessions_app_version_idx"
+  ON "user_sessions" ("app_version", "platform", "last_active_at")
+  WHERE "app_version" IS NOT NULL;
+
+-- One live case per target (§4.6). The grouping rule in §7.1 reads "find the open case for this
+-- target, and create one only if there is none", which is a race between two reports arriving
+-- together -- and two open cases about one post is two reviewers taking two decisions about it.
+-- Partial, so the history of decided cases on the same target is unaffected.
+CREATE UNIQUE INDEX IF NOT EXISTS "report_cases_open_target_idx"
+  ON "report_cases" ("target_type", "target_id")
+  WHERE "state" IN ('OPEN', 'IN_REVIEW');

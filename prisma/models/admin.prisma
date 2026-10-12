@@ -221,3 +221,49 @@ model InternalNote {
   @@index([authorId])
   @@map("internal_notes")
 }
+
+/// A CSV a member of staff asked for (§5.26).
+///
+/// The row is the receipt, which is why it outlives the file by a year. An export is the one
+/// action in the portal that takes member data out of it — past the masking, past the audit of
+/// who read what, into a spreadsheet on somebody's laptop — so the record of who asked for which
+/// columns over which filters is the only thing that makes it accountable afterwards.
+///
+/// `params` holds the filters and the column list as sent, so the file can be explained later
+/// without reconstructing what the portal's filter bar looked like that afternoon — and so a
+/// retry produces the same file. That includes the free-text search, which is why it is stored
+/// here and **redacted in the audit entry** (S14.3): the job cannot be run without the term, and
+/// the trail is read by far more people, far more often, than this column is. Nothing serves
+/// `params` back over the API: `ExportView` carries the columns and not the filters.
+model AdminExport {
+  id String @id @default(uuid())
+
+  kind AdminExportKind @map("kind")
+
+  /// No foreign key, for the reason the audit log has none: the receipt must survive the staff
+  /// account being removed, and a cascade would delete the evidence with the person.
+  requestedById String @map("requested_by_id")
+
+  /// `{ filters, columns }`. Capped at 4 KB by the service before it is written.
+  params Json @map("params")
+
+  state    AdminExportState @default(QUEUED) @map("state")
+  rowCount Int?             @map("row_count")
+
+  /// Object key, signed for five minutes on download and never returned any other way.
+  storageKey String? @map("storage_key")
+
+  /// Why it failed, in a sentence a staff member can act on ("too many rows — narrow the filters").
+  error String? @map("error")
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  completedAt DateTime? @map("completed_at") @db.Timestamptz
+  /// `completedAt` + 7 days (§12 Settings).
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz
+
+  @@index([requestedById, createdAt])
+  /// The expiry sweep's own index: it asks for READY rows past their date, hourly, and without
+  /// this it reads every export ever made to find the handful that aged out.
+  @@index([state, expiresAt])
+  @@map("admin_exports")
+}

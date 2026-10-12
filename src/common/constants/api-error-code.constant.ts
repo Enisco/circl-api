@@ -22,6 +22,16 @@ export const ApiErrorCode = {
   // ─── Media (0.11) ──────────────────────────────────────────────────────────
   MEDIA_NOT_FOUND: 'MEDIA_NOT_FOUND',
   MEDIA_ALREADY_ATTACHED: 'MEDIA_ALREADY_ATTACHED',
+  // §2.9: the supporting documents a gated profession has to show.
+  DOCUMENTS_REQUIRED: 'DOCUMENTS_REQUIRED',
+  PROFESSION_LOCKED: 'PROFESSION_LOCKED',
+  TOO_MANY_DOCUMENTS: 'TOO_MANY_DOCUMENTS',
+  /// Sent for a profession that needs none. Refused rather than ignored: these are qualification
+  /// and identity papers, and the platform does not keep ones it has no reason to hold.
+  DOCUMENTS_NOT_REQUIRED: 'DOCUMENTS_NOT_REQUIRED',
+  DOCUMENT_NOT_USABLE: 'DOCUMENT_NOT_USABLE',
+  DOCUMENT_SCANNING: 'DOCUMENT_SCANNING',
+  DOCUMENT_REMOVED: 'DOCUMENT_REMOVED',
   MEDIA_TYPE_NOT_ALLOWED: 'MEDIA_TYPE_NOT_ALLOWED',
   MEDIA_TOO_LARGE: 'MEDIA_TOO_LARGE',
   MEDIA_MIXED_TYPES: 'MEDIA_MIXED_TYPES',

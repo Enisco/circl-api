@@ -1,8 +1,31 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import {
+  ContentScanStatus,
+  ContentScanTrigger,
+  ContentVisibilityState,
+  ListingReviewState,
+  MediaScanStatus,
+  ModerationDecision,
+  ModerationQueueState,
+  ModerationQueueType,
+  NotificationKind,
+  ReportTargetType,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiException } from '@/common';
+import {
+  ContentSafetyQueue,
+  ContentSafetyService,
+  DOCUMENT_RETENTION_DAYS,
+  LISTING_DOCUMENT_OWNER,
+  LISTING_ROUTE,
+  SCANNABLE_TARGETS,
+  SafetyClassifierService,
+} from '../shared';
+import { StorageProvider } from '../media/storage';
+import { NotificationFeedService } from '../notifications/services/notification-feed.service';
 import { MediaDerivationService } from '../media/derivation/media-derivation.service';
 import { SearchDemandService } from '../intelligence/services/search-demand.service';
 import { MediaUploadService } from '../media/services/media-upload.service';
@@ -12,6 +35,13 @@ import { EnquiryService } from '../commerce/services/enquiry.service';
 import { AutoGuideService } from '../intelligence/services/auto-guide.service';
 import { DemandService } from '../intelligence/services/demand.service';
 import { MetricsService } from '../intelligence/services/metrics.service';
+
+/** What a member is told when the last of their documents could not be accepted (§2.9). */
+const INFECTED_DOCUMENT_MESSAGE =
+  "One of your documents couldn't be accepted. Please upload it again.";
+
+/** How many rows one rescan pass re-queues, so a long outage does not flood the queue. */
+const RESCAN_BATCH = 200;
 
 /** The scheduled work that keeps the platform's promises true between requests. */
 @Injectable()
@@ -30,6 +60,11 @@ export class PlatformJobsService {
     private readonly demand: DemandService,
     private readonly autoGuides: AutoGuideService,
     private readonly metrics: MetricsService,
+    private readonly classifier: SafetyClassifierService,
+    private readonly safetyQueue: ContentSafetyQueue,
+    private readonly safety: ContentSafetyService,
+    private readonly storage: StorageProvider,
+    private readonly notifications: NotificationFeedService,
   ) {}
 
   /** A booking auto-completes 7 days after delivery (2.9.5). */
@@ -89,6 +124,145 @@ export class PlatformJobsService {
       const swept = await this.media.sweepOrphans();
 
       return swept ? `removed ${swept} orphaned uploads` : null;
+    });
+  }
+
+  /**
+   * A document that turned out to be infected after the submission was accepted (§2.9).
+   *
+   * A scan may still be running when a member submits — refusing the submission until it finishes
+   * would make them wait on a queue they cannot see. So the file is accepted, and if the verdict
+   * comes back INFECTED this takes it out.
+   *
+   * If that leaves the listing with none, the listing is **rejected with a message the member can
+   * act on**. Leaving it PENDING would be worse: it would sit in the review queue for a reviewer
+   * who has nothing to read, and the member would be waiting on a decision nobody can take.
+   */
+  @Cron(CronExpression.EVERY_30_MINUTES, { name: 'listings.infected-documents' })
+  async removeInfectedDocuments() {
+    await this.run('listings.infected-documents', async () => {
+      const infected = await this.database.media.findMany({
+        where: {
+          ownerType: LISTING_DOCUMENT_OWNER,
+          supersededAt: null,
+          scanStatus: MediaScanStatus.INFECTED,
+        },
+        select: { id: true, ownerId: true },
+        take: 200,
+      });
+
+      if (!infected.length) return null;
+
+      const listingIds = [...new Set(infected.map(row => row.ownerId as string))];
+
+      await this.database.media.updateMany({
+        where: { id: { in: infected.map(row => row.id) } },
+        data: { supersededAt: new Date() },
+      });
+
+      let rejected = 0;
+
+      for (const listingId of listingIds) {
+        const left = await this.database.media.count({
+          where: { ownerType: LISTING_DOCUMENT_OWNER, ownerId: listingId, supersededAt: null },
+        });
+
+        if (left > 0) continue;
+
+        // visibility: a job reading the listing whose documents it has just removed, to decide
+        // whether anything is left to review. No reader is being served, so no filter applies.
+        const listing = await this.database.professionalListing.findUnique({
+          where: { id: listingId },
+          select: { id: true, userId: true, reviewState: true },
+        });
+
+        // Only one that is still waiting. A listing already approved keeps its approval: the
+        // decision was taken on documents a reviewer read, and one of them failing a scan
+        // afterwards is not grounds to undo it silently.
+        if (!listing || listing.reviewState !== ListingReviewState.PENDING) continue;
+
+        await this.database.$transaction(async tx => {
+          await tx.professionalListing.update({
+            where: { id: listing.id },
+            data: {
+              reviewState: ListingReviewState.REJECTED,
+              reviewDecidedAt: new Date(),
+              reviewNote: INFECTED_DOCUMENT_MESSAGE,
+            },
+          });
+
+          await this.safety.applyDecision(tx, {
+            targetType: ReportTargetType.PROFESSIONAL_LISTING,
+            targetId: listing.id,
+            state: ContentVisibilityState.REJECTED,
+            decision: ModerationDecision.REJECT,
+            // No staff member decided this; the scanner did. Recorded as the subject's own listing
+            // rather than crediting a reviewer who never saw it.
+            reviewerId: listing.userId,
+          });
+
+          await tx.moderationQueueItem.updateMany({
+            where: {
+              type: ModerationQueueType.PROFESSIONAL_REVIEW,
+              targetId: listing.id,
+              state: { not: ModerationQueueState.RESOLVED },
+            },
+            data: {
+              state: ModerationQueueState.RESOLVED,
+              decision: ModerationDecision.REJECT,
+              decisionNote: 'Documents could not be accepted.',
+              decidedAt: new Date(),
+            },
+          });
+        });
+
+        this.notifications.raise({
+          userId: listing.userId,
+          kind: NotificationKind.MODERATION,
+          categoryCode: 'ACCOUNT',
+          title: 'We couldn’t accept one of your documents',
+          body: 'Please upload it again.',
+          // The form, not the listing: this row exists because the member has to re-upload, and
+          // the listing view has no documents step to do it from.
+          route: LISTING_ROUTE.edit,
+        });
+
+        rejected += 1;
+      }
+
+      return `removed ${infected.length} infected document(s)${
+        rejected ? `, rejected ${rejected} listing(s)` : ''
+      }`;
+    });
+  }
+
+  /**
+   * Superseded supporting documents, ninety days on (§2.9 retention).
+   *
+   * Kept that long so an appeal about a decision can be about the evidence the decision was taken
+   * on. After that the platform has no reason to hold somebody's certificates, and holding them
+   * anyway is the difference between a retention policy and a filing cabinet.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_3AM, { name: 'retention.purge-documents' })
+  async purgeSupersededDocuments() {
+    await this.run('retention.purge-documents', async () => {
+      const cutoff = new Date(Date.now() - DOCUMENT_RETENTION_DAYS * 86_400_000);
+      const expired = await this.database.media.findMany({
+        where: { ownerType: LISTING_DOCUMENT_OWNER, supersededAt: { lt: cutoff } },
+        select: { id: true, storageKey: true },
+        take: 500,
+      });
+
+      if (!expired.length) return null;
+
+      // Storage first, then the rows: a deleted row with the object still in the bucket is a file
+      // nothing points at and nothing will ever clean up.
+      await Promise.all(
+        expired.map(row => this.storage.delete(row.storageKey).catch(() => undefined)),
+      );
+      await this.database.media.deleteMany({ where: { id: { in: expired.map(row => row.id) } } });
+
+      return `purged ${expired.length} superseded document(s)`;
     });
   }
 
@@ -160,6 +334,80 @@ export class PlatformJobsService {
     });
   }
 
+  /**
+   * The classifier's second chance (§6.7).
+   *
+   * Two jobs in one pass, because they are the same question — content the pipeline did not
+   * finish with:
+   *
+   * - `DEGRADED` rows scanned in the last 24 hours go back on the queue. The lexicon verdict is
+   *   standing in for a classifier that was down, and standing in is not the same as deciding: a
+   *   post the classifier would have held is in a feed until it is asked again.
+   * - `PENDING` rows older than five minutes are rows whose job never arrived (Redis restarted
+   *   between the write and the worker). They are the ones sitting in the provisional LIMITED
+   *   state, so they are invisible until something finishes them.
+   *
+   * Ten minutes, as the spec says. It does nothing at all while the classifier is switched off —
+   * there is no second opinion to come back for.
+   */
+  @Cron(CronExpression.EVERY_10_MINUTES, { name: 'safety.rescan-degraded' })
+  async rescanDegraded() {
+    await this.run('safety.rescan-degraded', async () => {
+      if (!(await this.classifier.enabled())) return null;
+
+      const now = Date.now();
+      const rows = await this.database.contentSafety.findMany({
+        where: {
+          // Only what the worker could actually re-read. A message's row is observe-only and has
+          // no source, so re-queueing it would record it degraded again and bring it straight
+          // back here on the next pass (§6.8).
+          targetType: { in: SCANNABLE_TARGETS },
+          OR: [
+            {
+              scanStatus: ContentScanStatus.DEGRADED,
+              updatedAt: { gte: new Date(now - 24 * 3_600_000) },
+            },
+            {
+              scanStatus: ContentScanStatus.PENDING,
+              createdAt: { lt: new Date(now - 5 * 60_000) },
+            },
+          ],
+        },
+        select: { targetType: true, targetId: true, scanVersion: true, scanStatus: true },
+        orderBy: { updatedAt: 'asc' },
+        take: RESCAN_BATCH,
+      });
+
+      if (!rows.length) return null;
+
+      // A DEGRADED row has already been through the worker, so its version would dedupe against
+      // the finished job. Bumping it is what makes the retry a new scan rather than a no-op — and
+      // it moves `scanStatus` back to PENDING, which is the state `finalise` will act on.
+      for (const row of rows) {
+        const next =
+          row.scanStatus === ContentScanStatus.DEGRADED ? row.scanVersion + 1 : row.scanVersion;
+
+        if (next !== row.scanVersion) {
+          await this.database.contentSafety.update({
+            where: {
+              targetType_targetId: { targetType: row.targetType, targetId: row.targetId },
+            },
+            data: { scanVersion: next, scanStatus: ContentScanStatus.PENDING },
+          });
+        }
+
+        await this.safetyQueue.enqueue({
+          targetType: row.targetType,
+          targetId: row.targetId,
+          scanVersion: next,
+          trigger: ContentScanTrigger.RESCAN,
+        });
+      }
+
+      return `re-queued ${rows.length} scan(s)`;
+    });
+  }
+
   /** Runs one job now, by name. */
   private onDemand = false;
 
@@ -175,6 +423,7 @@ export class PlatformJobsService {
       'intelligence.auto-guides': () => this.draftAutoGuides(),
       'intelligence.metrics': () => this.rebuildMetrics(),
       'intelligence.search-demand': () => this.rebuildSearchDemand(),
+      'safety.rescan-degraded': () => this.rescanDegraded(),
     };
 
     const job = jobs[name];

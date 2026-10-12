@@ -280,7 +280,8 @@ async function signIn(email) {
   r = await api(mine.token, 'GET', '/users/profile');
   check(
     'and they survive the round trip',
-    JSON.stringify(r.body?.data?.profile?.interests) === JSON.stringify(['TRAVEL', 'TECH', 'MUSIC']),
+    JSON.stringify(r.body?.data?.profile?.interests) ===
+      JSON.stringify(['TRAVEL', 'TECH', 'MUSIC']),
     r.body?.data?.profile?.interests,
   );
 

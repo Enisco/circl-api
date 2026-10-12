@@ -1,3 +1,6 @@
+import { ContentVisibilityState } from '@prisma/client';
+import { isReachable } from './content-visibility';
+
 /**
  * Who may be told that somebody has a Connect profile.
  *
@@ -13,7 +16,12 @@ export type ConnectVisibility = 'VISIBLE' | 'NO_OWN_PROFILE' | 'NOT_FOUND';
 export interface ConnectVisibilityInput {
   /** The viewer's own profile, which the reciprocity gate requires (3.4). */
   viewerHasProfile: boolean;
-  target: { isVisible: boolean; deletedAt: Date | null } | null;
+  target: {
+    isVisible: boolean;
+    deletedAt: Date | null;
+    /** Absent for a caller that has not loaded it; treated as visible, as it was before §6.5. */
+    visibilityState?: ContentVisibilityState;
+  } | null;
   isBlockedEitherWay: boolean;
 }
 
@@ -28,6 +36,13 @@ export interface ConnectVisibilityInput {
 export const connectVisibility = (input: ConnectVisibilityInput): ConnectVisibility => {
   if (!input.viewerHasProfile) return 'NO_OWN_PROFILE';
   if (!input.target || input.target.deletedAt !== null || !input.target.isVisible) {
+    return 'NOT_FOUND';
+  }
+
+  // A profile whose own words are held or rejected is not somebody else's to read (§6.5). The
+  // same answer as hidden, for the same reason the other three are one answer: telling them apart
+  // says which it was.
+  if (input.target.visibilityState && !isReachable(input.target.visibilityState)) {
     return 'NOT_FOUND';
   }
   if (input.isBlockedEitherWay) return 'NOT_FOUND';

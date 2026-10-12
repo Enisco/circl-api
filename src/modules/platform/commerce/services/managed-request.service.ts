@@ -28,7 +28,8 @@ export class ManagedRequestService {
 
     const store =
       dto.subjectType === 'STOREFRONT'
-        ? await this.database.store.findUnique({
+        ? // visibility: the caller's own shop, to decide whether a managed request is theirs.
+          await this.database.store.findUnique({
             where: { ownerId: userId },
             include: {
               contacts: true,

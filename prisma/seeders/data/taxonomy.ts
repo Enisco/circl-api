@@ -42,29 +42,63 @@ const communityCategories: Array<[string, string, boolean, string[]]> = [
 
 // ─── Professions (D8) ─────────────────────────────────────────────────────────
 // `isRegulated` and `credentialBodies` drive the credential step's field labels without a hardcoded map in the client (2.7.4), and — more importantly this release — let a regulated profile print the visible line saying Circl has not verified it (D13).
-const professions: Array<[string, string, boolean, string[]]> = [
-  ['LEGAL', 'Legal', true, ['SRA', 'BSB', 'CILEx']],
-  ['IMMIGRATION', 'Immigration Advice', true, ['IAA']],
-  ['HEALTHCARE', 'Healthcare', true, ['GMC', 'NMC', 'HCPC', 'GPhC']],
-  ['THERAPY_COACHING', 'Therapy & Coaching', true, ['BACP', 'UKCP', 'HCPC']],
-  ['FINANCE_ACCOUNTING', 'Finance & Accounting', true, ['ACCA', 'ICAEW', 'CIMA', 'FCA']],
-  ['PROPERTY_LETTINGS', 'Property & Lettings', true, ['ARLA', 'RICS', 'NAEA']],
-  ['CHILDCARE_SERVICES', 'Childcare', true, ['Ofsted']],
-  ['EDUCATION_TUTORING', 'Education & Tutoring', false, []],
-  ['CAREERS_CV', 'Careers & CV', false, []],
-  ['RECRUITMENT', 'Recruitment', false, []],
-  ['TRANSLATION', 'Translation & Interpreting', false, ['CIOL', 'ITI']],
-  ['DESIGN_CREATIVE', 'Design & Creative', false, []],
-  ['TECH_SOFTWARE', 'Tech & Software', false, []],
-  ['MARKETING', 'Marketing & Social Media', false, []],
-  ['BUSINESS_CONSULTING', 'Business Consulting', false, []],
-  ['BEAUTY_HAIR_SERVICES', 'Beauty & Hair', false, []],
-  ['TRADES_REPAIRS', 'Trades & Repairs', false, ['Gas Safe', 'NICEIC']],
-  ['LOGISTICS', 'Driving & Logistics', false, []],
-  ['EVENTS_CATERING', 'Events & Catering', false, []],
-  ['PHOTOGRAPHY_VIDEO', 'Photography & Video', false, []],
-  ['CLEANING', 'Cleaning', false, []],
-  ['OTHER', 'Other', false, []],
+//
+// `requiresReview` is a **different** question and the two are deliberately not the same column
+// (§2.9). `isRegulated` asks "is there a regulator"; `requiresReview` asks "may this person offer
+// this service at all, and should somebody read the listing before anybody can find it". They
+// overlap heavily and are still not the same flag: `TRANSLATION` has professional bodies in
+// `credentialBodies` and is not gated, because a bad translation is a bad service rather than a
+// legal or safeguarding event.
+//
+// The seven gated here are the **default**, not the rule. Trust & Safety, managers and super admins
+// change the set from the portal (`PUT admin/professional-reviews/categories`, permission
+// `professions:gate`), which rewrites this flag and applies the consequences to listings already
+// in the profession. This file is only what a fresh database starts with — so a seed run must not
+// undo a decision somebody made in the portal, which is why `seedTaxonomy` preserves the live
+// value of this one key. See `prisma/seeders/taxonomy.seeder.ts`.
+//
+// Three professions were considered and left **off** by default, recorded here because the
+// reasoning is the useful part if anybody turns them on later:
+//
+//   - `TRADES_REPAIRS` — gas work without Gas Safe registration is a criminal offence, but the
+//     category is mostly flat-pack and shelves, and gating all of it to catch the gas is a wide net.
+//   - `EDUCATION_TUTORING` — unsupervised contact with children, but most of it is adult English
+//     conversation practice.
+//   - `RECRUITMENT` — "a job with visa sponsorship" is a common fraud against this community.
+//
+const professions: Array<[string, string, boolean, string[], boolean]> = [
+  // Giving immigration advice in the UK without IAA (ex-OISC) regulation or an exemption is a
+  // criminal offence, and this audience is overwhelmingly people who need that advice. If one
+  // profession justified the whole feature it is this one.
+  ['IMMIGRATION', 'Immigration Advice', true, ['IAA'], true],
+  ['LEGAL', 'Legal', true, ['SRA', 'BSB', 'CILEx'], true],
+  // Unauthorised investment, mortgage and debt advice is a criminal offence; tax agents act on
+  // somebody else's behalf with HMRC.
+  ['FINANCE_ACCOUNTING', 'Finance & Accounting', true, ['ACCA', 'ICAEW', 'CIMA', 'FCA'], true],
+  ['HEALTHCARE', 'Healthcare', true, ['GMC', 'NMC', 'HCPC', 'GPhC'], true],
+  // "Coach" is unregulated, which is precisely why the wording has to be read by somebody: the
+  // risk here is a vulnerable person being treated by an untrained one.
+  ['THERAPY_COACHING', 'Therapy & Coaching', true, ['BACP', 'UKCP', 'HCPC'], true],
+  ['CHILDCARE_SERVICES', 'Childcare', true, ['Ofsted'], true],
+  // Client money and mandatory redress-scheme membership; deposit fraud against new arrivals is
+  // the oldest scam on this platform's beat.
+  ['PROPERTY_LETTINGS', 'Property & Lettings', true, ['ARLA', 'RICS', 'NAEA'], true],
+  // Not gated by default; see the three bullets above. The flag is what the portal changes.
+  ['TRADES_REPAIRS', 'Trades & Repairs', false, ['Gas Safe', 'NICEIC'], false],
+  ['EDUCATION_TUTORING', 'Education & Tutoring', false, [], false],
+  ['RECRUITMENT', 'Recruitment', false, [], false],
+  ['CAREERS_CV', 'Careers & CV', false, [], false],
+  ['TRANSLATION', 'Translation & Interpreting', false, ['CIOL', 'ITI'], false],
+  ['DESIGN_CREATIVE', 'Design & Creative', false, [], false],
+  ['TECH_SOFTWARE', 'Tech & Software', false, [], false],
+  ['MARKETING', 'Marketing & Social Media', false, [], false],
+  ['BUSINESS_CONSULTING', 'Business Consulting', false, [], false],
+  ['BEAUTY_HAIR_SERVICES', 'Beauty & Hair', false, [], false],
+  ['LOGISTICS', 'Driving & Logistics', false, [], false],
+  ['EVENTS_CATERING', 'Events & Catering', false, [], false],
+  ['PHOTOGRAPHY_VIDEO', 'Photography & Video', false, [], false],
+  ['CLEANING', 'Cleaning', false, [], false],
+  ['OTHER', 'Other', false, [], false],
 ];
 
 // ─── Guide topics (spec 0.7) ──────────────────────────────────────────────────
@@ -460,12 +494,12 @@ export const taxonomySeeds: TaxonomySeed[] = [
     // The bridge that lets offer promotion prefill a profession (D8), so the member confirms rather than choosing from scratch.
     metadata: { suggestedProfessionCodes: suggested },
   })),
-  ...professions.map(([code, label, isRegulated, credentialBodies], index) => ({
+  ...professions.map(([code, label, isRegulated, credentialBodies, requiresReview], index) => ({
     kind: TaxonomyKind.PROFESSION,
     code,
     label,
     sort: index + 1,
-    metadata: { isRegulated, credentialBodies },
+    metadata: { isRegulated, credentialBodies, requiresReview },
   })),
   ...pair(TaxonomyKind.GUIDE_TOPIC, guideTopics),
   ...pair(TaxonomyKind.HERITAGE_TAG, heritageTags),

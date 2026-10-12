@@ -82,6 +82,11 @@ model Review {
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz
 
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
+
   // One review per reviewer per source.
   @@unique([reviewerId, context, sourceId])
   @@index([subjectUserId, countsToAverage, createdAt])

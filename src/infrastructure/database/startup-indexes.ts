@@ -48,6 +48,15 @@ const PARTIAL: Array<[index: string, statement: string]> = [
       'ON "media" ("derived_at") WHERE "derived_at" IS NULL',
   ],
   [
+    // The admin filter bar asks "which builds are still in the wild" every ten minutes, which is a
+    // DISTINCT over every session row. Leading on the two projected columns so the DISTINCT comes
+    // free from index order, and partial because a session with no recorded build is not an answer.
+    'user_sessions_app_version_idx',
+    'CREATE INDEX IF NOT EXISTS "user_sessions_app_version_idx" ' +
+      'ON "user_sessions" ("app_version", "platform", "last_active_at") ' +
+      'WHERE "app_version" IS NOT NULL',
+  ],
+  [
     'reviews_one_prior_work_per_pair_idx',
     'CREATE UNIQUE INDEX IF NOT EXISTS "reviews_one_prior_work_per_pair_idx" ' +
       'ON "reviews" ("reviewer_id", "subject_user_id") ' +

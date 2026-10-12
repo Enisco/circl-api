@@ -1,13 +1,14 @@
 import { Injectable } from '@nestjs/common';
-import { ThreadKind, TrustCheckStatus } from '@prisma/client';
+import { ContentVisibilityState, ThreadKind, TrustCheckStatus } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException } from '@/common';
 import {
-  authorSelect,
   BlockingService,
-  connectVisibility,
   MediaService,
   TaxonomyService,
+  authorSelect,
+  connectVisibility,
+  isReachable,
   toAuthorView,
   toCountryView,
 } from '@/modules/platform/shared';
@@ -40,6 +41,7 @@ export class UserPublicService {
         profile: {
           select: {
             bio: true,
+            bioVisibilityState: true,
             headline: true,
             canHelpWith: true,
             countryOfOrigin: true,
@@ -66,14 +68,21 @@ export class UserPublicService {
     }
 
     const isOwner = subjectId === viewerId;
+    // §4.5: a held bio renders as empty publicly rather than hiding the profile. The member is
+    // not their paragraph — taking the person off the platform because a sentence is under review
+    // would be a far heavier answer than the question deserves. Its author still sees their own.
+    const written =
+      isOwner || isReachable(user.profile?.bioVisibilityState ?? ContentVisibilityState.VISIBLE)
+        ? user.profile
+        : null;
 
     return {
       data: {
         user: toAuthorView(user, { sign: this.media.sign }),
         username: user.username,
-        bio: user.profile?.bio ?? null,
-        headline: user.profile?.headline ?? null,
-        canHelpWith: splitHelpWith(user.profile?.canHelpWith),
+        bio: written?.bio ?? null,
+        headline: written?.headline ?? null,
+        canHelpWith: splitHelpWith(written?.canHelpWith),
         countryOfOrigin: toCountryView(user.profile?.countryOfOrigin),
         // The same numbers as GET /reviews/{userId} (2.5.1), summarised.
         rating: {

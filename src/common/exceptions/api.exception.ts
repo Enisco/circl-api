@@ -48,8 +48,17 @@ export class ApiException extends HttpException {
     return new ApiException(HttpStatus.FORBIDDEN, code, message, options);
   }
 
-  static notFound(message: string, code: ApiErrorCode = ApiErrorCode.NOT_FOUND) {
-    return new ApiException(HttpStatus.NOT_FOUND, code, message);
+  /**
+   * `options` so a 404 can carry something useful — the list of valid content types behind a
+   * mistyped `/content/:type`, for instance. Added for the same reason `gone` has it: a refusal
+   * that can only say "no" makes the caller guess what would have worked.
+   */
+  static notFound(
+    message: string,
+    code: ApiErrorCode = ApiErrorCode.NOT_FOUND,
+    options?: ApiExceptionOptions,
+  ) {
+    return new ApiException(HttpStatus.NOT_FOUND, code, message, options);
   }
 
   /** A post that was removed, so the client renders a tombstone (0.4). */
@@ -65,8 +74,8 @@ export class ApiException extends HttpException {
     return new ApiException(HttpStatus.CONFLICT, code, message, options);
   }
 
-  static gone(code: ApiErrorCode, message: string) {
-    return new ApiException(HttpStatus.GONE, code, message);
+  static gone(code: ApiErrorCode, message: string, options?: ApiExceptionOptions) {
+    return new ApiException(HttpStatus.GONE, code, message, options);
   }
 
   static rateLimited(code: ApiErrorCode, message: string, options?: ApiExceptionOptions) {

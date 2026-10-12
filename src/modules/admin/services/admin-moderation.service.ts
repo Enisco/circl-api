@@ -1,189 +1,37 @@
-import { Injectable } from '@nestjs/common';
-import {
-  ModerationDecision,
-  ModerationQueueState,
-  Prisma,
-  ReportTargetType,
-  RiskLevel,
-  UserAccountStatus,
-} from '@prisma/client';
+import { Injectable, Logger } from '@nestjs/common';
+import { ModerationDecision, Prisma, ReportTargetType, UserAccountStatus } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException, buildPageMeta } from '@/common';
-import { MediaService, authorSelect, toAuthorView } from '@/modules/platform/shared';
-import { DecideQueueItemDto, ListQueueDto, SuspendUserDto } from '../dtos/admin.dto';
-
-/** Ordering weight per band, so CRITICAL always outranks a heavily-reported spam post. */
-const RISK_WEIGHT: Record<RiskLevel, number> = {
-  CRITICAL: 4,
-  HIGH: 3,
-  MEDIUM: 2,
-  LOW: 1,
-  NONE: 0,
-};
+import { ApiException } from '@/common';
+import {
+  AVATAR_MEDIA_OWNER,
+  MediaService,
+  authorSelect,
+  toAuthorView,
+} from '@/modules/platform/shared';
+import { SuspendUserDto } from '../dtos/admin.dto';
 
 /** The admin queue. */
 @Injectable()
 export class AdminModerationService {
+  private readonly logger = new Logger(AdminModerationService.name);
+
   constructor(
     private readonly database: PrismaService,
     private readonly media: MediaService,
   ) {}
 
-  async listQueue(query: ListQueueDto, adminId: string) {
-    const where: Prisma.ModerationQueueItemWhereInput = {
-      state: query.state ?? ModerationQueueState.PENDING,
-      ...(query.type ? { type: query.type } : {}),
-      ...(query.mine ? { assignedToId: adminId } : {}),
-      ...(query.minRiskLevel
-        ? {
-            riskLevel: {
-              in: (Object.keys(RISK_WEIGHT) as RiskLevel[]).filter(
-                level => RISK_WEIGHT[level] >= RISK_WEIGHT[query.minRiskLevel!],
-              ),
-            },
-          }
-        : {}),
-    };
-
-    const [total, rows] = await this.database.$transaction([
-      this.database.moderationQueueItem.count({ where }),
-      this.database.moderationQueueItem.findMany({
-        where,
-        include: {
-          subjectUser: { select: authorSelect },
-          assignedTo: { select: authorSelect },
-        },
-        // Urgency first, then how many people reported it, then age.
-        orderBy: [{ riskLevel: 'desc' }, { riskScore: 'desc' }, { createdAt: 'asc' }],
-        skip: query.skip,
-        take: query.take,
-      }),
-    ]);
-
-    const content = await this.resolveContent(rows);
-
-    return {
-      data: rows.map(row => ({
-        id: row.id,
-        type: row.type,
-        state: row.state,
-        targetType: row.targetType,
-        targetId: row.targetId,
-        subject: row.subjectUser ? toAuthorView(row.subjectUser, { sign: this.media.sign }) : null,
-        assignedTo: row.assignedTo ? toAuthorView(row.assignedTo, { sign: this.media.sign }) : null,
-        risk: {
-          level: row.riskLevel,
-          category: row.riskCategory,
-          score: row.riskScore,
-          // The matched phrases, so "why was this escalated" has an answer a reviewer can read rather than a number they have to trust.
-          signals: row.riskSignals ?? [],
-        },
-        summary: row.summary,
-        content: content.get(`${row.targetType}:${row.targetId}`) ?? null,
-        reportCount: row.reportId ? 1 : 0,
-        createdAt: row.createdAt.toISOString(),
-      })),
-      meta: buildPageMeta(query, total, {
-        // What an alert would be raised on: the count that should never sit.
-        urgentCount: await this.database.moderationQueueItem.count({
-          where: {
-            state: ModerationQueueState.PENDING,
-            riskLevel: { in: [RiskLevel.HIGH, RiskLevel.CRITICAL] },
-          },
-        }),
-      }),
-    };
-  }
-
-  /** Approve or reject one item. */
-  async decide(adminId: string, id: string, dto: DecideQueueItemDto) {
-    const item = await this.database.moderationQueueItem.findUnique({ where: { id } });
-
-    if (!item) throw ApiException.notFound('That queue item could not be found.');
-
-    if (item.state === ModerationQueueState.RESOLVED) {
-      throw ApiException.conflict(ApiErrorCode.CONFLICT, 'That item has already been decided.', {
-        data: { decision: item.decision, decidedAt: item.decidedAt },
-      });
-    }
-
-    await this.database.$transaction(async tx => {
-      if (dto.decision === ModerationDecision.REMOVE_CONTENT) {
-        await this.softDeleteTarget(tx, item.targetType, item.targetId);
-      }
-
-      if (dto.decision === ModerationDecision.SUSPEND_AUTHOR && item.subjectUserId) {
-        await tx.user.update({
-          where: { id: item.subjectUserId },
-          data: { status: UserAccountStatus.SUSPENDED },
-        });
-        await tx.userSession.updateMany({
-          where: { userId: item.subjectUserId },
-          data: { isActive: false, revokedAt: new Date() },
-        });
-      }
-
-      await tx.moderationQueueItem.update({
-        where: { id },
-        data: {
-          state: ModerationQueueState.RESOLVED,
-          decision: dto.decision,
-          decisionNote: dto.reason ?? null,
-          decidedById: adminId,
-          decidedAt: new Date(),
-        },
-      });
-
-      if (item.reportId) {
-        await tx.report.update({
-          where: { id: item.reportId },
-          data: {
-            state: dto.decision === ModerationDecision.NO_ACTION ? 'DISMISSED' : 'ACTIONED',
-            decision: dto.decision,
-            decisionNote: dto.reason ?? null,
-            reviewedById: adminId,
-            reviewedAt: new Date(),
-          },
-        });
-      }
-
-      // Append-only. This is the record that makes the queue reviewable.
-      await tx.moderationAction.create({
-        data: {
-          actorId: adminId,
-          targetType: item.targetType,
-          targetId: item.targetId,
-          decision: dto.decision,
-          reason: dto.reason ?? null,
-          metadata: { queueItemId: id, queueType: item.type },
-        },
-      });
-    });
-
-    return { id, decision: dto.decision, state: ModerationQueueState.RESOLVED };
-  }
-
-  async claim(adminId: string, id: string) {
-    const item = await this.database.moderationQueueItem.findUnique({ where: { id } });
-
-    if (!item) throw ApiException.notFound('That queue item could not be found.');
-
-    if (item.assignedToId && item.assignedToId !== adminId) {
-      // Two people working the same disclosure is worse than one, so a claim by someone else is a conflict rather than a silent overwrite.
-      throw ApiException.conflict(
-        ApiErrorCode.CONFLICT,
-        'Someone else is already working on this.',
-        { data: { assignedToId: item.assignedToId } },
-      );
-    }
-
-    await this.database.moderationQueueItem.update({
-      where: { id },
-      data: { assignedToId: adminId, state: ModerationQueueState.IN_REVIEW },
-    });
-
-    return { id, assignedToId: adminId, state: ModerationQueueState.IN_REVIEW };
-  }
+  // `listQueue`, `decide` and `claim` lived here and are gone (§5.9).
+  //
+  // `AdminQueueService` replaced all three: CSV filters, a priority and a deadline, a detail
+  // endpoint, `allowedDecisions`, and decisions that actually do something — the old `decide`
+  // issued no strike for `WARN_AUTHOR`, published nothing for `APPROVE` and did nothing at all for
+  // an anonymous `REJECT`. The routes moved to `AdminQueueController` in the same stage, which left
+  // these three unreachable from any controller.
+  //
+  // Deleted rather than kept for reference: two implementations of one queue, one of them wrong
+  // and neither obviously dead, is how somebody wires the old one back up. What this service still
+  // owns is the removal switch (`removeContent`/`restoreContent`), the action trail, and
+  // `setUserStatus` — the parts the new queue calls into.
 
   async setUserStatus(adminId: string, userId: string, dto: SuspendUserDto) {
     const user = await this.database.user.findUnique({ where: { id: userId } });
@@ -316,6 +164,100 @@ export class AdminModerationService {
     return result;
   }
 
+  /**
+   * Takes content down, by the rule each kind has for coming down (§6.6).
+   *
+   * Public because the report case decide path (§7.2) removes content for exactly the same
+   * reasons through a different door, and two copies of this switch would drift apart — which is
+   * how the `default: break` that silently swallowed a review removal got there in the first
+   * place.
+   */
+  async removeContent(
+    tx: Prisma.TransactionClient,
+    targetType: ReportTargetType,
+    targetId: string,
+  ): Promise<void> {
+    await this.softDeleteTarget(tx, targetType, targetId);
+  }
+
+  /**
+   * Puts content back, which is the only thing an overturned appeal can mean (§5.11).
+   *
+   * The inverse of `removeContent`, one kind at a time, because "undelete" is not one operation:
+   * most kinds soft-delete, a professional service switches off, and two of them cannot come back
+   * at all — a removed message had its text blanked and a removed avatar was deleted from storage.
+   * Those two return quietly rather than pretending: the appeal's own trail records that it was
+   * overturned, and a reviewer reading it can see what there was to restore.
+   */
+  async restoreContent(
+    tx: Prisma.TransactionClient,
+    targetType: ReportTargetType,
+    targetId: string,
+  ): Promise<void> {
+    const live = { deletedAt: null };
+    const where = { id: targetId };
+
+    switch (targetType) {
+      case ReportTargetType.REQUEST:
+        await tx.communityRequest.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.UPDATE:
+        await tx.communityUpdate.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.OFFER:
+        await tx.communityOffer.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.RESPONSE:
+        await tx.requestResponse.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.UPDATE_REPLY:
+        await tx.updateReply.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.GROUP_POST:
+        await tx.groupPost.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.GROUP_POST_REPLY:
+        await tx.groupPostReply.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.GUIDE:
+        await tx.guide.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.GROUP:
+        await tx.group.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.STORE:
+        await tx.store.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.STORE_ITEM:
+        await tx.storeItem.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.PROFESSIONAL_LISTING:
+        await tx.professionalListing.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.PROFESSIONAL_SERVICE:
+        // Switched off rather than deleted, so switching it back on is the restore.
+        await tx.professionalService.updateMany({ where, data: { isActive: true } });
+        break;
+      case ReportTargetType.CONNECT_PROFILE:
+        await tx.connectProfile.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.CONNECT_POST:
+        await tx.connectPost.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.CONNECT_STORY:
+        await tx.connectStory.updateMany({ where, data: live });
+        break;
+      case ReportTargetType.REVIEW:
+        await tx.review.updateMany({ where, data: live });
+        break;
+      default:
+        // MESSAGE, USER_PROFILE, MEDIA and the member types: nothing to undelete. The words were
+        // blanked or the object was deleted, and saying so in the log beats a silent no-op.
+        this.logger.warn(`Nothing to restore for ${targetType} ${targetId}`);
+        break;
+    }
+  }
+
   private async softDeleteTarget(
     tx: Prisma.TransactionClient,
     targetType: ReportTargetType,
@@ -401,6 +343,56 @@ export class AdminModerationService {
           UPDATE "conversations"
           SET "context_snapshot" = "context_snapshot" - 'about'
           WHERE "context_snapshot" -> 'about' ->> 'id' = ${targetId}`;
+        break;
+      }
+      // Added with the scanner (§4.1): four kinds that are now scanned, so they are now
+      // removable. Without these a staff member removing a reported review saw a success and
+      // nothing happened — the switch's `default` swallowed it.
+      case ReportTargetType.CONNECT_POST:
+        await tx.connectPost.updateMany({ where: { id: targetId }, data: now });
+        await tx.media.deleteMany({ where: { ownerType: 'CONNECT_POST', ownerId: targetId } });
+        break;
+      case ReportTargetType.PROFESSIONAL_SERVICE:
+        // A service is never hard-deleted while a booking references it, so removal is the same
+        // switch-off the owner's own delete uses.
+        await tx.professionalService.updateMany({
+          where: { id: targetId },
+          data: { isActive: false },
+        });
+        break;
+      case ReportTargetType.REVIEW:
+        await tx.review.updateMany({ where: { id: targetId }, data: now });
+        break;
+      case ReportTargetType.USER_PROFILE:
+        // There is no profile to delete — the member stays. Removing the *content* means clearing
+        // the paragraph that was reported, which is what §6.1 scans and what §4.5 holds.
+        await tx.userProfile.updateMany({
+          where: { id: targetId },
+          data: { bio: null, headline: null, canHelpWith: null },
+        });
+        break;
+      case ReportTargetType.MEDIA: {
+        // An image with no post of its own, which today means an avatar (§6.1). Removing it is
+        // clearing what was on show and then deleting the object: the member keeps their account
+        // and loses the photo, which is the whole of the content here.
+        const image = await tx.media.findUnique({
+          where: { id: targetId },
+          select: { ownerId: true, ownerType: true, storageKey: true },
+        });
+
+        if (image?.ownerType === AVATAR_MEDIA_OWNER && image.ownerId) {
+          await tx.user.updateMany({
+            where: { id: image.ownerId, avatarKey: image.storageKey },
+            data: { avatarKey: null },
+          });
+        }
+
+        await tx.media.delete({ where: { id: targetId } }).catch(() => undefined);
+        // The verdict goes with the object, for the same reason `releaseOwner` drops it: nothing
+        // cascades to a polymorphic table, and a scan of nothing comes back round the sweep.
+        await tx.contentSafety.deleteMany({
+          where: { targetType: ReportTargetType.MEDIA, targetId },
+        });
         break;
       }
       default:

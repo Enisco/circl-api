@@ -11,6 +11,13 @@ export interface PresignGetOptions {
   expiresIn: number;
   /** The instant the signature is anchored to. */
   signingDate: Date;
+  /**
+   * Query parameters signed into the URL alongside the credential, for the response-header
+   * overrides S3 reads off a presigned GET. Signed rather than appended, which is the point: a
+   * parameter outside the signature is ignored by S3, so `response-content-disposition` added
+   * afterwards would quietly do nothing and the file would open in the tab instead of saving.
+   */
+  extraQuery?: Array<[string, string]>;
   /** A CDN origin in front of the bucket, without a trailing slash. */
 }
 
@@ -34,6 +41,10 @@ export const presignGetV4 = (options: PresignGetOptions): string => {
 
   if (options.sessionToken) {
     query.push(['X-Amz-Security-Token', options.sessionToken]);
+  }
+
+  if (options.extraQuery) {
+    query.push(...options.extraQuery);
   }
 
   // Sorted by encoded key, which is what the canonical form requires.

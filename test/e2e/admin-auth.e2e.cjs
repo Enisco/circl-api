@@ -28,7 +28,9 @@ const crypto = new NobleCryptoPlugin();
 const codeFor = secret => generate({ secret, base32, crypto, digits: 6, period: 30 });
 
 const PASSWORD = 'correct-horse-battery-staple-7';
-const bff = process.env.ADMIN_BFF_SECRET ? { 'X-Circl-Admin-Client': process.env.ADMIN_BFF_SECRET } : {};
+const bff = process.env.ADMIN_BFF_SECRET
+  ? { 'X-Circl-Admin-Client': process.env.ADMIN_BFF_SECRET }
+  : {};
 
 /** An invitation, created the way the bootstrap CLI creates one. */
 async function inviteFor(email, roleCode = 'super_admin') {
@@ -63,37 +65,76 @@ async function inviteFor(email, roleCode = 'super_admin') {
   const token = await inviteFor(email);
 
   let r = await api(null, 'POST', '/admin/auth/invites/inspect', { token }, bff);
-  check('an invite says who it is for and who sent it',
+  check(
+    'an invite says who it is for and who sent it',
     r.status === 200 && r.body?.data?.email === email && r.body?.data?.role === 'super_admin',
-    r.body?.data);
+    r.body?.data,
+  );
 
-  r = await api(null, 'POST', '/admin/auth/invites/inspect', { token: 'not-a-real-token-at-all' }, bff);
-  check('an unknown token is INVITE_INVALID, not a 400 that confirms the shape',
-    r.status === 404 && r.body?.error?.code === 'INVITE_INVALID', r.body?.error);
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/invites/inspect',
+    { token: 'not-a-real-token-at-all' },
+    bff,
+  );
+  check(
+    'an unknown token is INVITE_INVALID, not a 400 that confirms the shape',
+    r.status === 404 && r.body?.error?.code === 'INVITE_INVALID',
+    r.body?.error,
+  );
 
-  r = await api(null, 'POST', '/admin/auth/invites/accept',
-    { token, firstName: 'Ada', lastName: 'L', password: 'short' }, bff);
-  check('a password that breaks the policy is refused, with the rules named',
-    r.status === 422 && r.body?.error?.code === 'PASSWORD_POLICY' && r.body?.error?.details?.length > 0,
-    r.body?.error);
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/invites/accept',
+    { token, firstName: 'Ada', lastName: 'L', password: 'short' },
+    bff,
+  );
+  check(
+    'a password that breaks the policy is refused, with the rules named',
+    r.status === 422 &&
+      r.body?.error?.code === 'PASSWORD_POLICY' &&
+      r.body?.error?.details?.length > 0,
+    r.body?.error,
+  );
 
-  r = await api(null, 'POST', '/admin/auth/invites/accept',
-    { token, firstName: 'Ada', lastName: 'L', password: `${email.split('@')[0]}-and-more` }, bff);
-  check('and so is one built out of their own email address',
-    r.status === 422 && r.body?.error?.code === 'PASSWORD_POLICY', r.body?.error);
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/invites/accept',
+    { token, firstName: 'Ada', lastName: 'L', password: `${email.split('@')[0]}-and-more` },
+    bff,
+  );
+  check(
+    'and so is one built out of their own email address',
+    r.status === 422 && r.body?.error?.code === 'PASSWORD_POLICY',
+    r.body?.error,
+  );
 
   r = await api(null, 'POST', '/admin/auth/invites/inspect', { token }, bff);
   check('neither refusal spent the invitation', r.status === 200, r.status);
 
-  r = await api(null, 'POST', '/admin/auth/invites/accept',
-    { token, firstName: 'Ada', lastName: 'L', password: PASSWORD }, bff);
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/invites/accept',
+    { token, firstName: 'Ada', lastName: 'L', password: PASSWORD },
+    bff,
+  );
   check('a real password is accepted', r.status === 201, r.body?.error);
   const setup = r.body?.data;
-  check('and hands back a setup token and a scannable URI',
-    typeof setup?.mfaSetupToken === 'string' && /^otpauth:\/\/totp\/Circl%20Admin/.test(setup?.otpauthUri ?? ''),
-    setup?.otpauthUri);
-  check('with the secret in base32, for anyone typing it in by hand',
-    /^[A-Z2-7]{32}$/.test(setup?.secret ?? ''), setup?.secret?.length);
+  check(
+    'and hands back a setup token and a scannable URI',
+    typeof setup?.mfaSetupToken === 'string' &&
+      /^otpauth:\/\/totp\/Circl%20Admin/.test(setup?.otpauthUri ?? ''),
+    setup?.otpauthUri,
+  );
+  check(
+    'with the secret in base32, for anyone typing it in by hand',
+    /^[A-Z2-7]{32}$/.test(setup?.secret ?? ''),
+    setup?.secret?.length,
+  );
 
   r = await api(null, 'POST', '/admin/auth/invites/inspect', { token }, bff);
   check('the invitation is single use', r.status === 404, r.status);
@@ -101,45 +142,85 @@ async function inviteFor(email, roleCode = 'super_admin') {
   console.log('\n── The account cannot be used until MFA is enrolled ─────────');
 
   r = await api(null, 'POST', '/admin/auth/login', { email, password: PASSWORD }, bff);
-  check('the password alone returns the enrolment path, never a session',
+  check(
+    'the password alone returns the enrolment path, never a session',
     r.status === 200 && r.body?.data?.mfaEnrollmentRequired === true && !r.body?.data?.accessToken,
-    r.body?.data);
+    r.body?.data,
+  );
 
-  r = await api(null, 'POST', '/admin/auth/mfa/enroll', { mfaSetupToken: setup.mfaSetupToken, code: '000000' }, bff);
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/mfa/enroll',
+    { mfaSetupToken: setup.mfaSetupToken, code: '000000' },
+    bff,
+  );
   check('a wrong enrolment code is refused', r.status === 401, r.status);
 
-  r = await api(null, 'POST', '/admin/auth/mfa/enroll',
-    { mfaSetupToken: setup.mfaSetupToken, code: await codeFor(setup.secret) }, bff);
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/mfa/enroll',
+    { mfaSetupToken: setup.mfaSetupToken, code: await codeFor(setup.secret) },
+    bff,
+  );
   check('the right code enrols', r.status === 201, r.body?.error);
   const recovery = r.body?.data?.recoveryCodes ?? [];
   const firstPair = r.body?.data?.tokens;
-  check('and returns exactly ten recovery codes, once',
-    recovery.length === 10 && recovery.every(code => /^[2-9A-HJ-NP-TV-Z]{5}-[2-9A-HJ-NP-TV-Z]{5}$/.test(code)),
-    recovery.slice(0, 2));
+  check(
+    'and returns exactly ten recovery codes, once',
+    recovery.length === 10 &&
+      recovery.every(code => /^[2-9A-HJ-NP-TV-Z]{5}-[2-9A-HJ-NP-TV-Z]{5}$/.test(code)),
+    recovery.slice(0, 2),
+  );
   check('with a session', typeof firstPair?.accessToken === 'string', Object.keys(firstPair ?? {}));
 
-  r = await api(null, 'POST', '/admin/auth/mfa/enroll',
-    { mfaSetupToken: setup.mfaSetupToken, code: await codeFor(setup.secret) }, bff);
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/mfa/enroll',
+    { mfaSetupToken: setup.mfaSetupToken, code: await codeFor(setup.secret) },
+    bff,
+  );
   check('the setup token cannot be used twice', r.status !== 201, r.status);
 
   console.log('\n── Signing in ───────────────────────────────────────────────');
 
   await clearRateLimits();
-  r = await api(null, 'POST', '/admin/auth/login', { email, password: 'wrong-password-entirely-x' }, bff);
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/login',
+    { email, password: 'wrong-password-entirely-x' },
+    bff,
+  );
   const wrongPassword = r;
-  check('a wrong password is INVALID_CREDENTIALS',
-    r.status === 401 && r.body?.error?.code === 'INVALID_CREDENTIALS', r.body?.error);
+  check(
+    'a wrong password is INVALID_CREDENTIALS',
+    r.status === 401 && r.body?.error?.code === 'INVALID_CREDENTIALS',
+    r.body?.error,
+  );
 
-  r = await api(null, 'POST', '/admin/auth/login',
-    { email: `e2e-nobody-${Date.now()}@example.test`, password: 'wrong-password-entirely-x' }, bff);
-  check('an unknown email returns the identical body — it cannot be used to find staff addresses',
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/login',
+    { email: `e2e-nobody-${Date.now()}@example.test`, password: 'wrong-password-entirely-x' },
+    bff,
+  );
+  check(
+    'an unknown email returns the identical body — it cannot be used to find staff addresses',
     r.status === wrongPassword.status && r.body?.error?.code === wrongPassword.body?.error?.code,
-    r.body?.error);
+    r.body?.error,
+  );
 
   await clearRateLimits();
   r = await api(null, 'POST', '/admin/auth/login', { email, password: PASSWORD }, bff);
-  check('the right password returns a ticket, not a session',
-    r.status === 200 && r.body?.data?.mfaRequired === true && !r.body?.data?.accessToken, r.body?.data);
+  check(
+    'the right password returns a ticket, not a session',
+    r.status === 200 && r.body?.data?.mfaRequired === true && !r.body?.data?.accessToken,
+    r.body?.data,
+  );
   const ticket = r.body?.data?.mfaToken;
 
   // Enrolment recorded the step its own code belonged to, so the same six digits are now refused —
@@ -163,9 +244,18 @@ async function inviteFor(email, roleCode = 'super_admin') {
 
   await clearRateLimits();
   r = await api(null, 'POST', '/admin/auth/login', { email, password: PASSWORD }, bff);
-  r = await api(null, 'POST', '/admin/auth/mfa/verify', { mfaToken: r.body?.data?.mfaToken, code: live }, bff);
-  check('and the same authenticator code cannot be replayed inside its own 30-second window',
-    r.status === 401, r.status);
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/mfa/verify',
+    { mfaToken: r.body?.data?.mfaToken, code: live },
+    bff,
+  );
+  check(
+    'and the same authenticator code cannot be replayed inside its own 30-second window',
+    r.status === 401,
+    r.status,
+  );
 
   console.log('\n── The sign-in limit ───────────────────────────────────────');
 
@@ -175,14 +265,27 @@ async function inviteFor(email, roleCode = 'super_admin') {
   let limited = null;
 
   for (let attempt = 0; attempt < 8 && !limited; attempt += 1) {
-    const tried = await api(null, 'POST', '/admin/auth/login', { email, password: 'wrong-x-wrong-x' }, bff);
+    const tried = await api(
+      null,
+      'POST',
+      '/admin/auth/login',
+      { email, password: 'wrong-x-wrong-x' },
+      bff,
+    );
 
     if (tried.status === 429) limited = tried;
   }
 
-  check('repeated sign-in attempts are rate limited', limited !== null, limited?.status ?? 'never limited');
-  check('and the refusal says how long to wait',
-    typeof limited?.body?.data?.retryAfterSeconds === 'number', limited?.body?.data);
+  check(
+    'repeated sign-in attempts are rate limited',
+    limited !== null,
+    limited?.status ?? 'never limited',
+  );
+  check(
+    'and the refusal says how long to wait',
+    typeof limited?.body?.data?.retryAfterSeconds === 'number',
+    limited?.body?.data,
+  );
 
   await clearRateLimits();
 
@@ -208,12 +311,17 @@ async function inviteFor(email, roleCode = 'super_admin') {
     select: { lockedUntil: true, lockCount: true },
   });
 
-  check('five consecutive failures lock the account',
-    locked?.lockedUntil !== null && (locked?.lockCount ?? 0) >= 1, locked);
-  check('and a locked account still answers with the same generic refusal',
+  check(
+    'five consecutive failures lock the account',
+    locked?.lockedUntil !== null && (locked?.lockCount ?? 0) >= 1,
+    locked,
+  );
+  check(
+    'and a locked account still answers with the same generic refusal',
     (await api(null, 'POST', '/admin/auth/login', { email, password: PASSWORD }, bff)).body?.error
       ?.code === 'INVALID_CREDENTIALS',
-    'told the caller it was locked');
+    'told the caller it was locked',
+  );
 
   // Cleared so the rest of the suite can sign in. In production this is what waiting out the lock
   // does; there is no endpoint that clears it, on purpose.
@@ -226,27 +334,51 @@ async function inviteFor(email, roleCode = 'super_admin') {
 
   await clearRateLimits();
   r = await api(null, 'POST', '/admin/auth/login', { email, password: PASSWORD }, bff);
-  r = await api(null, 'POST', '/admin/auth/mfa/verify',
-    { mfaToken: r.body?.data?.mfaToken, code: recovery[0].toLowerCase().replace('-', '') }, bff);
-  check('a recovery code works in lower case and without its hyphen', r.status === 200, r.body?.error);
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/mfa/verify',
+    { mfaToken: r.body?.data?.mfaToken, code: recovery[0].toLowerCase().replace('-', '') },
+    bff,
+  );
+  check(
+    'a recovery code works in lower case and without its hyphen',
+    r.status === 200,
+    r.body?.error,
+  );
 
   await clearRateLimits();
   r = await api(null, 'POST', '/admin/auth/login', { email, password: PASSWORD }, bff);
-  r = await api(null, 'POST', '/admin/auth/mfa/verify',
-    { mfaToken: r.body?.data?.mfaToken, code: recovery[0] }, bff);
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/mfa/verify',
+    { mfaToken: r.body?.data?.mfaToken, code: recovery[0] },
+    bff,
+  );
   check('and only once', r.status !== 200, r.status);
 
   console.log('\n── Refresh: rotation, grace and reuse ───────────────────────');
 
   r = await api(null, 'POST', '/admin/auth/refresh', { refreshToken: pair.refreshToken }, bff);
-  check('refresh issues a new pair', r.status === 200 && r.body?.data?.refreshToken !== pair.refreshToken, r.status);
+  check(
+    'refresh issues a new pair',
+    r.status === 200 && r.body?.data?.refreshToken !== pair.refreshToken,
+    r.status,
+  );
   const rotated = r.body?.data;
 
   r = await api(null, 'POST', '/admin/auth/refresh', { refreshToken: pair.refreshToken }, bff);
-  check('the superseded token inside the grace window returns the SAME pair, not a second rotation',
-    r.status === 200 && r.body?.data?.refreshToken === rotated.refreshToken, r.body?.data?.refreshToken?.slice(0, 12));
+  check(
+    'the superseded token inside the grace window returns the SAME pair, not a second rotation',
+    r.status === 200 && r.body?.data?.refreshToken === rotated.refreshToken,
+    r.body?.data?.refreshToken?.slice(0, 12),
+  );
 
-  r = await api(null, 'GET', '/admin/me', null, { Authorization: `Bearer ${rotated.accessToken}`, ...bff });
+  r = await api(null, 'GET', '/admin/me', null, {
+    Authorization: `Bearer ${rotated.accessToken}`,
+    ...bff,
+  });
   check('the rotated access token works', r.status === 200, r.body?.error);
 
   // Past the window, the same token is a replay. Forced rather than waited for — and it takes
@@ -262,14 +394,26 @@ async function inviteFor(email, roleCode = 'super_admin') {
   check('outside the window it is treated as a replay', r.status === 401, r.status);
 
   const revoked = await prisma.adminSession.findUnique({ where: { id: rotated.sessionId } });
-  check('and the session is revoked with the reason recorded',
-    revoked?.revokedReason === 'REFRESH_REUSE', revoked?.revokedReason);
-  check('with the token hashes cleared, so a reactivation cannot revive them',
-    revoked?.refreshTokenHash === null && revoked?.previousRefreshTokenHash === null, revoked);
+  check(
+    'and the session is revoked with the reason recorded',
+    revoked?.revokedReason === 'REFRESH_REUSE',
+    revoked?.revokedReason,
+  );
+  check(
+    'with the token hashes cleared, so a reactivation cannot revive them',
+    revoked?.refreshTokenHash === null && revoked?.previousRefreshTokenHash === null,
+    revoked,
+  );
 
-  r = await api(null, 'GET', '/admin/me', null, { Authorization: `Bearer ${rotated.accessToken}`, ...bff });
-  check('the revoked session\'s access token fails on the very next request',
-    r.status === 401 && r.body?.error?.code === 'SESSION_REVOKED', r.body?.error);
+  r = await api(null, 'GET', '/admin/me', null, {
+    Authorization: `Bearer ${rotated.accessToken}`,
+    ...bff,
+  });
+  check(
+    "the revoked session's access token fails on the very next request",
+    r.status === 401 && r.body?.error?.code === 'SESSION_REVOKED',
+    r.body?.error,
+  );
 
   console.log('\n── Invitations that must not restore the wrong account ─────');
 
@@ -291,10 +435,18 @@ async function inviteFor(email, roleCode = 'super_admin') {
   });
   await prisma.user.delete({ where: { id: orphanTarget.id } });
 
-  r = await api(null, 'POST', '/admin/auth/invites/accept',
-    { token: orphanToken, firstName: 'Ghost', lastName: 'Account', password: PASSWORD }, bff);
-  check('an invite bound to an account that no longer exists is refused',
-    r.status === 404 && r.body?.error?.code === 'INVITE_INVALID', r.body?.error);
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/invites/accept',
+    { token: orphanToken, firstName: 'Ghost', lastName: 'Account', password: PASSWORD },
+    bff,
+  );
+  check(
+    'an invite bound to an account that no longer exists is refused',
+    r.status === 404 && r.body?.error?.code === 'INVITE_INVALID',
+    r.body?.error,
+  );
 
   const recreated = await prisma.user.findUnique({ where: { email: orphanTarget.email } });
   check('and no account was created from it', recreated === null, recreated?.id);
@@ -318,10 +470,16 @@ async function inviteFor(email, roleCode = 'super_admin') {
 
   // A staff row trying to sign in as a member. The email-code flow has no password and no second
   // factor, so this was the way in that mattered.
-  const staffRow = await prisma.user.findUnique({ where: { id: admin.id }, select: { email: true } });
+  const staffRow = await prisma.user.findUnique({
+    where: { id: admin.id },
+    select: { email: true },
+  });
   r = await api(null, 'POST', '/auth/login', { email: staffRow.email });
-  check('a staff address cannot start the member sign-in flow',
-    r.status === 401 || r.status === 403 || r.status === 404, r.status);
+  check(
+    'a staff address cannot start the member sign-in flow',
+    r.status === 401 || r.status === 403 || r.status === 404,
+    r.status,
+  );
 
   const forged = jwt.sign(
     { sub: admin.id, sid: admin.sessionId, typ: 'admin_access', role: 'super_admin' },
@@ -338,7 +496,10 @@ async function inviteFor(email, roleCode = 'super_admin') {
     { expiresIn: '1h', issuer: 'circl-api', audience: 'circl-app', algorithm: 'HS256' },
   );
 
-  r = await api(null, 'GET', '/admin/me', null, { Authorization: `Bearer ${wrongAudience}`, ...bff });
+  r = await api(null, 'GET', '/admin/me', null, {
+    Authorization: `Bearer ${wrongAudience}`,
+    ...bff,
+  });
   check('and so is one with the wrong audience, even correctly signed', r.status === 401, r.status);
 
   console.log('\n── Permissions deny by default ─────────────────────────────');
@@ -349,8 +510,11 @@ async function inviteFor(email, roleCode = 'super_admin') {
   check('support can read their own account', r.status === 200, r.body?.error);
 
   r = await api(null, 'GET', '/admin/team', null, adminHeaders(support));
-  check('but not the team, which needs team:read',
-    r.status === 403 && r.body?.data?.requires?.includes('team:read'), r.body);
+  check(
+    'but not the team, which needs team:read',
+    r.status === 403 && r.body?.data?.requires?.includes('team:read'),
+    r.body,
+  );
 
   r = await api(null, 'GET', '/admin/moderation/queue', null, adminHeaders(support));
   check('nor the moderation queue', r.status === 403, r.status);
@@ -373,37 +537,56 @@ async function inviteFor(email, roleCode = 'super_admin') {
     orderBy: { occurredAt: 'desc' },
   });
 
-  check('signing in, enrolling and a refresh replay are all recorded',
+  check(
+    'signing in, enrolling and a refresh replay are all recorded',
     ['auth.login_success', 'auth.mfa_enrolled', 'auth.refresh_reuse'].every(action =>
-      entries.some(entry => entry.action === action)),
-    entries.map(entry => entry.action));
+      entries.some(entry => entry.action === action),
+    ),
+    entries.map(entry => entry.action),
+  );
 
   const login = entries.find(entry => entry.action === 'auth.login_success');
-  check('an entry carries its actor, area, address and request id',
-    login?.actorId && login?.area === 'AUTH' && login?.ip && login?.requestId, {
-      actorId: !!login?.actorId, area: login?.area, ip: !!login?.ip, requestId: !!login?.requestId });
+  check(
+    'an entry carries its actor, area, address and request id',
+    login?.actorId && login?.area === 'AUTH' && login?.ip && login?.requestId,
+    {
+      actorId: !!login?.actorId,
+      area: login?.area,
+      ip: !!login?.ip,
+      requestId: !!login?.requestId,
+    },
+  );
 
   const failures = await prisma.auditLog.findMany({
     where: { occurredAt: { gte: runStartedAt }, action: 'auth.login_failed' },
     orderBy: { occurredAt: 'desc' },
   });
-  check('every failed sign-in records a hash of the address, and never the address',
+  check(
+    'every failed sign-in records a hash of the address, and never the address',
     failures.length > 0 &&
       failures.every(entry => typeof entry.metadata?.emailHash === 'string') &&
       !JSON.stringify(failures.map(entry => entry.metadata)).includes('@'),
-    failures.slice(0, 2).map(entry => entry.metadata));
+    failures.slice(0, 2).map(entry => entry.metadata),
+  );
 
   let refused = null;
   try {
     await prisma.auditLog.update({ where: { id: login.id }, data: { reason: 'tampered' } });
-  } catch (error) { refused = error; }
-  check('the audit trail refuses to be rewritten, in the database', refused !== null,
-    refused ? 'refused' : 'ALLOWED');
+  } catch (error) {
+    refused = error;
+  }
+  check(
+    'the audit trail refuses to be rewritten, in the database',
+    refused !== null,
+    refused ? 'refused' : 'ALLOWED',
+  );
 
   refused = null;
   try {
     await prisma.auditLog.delete({ where: { id: login.id } });
-  } catch (error) { refused = error; }
+  } catch (error) {
+    refused = error;
+  }
   check('and refuses to be deleted', refused !== null, refused ? 'refused' : 'ALLOWED');
 
   await prisma.user.deleteMany({ where: { email } });

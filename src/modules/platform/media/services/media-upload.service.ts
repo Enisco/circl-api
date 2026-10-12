@@ -7,12 +7,40 @@ import { MediaService, StorageProvider } from '../../shared';
 import { CreateUploadDto, UploadFileDto } from '../dtos/create-upload.dto';
 
 export interface UploadTicket {
+  /**
+   * The media row's id.
+   *
+   * Everything that attaches a *photo* works in keys (0.11.2), and that stays. Supporting
+   * documents are referenced by id instead — `documentIds` on a listing,
+   * `documents/:documentId` for a reviewer — because a document is a record with a decision
+   * attached to it rather than a frame in a gallery. Without this on the ticket there was no way
+   * for a client to learn the id it is required to send: a declared input nothing could populate.
+   */
+  id: string;
   /** The object key. */
   key: string;
   uploadUrl: string;
   uploadHeaders?: Record<string, string>;
   expiresAt: string;
 }
+
+/**
+ * PDFs, for supporting documents and nothing else (§2.9).
+ *
+ * Scoped to `VERIFICATION` on purpose. A PDF is a program as much as a document — it can carry
+ * JavaScript, embedded files and remote references — so the only place one is accepted is the one
+ * place a human opens it deliberately, behind staff authentication, from a private prefix, with
+ * `Content-Disposition: attachment`. Letting one into `COMMUNITY` would put it in a feed.
+ */
+const DOCUMENT_PURPOSES: MediaPurpose[] = [MediaPurpose.VERIFICATION];
+const DOCUMENT_TYPES = ['application/pdf'];
+
+/**
+ * Everything a supporting document may be. Narrower than the general image list on purpose: HEIC
+ * and WebP are fine for an avatar and are not what a reviewer should be handed, and the content
+ * check downstream only knows these three signatures.
+ */
+const VERIFICATION_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
 
 /** Orphan media is deleted after 24 hours if never attached (0.11.1). */
 const ORPHAN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -41,7 +69,7 @@ export class MediaUploadService {
     const tickets: UploadTicket[] = [];
 
     for (const [index, file] of dto.files.entries()) {
-      const type = this.assertType(file, index);
+      const type = this.assertType(file, dto.purpose, index);
 
       this.assertSize(file, type, index);
       this.assertAudioFields(file, type, index);
@@ -50,13 +78,15 @@ export class MediaUploadService {
       const storageKey = this.mintKey(dto.purpose, userId, file.mimeType);
       const presigned = await this.storage.presignUpload(storageKey, file.mimeType, file.byteSize);
 
-      await this.database.media.create({
+      const row = await this.database.media.create({
+        select: { id: true },
         data: {
           uploadedById: userId,
           type,
           purpose: dto.purpose,
           status: MediaStatus.PENDING,
           mimeType: file.mimeType,
+          fileName: file.fileName?.trim() || null,
           byteSize: file.byteSize,
           storageKey,
           // Marked clean up front when no scanner is deployed, so the attach gate in MediaService is a no-op until MEDIA_SCAN_REQUIRED is on.
@@ -68,6 +98,7 @@ export class MediaUploadService {
       });
 
       tickets.push({
+        id: row.id,
         key: storageKey,
         uploadUrl: presigned.uploadUrl,
         uploadHeaders: presigned.uploadHeaders,
@@ -86,7 +117,49 @@ export class MediaUploadService {
     return `${PREFIXES[purpose]}/${userId}/${filename}`;
   }
 
-  private assertType(file: UploadFileDto, index: number): MediaType {
+  private assertType(file: UploadFileDto, purpose: MediaPurpose, index: number): MediaType {
+    if (DOCUMENT_TYPES.includes(file.mimeType)) {
+      if (!DOCUMENT_PURPOSES.includes(purpose)) {
+        throw ApiException.unprocessable(
+          ApiErrorCode.MEDIA_TYPE_NOT_ALLOWED,
+          'PDFs can only be uploaded as supporting documents.',
+          {
+            details: [
+              {
+                field: `files[${index}].mimeType`,
+                message: 'PDFs are accepted for VERIFICATION only.',
+              },
+            ],
+          },
+        );
+      }
+
+      return MediaType.DOCUMENT;
+    }
+
+    // A supporting document is a PDF, a PNG or a JPEG and nothing else (§2.9) — so the refusal
+    // happens **here**, when the file is picked, rather than at submit.
+    //
+    // Without this the wider image list applied: a HEIC, which is what an iPhone's photo library
+    // hands over by default, uploaded perfectly happily and was then refused by
+    // `ListingDocumentService.prepare` when the member pressed Submit. The member would have filled
+    // in the whole form, watched four files upload, and been told at the last step that one of them
+    // was never going to work — with no clue which picker to avoid next time.
+    if (DOCUMENT_PURPOSES.includes(purpose) && !VERIFICATION_TYPES.includes(file.mimeType)) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.MEDIA_TYPE_NOT_ALLOWED,
+        'Supporting documents must be a PDF, a PNG or a JPEG.',
+        {
+          details: [
+            {
+              field: `files[${index}].mimeType`,
+              message: `${file.mimeType} is not accepted here. Use a PDF, a PNG or a JPEG.`,
+            },
+          ],
+        },
+      );
+    }
+
     const type = MediaService.typeFor(file.mimeType);
 
     if (!type) {
@@ -174,6 +247,7 @@ const EXTENSIONS: Record<string, string> = {
   'audio/x-m4a': '.m4a',
   'audio/mp4': '.m4a',
   'audio/aac': '.aac',
+  'application/pdf': '.pdf',
 };
 
 const extensionFor = (mimeType: string): string => EXTENSIONS[mimeType] ?? '';

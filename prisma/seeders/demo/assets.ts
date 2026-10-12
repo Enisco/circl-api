@@ -2,7 +2,10 @@ import { createHash } from 'crypto';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { videoMetadata, videoMetadataFromTail } from '../../../src/modules/platform/media/derivation/video-metadata';
+import {
+  videoMetadata,
+  videoMetadataFromTail,
+} from '../../../src/modules/platform/media/derivation/video-metadata';
 
 /**
  * Real photographs and real clips for the demo, from Flutter's public asset repository.
@@ -51,7 +54,10 @@ export const videoFor = (label: string): string => {
 const CACHE = join(tmpdir(), 'circl-seed-assets');
 
 const cachePathFor = (path: string): string =>
-  join(CACHE, createHash('sha256').update(path).digest('hex').slice(0, 16) + '-' + path.split('/').pop());
+  join(
+    CACHE,
+    createHash('sha256').update(path).digest('hex').slice(0, 16) + '-' + path.split('/').pop(),
+  );
 
 /**
  * The bytes, or null when they cannot be had. Null is not a failure: the seed must not need the

@@ -70,10 +70,27 @@ export interface MatrixChart {
   cells: Num[][];
   /** `[row, col]` pairs whose value was withheld, so the portal can shade them. */
   suppressed: Array<[number, number]>;
+  /**
+   * The period the values actually cover, when it is not the one the caller asked for.
+   *
+   * `demandGaps` reads scores a nightly job computed over its own window, so the date picker above
+   * it does not control them. Without saying so, a staff member who narrows the range to last week
+   * and sees the numbers stay put concludes the chart is broken — or worse, does not notice and
+   * reads a month-old signal as last week's.
+   */
+  window?: { from: string; to: string; computedAt: string };
 }
 
 export interface FunnelChart {
   kind: 'funnel';
+  /**
+   * What the steps count.
+   *
+   * Carried for the same reason every other shape carries it: the suppressor applies the
+   * small-number floor only to counts of **members**. Without it, a funnel of deal stages had the
+   * member floor applied to counts of deals and came back with holes in the middle.
+   */
+  unit: Unit;
   steps: Array<{ key: string; label: string; value: Num; fromPrevious: Num; fromStart: Num }>;
 }
 
@@ -85,8 +102,17 @@ export interface CohortChart {
 
 export interface TableChart<Row = Record<string, unknown>> {
   kind: 'table';
+  /**
+   * A column's `unit` is what lets the suppressor find the member counts in a table.
+   *
+   * Every other shape declares one unit for the whole chart; a table's columns each have their
+   * own, so the unit has to live here. A column of member counts left without it is a column the
+   * floor cannot see — which is how `topGuides` shipped showing "read by 3 members".
+   */
   columns: Array<{ key: string; label: string; unit?: Unit }>;
   rows: Row[];
+  /** Set when the rows were withheld rather than absent, so an empty table can say which it is. */
+  suppressed?: true;
 }
 
 export interface MapChart {

@@ -40,7 +40,7 @@ const PARTIAL_UNIQUE = [
 
 /* Not unique, but just as invisible to Prisma, and just as quiet when it goes: the media sweep
  * reads it to find what it has not measured yet. It was dropped once and nothing noticed. */
-const PARTIAL_PLAIN = ['media_derived_at_idx'];
+const PARTIAL_PLAIN = ['media_derived_at_idx', 'user_sessions_app_version_idx'];
 
 (async () => {
   const rows = await prisma.$queryRaw`
@@ -52,37 +52,47 @@ const PARTIAL_PLAIN = ['media_derived_at_idx'];
   for (const name of TRIGRAM) {
     check(`${name} exists`, byName.has(name), 'missing — a q= filter just became a table scan');
   }
-  check('all fifteen are GIN over gin_trgm_ops',
-    TRIGRAM.every(name => /USING gin/i.test(byName.get(name) ?? '')
-      && /gin_trgm_ops/.test(byName.get(name) ?? '')),
-    TRIGRAM.filter(name => !/gin_trgm_ops/.test(byName.get(name) ?? '')));
+  check(
+    'all fifteen are GIN over gin_trgm_ops',
+    TRIGRAM.every(
+      name =>
+        /USING gin/i.test(byName.get(name) ?? '') && /gin_trgm_ops/.test(byName.get(name) ?? ''),
+    ),
+    TRIGRAM.filter(name => !/gin_trgm_ops/.test(byName.get(name) ?? '')),
+  );
 
   console.log('\n── Uniqueness the schema cannot express ─────────────────────');
   for (const name of PARTIAL_UNIQUE) {
     check(`${name} exists`, byName.has(name), 'missing — the rule is no longer enforced');
   }
-  check('both are UNIQUE and partial',
+  check(
+    'both are UNIQUE and partial',
     PARTIAL_UNIQUE.every(name => {
       const def = byName.get(name) ?? '';
 
       return /CREATE UNIQUE INDEX/i.test(def) && /WHERE/i.test(def);
     }),
-    PARTIAL_UNIQUE.map(name => byName.get(name)));
+    PARTIAL_UNIQUE.map(name => byName.get(name)),
+  );
 
   // The predicate is the rule. This one was restored once as `WHERE booking_id IS NULL`, which is
   // "one review per pair for anything that is not a booking" — a different rule under the same
   // name, enforced for a fortnight, and invisible to a check that only asked whether WHERE existed.
-  check('the prior-work index restricts by CONTEXT, not by booking',
+  check(
+    'the prior-work index restricts by CONTEXT, not by booking',
     /context = 'PRIOR_WORK'/i.test(byName.get('reviews_one_prior_work_per_pair_idx') ?? ''),
-    byName.get('reviews_one_prior_work_per_pair_idx'));
+    byName.get('reviews_one_prior_work_per_pair_idx'),
+  );
 
   for (const name of PARTIAL_PLAIN) {
     check(`${name} exists`, byName.has(name), 'missing — the media sweep now scans the table');
   }
 
-  check('the one-offer-per-author index restricts to help offers',
+  check(
+    'the one-offer-per-author index restricts to help offers',
     /is_help_offer/i.test(byName.get('request_responses_one_offer_per_author_idx') ?? ''),
-    byName.get('request_responses_one_offer_per_author_idx'));
+    byName.get('request_responses_one_offer_per_author_idx'),
+  );
 
   console.log('\n── The extension they depend on ─────────────────────────────');
   const ext = await prisma.$queryRaw`SELECT extname FROM pg_extension WHERE extname = 'pg_trgm'`;

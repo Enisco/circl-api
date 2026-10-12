@@ -18,8 +18,9 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
-import { PageOptionsDto, ToBoolean } from '@/common';
+import { AdminPageOptionsDto, CsvArray, PageOptionsDto, ToBoolean } from '@/common';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 const Bool = ToBoolean;
@@ -63,33 +64,6 @@ export class DecideQueueItemDto {
   @MaxLength(1000)
   @IsOptional()
   reason?: string;
-}
-
-export class ListGuardCasesDto extends PageOptionsDto {
-  @ApiPropertyOptional({
-    enum: ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', 'ALL'],
-    default: 'OPEN',
-  })
-  @IsIn(['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', 'ALL'])
-  @IsOptional()
-  state?: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED' | 'ALL';
-
-  @ApiPropertyOptional({ enum: RiskLevel })
-  @IsEnum(RiskLevel)
-  @IsOptional()
-  minRiskLevel?: RiskLevel;
-}
-
-export class UpdateGuardCaseDto {
-  @ApiPropertyOptional({ enum: ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'] })
-  @IsIn(['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'])
-  @IsOptional()
-  state?: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
-
-  @ApiPropertyOptional({ description: 'A staff user id, or null to unassign.' })
-  @IsString()
-  @IsOptional()
-  assignedToId?: string | null;
 }
 
 export class UpsertTaxonomyTermDto {
@@ -141,7 +115,92 @@ export class UpsertTaxonomyTermDto {
   metadata?: Record<string, unknown>;
 }
 
-export class ListRiskTermsDto extends PageOptionsDto {}
+export class DraftTermDto {
+  @ApiProperty({ description: 'A RiskCategory code.' })
+  @Trim()
+  @IsString()
+  category: string;
+
+  @ApiProperty({ maxLength: 120 })
+  @Trim()
+  @IsString()
+  @MaxLength(120)
+  pattern: string;
+
+  @ApiProperty({ minimum: 1, maximum: 100 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  weight: number;
+}
+
+export const RISK_TERM_SORTS = [
+  'pattern',
+  'weight',
+  'hitCount',
+  'falsePositiveRate',
+  'lastHitAt',
+] as const;
+
+/** §5.13's list query. */
+export class ListRiskTermsDto extends AdminPageOptionsDto {
+  @ApiPropertyOptional({
+    description: 'Comma-separated RiskCategory codes.',
+    isArray: true,
+    type: String,
+  })
+  @CsvArray()
+  @IsString({ each: true })
+  @IsOptional()
+  category?: string[];
+
+  @ApiPropertyOptional({ description: 'Only the live phrases, or only the retired ones.' })
+  @ToBoolean()
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
+
+  @ApiPropertyOptional({
+    enum: RISK_TERM_SORTS,
+    default: 'pattern',
+    description:
+      '`falsePositiveRate` sorts the terms wasting reviewers’ time to the top, which is what the ' +
+      'screen is for.',
+  })
+  @IsIn([...RISK_TERM_SORTS])
+  @IsOptional()
+  declare sort?: string;
+}
+
+/** §5.13's phrase tester. */
+export class TestPhraseDto {
+  @ApiProperty({ maxLength: 5000 })
+  @Trim()
+  @IsString()
+  @MaxLength(5000)
+  text: string;
+
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      'Run the classifier too. Off by default: it is a paid call per test, and a lexicon ' +
+      'question is usually a lexicon question.',
+  })
+  @ToBoolean()
+  @IsBoolean()
+  @IsOptional()
+  includeClassifier?: boolean;
+
+  @ApiPropertyOptional({
+    type: DraftTermDto,
+    description: 'A phrase that has not been saved, so a weight can be tried before it is live.',
+  })
+  @ValidateNested()
+  @Type(() => DraftTermDto)
+  @IsOptional()
+  draftTerm?: DraftTermDto;
+}
 
 export class UpsertRiskTermDto {
   @ApiProperty({ description: 'A RiskCategory code.' })

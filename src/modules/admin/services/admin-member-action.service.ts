@@ -889,6 +889,22 @@ export class AdminMemberActionService {
   }
 
   /**
+   * Where the member stands on strikes, and whether the portal should prompt for a suspension.
+   *
+   * Public because every decide path reports it back (§5.9's decide response) and the threshold is
+   * configuration — a second place reading `safety.suggestSuspensionAtStrikes` is a second place
+   * that can be changed and missed.
+   */
+  async strikeStanding(
+    userId: string,
+  ): Promise<{ authorActiveStrikes: number; suggestSuspension: boolean }> {
+    const threshold = await this.config.get(SYSTEM_CONFIG_KEYS.SUGGEST_SUSPENSION_AT_STRIKES);
+    const activeStrikes = await this.enforcement.activeStrikeCount(userId);
+
+    return { authorActiveStrikes: activeStrikes, suggestSuspension: activeStrikes >= threshold };
+  }
+
+  /**
    * Records a strike and tells the member.
    *
    * A warning *is* a strike plus a notification — the same row, the difference being whether
@@ -1113,14 +1129,37 @@ export class AdminMemberActionService {
    * suspension half-applied because an email bounced is worse than a suspension nobody was told
    * about — which the audit entry records either way.
    */
-  private tellMember(userId: string, message: { title: string; body: string }): void {
+  /**
+   * The in-app notice a member gets about something staff did (§7.3's reporter outcome, and the
+   * warning and suspension notices). Public because the report case path tells reporters the
+   * same way, and a second notification shape for the same kind of message would drift.
+   */
+  notifyMember(userId: string, message: MemberNotice): void {
+    this.tellMember(userId, message);
+  }
+
+  /**
+   * One envelope for everything staff tell a member about their account.
+   *
+   * `route` is the caller's to set, and most of these do not set one. It used to be hardcoded to
+   * `/support` for all of them, which was a route the app does not have: `NotificationDestination`
+   * resolves an unknown path to nothing, so every one of these rows marked itself read and went
+   * nowhere. A dead default is worse than none, because it reads at the call site as though a
+   * destination had been thought about.
+   *
+   * So: nothing by default, and a route only where there is something at the other end to do. A
+   * warning, a suspension and an appeal outcome are all read in the row itself — the appeal route
+   * is an email (§13.3), not a screen — and a row that opens nothing is the honest rendering of
+   * that. The listing rows are the exception, and they say where they go.
+   */
+  private tellMember(userId: string, message: MemberNotice): void {
     this.notifications.raise({
       userId,
       kind: NotificationKind.MODERATION,
       categoryCode: 'ACCOUNT',
       title: message.title,
       body: message.body,
-      route: '/support',
+      route: message.route ?? null,
     });
   }
 
@@ -1144,6 +1183,14 @@ export class AdminMemberActionService {
 
     return actorId;
   }
+}
+
+/** What a section hands over when staff have something to tell a member about their account. */
+interface MemberNotice {
+  title: string;
+  body: string;
+  /** Where it opens, for the few that have somewhere. Nothing means the row is the whole message. */
+  route?: string | null;
 }
 
 /** The profile columns an edit can touch, and therefore the ones a `before` has to read. */

@@ -6,6 +6,7 @@ import {
   MatrixChart,
   Num,
   Point,
+  TableChart,
   TimeSeriesChart,
 } from './chart.types';
 
@@ -71,6 +72,8 @@ export const suppressChart = (chart: Chart): Chart => {
       return MEMBER_UNITS.has(chart.unit) ? suppressMatrix(chart) : chart;
     case 'map':
       return suppressMap(chart);
+    case 'table':
+      return suppressTable(chart);
     case 'cohort':
       return {
         ...chart,
@@ -81,14 +84,16 @@ export const suppressChart = (chart: Chart): Chart => {
         ),
       };
     case 'funnel':
-      return {
-        ...chart,
-        steps: chart.steps.map(step =>
-          suppress(step.value)
-            ? { ...step, value: null, fromPrevious: null, fromStart: null }
-            : step,
-        ),
-      };
+      return MEMBER_UNITS.has(chart.unit)
+        ? {
+            ...chart,
+            steps: chart.steps.map(step =>
+              suppress(step.value)
+                ? { ...step, value: null, fromPrevious: null, fromStart: null }
+                : step,
+            ),
+          }
+        : chart;
     case 'group':
       return {
         ...chart,
@@ -165,6 +170,42 @@ const suppressMatrix = (chart: MatrixChart): MatrixChart => {
 
   return { ...chart, cells, suppressed: hidden };
 };
+
+/**
+ * A table, cell by cell, on the units its columns declare.
+ *
+ * Every other shape has one unit for the whole chart, so the switch above can decide a table's
+ * fate in one line. A table cannot: `topGuides` is a title, a topic, a count of reads and a count
+ * of *readers*, and only the last of those is about people. So this is the one shape where the
+ * floor has to look at each column.
+ *
+ * It had been falling through to `default` and returning unchanged, which is how a guide read by
+ * three members shipped with the number on it. Where a whole row must go rather than one cell —
+ * `topTerms` drops a term fewer than ten people searched, because the term itself is the
+ * disclosure — the query omits it, since only the query knows what the row is about.
+ */
+const suppressTable = (chart: TableChart): TableChart => {
+  const memberColumns = chart.columns
+    .filter(column => MEMBER_UNITS.has(column.unit ?? ''))
+    .map(column => column.key);
+
+  if (!memberColumns.length) return chart;
+
+  return {
+    ...chart,
+    rows: chart.rows.map(row => {
+      const hidden = memberColumns.filter(key => suppress(asNum(row[key])));
+
+      return hidden.length
+        ? { ...row, ...Object.fromEntries(hidden.map(key => [key, null])) }
+        : row;
+    }),
+  };
+};
+
+/** A table cell holds whatever the query returned, and only a finite number counts as a count. */
+const asNum = (value: unknown): Num =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
 
 const suppressMap = (chart: MapChart): MapChart => ({
   ...chart,
@@ -256,6 +297,13 @@ const blank = (chart: Chart): Chart => {
           fromStart: null,
         })),
       };
+    case 'table':
+      // The rows go entirely, not cell by cell. Under the population floor every row is about one
+      // of fewer than ten identifiable people, and a table's non-numeric columns are the
+      // disclosure as much as its numbers are — a guide title, a shop name, a search term. The
+      // columns stay so the portal still draws a header, and `suppressed` tells it that the
+      // emptiness is a decision rather than an absence of data.
+      return { ...chart, rows: [], suppressed: true };
     case 'gauge':
       return { ...chart, value: null, previous: null };
     case 'group':

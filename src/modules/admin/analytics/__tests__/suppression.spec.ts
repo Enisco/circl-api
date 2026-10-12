@@ -1,4 +1,4 @@
-import { BreakdownChart, Chart, KpiChart, MatrixChart } from '../chart.types';
+import { BreakdownChart, Chart, KpiChart, MatrixChart, TableChart } from '../chart.types';
 import { suppressChart, suppressEverything } from '../suppression';
 
 const kpi = (value: number | null, previous: number | null = null): KpiChart => ({
@@ -140,6 +140,73 @@ describe('suppressChart', () => {
     });
   });
 
+  /**
+   * A table is the one shape whose unit is per-column, so it is the one shape the floor can miss
+   * entirely — and did. `topGuides` carries a `uniqueReaders` column of member counts and shipped
+   * showing "3".
+   */
+  describe('tables', () => {
+    const guides = (readers: number): TableChart => ({
+      kind: 'table',
+      columns: [
+        { key: 'title', label: 'Title' },
+        { key: 'reads', label: 'Reads', unit: 'count' },
+        { key: 'uniqueReaders', label: 'Readers', unit: 'members' },
+      ],
+      rows: [{ title: 'Renting in Leeds', reads: 48, uniqueReaders: readers }],
+    });
+
+    it('withholds a member count below the floor', () => {
+      expect((suppressChart(guides(3)) as TableChart).rows[0]).toEqual({
+        title: 'Renting in Leeds',
+        reads: 48,
+        uniqueReaders: null,
+      });
+    });
+
+    it('leaves the other columns of that row alone', () => {
+      // The row stays readable: it is the count of people that is withheld, not the guide.
+      const row = (suppressChart(guides(3)) as TableChart).rows[0];
+
+      expect(row.title).toBe('Renting in Leeds');
+      expect(row.reads).toBe(48);
+    });
+
+    it('leaves a member count at the floor alone', () => {
+      expect((suppressChart(guides(10)) as TableChart).rows[0].uniqueReaders).toBe(10);
+    });
+
+    it('leaves zero alone, because zero names nobody', () => {
+      expect((suppressChart(guides(0)) as TableChart).rows[0].uniqueReaders).toBe(0);
+    });
+
+    it('leaves a table with no member column untouched, including small counts', () => {
+      const shops: TableChart = {
+        kind: 'table',
+        columns: [
+          { key: 'name', label: 'Name' },
+          { key: 'enquiries', label: 'Enquiries', unit: 'count' },
+        ],
+        rows: [{ name: 'Mama Put', enquiries: 2 }],
+      };
+
+      expect(suppressChart(shops)).toBe(shops);
+    });
+
+    it('ignores a cell that is not a number, rather than nulling it', () => {
+      const odd: TableChart = {
+        kind: 'table',
+        columns: [{ key: 'uniqueReaders', label: 'Readers', unit: 'members' }],
+        rows: [{ uniqueReaders: null }, { uniqueReaders: '4' }],
+      };
+
+      expect((suppressChart(odd) as TableChart).rows).toEqual([
+        { uniqueReaders: null },
+        { uniqueReaders: '4' },
+      ]);
+    });
+  });
+
   describe('groups', () => {
     it('reaches inside, because a KPI group is where the sparklines live', () => {
       const group: Chart = { kind: 'group', items: { a: kpi(3), b: kpi(40) } };
@@ -192,6 +259,28 @@ describe('suppressEverything (the population floor)', () => {
 
   it('empties a sparkline rather than leaving nulls that still show its length', () => {
     expect(suppressEverything({ a: kpi(7) }).a).toMatchObject({ sparkline: [] });
+  });
+
+  /**
+   * The rows go entirely. A table's non-numeric columns are the disclosure as much as its numbers:
+   * under the floor, a guide title or a search term is a fact about one of fewer than ten people.
+   */
+  it('drops a table\u2019s rows and says it did, keeping the header', () => {
+    const table: TableChart = {
+      kind: 'table',
+      columns: [
+        { key: 'term', label: 'Term' },
+        { key: 'searches', label: 'Searches', unit: 'count' },
+      ],
+      rows: [{ term: 'immigration solicitor', searches: 4 }],
+    };
+
+    expect(suppressEverything({ t: table }).t).toEqual({
+      kind: 'table',
+      columns: table.columns,
+      rows: [],
+      suppressed: true,
+    });
   });
 
   it('marks every matrix cell as withheld', () => {

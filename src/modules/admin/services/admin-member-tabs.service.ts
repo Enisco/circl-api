@@ -175,111 +175,171 @@ const memberRefSelect = {
  * member with four hundred long posts should not move four hundred long posts across the wire to
  * show twenty-five snippets.
  */
-const CONTENT_ARMS: Array<{ type: ReportTargetType; sql: (userId: string) => Prisma.Sql }> = [
+/**
+ * One definition of "a piece of content", answering two questions.
+ *
+ * The member content tab asks "what has this member written" and the command palette asks
+ * "what is the thing with this id". Both have to cover the same eleven tables, and a second
+ * list of eleven would drift the first time one of them gained a column — so each arm carries
+ * its shape plus the two columns a caller might filter on, and the caller supplies the
+ * predicate.
+ */
+const CONTENT_ARMS: Array<{
+  type: ReportTargetType;
+  /** The SELECT and its joins, up to but not including the WHERE. */
+  body: Prisma.Sql;
+  /** The column holding the author's user id, which is not always on the arm's own table. */
+  author: Prisma.Sql;
+  /** The column holding the content's own id. */
+  id: Prisma.Sql;
+}> = [
   {
     type: ReportTargetType.REQUEST,
-    sql: id => Prisma.sql`
+    body: Prisma.sql`
       SELECT 'REQUEST' AS target_type, r."id" AS id, r."title" AS title,
              LEFT(COALESCE(r."description", ''), 280) AS excerpt,
              r."visibility"::text AS visibility, r."deleted_at" AS deleted_at,
              r."created_at" AS created_at
-      FROM "community_requests" r WHERE r."author_id" = ${id}`,
+      FROM "community_requests" r`,
+    author: Prisma.sql`r."author_id"`,
+    id: Prisma.sql`r."id"`,
   },
   {
     type: ReportTargetType.OFFER,
-    sql: id => Prisma.sql`
+    body: Prisma.sql`
       SELECT 'OFFER' AS target_type, o."id" AS id, o."title" AS title,
              LEFT(o."description", 280) AS excerpt,
              o."visibility"::text AS visibility, o."deleted_at" AS deleted_at,
              o."created_at" AS created_at
-      FROM "community_offers" o WHERE o."author_id" = ${id}`,
+      FROM "community_offers" o`,
+    author: Prisma.sql`o."author_id"`,
+    id: Prisma.sql`o."id"`,
   },
   {
     type: ReportTargetType.UPDATE,
-    sql: id => Prisma.sql`
+    body: Prisma.sql`
       SELECT 'UPDATE' AS target_type, u."id" AS id, NULL::text AS title,
              LEFT(u."content", 280) AS excerpt,
              u."visibility"::text AS visibility, u."deleted_at" AS deleted_at,
              u."created_at" AS created_at
-      FROM "community_updates" u WHERE u."author_id" = ${id}`,
+      FROM "community_updates" u`,
+    author: Prisma.sql`u."author_id"`,
+    id: Prisma.sql`u."id"`,
   },
   {
     type: ReportTargetType.RESPONSE,
-    sql: id => Prisma.sql`
+    body: Prisma.sql`
       SELECT 'RESPONSE' AS target_type, rr."id" AS id, NULL::text AS title,
              LEFT(rr."content", 280) AS excerpt,
              NULL::text AS visibility, rr."deleted_at" AS deleted_at,
              rr."created_at" AS created_at
-      FROM "request_responses" rr WHERE rr."author_id" = ${id}`,
+      FROM "request_responses" rr`,
+    author: Prisma.sql`rr."author_id"`,
+    id: Prisma.sql`rr."id"`,
   },
   {
     type: ReportTargetType.UPDATE_REPLY,
-    sql: id => Prisma.sql`
+    body: Prisma.sql`
       SELECT 'UPDATE_REPLY' AS target_type, ur."id" AS id, NULL::text AS title,
              LEFT(ur."content", 280) AS excerpt,
              NULL::text AS visibility, ur."deleted_at" AS deleted_at,
              ur."created_at" AS created_at
-      FROM "update_replies" ur WHERE ur."author_id" = ${id}`,
+      FROM "update_replies" ur`,
+    author: Prisma.sql`ur."author_id"`,
+    id: Prisma.sql`ur."id"`,
   },
   {
     type: ReportTargetType.GUIDE,
-    sql: id => Prisma.sql`
+    body: Prisma.sql`
       SELECT 'GUIDE' AS target_type, g."id" AS id, g."title" AS title,
              LEFT(g."intro", 280) AS excerpt,
              NULL::text AS visibility, g."deleted_at" AS deleted_at,
              g."created_at" AS created_at
-      FROM "guides" g WHERE g."author_id" = ${id}`,
+      FROM "guides" g`,
+    author: Prisma.sql`g."author_id"`,
+    id: Prisma.sql`g."id"`,
   },
   {
     type: ReportTargetType.GROUP_POST,
-    sql: id => Prisma.sql`
+    body: Prisma.sql`
       SELECT 'GROUP_POST' AS target_type, gp."id" AS id, NULL::text AS title,
              LEFT(gp."content", 280) AS excerpt,
              NULL::text AS visibility, gp."deleted_at" AS deleted_at,
              gp."created_at" AS created_at
-      FROM "group_posts" gp WHERE gp."author_id" = ${id}`,
+      FROM "group_posts" gp`,
+    author: Prisma.sql`gp."author_id"`,
+    id: Prisma.sql`gp."id"`,
   },
   {
     type: ReportTargetType.GROUP_POST_REPLY,
-    sql: id => Prisma.sql`
+    body: Prisma.sql`
       SELECT 'GROUP_POST_REPLY' AS target_type, gr."id" AS id, NULL::text AS title,
              LEFT(gr."content", 280) AS excerpt,
              NULL::text AS visibility, gr."deleted_at" AS deleted_at,
              gr."created_at" AS created_at
-      FROM "group_post_replies" gr WHERE gr."author_id" = ${id}`,
+      FROM "group_post_replies" gr`,
+    author: Prisma.sql`gr."author_id"`,
+    id: Prisma.sql`gr."id"`,
   },
   {
     type: ReportTargetType.CONNECT_MEDIA,
-    sql: id => Prisma.sql`
+    body: Prisma.sql`
       SELECT 'CONNECT_MEDIA' AS target_type, cp."id" AS id, NULL::text AS title,
              LEFT(COALESCE(cp."caption", ''), 280) AS excerpt,
              NULL::text AS visibility, cp."deleted_at" AS deleted_at,
              cp."posted_at" AS created_at
       FROM "connect_posts" cp
-      JOIN "connect_profiles" cpr ON cpr."id" = cp."profile_id"
-      WHERE cpr."user_id" = ${id}`,
+      JOIN "connect_profiles" cpr ON cpr."id" = cp."profile_id"`,
+    author: Prisma.sql`cpr."user_id"`,
+    id: Prisma.sql`cp."id"`,
   },
   {
     type: ReportTargetType.CONNECT_STORY,
-    sql: id => Prisma.sql`
+    body: Prisma.sql`
       SELECT 'CONNECT_STORY' AS target_type, cs."id" AS id, NULL::text AS title,
              LEFT(COALESCE(cs."caption", ''), 280) AS excerpt,
              NULL::text AS visibility, cs."deleted_at" AS deleted_at,
              cs."posted_at" AS created_at
-      FROM "connect_stories" cs WHERE cs."user_id" = ${id}`,
+      FROM "connect_stories" cs`,
+    author: Prisma.sql`cs."user_id"`,
+    id: Prisma.sql`cs."id"`,
   },
   {
     type: ReportTargetType.STORE_ITEM,
-    sql: id => Prisma.sql`
+    body: Prisma.sql`
       SELECT 'STORE_ITEM' AS target_type, si."id" AS id, si."name" AS title,
              LEFT(COALESCE(si."description", ''), 280) AS excerpt,
              NULL::text AS visibility, si."deleted_at" AS deleted_at,
              si."created_at" AS created_at
       FROM "store_items" si
-      JOIN "stores" st ON st."id" = si."store_id"
-      WHERE st."owner_id" = ${id}`,
+      JOIN "stores" st ON st."id" = si."store_id"`,
+    author: Prisma.sql`st."owner_id"`,
+    id: Prisma.sql`si."id"`,
   },
 ];
+
+/** This member's content, which is what the content tab lists. */
+export const contentByAuthor = (
+  userId: string,
+): Array<{ type: ReportTargetType; sql: Prisma.Sql }> =>
+  CONTENT_ARMS.map(arm => ({
+    type: arm.type,
+    sql: Prisma.sql`${arm.body} WHERE ${arm.author} = ${userId}`,
+  }));
+
+/**
+ * The content with this id, whatever kind it is.
+ *
+ * Every arm is asked, because an id does not say what it belongs to. Eleven indexed primary-key
+ * lookups is a cheap way to answer that, and far cheaper than making the caller guess the type.
+ */
+export const contentById = (
+  contentId: string,
+): Array<{ type: ReportTargetType; sql: Prisma.Sql }> =>
+  CONTENT_ARMS.map(arm => ({
+    type: arm.type,
+    sql: Prisma.sql`${arm.body} WHERE ${arm.id} = ${contentId}`,
+  }));
 
 @Injectable()
 export class AdminMemberTabsService {
@@ -650,9 +710,9 @@ export class AdminMemberTabsService {
     await this.policy.assertIsMember(id);
     dto.assertDepth();
 
-    const arms = CONTENT_ARMS.filter(arm => !dto.targetType || arm.type === dto.targetType).map(
-      arm => arm.sql(id),
-    );
+    const arms = contentByAuthor(id)
+      .filter(arm => !dto.targetType || arm.type === dto.targetType)
+      .map(arm => arm.sql);
 
     if (!arms.length) return { data: [], meta: this.page(dto, 0) };
 

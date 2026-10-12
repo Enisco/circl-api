@@ -99,6 +99,9 @@ model User {
   reportsAbout      Report[]              @relation("ReportSubject")
   blocksMade        Block[]               @relation("Blocker")
   blocksReceived    Block[]               @relation("Blocked")
+  appeals           Appeal[]              @relation("AppealSubject")
+  reportCasesAbout  ReportCase[]          @relation("ReportCaseSubject")
+  reportCasesTaken  ReportCase[]          @relation("ReportCaseAssignee")
   queueSubjectOf    ModerationQueueItem[] @relation("QueueSubject")
   queueAssignedTo   ModerationQueueItem[] @relation("QueueAssignee")
   guardThreads      GuardThread[]
@@ -265,6 +268,11 @@ model UserProfile {
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  /// A held bio renders as empty publicly rather than hiding the profile (§4.5). The profile is
+  /// the member; one sentence of it being under review is not a reason to make the person
+  /// disappear.
+  bioVisibilityState ContentVisibilityState @default(VISIBLE) @map("bio_visibility_state")
 
   @@index([cityId])
   @@index([countryOfOriginCode])

@@ -14,6 +14,7 @@ import {
   authorSelect,
   CityService,
   MediaService,
+  PUBLIC_VISIBILITY,
   TaxonomyService,
   toAuthorView,
   toCityView,
@@ -85,9 +86,12 @@ export class BriefService {
     const brief = await this.load(userId, id);
     const city = brief.cityId ? await this.cities.find(brief.cityId) : null;
 
+    // Smart Match is a recommendation, and the strongest one the platform makes: three names put
+    // in front of somebody about to hire. A limited or held listing is in neither (§6.5).
     const candidates = await this.database.professionalListing.findMany({
       where: {
         deletedAt: null,
+        ...PUBLIC_VISIBILITY,
         isAcceptingWork: true,
         userId: { not: userId },
         verificationStatus: { not: ListingVerificationStatus.DRAFT },
@@ -219,6 +223,7 @@ export class BriefService {
       );
     }
 
+    // visibility: the listing a match is about, after the brief's shortlist chose it.
     const listing = await this.database.professionalListing.findUnique({
       where: { id: dto.listingId },
     });

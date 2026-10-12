@@ -13,8 +13,17 @@ import { connectExtras, PEOPLE } from './people';
 
 /** The twelve in the picker. BRISTOL is deliberately absent: see EMPTY_CITY. */
 const CITIES = [
-  'MANCHESTER', 'LONDON', 'BIRMINGHAM', 'LEEDS', 'NOTTINGHAM', 'SHEFFIELD',
-  'LIVERPOOL', 'EDINBURGH', 'GLASGOW', 'CARDIFF', 'NEWCASTLE',
+  'MANCHESTER',
+  'LONDON',
+  'BIRMINGHAM',
+  'LEEDS',
+  'NOTTINGHAM',
+  'SHEFFIELD',
+  'LIVERPOOL',
+  'EDINBURGH',
+  'GLASGOW',
+  'CARDIFF',
+  'NEWCASTLE',
 ] as const;
 
 /**
@@ -92,7 +101,7 @@ const POSTS: Record<string, string[]> = {
   ],
   EDINBURGH: [
     'Nobody warned me the Festival makes the whole city unrecognisable for a month.',
-    'Arthur\'s Seat before work. Cold, steep, absolutely worth it.',
+    "Arthur's Seat before work. Cold, steep, absolutely worth it.",
     'Looking for other people doing a masters here who are not 22. Feeling my age in seminars.',
     'The rent jumps in August because of the Festival and comes back down in September. Learned that the expensive way.',
     'Found a Nigerian shop in Leith. Small, but it has everything that matters.',
@@ -126,41 +135,96 @@ const POSTS: Record<string, string[]> = {
 
 /** Requests per city. Two OPEN each at minimum, so "Near you" is never empty. */
 const REQUEST_TEMPLATES: Array<[string, string, string]> = [
-  ['BANK_ACCOUNT', 'Which bank actually opens an account without a utility bill in {city}?', 'I have my BRP and a tenancy agreement but no bill in my name. Two branches have turned me away already.'],
-  ['NHS_HEALTHCARE', 'Which GP surgeries in {city} are taking new patients?', 'I have been refused at two because of the catchment area and I am not sure what proof they actually need.'],
-  ['ACCOMMODATION', 'Is this rent normal for a one bed in {city}?', 'Been quoted a figure that seems high for the area and I have nobody local to sanity-check it against.'],
-  ['JOBS', 'Anyone hiring part time around {city}?', 'Available evenings and weekends, right to work in order, happy to start with anything.'],
-  ['MOVING_HELP', 'Need a hand moving a small flat in {city} on Saturday', 'Two suitcases, a mattress and some boxes. I can pay for petrol and lunch.'],
+  [
+    'BANK_ACCOUNT',
+    'Which bank actually opens an account without a utility bill in {city}?',
+    'I have my BRP and a tenancy agreement but no bill in my name. Two branches have turned me away already.',
+  ],
+  [
+    'NHS_HEALTHCARE',
+    'Which GP surgeries in {city} are taking new patients?',
+    'I have been refused at two because of the catchment area and I am not sure what proof they actually need.',
+  ],
+  [
+    'ACCOMMODATION',
+    'Is this rent normal for a one bed in {city}?',
+    'Been quoted a figure that seems high for the area and I have nobody local to sanity-check it against.',
+  ],
+  [
+    'JOBS',
+    'Anyone hiring part time around {city}?',
+    'Available evenings and weekends, right to work in order, happy to start with anything.',
+  ],
+  [
+    'MOVING_HELP',
+    'Need a hand moving a small flat in {city} on Saturday',
+    'Two suitcases, a mattress and some boxes. I can pay for petrol and lunch.',
+  ],
 ];
 
 /** Offers per city. */
 const OFFER_TEMPLATES: Array<[string, string, string, number | null]> = [
-  ['AIRPORT_PICKUP', 'Airport runs from {city}, any hour', 'I drive nights anyway. If your flight lands at 4am I would rather you were not waiting for the first bus.', null],
-  ['CV_REVIEW', 'Free CV read for anyone job hunting in {city}', 'I hire for a living. Send it over and I will tell you what a UK recruiter sees in the first ten seconds.', null],
-  ['TRANSLATION', 'Help with official letters in {city}', 'Council, NHS, landlord. I will tell you what it actually means rather than translating word for word.', 2500],
-  ['MOVING_HELP', 'Van and a spare pair of hands, {city} area', 'Weekends mostly. Cheaper than a removal firm and I will not break your things.', 4000],
+  [
+    'AIRPORT_PICKUP',
+    'Airport runs from {city}, any hour',
+    'I drive nights anyway. If your flight lands at 4am I would rather you were not waiting for the first bus.',
+    null,
+  ],
+  [
+    'CV_REVIEW',
+    'Free CV read for anyone job hunting in {city}',
+    'I hire for a living. Send it over and I will tell you what a UK recruiter sees in the first ten seconds.',
+    null,
+  ],
+  [
+    'TRANSLATION',
+    'Help with official letters in {city}',
+    'Council, NHS, landlord. I will tell you what it actually means rather than translating word for word.',
+    2500,
+  ],
+  [
+    'MOVING_HELP',
+    'Van and a spare pair of hands, {city} area',
+    'Weekends mostly. Cheaper than a removal firm and I will not break your things.',
+    4000,
+  ],
 ];
 
 /** Guides per city, on top of the national ones. */
 const GUIDE_TEMPLATES: Array<[string, string, string, string[]]> = [
-  ['HOUSING', 'Renting in {city} without a UK guarantor', 'Most agents will ask for a guarantor who owns UK property. Here is what to do when you do not have one.', [
-    'Ask directly whether they accept six months rent up front, and get the answer in writing before you pay anything.',
-    'A guarantor service costs roughly one week of rent and most agents accept them. Compare two before you commit.',
-    'An employer reference letter on headed paper does more work than people expect. Ask HR for one.',
-    'If an agent refuses every option and keeps the holding deposit, that is a complaint to the redress scheme they are legally required to belong to.',
-  ]],
-  ['HEALTH', 'Registering with a GP in {city}', 'You do not need proof of address or immigration status to register. Surgeries get this wrong regularly.', [
-    'Find your nearest surgeries on the NHS website and check which are accepting patients.',
-    'Fill in form GMS1. The address section is for their records, not an eligibility test.',
-    'If you are refused, ask for the refusal in writing. Most refusals stop at that point.',
-    'Register before you are ill. Getting an appointment as a new patient during an emergency is the worst time to be doing paperwork.',
-  ]],
-  ['MONEY', 'Council tax in {city}: who pays and who does not', 'Full time students are exempt, but only if they claim it. It does not happen automatically.', [
-    'Get a council tax certificate from your university. Most issue them from the student portal.',
-    'Upload it on the council website under student exemption.',
-    'If everyone in the property is a full time student the bill goes to zero. One non-student and it drops by 25 percent instead.',
-    'Bills already issued get cancelled and refunded once the exemption is applied, so do not panic about a demand letter.',
-  ]],
+  [
+    'HOUSING',
+    'Renting in {city} without a UK guarantor',
+    'Most agents will ask for a guarantor who owns UK property. Here is what to do when you do not have one.',
+    [
+      'Ask directly whether they accept six months rent up front, and get the answer in writing before you pay anything.',
+      'A guarantor service costs roughly one week of rent and most agents accept them. Compare two before you commit.',
+      'An employer reference letter on headed paper does more work than people expect. Ask HR for one.',
+      'If an agent refuses every option and keeps the holding deposit, that is a complaint to the redress scheme they are legally required to belong to.',
+    ],
+  ],
+  [
+    'HEALTH',
+    'Registering with a GP in {city}',
+    'You do not need proof of address or immigration status to register. Surgeries get this wrong regularly.',
+    [
+      'Find your nearest surgeries on the NHS website and check which are accepting patients.',
+      'Fill in form GMS1. The address section is for their records, not an eligibility test.',
+      'If you are refused, ask for the refusal in writing. Most refusals stop at that point.',
+      'Register before you are ill. Getting an appointment as a new patient during an emergency is the worst time to be doing paperwork.',
+    ],
+  ],
+  [
+    'MONEY',
+    'Council tax in {city}: who pays and who does not',
+    'Full time students are exempt, but only if they claim it. It does not happen automatically.',
+    [
+      'Get a council tax certificate from your university. Most issue them from the student portal.',
+      'Upload it on the council website under student exemption.',
+      'If everyone in the property is a full time student the bill goes to zero. One non-student and it drops by 25 percent instead.',
+      'Bills already issued get cancelled and refunded once the exemption is applied, so do not panic about a demand letter.',
+    ],
+  ],
 ];
 
 /** Not round. 47 and 12 read as real; 50 and 10 do not. */
@@ -273,12 +337,19 @@ export const seedCityFeeds = async (ctx: DemoSeedContext) => {
         ...(status === 'RESOLVED' ? { resolvedAt: hoursAgo(4 + index * 41) } : {}),
       };
 
-      await prisma.communityRequest.upsert({ where: { id }, update: data, create: { id, ...data } });
+      await prisma.communityRequest.upsert({
+        where: { id },
+        update: data,
+        create: { id, ...data },
+      });
       counts.requests += 1;
     }
 
     // ── Offers ───────────────────────────────────────────────────────────────
-    for (const [index, [categoryCode, title, description, priceFrom]] of OFFER_TEMPLATES.entries()) {
+    for (const [
+      index,
+      [categoryCode, title, description, priceFrom],
+    ] of OFFER_TEMPLATES.entries()) {
       const label = `${cityId}:${index}`;
       const id = seedId(`city-offer:${label}`);
       const author = AUTHORS[(cityIndex * 4 + index * 6 + 2) % AUTHORS.length];

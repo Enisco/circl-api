@@ -159,6 +159,15 @@ export class UserDirectoryService {
     return {
       deletedAt: null,
       isAnonymised: false,
+      // Staff accounts are not members, and this directory is member-facing: searching it should
+      // not return the people who moderate it. Until the portal's own accounts existed nothing in
+      // a development database had `isStaff`, so the omission never showed — the first four
+      // seeded staff accounts turned up in member search immediately, which is the staff roster
+      // leaking one name at a time to anybody who types a letter.
+      //
+      // A staff member who also wants to take part in the community has a member account for it,
+      // which is the ordinary arrangement and the one the permission model already assumes.
+      isStaff: false,
       // Exactly the rule the auth guard applies: SUSPENDED cannot hold a session, and everyone
       // else can. Anything stricter would hide members who are using the app right now.
       status: { not: UserAccountStatus.SUSPENDED },

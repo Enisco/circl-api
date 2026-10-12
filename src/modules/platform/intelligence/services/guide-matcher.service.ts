@@ -9,6 +9,7 @@ import {
   keywords,
   questionSignature,
 } from '@/common';
+import { PUBLIC_VISIBILITY } from '../../shared';
 
 export interface MatchCandidate {
   type: 'GUIDE' | 'RESOLVED_REQUEST';
@@ -76,6 +77,9 @@ export class GuideMatcherService {
     const guides = await this.database.guide.findMany({
       where: {
         deletedAt: null,
+        // Deflection is a recommendation: suggesting a held guide would publish it to the one
+        // member most likely to read it (§6.5).
+        ...PUBLIC_VISIBILITY,
         publishedAt: { not: null },
         OR: draftKeywords.slice(0, 6).map(word => ({
           OR: [
@@ -105,6 +109,7 @@ export class GuideMatcherService {
     const requests = await this.database.communityRequest.findMany({
       where: {
         deletedAt: null,
+        ...PUBLIC_VISIBILITY,
         status: RequestStatus.RESOLVED,
         categoryCode: input.categoryCode,
         replyCount: { gt: 0 },
@@ -139,6 +144,9 @@ export class GuideMatcherService {
     const requests = await this.database.communityRequest.findMany({
       where: {
         deletedAt: null,
+        // "How many people asked something similar" is a count shown to a member, so it counts
+        // what a member could have seen.
+        ...PUBLIC_VISIBILITY,
         categoryCode,
         createdAt: { gte: daysAgo(90) },
         ...(cityId ? { cityId } : {}),

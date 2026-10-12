@@ -1,10 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JobStage, JobState, Prisma, SystemMessageType, UserAccountStatus } from '@prisma/client';
 import { createHash } from 'crypto';
 import { CacheService, PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, Util } from '@/common';
 import { EventBusService, UserLoginOtpEvent } from '@/modules/infrastructure/events';
+import { LISTING_DOCUMENT_OWNER } from '../../shared';
+import { StorageProvider } from '../../media/storage';
 import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
+import { deletedAccountView } from '@/modules/core/auth/services/account-state.service';
 
 const CODE_TTL_SECONDS = 600;
 const RATE_LIMIT_PER_HOUR = 3;
@@ -27,22 +31,39 @@ export class AccountDeletionService {
     private readonly cache: CacheService,
     private readonly conversations: ConversationFactoryService,
     private readonly eventBus: EventBusService,
+    private readonly storage: StorageProvider,
+    private readonly config: ConfigService,
   ) {}
+
+  /**
+   * The 410 for an account that is already gone, carrying the payload every other path carries.
+   *
+   * These three used to throw a bare `gone(...)` with no `data`, so a client told to render from
+   * `data.state` found nothing there — the same gap §13.2 closed everywhere else. One helper, so
+   * the next refusal added here cannot be the one that forgets.
+   */
+  private alreadyDeleted(anonymisedAt?: Date | null): ApiException {
+    const supportEmail = this.config.get<string>('SUPPORT_EMAIL') ?? 'support@circl.app';
+    const view = deletedAccountView(anonymisedAt, supportEmail);
+
+    return ApiException.gone(
+      ApiErrorCode.ACCOUNT_ALREADY_DELETED,
+      view.message ?? 'This account has already been deleted.',
+      { data: view },
+    );
+  }
 
   /** Step 1: send a code to the address on the account. */
   async requestDeletion(userId: string) {
     const user = await this.database.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, firstName: true, isAnonymised: true },
+      select: { id: true, email: true, firstName: true, isAnonymised: true, anonymisedAt: true },
     });
 
     if (!user) throw ApiException.notFound('That account could not be found.');
 
     if (user.isAnonymised) {
-      throw ApiException.gone(
-        ApiErrorCode.ACCOUNT_ALREADY_DELETED,
-        'This account has already been deleted.',
-      );
+      throw this.alreadyDeleted(user.anonymisedAt);
     }
 
     const attempts = (await this.cache.get<number>(attemptsKey(userId))) ?? 0;
@@ -74,17 +95,14 @@ export class AccountDeletionService {
   async confirmDeletion(userId: string, code: string) {
     const user = await this.database.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, isAnonymised: true },
+      select: { id: true, email: true, isAnonymised: true, anonymisedAt: true },
     });
 
     if (!user) throw ApiException.notFound('That account could not be found.');
 
     if (user.isAnonymised) {
       // 410 rather than a confusing 404: the account existed, and it is gone.
-      throw ApiException.gone(
-        ApiErrorCode.ACCOUNT_ALREADY_DELETED,
-        'This account has already been deleted.',
-      );
+      throw this.alreadyDeleted(user.anonymisedAt);
     }
 
     const hashed = await this.cache.get<string>(codeKey(userId));
@@ -122,16 +140,13 @@ export class AccountDeletionService {
   async anonymiseOnBehalf(userId: string): Promise<void> {
     const user = await this.database.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, isAnonymised: true },
+      select: { id: true, email: true, isAnonymised: true, anonymisedAt: true },
     });
 
     if (!user) throw ApiException.notFound('That account could not be found.');
 
     if (user.isAnonymised) {
-      throw ApiException.gone(
-        ApiErrorCode.ACCOUNT_ALREADY_DELETED,
-        'This account has already been deleted.',
-      );
+      throw this.alreadyDeleted(user.anonymisedAt);
     }
 
     await this.anonymise(userId, user.email);
@@ -142,6 +157,8 @@ export class AccountDeletionService {
     const now = new Date();
     // One-way, so the same address cannot silently re-register onto the old record and a 410 can be returned rather than a confusing 404.
     const emailHash = createHash('sha256').update(email.toLowerCase()).digest('hex');
+    /** Collected inside the transaction, deleted after it commits. See the uploads block below. */
+    const storageKeys: string[] = [];
 
     await this.database.$transaction(async tx => {
       await this.closeOpenWork(tx, userId, now);
@@ -197,13 +214,34 @@ export class AccountDeletionService {
       // Every handset, not the current one: a deleted account must not keep pushing to a phone.
       await tx.pushDevice.deleteMany({ where: { userId } });
 
-      // ── Uploads: deleted from storage, not just dereferenced ─────────────── Their avatar, any identity document, and anything reserved but never attached.
-      await tx.media.deleteMany({
-        where: {
-          uploadedById: userId,
-          OR: [{ ownerType: null }, { ownerType: { in: ['AVATAR', 'IDENTITY_DOCUMENT'] } }],
-        },
-      });
+      // ── Uploads: the rows here, the objects after the commit ───────────────
+      //
+      // Their avatar, their supporting documents, and anything reserved but never attached.
+      // `LISTING_DOCUMENT` is the §2.9 set — qualification certificates, registration letters,
+      // insurance schedules — which the listing itself does not take with it: a listing is
+      // delisted rather than deleted, so without naming them here they would outlive the account
+      // attached to a soft-deleted row.
+      //
+      // The keys are read **before** the delete, because afterwards nothing points at the objects
+      // and they could never be found again. The comment here used to claim these were "deleted
+      // from storage, not just dereferenced" and no storage call existed: the rows went and the
+      // files stayed in the bucket for ever, which for an identity document is the opposite of
+      // what deleting an account is supposed to mean.
+      const uploads = {
+        uploadedById: userId,
+        OR: [
+          { ownerType: null },
+          { ownerType: { in: ['AVATAR', 'IDENTITY_DOCUMENT', LISTING_DOCUMENT_OWNER] } },
+        ],
+      };
+
+      storageKeys.push(
+        ...(await tx.media.findMany({ where: uploads, select: { storageKey: true } })).map(
+          row => row.storageKey,
+        ),
+      );
+
+      await tx.media.deleteMany({ where: uploads });
 
       // ── Connect: deleted outright, with every pending request both ways ────
       await tx.connectionRequest.deleteMany({
@@ -228,7 +266,21 @@ export class AccountDeletionService {
       // ── Everything else stays, re-attributed ─────────────────────────────── Posts, guides, comments, replies, reviews they wrote; messages they sent; reviews about them; moderation reports either way.
     });
 
-    this.logger.log(`Anonymised account ${userId}`);
+    // After the commit, deliberately. Objects deleted first and then a rollback would leave a live
+    // account whose files are gone; this order leaves, at worst, an object nothing points at.
+    // Failures are logged one by one rather than thrown: the account **is** deleted, and an
+    // exception here would report a destruction that happened as though it had not.
+    for (const key of storageKeys) {
+      try {
+        await this.storage.delete(key);
+      } catch (error) {
+        this.logger.error(
+          `Anonymised ${userId} but could not delete ${key}: ${(error as Error).message}`,
+        );
+      }
+    }
+
+    this.logger.log(`Anonymised account ${userId} and deleted ${storageKeys.length} upload(s)`);
   }
 
   /** Open work at the moment of deletion (0.15.4). */

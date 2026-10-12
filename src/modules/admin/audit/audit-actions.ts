@@ -73,6 +73,25 @@ export const AUDIT_ACTIONS = {
   'content.hidden': AuditArea.CONTENT,
   'content.removed': AuditArea.CONTENT,
   'content.restored': AuditArea.CONTENT,
+  /// §5.7: a reviewer asked for a fresh scan. Recorded even though nothing changed on the content,
+  /// because "who asked, and when" is what explains a verdict that moved without an edit.
+  'content.rescanned': AuditArea.CONTENT,
+  /// §5.7: a shop's compliance state. CONTENT rather than CONFIG — it is a decision about one
+  /// seller, and SUSPENDED takes them out of browse and search.
+  'store.compliance_changed': AuditArea.CONTENT,
+  // §2.9: approving a listing in a gated profession. CONTENT rather than SAFETY — nobody broke a
+  // rule, and the trail belongs beside the other decisions taken about a piece of content.
+  // §2.9: changing which professions are gated. CONFIG, not CONTENT — it is a platform setting,
+  // and it is the entry somebody will go looking for when a profession started or stopped holding
+  // its listings and nobody remembers agreeing to it.
+  'professions.gate_changed': AuditArea.CONFIG,
+  /// §2.9: a reviewer opened a member's qualification paper. Recorded because these are identity
+  /// documents and "who looked at my certificate" is a question a member is entitled to an answer
+  /// to. Throttled to one entry per staff member per document per fifteen minutes, so paging
+  /// through a PDF is one view rather than forty.
+  'listing.document_viewed': AuditArea.CONTENT,
+  'listing.review_approved': AuditArea.CONTENT,
+  'listing.review_declined': AuditArea.CONTENT,
   'guide.created': AuditArea.CONTENT,
   'guide.updated': AuditArea.CONTENT,
   'guide.published': AuditArea.CONTENT,
@@ -107,6 +126,10 @@ export const AUDIT_ACTIONS = {
   'support.replied': AuditArea.SUPPORT,
   'thread.access_granted': AuditArea.SUPPORT,
   'thread.read': AuditArea.SUPPORT,
+  /// §5.12's Guard thread read, kept apart from `thread.read` because the two are not the same
+  /// act: one is a support conversation, the other is somebody's private disclosure, and the
+  /// safety area is where that belongs.
+  'guard.thread_read': AuditArea.SAFETY,
   'managed.updated': AuditArea.SUPPORT,
   'managed.brief_placed': AuditArea.SUPPORT,
   'dispute.updated': AuditArea.SUPPORT,
@@ -129,7 +152,9 @@ export const AUDIT_ACTIONS = {
   'job.run': AuditArea.CONFIG,
 
   // ─── Exports and analytics ─────────────────────────────────────────────────
-  'export.created': AuditArea.EXPORTS,
+  // `requested`, not `created`, because that is the moment worth recording: the file is built by a
+  // worker minutes later, and the question the trail answers is who asked for which columns.
+  'export.requested': AuditArea.EXPORTS,
   'export.downloaded': AuditArea.EXPORTS,
   'analytics.exported': AuditArea.ANALYTICS,
 

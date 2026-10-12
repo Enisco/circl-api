@@ -40,8 +40,11 @@ const londonDay = at =>
     where: { id: member.id },
     select: { lastActiveAt: true },
   });
-  check('a new member has never been seen, and says so rather than guessing',
-    before?.lastActiveAt === null, before?.lastActiveAt);
+  check(
+    'a new member has never been seen, and says so rather than guessing',
+    before?.lastActiveAt === null,
+    before?.lastActiveAt,
+  );
 
   let r = await api(member.token, 'GET', '/users/profile', null, {
     'x-app-version': '3.4.1',
@@ -63,9 +66,14 @@ const londonDay = at =>
     where: { userId_day: { userId: member.id, day: today } },
   });
   check('with a row for the London day', day !== null, day);
-  check('carrying the platform and build they were on, as sent',
-    day?.platform === 'ANDROID' && day?.appVersion === '3.4.1', {
-      platform: day?.platform, appVersion: day?.appVersion });
+  check(
+    'carrying the platform and build they were on, as sent',
+    day?.platform === 'ANDROID' && day?.appVersion === '3.4.1',
+    {
+      platform: day?.platform,
+      appVersion: day?.appVersion,
+    },
+  );
 
   // Looked up where the write happens, not read off the request. The member strategy does not
   // load the profile, so taking the city from the authenticated user gave undefined every time
@@ -74,9 +82,11 @@ const londonDay = at =>
     where: { userId: member.id },
     select: { cityId: true },
   });
-  check('and the city they were in that day, not an empty column',
+  check(
+    'and the city they were in that day, not an empty column',
     day?.cityId !== null && day?.cityId === profile?.cityId,
-    { row: day?.cityId, profile: profile?.cityId });
+    { row: day?.cityId, profile: profile?.cityId },
+  );
 
   const firstSeen = day?.firstSeenAt;
 
@@ -89,9 +99,11 @@ const londonDay = at =>
   const second = await prisma.userDailyActivity.findUnique({
     where: { userId_day: { userId: member.id, day: today } },
   });
-  check('a second visit the same day does not overwrite the first',
+  check(
+    'a second visit the same day does not overwrite the first',
     second?.firstSeenAt?.getTime() === firstSeen?.getTime() && second?.appVersion === '3.4.1',
-    { firstSeenAt: second?.firstSeenAt, appVersion: second?.appVersion });
+    { firstSeenAt: second?.firstSeenAt, appVersion: second?.appVersion },
+  );
 
   const dayCount = await prisma.userDailyActivity.count({ where: { userId: member.id } });
   check('and there is still exactly one row for the day', dayCount === 1, dayCount);
@@ -126,9 +138,11 @@ const londonDay = at =>
     },
   });
   check('no live member is left without a signup method', nullMembers === 0, nullMembers);
-  check('and staff have none, because staff are invited rather than signing up',
+  check(
+    'and staff have none, because staff are invited rather than signing up',
     (await prisma.user.count({ where: { isStaff: true, signupMethod: { not: null } } })) === 0,
-    'a staff account claims a signup method');
+    'a staff account claims a signup method',
+  );
 
   console.log('\n── A suspension ends when it said it would ─────────────────');
 
@@ -156,7 +170,9 @@ const londonDay = at =>
   r = await api(subject.token, 'GET', '/users/profile');
   check('a suspended member cannot use the app', r.status === 403, r.status);
 
-  const { EnforcementService } = require('../../dist/src/modules/admin/services/enforcement.service');
+  const {
+    EnforcementService,
+  } = require('../../dist/src/modules/admin/services/enforcement.service');
   const { AuditService } = require('../../dist/src/modules/admin/audit/audit.service');
   const enforcement = new EnforcementService(prisma, new AuditService(prisma));
 
@@ -167,19 +183,33 @@ const londonDay = at =>
     where: { id: subject.id },
     select: { status: true, suspendedUntil: true },
   });
-  check('and the account is usable again',
-    restored?.status === 'ACTIVE' && restored?.suspendedUntil === null, restored);
+  check(
+    'and the account is usable again',
+    restored?.status === 'ACTIVE' && restored?.suspendedUntil === null,
+    restored,
+  );
 
   const record = await prisma.suspension.findFirst({ where: { userId: subject.id } });
-  check('the suspension is marked lifted with a reason', record?.liftedAt !== null, record?.liftReason);
-  check('and with nobody named, because the clock did it — not a person',
-    record?.liftedById === null, record?.liftedById);
+  check(
+    'the suspension is marked lifted with a reason',
+    record?.liftedAt !== null,
+    record?.liftReason,
+  );
+  check(
+    'and with nobody named, because the clock did it — not a person',
+    record?.liftedById === null,
+    record?.liftedById,
+  );
 
   const entry = await prisma.auditLog.findFirst({
     where: { action: 'member.suspension_expired', targetId: subject.id },
   });
   check('it is in the audit trail with no actor', entry !== null && entry.actorId === null, entry);
-  check('and says the account was reactivated', entry?.metadata?.reactivated === true, entry?.metadata);
+  check(
+    'and says the account was reactivated',
+    entry?.metadata?.reactivated === true,
+    entry?.metadata,
+  );
 
   console.log('\n── A longer suspension is not undone by a shorter one ──────');
 
@@ -211,8 +241,11 @@ const londonDay = at =>
     where: { id: both.id },
     select: { status: true },
   });
-  check('the expired one is closed but the account stays suspended',
-    stillOut?.status === 'SUSPENDED', stillOut?.status);
+  check(
+    'the expired one is closed but the account stays suspended',
+    stillOut?.status === 'SUSPENDED',
+    stillOut?.status,
+  );
 
   const closed = await prisma.suspension.count({
     where: { userId: both.id, liftedAt: { not: null } },

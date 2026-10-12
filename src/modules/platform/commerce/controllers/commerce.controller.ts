@@ -341,7 +341,7 @@ export class CommerceController {
     summary: 'A store catalogue',
     description:
       'Out-of-stock items are included by default: they still tell a buyer what the shop sells. ' +
-      '**Drafts come back only to the shop\'s owner** — this is the same endpoint the seller\'s ' +
+      "**Drafts come back only to the shop's owner** — this is the same endpoint the seller's " +
       'own management screen reads, so it cannot filter them out for everybody.',
   })
   async listStoreItems(
@@ -448,7 +448,7 @@ export class CommerceController {
       '`views` and `responseRate` are present only when the caller owns the store.',
   })
   async findStore(@CurrentUserId() userId: string, @Param('id') id: string) {
-    const store = await this.stores.storeOrThrow(id);
+    const store = await this.stores.storeOrThrow(id, userId);
     const data = await this.stores.toDetail(store, userId, null);
 
     return { data, message: SuccessMessage.RESOURCE_FETCHED('Store') };

@@ -40,6 +40,11 @@ model CommunityRequest {
   helpers   RequestHelper[]
   reviews   Review[]
 
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
+
   @@index([cityId, status, createdAt])
   @@index([categoryCode, status])
   @@index([authorId, createdAt])
@@ -73,6 +78,12 @@ model RequestResponse {
   guideSources GuideSource[]
 
   // A member may post several plain replies but only ONE help offer, so `helperCount` equals the number of distinct people — which is what the card claims (1.3.2).
+
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
+
   @@index([requestId, authorId])
   @@index([requestId, createdAt])
   @@index([authorId])
@@ -123,6 +134,11 @@ model CommunityOffer {
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz
 
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
+
   @@index([cityId, createdAt])
   @@index([categoryCode])
   @@index([authorId, createdAt])
@@ -163,6 +179,11 @@ model CommunityUpdate {
   reactions UpdateReaction[]
   tags      UpdateTag[]
 
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
+
   @@index([cityId, createdAt])
   @@index([authorId, createdAt])
   @@map("community_updates")
@@ -179,6 +200,11 @@ model UpdateReply {
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
 
   @@index([updateId, createdAt])
   @@map("update_replies")
@@ -250,6 +276,11 @@ model Guide {
   feedback    GuideFeedback[]
   progress    GuideProgress[]
   deflections GuideDeflection[]
+
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
 
   @@index([topicCode, publishedAt])
   @@index([cityId, publishedAt])
@@ -391,6 +422,12 @@ model Group {
   invitations GroupInvitation[]
 
   // Two "Manchester Nigerians" in Manchester is a support problem, not a feature.
+
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
+
   @@unique([cityId, name])
   @@index([cityId, memberCount])
   @@index([createdAt])
@@ -460,6 +497,11 @@ model GroupPost {
 
   replies GroupPostReply[]
 
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
+
   @@index([groupId, createdAt])
   @@index([authorId])
   @@map("group_posts")
@@ -476,6 +518,11 @@ model GroupPostReply {
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
 
   @@index([postId, createdAt])
   @@map("group_post_replies")

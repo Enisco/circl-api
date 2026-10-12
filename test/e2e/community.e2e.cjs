@@ -1,8 +1,15 @@
 /* Section 1 end-to-end check against the running server. Creates two throwaway
    users, exercises the flows, then removes everything it made. */
-const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness.cjs');
-
-
+const {
+  api,
+  approveAnonymous,
+  check,
+  fail,
+  finish,
+  makeUser,
+  prisma,
+  sweep,
+} = require('./harness.cjs');
 
 (async () => {
   await sweep('pre-run');
@@ -13,26 +20,54 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
 
   console.log('\n── 1.2 Requests ─────────────────────────────────────────────');
 
-  let r = await api(alice.token, 'POST', '/community/requests', {
-    categoryCode: 'VISA_DOCS', title: 'Need help understanding my CoS letter',
-    description: 'I got my Certificate of Sponsorship last week and I cannot make sense of the sponsor details section.',
-    cityId: 'MANCHESTER', thankYouAmount: 2000,
-  }, { 'Idempotency-Key': 'e2e-req-1' });
+  let r = await api(
+    alice.token,
+    'POST',
+    '/community/requests',
+    {
+      categoryCode: 'VISA_DOCS',
+      title: 'Need help understanding my CoS letter',
+      description:
+        'I got my Certificate of Sponsorship last week and I cannot make sense of the sponsor details section.',
+      cityId: 'MANCHESTER',
+      thankYouAmount: 2000,
+    },
+    { 'Idempotency-Key': 'e2e-req-1' },
+  );
   check('create request → 201', r.status === 201, r.body);
   const reqId = r.body?.data?.id;
-  check('envelope has success+status+data', r.body?.success === true && r.body?.status === 'success' && !!r.body?.data);
-  check('category is {code,label}', r.body?.data?.category?.code === 'VISA_DOCS' && !!r.body?.data?.category?.label, r.body?.data?.category);
-  check('thankYou is money object', r.body?.data?.thankYou?.amount === 2000 && r.body?.data?.thankYou?.currency === 'GBP');
+  check(
+    'envelope has success+status+data',
+    r.body?.success === true && r.body?.status === 'success' && !!r.body?.data,
+  );
+  check(
+    'category is {code,label}',
+    r.body?.data?.category?.code === 'VISA_DOCS' && !!r.body?.data?.category?.label,
+    r.body?.data?.category,
+  );
+  check(
+    'thankYou is money object',
+    r.body?.data?.thankYou?.amount === 2000 && r.body?.data?.thankYou?.currency === 'GBP',
+  );
   check('reportToken present', typeof r.body?.data?.reportToken === 'string');
   check('viewer.canResolve true for owner', r.body?.data?.viewer?.canResolve === true);
   check('counts.privateReplies present for owner', r.body?.data?.counts?.privateReplies === 0);
   created.requests.push(reqId);
 
-  r = await api(alice.token, 'POST', '/community/requests', {
-    categoryCode: 'VISA_DOCS', title: 'Need help understanding my CoS letter',
-    description: 'I got my Certificate of Sponsorship last week and I cannot make sense of the sponsor details section.',
-    cityId: 'MANCHESTER', thankYouAmount: 2000,
-  }, { 'Idempotency-Key': 'e2e-req-1' });
+  r = await api(
+    alice.token,
+    'POST',
+    '/community/requests',
+    {
+      categoryCode: 'VISA_DOCS',
+      title: 'Need help understanding my CoS letter',
+      description:
+        'I got my Certificate of Sponsorship last week and I cannot make sense of the sponsor details section.',
+      cityId: 'MANCHESTER',
+      thankYouAmount: 2000,
+    },
+    { 'Idempotency-Key': 'e2e-req-1' },
+  );
   check('idempotent replay returns same id', r.body?.data?.id === reqId, { got: r.body?.data?.id });
 
   // The replay above only proves it usually works. The record itself has to be there by the time
@@ -42,118 +77,225 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
     where: { userId: alice.id, key: 'e2e-req-1' },
     select: { responseBody: true },
   });
-  check('and the key is on record by the time the caller holds the response',
-    record?.responseBody?.data?.id === reqId, record?.responseBody?.data?.id ?? record ?? null);
+  check(
+    'and the key is on record by the time the caller holds the response',
+    record?.responseBody?.data?.id === reqId,
+    record?.responseBody?.data?.id ?? record ?? null,
+  );
 
   // Two genuinely in flight at once: a member tapping Post again while the first is still running.
-  const twice = { categoryCode: 'VISA_DOCS', cityId: 'MANCHESTER',
+  const twice = {
+    categoryCode: 'VISA_DOCS',
+    cityId: 'MANCHESTER',
     title: 'Two taps on the same post button',
-    description: 'Sent twice at the same instant from one device, which is what an impatient tap looks like.' };
+    description:
+      'Sent twice at the same instant from one device, which is what an impatient tap looks like.',
+  };
   const [first, second] = await Promise.all([
     api(alice.token, 'POST', '/community/requests', twice, { 'Idempotency-Key': 'e2e-race-1' }),
     api(alice.token, 'POST', '/community/requests', twice, { 'Idempotency-Key': 'e2e-race-1' }),
   ]);
   const won = [first, second].find(r => r.status === 201);
   const refused = [first, second].find(r => r.status === 409);
-  check('one of two simultaneous attempts is refused, not doubled',
-    !!won && !!refused, [first.status, second.status]);
-  check('and says which refusal it is',
-    refused?.body?.error?.code === 'IDEMPOTENT_REQUEST_IN_PROGRESS', refused?.body?.error);
-  check('carrying no result, because there is not one yet', refused?.body?.data === null, refused?.body?.data);
-  check('only one request was made',
-    (await prisma.communityRequest.count({ where: { authorId: alice.id, title: twice.title } })) === 1);
+  check('one of two simultaneous attempts is refused, not doubled', !!won && !!refused, [
+    first.status,
+    second.status,
+  ]);
+  check(
+    'and says which refusal it is',
+    refused?.body?.error?.code === 'IDEMPOTENT_REQUEST_IN_PROGRESS',
+    refused?.body?.error,
+  );
+  check(
+    'carrying no result, because there is not one yet',
+    refused?.body?.data === null,
+    refused?.body?.data,
+  );
+  check(
+    'only one request was made',
+    (await prisma.communityRequest.count({ where: { authorId: alice.id, title: twice.title } })) ===
+      1,
+  );
 
-  const afterwards = await api(alice.token, 'POST', '/community/requests', twice, { 'Idempotency-Key': 'e2e-race-1' });
-  check('and a retry once it has finished replays rather than refusing',
+  const afterwards = await api(alice.token, 'POST', '/community/requests', twice, {
+    'Idempotency-Key': 'e2e-race-1',
+  });
+  check(
+    'and a retry once it has finished replays rather than refusing',
     afterwards.status === 201 && afterwards.body?.data?.id === won?.body?.data?.id,
-    { status: afterwards.status, id: afterwards.body?.data?.id });
-  check('still one request', (await prisma.communityRequest.count({ where: { authorId: alice.id, title: twice.title } })) === 1);
+    { status: afterwards.status, id: afterwards.body?.data?.id },
+  );
+  check(
+    'still one request',
+    (await prisma.communityRequest.count({ where: { authorId: alice.id, title: twice.title } })) ===
+      1,
+  );
   created.requests.push(won?.body?.data?.id);
 
   r = await api(alice.token, 'POST', '/community/requests', {
-    categoryCode: 'VISA_DOCS', title: 'Short', cityId: 'MANCHESTER',
+    categoryCode: 'VISA_DOCS',
+    title: 'Short',
+    cityId: 'MANCHESTER',
   });
-  check('title < 6 → 400 with details[].field', r.status === 400 && r.body?.error?.details?.[0]?.field === 'title', r.body?.error);
+  check(
+    'title < 6 → 400 with details[].field',
+    r.status === 400 && r.body?.error?.details?.[0]?.field === 'title',
+    r.body?.error,
+  );
 
   r = await api(alice.token, 'POST', '/community/requests', {
-    categoryCode: 'NOT_A_REAL_CODE', title: 'A valid enough title here', cityId: 'MANCHESTER',
+    categoryCode: 'NOT_A_REAL_CODE',
+    title: 'A valid enough title here',
+    cityId: 'MANCHESTER',
   });
-  check('bad category → 422 UNKNOWN_TAXONOMY_CODE', r.status === 422 && r.body?.error?.code === 'UNKNOWN_TAXONOMY_CODE', r.body?.error);
+  check(
+    'bad category → 422 UNKNOWN_TAXONOMY_CODE',
+    r.status === 422 && r.body?.error?.code === 'UNKNOWN_TAXONOMY_CODE',
+    r.body?.error,
+  );
 
   r = await api(alice.token, 'POST', '/community/requests', {
-    categoryCode: 'VISA_DOCS', title: 'A private matter I need help with', cityId: 'MANCHESTER',
+    categoryCode: 'VISA_DOCS',
+    title: 'A private matter I need help with',
+    cityId: 'MANCHESTER',
     visibility: 'PRIVATE_TO_CIRCL',
   });
-  check('PRIVATE_TO_CIRCL → 422 USE_PRIVATE_ENDPOINT', r.status === 422 && r.body?.error?.code === 'USE_PRIVATE_ENDPOINT', r.body?.error);
+  check(
+    'PRIVATE_TO_CIRCL → 422 USE_PRIVATE_ENDPOINT',
+    r.status === 422 && r.body?.error?.code === 'USE_PRIVATE_ENDPOINT',
+    r.body?.error,
+  );
 
   r = await api(bob.token, 'GET', `/community/requests/${reqId}`);
-  check('non-owner detail omits privateReplies', r.body?.data?.counts?.privateReplies === undefined, r.body?.data?.counts);
+  check(
+    'non-owner detail omits privateReplies',
+    r.body?.data?.counts?.privateReplies === undefined,
+    r.body?.data?.counts,
+  );
   check('non-owner canEdit false', r.body?.data?.viewer?.canEdit === false);
 
   console.log('\n── 1.3 Responses ────────────────────────────────────────────');
 
   r = await api(bob.token, 'POST', `/community/requests/${reqId}/responses`, {
-    content: 'I went through this last year, happy to walk you through it.', isHelpOffer: true,
+    content: 'I went through this last year, happy to walk you through it.',
+    isHelpOffer: true,
   });
   check('offer to help → 201', r.status === 201, r.body);
-  check('returns updated parent counts', r.body?.data?.requestCounts?.helpers === 1, r.body?.data?.requestCounts);
+  check(
+    'returns updated parent counts',
+    r.body?.data?.requestCounts?.helpers === 1,
+    r.body?.data?.requestCounts,
+  );
 
   r = await api(bob.token, 'POST', `/community/requests/${reqId}/responses`, {
-    content: 'Also, check the sponsor licence number on page two.', isHelpOffer: true,
+    content: 'Also, check the sponsor licence number on page two.',
+    isHelpOffer: true,
   });
-  check('second help offer → 409 ALREADY_OFFERED', r.status === 409 && r.body?.error?.code === 'ALREADY_OFFERED', r.body?.error);
+  check(
+    'second help offer → 409 ALREADY_OFFERED',
+    r.status === 409 && r.body?.error?.code === 'ALREADY_OFFERED',
+    r.body?.error,
+  );
 
   r = await api(bob.token, 'POST', `/community/requests/${reqId}/responses`, {
     content: 'One more thought — the sponsor licence number is on page two.',
   });
   check('second plain reply allowed → 201', r.status === 201, r.body?.error);
-  check('replies now 2, helpers still 1', r.body?.data?.requestCounts?.replies === 2 && r.body?.data?.requestCounts?.helpers === 1, r.body?.data?.requestCounts);
+  check(
+    'replies now 2, helpers still 1',
+    r.body?.data?.requestCounts?.replies === 2 && r.body?.data?.requestCounts?.helpers === 1,
+    r.body?.data?.requestCounts,
+  );
 
   r = await api(alice.token, 'POST', `/community/requests/${reqId}/responses`, {
-    content: 'Thanks so much for this.', isHelpOffer: true,
+    content: 'Thanks so much for this.',
+    isHelpOffer: true,
   });
-  check('owner cannot offer on own request → 422', r.status === 422 && r.body?.error?.code === 'CANNOT_OFFER_ON_OWN_REQUEST', r.body?.error);
+  check(
+    'owner cannot offer on own request → 422',
+    r.status === 422 && r.body?.error?.code === 'CANNOT_OFFER_ON_OWN_REQUEST',
+    r.body?.error,
+  );
 
   r = await api(bob.token, 'POST', `/community/requests/${reqId}/responses`, {
-    content: 'Message me privately and I will send you a template.', isPrivate: true,
+    content: 'Message me privately and I will send you a template.',
+    isPrivate: true,
   });
   check('private reply → 201', r.status === 201);
 
   r = await api(alice.token, 'GET', `/community/requests/${reqId}/responses`);
-  check('owner sees private reply', r.body?.data?.some(x => x.isPrivate === true), r.body?.data?.map(x => x.isPrivate));
+  check(
+    'owner sees private reply',
+    r.body?.data?.some(x => x.isPrivate === true),
+    r.body?.data?.map(x => x.isPrivate),
+  );
   check('owner sees private first', r.body?.data?.[0]?.isPrivate === true);
   const ownerTotal = r.body?.meta?.totalCount;
 
   const carol = await makeUser('carol');
   r = await api(carol.token, 'GET', `/community/requests/${reqId}/responses`);
   check('third party cannot see private reply', !r.body?.data?.some(x => x.isPrivate === true));
-  check('totalCount excludes private for third party', r.body?.meta?.totalCount === ownerTotal - 1, { third: r.body?.meta?.totalCount, owner: ownerTotal });
+  check(
+    'totalCount excludes private for third party',
+    r.body?.meta?.totalCount === ownerTotal - 1,
+    { third: r.body?.meta?.totalCount, owner: ownerTotal },
+  );
 
   r = await api(bob.token, 'GET', `/community/requests/${reqId}`);
   check('viewer.hasOffered true for bob', r.body?.data?.viewer?.hasOffered === true);
 
   console.log('\n── 1.2.5 Resolve ────────────────────────────────────────────');
 
-  r = await api(alice.token, 'POST', `/community/requests/${reqId}/resolve`, { helperUserIds: [carol.id] });
-  check('crediting a non-responder → 422 NOT_A_RESPONDER', r.status === 422 && r.body?.error?.code === 'NOT_A_RESPONDER', r.body?.error);
+  r = await api(alice.token, 'POST', `/community/requests/${reqId}/resolve`, {
+    helperUserIds: [carol.id],
+  });
+  check(
+    'crediting a non-responder → 422 NOT_A_RESPONDER',
+    r.status === 422 && r.body?.error?.code === 'NOT_A_RESPONDER',
+    r.body?.error,
+  );
 
-  r = await api(alice.token, 'POST', `/community/requests/${reqId}/resolve`, { helperUserIds: [bob.id], outcome: 'HELPED' });
-  check('resolve → 200 RESOLVED', r.status === 200 && r.body?.data?.status === 'RESOLVED', r.body?.error);
-  check('resolution.helpers populated', r.body?.data?.resolution?.helpers?.length === 1, r.body?.data?.resolution);
+  r = await api(alice.token, 'POST', `/community/requests/${reqId}/resolve`, {
+    helperUserIds: [bob.id],
+    outcome: 'HELPED',
+  });
+  check(
+    'resolve → 200 RESOLVED',
+    r.status === 200 && r.body?.data?.status === 'RESOLVED',
+    r.body?.error,
+  );
+  check(
+    'resolution.helpers populated',
+    r.body?.data?.resolution?.helpers?.length === 1,
+    r.body?.data?.resolution,
+  );
   check('canEdit false once resolved', r.body?.data?.viewer?.canEdit === false);
 
   r = await api(alice.token, 'POST', `/community/requests/${reqId}/resolve`, {});
-  check('re-resolve → 409 REQUEST_ALREADY_RESOLVED', r.status === 409 && r.body?.error?.code === 'REQUEST_ALREADY_RESOLVED', r.body?.error);
+  check(
+    're-resolve → 409 REQUEST_ALREADY_RESOLVED',
+    r.status === 409 && r.body?.error?.code === 'REQUEST_ALREADY_RESOLVED',
+    r.body?.error,
+  );
 
-  r = await api(carol.token, 'POST', `/community/requests/${reqId}/responses`, { content: 'Can I still help?' });
-  check('reply to closed request → 403 REQUEST_CLOSED', r.status === 403 && r.body?.error?.code === 'REQUEST_CLOSED', r.body?.error);
+  r = await api(carol.token, 'POST', `/community/requests/${reqId}/responses`, {
+    content: 'Can I still help?',
+  });
+  check(
+    'reply to closed request → 403 REQUEST_CLOSED',
+    r.status === 403 && r.body?.error?.code === 'REQUEST_CLOSED',
+    r.body?.error,
+  );
 
   console.log('\n── 1.4 Offers ───────────────────────────────────────────────');
 
   r = await api(bob.token, 'POST', '/community/offers', {
     title: 'Airport pickups from Manchester Airport',
     description: 'I drive a 7-seater and do airport runs most evenings, including early mornings.',
-    categoryCode: 'AIRPORT_PICKUP', cityId: 'MANCHESTER', priceFrom: 3000, priceBasis: 'PER_JOB',
+    categoryCode: 'AIRPORT_PICKUP',
+    cityId: 'MANCHESTER',
+    priceFrom: 3000,
+    priceBasis: 'PER_JOB',
   });
   check('create offer → 201', r.status === 201, r.body?.error);
   check('isFree false with a price', r.body?.data?.isFree === false);
@@ -162,51 +304,86 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   r = await api(bob.token, 'POST', '/community/offers', {
     title: 'Free CV review for newcomers',
     description: 'I have hired in the UK for eight years and will read your CV and give you notes.',
-    categoryCode: 'JOBS', cityId: 'MANCHESTER',
+    categoryCode: 'JOBS',
+    cityId: 'MANCHESTER',
   });
-  check('free offer → isFree true, priceFrom null', r.body?.data?.isFree === true && r.body?.data?.priceFrom === null);
+  check(
+    'free offer → isFree true, priceFrom null',
+    r.body?.data?.isFree === true && r.body?.data?.priceFrom === null,
+  );
   created.offers.push(r.body?.data?.id);
 
   r = await api(alice.token, 'GET', '/community/offers?freeOnly=true');
-  check('freeOnly filter works', r.body?.data?.every(o => o.isFree === true) && r.body?.data?.length >= 1, r.body?.data?.map(o => o.isFree));
+  check(
+    'freeOnly filter works',
+    r.body?.data?.every(o => o.isFree === true) && r.body?.data?.length >= 1,
+    r.body?.data?.map(o => o.isFree),
+  );
 
   console.log('\n── 1.5 Updates ──────────────────────────────────────────────');
 
   r = await api(alice.token, 'POST', '/community/updates', {
-    content: 'Finally got my BRP today after six weeks of waiting.', commentsEnabled: true,
+    content: 'Finally got my BRP today after six weeks of waiting.',
+    commentsEnabled: true,
   });
   check('create update → 201', r.status === 201, r.body?.error);
   const updId = r.body?.data?.id;
   created.updates.push(updId);
 
   r = await api(bob.token, 'POST', `/community/updates/${updId}/reactions`);
-  check('like → count 1', r.body?.data?.hasLiked === true && r.body?.data?.reactionCount === 1, r.body?.data);
+  check(
+    'like → count 1',
+    r.body?.data?.hasLiked === true && r.body?.data?.reactionCount === 1,
+    r.body?.data,
+  );
   r = await api(bob.token, 'POST', `/community/updates/${updId}/reactions`);
-  check('like twice is idempotent, not 409', r.status === 200 && r.body?.data?.reactionCount === 1, r.body?.data);
+  check(
+    'like twice is idempotent, not 409',
+    r.status === 200 && r.body?.data?.reactionCount === 1,
+    r.body?.data,
+  );
   r = await api(bob.token, 'DELETE', `/community/updates/${updId}/reactions`);
   check('unlike → count 0', r.body?.data?.reactionCount === 0, r.body?.data);
 
-  r = await api(bob.token, 'POST', `/community/updates/${updId}/replies`, { content: 'Congratulations!' });
+  r = await api(bob.token, 'POST', `/community/updates/${updId}/replies`, {
+    content: 'Congratulations!',
+  });
   check('reply to update → 201', r.status === 201, r.body?.error);
 
   r = await api(alice.token, 'POST', '/community/updates', {
-    content: 'Quiet post, no comments please.', commentsEnabled: false,
+    content: 'Quiet post, no comments please.',
+    commentsEnabled: false,
   });
   const noCommentId = r.body?.data?.id;
   created.updates.push(noCommentId);
-  r = await api(bob.token, 'POST', `/community/updates/${noCommentId}/replies`, { content: 'Hello' });
-  check('comments off → 403 COMMENTS_DISABLED', r.status === 403 && r.body?.error?.code === 'COMMENTS_DISABLED', r.body?.error);
+  r = await api(bob.token, 'POST', `/community/updates/${noCommentId}/replies`, {
+    content: 'Hello',
+  });
+  check(
+    'comments off → 403 COMMENTS_DISABLED',
+    r.status === 403 && r.body?.error?.code === 'COMMENTS_DISABLED',
+    r.body?.error,
+  );
 
   r = await api(alice.token, 'POST', '/community/updates', {
-    content: 'Hidden count post.', reactionCountHidden: true,
+    content: 'Hidden count post.',
+    reactionCountHidden: true,
   });
   const hiddenId = r.body?.data?.id;
   created.updates.push(hiddenId);
   await api(bob.token, 'POST', `/community/updates/${hiddenId}/reactions`);
   r = await api(bob.token, 'GET', `/community/updates/${hiddenId}`);
-  check('hidden count omitted for non-author', r.body?.data?.counts?.reactions === undefined, r.body?.data?.counts);
+  check(
+    'hidden count omitted for non-author',
+    r.body?.data?.counts?.reactions === undefined,
+    r.body?.data?.counts,
+  );
   r = await api(alice.token, 'GET', `/community/updates/${hiddenId}`);
-  check('hidden count visible to author', r.body?.data?.counts?.reactions === 1, r.body?.data?.counts);
+  check(
+    'hidden count visible to author',
+    r.body?.data?.counts?.reactions === 1,
+    r.body?.data?.counts,
+  );
 
   console.log('\n── 1.6 Guides ───────────────────────────────────────────────');
 
@@ -225,17 +402,24 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   const guideId = r.body?.data?.id;
   created.guides.push(guideId);
   check('readTimeMinutes computed', r.body?.data?.readTimeMinutes >= 1);
-  check('steps projected from blocks', Array.isArray(r.body?.data?.steps) && r.body.data.steps.length === 3);
+  check(
+    'steps projected from blocks',
+    Array.isArray(r.body?.data?.steps) && r.body.data.steps.length === 3,
+  );
   check('blocks stored', r.body?.data?.blocks?.[0]?.type === 'STEP');
   check('provenance null for member-written', r.body?.data?.provenance === null);
 
   r = await api(bob.token, 'PUT', `/community/guides/${guideId}/progress`, { progress: 0.42 });
   check('progress saved', r.body?.data?.progress === 0.42, r.body?.data);
-  r = await api(bob.token, 'PUT', `/community/guides/${guideId}/progress`, { progress: 0.10 });
+  r = await api(bob.token, 'PUT', `/community/guides/${guideId}/progress`, { progress: 0.1 });
   check('progress does not go backwards', r.body?.data?.progress === 0.42, r.body?.data);
 
   r = await api(bob.token, 'GET', '/community/guides?section=CONTINUE_READING');
-  check('CONTINUE_READING finds the started guide', r.body?.data?.some(g => g.id === guideId), r.body?.data?.length);
+  check(
+    'CONTINUE_READING finds the started guide',
+    r.body?.data?.some(g => g.id === guideId),
+    r.body?.data?.length,
+  );
 
   r = await api(bob.token, 'POST', `/community/guides/${guideId}/bookmark`);
   check('bookmark → true', r.body?.data?.isBookmarked === true);
@@ -245,8 +429,10 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   // Formatting travels as markers in the text (2026-10-01). The server stores the string it was
   // given — markers, newlines and all — because the app renders them and a member watched them work
   // while typing. It takes the markers out only where it reads the text for something else.
-  const formattedIntro = 'A *quibberdine* is the part most people get stuck on.\nHere is the _whole_ route.';
-  const formattedStep = '- Ask for a *basic account*\n- Take your `BRP`\n1. Book online first\n> Branches vary.';
+  const formattedIntro =
+    'A *quibberdine* is the part most people get stuck on.\nHere is the _whole_ route.';
+  const formattedStep =
+    '- Ask for a *basic account*\n- Take your `BRP`\n1. Book online first\n> Branches vary.';
 
   r = await api(alice.token, 'POST', '/community/guides', {
     topicCode: 'FINANCE',
@@ -254,15 +440,25 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
     intro: formattedIntro,
     steps: [formattedStep],
   });
-  check('a formatted guide → 201, because there is no such thing as invalid markup', r.status === 201, r.body?.error);
+  check(
+    'a formatted guide → 201, because there is no such thing as invalid markup',
+    r.status === 201,
+    r.body?.error,
+  );
   const formattedGuideId = r.body?.data?.id;
   created.guides.push(formattedGuideId);
 
   r = await api(bob.token, 'GET', `/community/guides/${formattedGuideId}`);
-  check('the intro comes back byte for byte, newlines included',
-    r.body?.data?.intro === formattedIntro, JSON.stringify(r.body?.data?.intro));
-  check('and so does the body, so the lists stay lists',
-    r.body?.data?.steps?.[0] === formattedStep, JSON.stringify(r.body?.data?.steps?.[0]));
+  check(
+    'the intro comes back byte for byte, newlines included',
+    r.body?.data?.intro === formattedIntro,
+    JSON.stringify(r.body?.data?.intro),
+  );
+  check(
+    'and so does the body, so the lists stay lists',
+    r.body?.data?.steps?.[0] === formattedStep,
+    JSON.stringify(r.body?.data?.steps?.[0]),
+  );
 
   const plainCreate = await api(alice.token, 'POST', '/community/guides', {
     topicCode: 'FINANCE',
@@ -272,28 +468,39 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   });
   const plainGuideId = plainCreate.body?.data?.id;
   created.guides.push(plainGuideId);
-  check('a read time counts the words, not the markers',
+  check(
+    'a read time counts the words, not the markers',
     r.body?.data?.readTimeMinutes === plainCreate.body?.data?.readTimeMinutes,
-    { formatted: r.body?.data?.readTimeMinutes, plain: plainCreate.body?.data?.readTimeMinutes });
+    { formatted: r.body?.data?.readTimeMinutes, plain: plainCreate.body?.data?.readTimeMinutes },
+  );
 
   // Search matches a substring of title or intro, so a formatted word is still found: there is no
   // token index to strip markers out of. What a marker does break is a phrase that straddles it.
   r = await api(bob.token, 'GET', '/search?q=quibberdine&types=GUIDE&limit=25');
   let found = (r.body?.data?.groups ?? []).flatMap(g => g.items ?? []);
-  check('a formatted term is still findable, because the match is a substring one',
-    found.some(item => item.id === formattedGuideId), found.map(item => item.title));
+  check(
+    'a formatted term is still findable, because the match is a substring one',
+    found.some(item => item.id === formattedGuideId),
+    found.map(item => item.title),
+  );
 
   r = await api(bob.token, 'GET', '/search?q=a%20quibberdine%20is&types=GUIDE&limit=25');
   found = (r.body?.data?.groups ?? []).flatMap(g => g.items ?? []);
-  check('but a phrase straddling a marker does not, which is the known edge',
-    !found.some(item => item.id === formattedGuideId) && found.some(item => item.id === plainGuideId),
-    found.map(item => item.title));
+  check(
+    'but a phrase straddling a marker does not, which is the known edge',
+    !found.some(item => item.id === formattedGuideId) &&
+      found.some(item => item.id === plainGuideId),
+    found.map(item => item.title),
+  );
 
   r = await api(bob.token, 'POST', '/community/guides/match', {
-    categoryCode: 'BANK_ACCOUNT', title: 'How do I open a bank account without proof of address?',
+    categoryCode: 'BANK_ACCOUNT',
+    title: 'How do I open a bank account without proof of address?',
   });
   check('guide match responds', r.status === 200 && Array.isArray(r.body?.data?.matches), r.body);
-  console.log(`    (matches: ${r.body?.data?.matches?.length}, confidence: ${r.body?.data?.matches?.[0]?.confidence ?? 'n/a'})`);
+  console.log(
+    `    (matches: ${r.body?.data?.matches?.length}, confidence: ${r.body?.data?.matches?.[0]?.confidence ?? 'n/a'})`,
+  );
 
   console.log('\n── 1.7 Groups ───────────────────────────────────────────────');
 
@@ -305,24 +512,41 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   check('create group → 201', r.status === 201, r.body?.error);
   const groupId = r.body?.data?.id;
   created.groups.push(groupId);
-  check('creator is ADMIN, memberCount 1', r.body?.data?.viewer?.membership === 'ADMIN' && r.body?.data?.memberCount === 1, r.body?.data);
+  check(
+    'creator is ADMIN, memberCount 1',
+    r.body?.data?.viewer?.membership === 'ADMIN' && r.body?.data?.memberCount === 1,
+    r.body?.data,
+  );
   check('isNew true', r.body?.data?.isNew === true);
 
   const groupName = r.body?.data?.name;
   r = await api(bob.token, 'POST', '/community/groups', {
-    name: groupName, description: 'A duplicate name in the same city, which should be refused.',
+    name: groupName,
+    description: 'A duplicate name in the same city, which should be refused.',
     cityId: 'MANCHESTER',
   });
-  check('duplicate name in city → 409 GROUP_NAME_TAKEN', r.status === 409 && r.body?.error?.code === 'GROUP_NAME_TAKEN', r.body?.error);
+  check(
+    'duplicate name in city → 409 GROUP_NAME_TAKEN',
+    r.status === 409 && r.body?.error?.code === 'GROUP_NAME_TAKEN',
+    r.body?.error,
+  );
 
   r = await api(bob.token, 'POST', `/community/groups/${groupId}/posts`, { content: 'Hello!' });
-  check('non-member cannot post → 403 NOT_A_MEMBER', r.status === 403 && r.body?.error?.code === 'NOT_A_MEMBER', r.body?.error);
+  check(
+    'non-member cannot post → 403 NOT_A_MEMBER',
+    r.status === 403 && r.body?.error?.code === 'NOT_A_MEMBER',
+    r.body?.error,
+  );
 
   r = await api(bob.token, 'GET', `/community/groups/${groupId}/posts`);
   check('non-member gets preview flag', r.body?.meta?.preview === true, r.body?.meta);
 
   r = await api(bob.token, 'POST', `/community/groups/${groupId}/join`);
-  check('open group join → MEMBER, count 2', r.body?.data?.membership === 'MEMBER' && r.body?.data?.memberCount === 2, r.body?.data);
+  check(
+    'open group join → MEMBER, count 2',
+    r.body?.data?.membership === 'MEMBER' && r.body?.data?.memberCount === 2,
+    r.body?.data,
+  );
 
   r = await api(bob.token, 'POST', `/community/groups/${groupId}/posts`, {
     content: 'Just found out MMU runs a free legal advice clinic on Thursdays.',
@@ -330,59 +554,111 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   check('member can post → 201', r.status === 201, r.body?.error);
   const postId = r.body?.data?.id;
 
-  r = await api(alice.token, 'POST', `/community/groups/${groupId}/posts/${postId}/replies`, { content: 'Useful, thank you.' });
+  r = await api(alice.token, 'POST', `/community/groups/${groupId}/posts/${postId}/replies`, {
+    content: 'Useful, thank you.',
+  });
   check('reply to group post → 201', r.status === 201, r.body?.error);
 
   r = await api(alice.token, 'GET', `/community/groups/${groupId}/posts/${postId}/replies`);
-  check('replies return parent post too', !!r.body?.data?.post?.id && Array.isArray(r.body?.data?.replies), Object.keys(r.body?.data ?? {}));
+  check(
+    'replies return parent post too',
+    !!r.body?.data?.post?.id && Array.isArray(r.body?.data?.replies),
+    Object.keys(r.body?.data ?? {}),
+  );
 
   r = await api(alice.token, 'DELETE', `/community/groups/${groupId}/join`);
-  check('last admin cannot leave → 409', r.status === 409 && r.body?.error?.code === 'LAST_ADMIN_CANNOT_LEAVE', r.body?.error);
+  check(
+    'last admin cannot leave → 409',
+    r.status === 409 && r.body?.error?.code === 'LAST_ADMIN_CANNOT_LEAVE',
+    r.body?.error,
+  );
 
   r = await api(alice.token, 'POST', '/community/groups', {
     name: `E2E Approval Group ${Date.now()}`,
     description: 'This one needs approval before anyone can join it at all.',
-    cityId: 'MANCHESTER', joinPolicy: 'APPROVAL',
+    cityId: 'MANCHESTER',
+    joinPolicy: 'APPROVAL',
   });
   const approvalGroupId = r.body?.data?.id;
   created.groups.push(approvalGroupId);
   r = await api(bob.token, 'POST', `/community/groups/${approvalGroupId}/join`);
-  check('approval group join → PENDING, count unchanged', r.body?.data?.membership === 'PENDING' && r.body?.data?.memberCount === 1, r.body?.data);
+  check(
+    'approval group join → PENDING, count unchanged',
+    r.body?.data?.membership === 'PENDING' && r.body?.data?.memberCount === 1,
+    r.body?.data,
+  );
   r = await api(alice.token, 'GET', `/community/groups/${approvalGroupId}/join-requests`);
   check('admin sees the queue', r.body?.data?.length === 1, r.body?.data);
-  r = await api(alice.token, 'POST', `/community/groups/${approvalGroupId}/join-requests/${bob.id}`, { decision: 'APPROVE' });
+  r = await api(
+    alice.token,
+    'POST',
+    `/community/groups/${approvalGroupId}/join-requests/${bob.id}`,
+    { decision: 'APPROVE' },
+  );
   // Answers the whole group now, not a pair: both memberCount and pendingRequestCount move and
   // the screen reads both. The older `{ decision }` body is still accepted beside `{ approve }`.
-  check('approve → the group, count 2, queue empty',
-    r.body?.data?.memberCount === 2 && r.body?.data?.pendingRequestCount === 0, r.body?.data?.memberCount);
+  check(
+    'approve → the group, count 2, queue empty',
+    r.body?.data?.memberCount === 2 && r.body?.data?.pendingRequestCount === 0,
+    r.body?.data?.memberCount,
+  );
   r = await api(bob.token, 'GET', `/community/groups/${approvalGroupId}`);
-  check('and the member is in', r.body?.data?.viewer?.membership === 'MEMBER', r.body?.data?.viewer);
+  check(
+    'and the member is in',
+    r.body?.data?.viewer?.membership === 'MEMBER',
+    r.body?.data?.viewer,
+  );
 
   console.log('\n── 1.1 Feed ─────────────────────────────────────────────────');
 
   r = await api(bob.token, 'GET', '/community/feed?limit=10');
   check('feed → 200', r.status === 200, r.body?.error);
   check('meta.totalCount is null (cursor paging)', r.body?.meta?.totalCount === null, r.body?.meta);
-  check('items carry a type discriminator', r.body?.data?.every(i => !!i.type), r.body?.data?.map(i => i.type));
+  check(
+    'items carry a type discriminator',
+    r.body?.data?.every(i => !!i.type),
+    r.body?.data?.map(i => i.type),
+  );
   const types = [...new Set(r.body?.data?.map(i => i.type) ?? [])];
   console.log(`    (types present: ${types.join(', ')}, items: ${r.body?.data?.length})`);
 
   r = await api(bob.token, 'GET', '/community/feed?types=REQUEST&limit=10');
-  check('types filter honoured', r.body?.data?.every(i => i.type === 'REQUEST'), r.body?.data?.map(i => i.type));
+  check(
+    'types filter honoured',
+    r.body?.data?.every(i => i.type === 'REQUEST'),
+    r.body?.data?.map(i => i.type),
+  );
 
   r = await api(bob.token, 'GET', '/community/feed?categories=VISA_DOCS&limit=10');
-  check('category filter excludes UPDATE items', !r.body?.data?.some(i => i.type === 'UPDATE'), r.body?.data?.map(i => i.type));
+  check(
+    'category filter excludes UPDATE items',
+    !r.body?.data?.some(i => i.type === 'UPDATE'),
+    r.body?.data?.map(i => i.type),
+  );
 
   const firstFeed = await api(bob.token, 'GET', '/community/feed?limit=2');
   if (firstFeed.body?.meta?.nextCursor) {
-    const second = await api(bob.token, 'GET', `/community/feed?limit=2&cursor=${encodeURIComponent(firstFeed.body.meta.nextCursor)}`);
+    const second = await api(
+      bob.token,
+      'GET',
+      `/community/feed?limit=2&cursor=${encodeURIComponent(firstFeed.body.meta.nextCursor)}`,
+    );
     const firstIds = firstFeed.body.data.map(i => i.id);
-    check('cursor page does not repeat items', !second.body?.data?.some(i => firstIds.includes(i.id)), { firstIds, secondIds: second.body?.data?.map(i => i.id) });
-  } else { check('cursor page does not repeat items (skipped, one page)', true); }
+    check(
+      'cursor page does not repeat items',
+      !second.body?.data?.some(i => firstIds.includes(i.id)),
+      { firstIds, secondIds: second.body?.data?.map(i => i.id) },
+    );
+  } else {
+    check('cursor page does not repeat items (skipped, one page)', true);
+  }
 
   const target = firstFeed.body?.data?.[0];
   if (target) {
-    r = await api(bob.token, 'POST', `/community/feed/${target.id}/less-like-this`, { type: target.type, reason: 'NOT_RELEVANT' });
+    r = await api(bob.token, 'POST', `/community/feed/${target.id}/less-like-this`, {
+      type: target.type,
+      reason: 'NOT_RELEVANT',
+    });
     check('less-like-this → 204', r.status === 204, r.body);
     r = await api(bob.token, 'GET', '/community/feed?limit=20');
     check('suppressed item no longer in feed', !r.body?.data?.some(i => i.id === target.id));
@@ -391,7 +667,10 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   console.log('\n── 1.8 Moderation & blocking ────────────────────────────────');
 
   r = await api(carol.token, 'POST', '/moderation/reports', {
-    targetType: 'REQUEST', targetId: reqId, reasonCode: 'SPAM', note: 'This looks like spam to me.',
+    targetType: 'REQUEST',
+    targetId: reqId,
+    reasonCode: 'SPAM',
+    note: 'This looks like spam to me.',
   });
   check('report → 202', r.status === 202, r.body?.error);
 
@@ -399,10 +678,18 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   check('block → 201', r.status === 201, r.body?.error);
 
   r = await api(carol.token, 'GET', '/community/requests?status=ALL&cityId=ANYWHERE&limit=50');
-  check("blocked author's requests hidden from list", !r.body?.data?.some(x => x.id === reqId), r.body?.data?.length);
+  check(
+    "blocked author's requests hidden from list",
+    !r.body?.data?.some(x => x.id === reqId),
+    r.body?.data?.length,
+  );
 
   r = await api(carol.token, 'GET', `/community/requests/${reqId}`);
-  check('blocked content still fetchable with viewer.isBlocked', r.status === 200 && r.body?.data?.viewer?.isBlocked === true, { status: r.status, viewer: r.body?.data?.viewer });
+  check(
+    'blocked content still fetchable with viewer.isBlocked',
+    r.status === 200 && r.body?.data?.viewer?.isBlocked === true,
+    { status: r.status, viewer: r.body?.data?.viewer },
+  );
 
   r = await api(carol.token, 'GET', '/moderation/blocks');
   check('blocked list returns the member', r.body?.data?.length === 1, r.body?.data);
@@ -413,19 +700,34 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   console.log('\n── Anonymity & tombstones ───────────────────────────────────');
 
   r = await api(alice.token, 'POST', '/community/requests', {
-    categoryCode: 'ACCOMMODATION', title: 'My landlord will not return my deposit',
-    description: 'I moved out three months ago and he keeps ignoring my messages about the deposit.',
-    cityId: 'MANCHESTER', visibility: 'ANONYMOUS',
+    categoryCode: 'ACCOMMODATION',
+    title: 'My landlord will not return my deposit',
+    description:
+      'I moved out three months ago and he keeps ignoring my messages about the deposit.',
+    cityId: 'MANCHESTER',
+    visibility: 'ANONYMOUS',
   });
   const anonId = r.body?.data?.id;
   created.requests.push(anonId);
+
+  // §7.4: anonymous content is pre-moderated, so it is invisible to everybody but its author until
+  // somebody approves it. This block is about the **masking** — that a reader never learns who
+  // wrote it — so the post is published first, or every assertion below is about a 404.
+  await approveAnonymous('community_requests', anonId);
+
   r = await api(bob.token, 'GET', `/community/requests/${anonId}`);
   check('anonymous: author.id null', r.body?.data?.author?.id === null, r.body?.data?.author);
   check('anonymous: username null', r.body?.data?.author?.username === null);
-  check('anonymous: displayName names the city', /Manchester/.test(r.body?.data?.author?.displayName ?? ''), r.body?.data?.author?.displayName);
+  check(
+    'anonymous: displayName names the city',
+    /Manchester/.test(r.body?.data?.author?.displayName ?? ''),
+    r.body?.data?.author?.displayName,
+  );
   const anonToken = r.body?.data?.reportToken;
   r = await api(bob.token, 'POST', '/moderation/reports', {
-    targetType: 'REQUEST', targetId: anonToken, reasonCode: 'HARASSMENT',
+    targetType: 'REQUEST',
+    targetId: anonToken,
+    reasonCode: 'HARASSMENT',
   });
   check('report anonymous post by reportToken → 202', r.status === 202, r.body?.error);
   r = await api(bob.token, 'POST', '/moderation/blocks', { userId: anonToken });
@@ -442,7 +744,8 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   check('a helper can offer on an anonymous request', r.status === 201, r.body?.error);
 
   r = await api(alice.token, 'POST', `/community/requests/${anonId}/resolve`, {
-    outcome: 'HELPED', helperUserIds: [bob.id],
+    outcome: 'HELPED',
+    helperUserIds: [bob.id],
   });
   check('and the author can credit them', r.status === 200, r.body?.error);
 
@@ -451,23 +754,41 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   r = await api(bob.token, 'GET', '/notifications?limit=20');
   const credit = (r.body?.data ?? []).find(row => /credited you for helping/.test(row.title ?? ''));
 
-  check('being credited notifies the helper', !!credit, (r.body?.data ?? []).map(row => row.title));
-  check('the title does not name an anonymous author',
-    credit?.title === 'Someone credited you for helping', credit?.title);
-  check('nor does the actor, which carried the id as well',
-    credit?.actor?.id === null && credit?.actor?.isAnonymous === true, credit?.actor);
-  check('and it reads exactly as the post does', /Manchester/.test(credit?.actor?.displayName ?? ''),
-    credit?.actor?.displayName);
+  check(
+    'being credited notifies the helper',
+    !!credit,
+    (r.body?.data ?? []).map(row => row.title),
+  );
+  check(
+    'the title does not name an anonymous author',
+    credit?.title === 'Someone credited you for helping',
+    credit?.title,
+  );
+  check(
+    'nor does the actor, which carried the id as well',
+    credit?.actor?.id === null && credit?.actor?.isAnonymous === true,
+    credit?.actor,
+  );
+  check(
+    'and it reads exactly as the post does',
+    /Manchester/.test(credit?.actor?.displayName ?? ''),
+    credit?.actor?.displayName,
+  );
 
   r = await api(alice.token, 'DELETE', `/community/requests/${created.requests[0]}`);
   check('delete request → 204', r.status === 204);
   r = await api(bob.token, 'GET', `/community/requests/${created.requests[0]}`);
-  check('deleted → 404 RESOURCE_DELETED (tombstone)', r.status === 404 && r.body?.error?.code === 'RESOURCE_DELETED', r.body?.error);
+  check(
+    'deleted → 404 RESOURCE_DELETED (tombstone)',
+    r.status === 404 && r.body?.error?.code === 'RESOURCE_DELETED',
+    r.body?.error,
+  );
 
   console.log('\n── Circl Guard ──────────────────────────────────────────────');
 
   r = await api(alice.token, 'POST', '/community/requests', {
-    categoryCode: 'ACCOMMODATION', title: 'I am scared and not safe at home right now',
+    categoryCode: 'ACCOMMODATION',
+    title: 'I am scared and not safe at home right now',
     description: 'My partner beats me and I have nowhere to go. He took my passport last week.',
     cityId: 'MANCHESTER',
   });
@@ -476,18 +797,36 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   await new Promise(res => setTimeout(res, 700));
   const queued = await prisma.moderationQueueItem.findFirst({ where: { targetId: guardReqId } });
   check('high-risk post queued for Guard', !!queued, queued);
-  check('risk level HIGH or CRITICAL', ['HIGH', 'CRITICAL'].includes(queued?.riskLevel), queued?.riskLevel);
-  check('risk category DOMESTIC_ABUSE', queued?.riskCategory === 'DOMESTIC_ABUSE', queued?.riskCategory);
-  check('matched signals recorded for the reviewer', Array.isArray(queued?.riskSignals) && queued.riskSignals.length > 0, queued?.riskSignals);
-  console.log(`    (score ${queued?.riskScore}, signals: ${(queued?.riskSignals ?? []).map(s => s.pattern).join(' | ')})`);
+  check(
+    'risk level HIGH or CRITICAL',
+    ['HIGH', 'CRITICAL'].includes(queued?.riskLevel),
+    queued?.riskLevel,
+  );
+  check(
+    'risk category DOMESTIC_ABUSE',
+    queued?.riskCategory === 'DOMESTIC_ABUSE',
+    queued?.riskCategory,
+  );
+  check(
+    'matched signals recorded for the reviewer',
+    Array.isArray(queued?.riskSignals) && queued.riskSignals.length > 0,
+    queued?.riskSignals,
+  );
+  console.log(
+    `    (score ${queued?.riskScore}, signals: ${(queued?.riskSignals ?? []).map(s => s.pattern).join(' | ')})`,
+  );
 
-  const anonQueued = await prisma.moderationQueueItem.findFirst({ where: { targetId: anonId, type: 'ANONYMOUS_POST' } });
+  const anonQueued = await prisma.moderationQueueItem.findFirst({
+    where: { targetId: anonId, type: 'ANONYMOUS_POST' },
+  });
   check('anonymous post queued for approval', !!anonQueued, anonQueued);
 
   console.log('\n── Cleanup ──────────────────────────────────────────────────');
   const ids = [alice.id, bob.id, carol.id];
   await prisma.moderationQueueItem.deleteMany({ where: { subjectUserId: { in: ids } } });
-  await prisma.report.deleteMany({ where: { OR: [{ reporterId: { in: ids } }, { targetUserId: { in: ids } }] } });
+  await prisma.report.deleteMany({
+    where: { OR: [{ reporterId: { in: ids } }, { targetUserId: { in: ids } }] },
+  });
   await prisma.activityEvent.deleteMany({ where: { userId: { in: ids } } });
   console.log('\n── 1.3 Reaching the person who offered to help ──────────────');
 
@@ -504,21 +843,30 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   });
   const helpReqId = r.body?.data?.id;
 
-  await api(willing.token, 'POST', `/community/requests/${helpReqId}/responses`,
-    { content: 'Yes, I can help with that. I interview people for a living.', isHelpOffer: true });
-  await api(alsoWilling.token, 'POST', `/community/requests/${helpReqId}/responses`,
-    { content: 'I could also run through some questions with you if that helps.', isHelpOffer: true });
-  await api(stranger.token, 'POST', `/community/requests/${helpReqId}/responses`,
-    { content: 'Good luck with it, you will be fine on the day.', isHelpOffer: false });
+  await api(willing.token, 'POST', `/community/requests/${helpReqId}/responses`, {
+    content: 'Yes, I can help with that. I interview people for a living.',
+    isHelpOffer: true,
+  });
+  await api(alsoWilling.token, 'POST', `/community/requests/${helpReqId}/responses`, {
+    content: 'I could also run through some questions with you if that helps.',
+    isHelpOffer: true,
+  });
+  await api(stranger.token, 'POST', `/community/requests/${helpReqId}/responses`, {
+    content: 'Good luck with it, you will be fine on the day.',
+    isHelpOffer: false,
+  });
 
   const responsesFor = async token =>
     (await api(token, 'GET', `/community/requests/${helpReqId}/responses`)).body?.data ?? [];
   let responses = await responsesFor(asker.token);
 
-  check('every response carries viewer.conversationId, null before any thread exists',
-    responses.length === 3 && responses.every(row => 'conversationId' in row.viewer)
-      && responses.every(row => row.viewer.conversationId === null),
-    responses.map(row => row.viewer));
+  check(
+    'every response carries viewer.conversationId, null before any thread exists',
+    responses.length === 3 &&
+      responses.every(row => 'conversationId' in row.viewer) &&
+      responses.every(row => row.viewer.conversationId === null),
+    responses.map(row => row.viewer),
+  );
 
   r = await api(asker.token, 'POST', '/messages', {
     recipientUserId: willing.id,
@@ -526,55 +874,81 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
   });
   const helpThreadId = r.body?.data?.id;
 
-  check('taking up an offer opens a thread pinned to the request', r.status === 201 && !!helpThreadId,
-    { s: r.status, e: r.body?.error });
-  check('and its strip names the request, its category and its status',
-    r.body?.data?.context?.type === 'REQUEST'
-      && r.body?.data?.context?.title?.startsWith('Who can help me practise')
-      && r.body?.data?.context?.subtitle === 'Request · Language Help'
-      && r.body?.data?.context?.trailing === 'Open',
-    r.body?.data?.context);
+  check(
+    'taking up an offer opens a thread pinned to the request',
+    r.status === 201 && !!helpThreadId,
+    { s: r.status, e: r.body?.error },
+  );
+  check(
+    'and its strip names the request, its category and its status',
+    r.body?.data?.context?.type === 'REQUEST' &&
+      r.body?.data?.context?.title?.startsWith('Who can help me practise') &&
+      r.body?.data?.context?.subtitle === 'Request · Language Help' &&
+      r.body?.data?.context?.trailing === 'Open',
+    r.body?.data?.context,
+  );
 
   responses = await responsesFor(asker.token);
   const contacted = responses.find(row => row.author.id === willing.id);
   const notContacted = responses.find(row => row.author.id === alsoWilling.id);
 
-  check('only the helper actually contacted reads as in touch',
-    contacted?.viewer?.conversationId === helpThreadId
-      && notContacted?.viewer?.conversationId === null,
-    { contacted: contacted?.viewer, other: notContacted?.viewer });
+  check(
+    'only the helper actually contacted reads as in touch',
+    contacted?.viewer?.conversationId === helpThreadId &&
+      notContacted?.viewer?.conversationId === null,
+    { contacted: contacted?.viewer, other: notContacted?.viewer },
+  );
 
   const plainReply = responses.find(row => row.author.id === stranger.id);
 
-  check('a response that is not an offer of help never carries a thread id',
-    plainReply?.viewer?.conversationId === null, plainReply?.viewer);
+  check(
+    'a response that is not an offer of help never carries a thread id',
+    plainReply?.viewer?.conversationId === null,
+    plainReply?.viewer,
+  );
 
   r = await api(asker.token, 'POST', '/messages', {
-    recipientUserId: willing.id, context: { kind: 'COMMUNITY_REQUEST', id: helpReqId },
+    recipientUserId: willing.id,
+    context: { kind: 'COMMUNITY_REQUEST', id: helpReqId },
   });
-  check('tapping the button twice reopens the same thread, with 200',
-    r.status === 200 && r.body?.data?.id === helpThreadId, { s: r.status, id: r.body?.data?.id });
+  check(
+    'tapping the button twice reopens the same thread, with 200',
+    r.status === 200 && r.body?.data?.id === helpThreadId,
+    { s: r.status, id: r.body?.data?.id },
+  );
 
   r = await api(willing.token, 'POST', '/messages', {
-    recipientUserId: asker.id, context: { kind: 'COMMUNITY_REQUEST', id: helpReqId },
+    recipientUserId: asker.id,
+    context: { kind: 'COMMUNITY_REQUEST', id: helpReqId },
   });
-  check('and the helper answering from their side lands in it too',
-    r.body?.data?.id === helpThreadId, r.body?.data?.id);
+  check(
+    'and the helper answering from their side lands in it too',
+    r.body?.data?.id === helpThreadId,
+    r.body?.data?.id,
+  );
 
   r = await api(asker.token, 'POST', '/messages', {
     context: { kind: 'COMMUNITY_REQUEST', id: helpReqId },
   });
-  check('a request context without a recipient is a 400, because it has many helpers',
-    r.status === 400, { s: r.status, m: r.body?.error?.message });
+  check(
+    'a request context without a recipient is a 400, because it has many helpers',
+    r.status === 400,
+    { s: r.status, m: r.body?.error?.message },
+  );
 
   r = await api(stranger.token, 'POST', '/messages', {
-    recipientUserId: willing.id, context: { kind: 'COMMUNITY_REQUEST', id: helpReqId },
+    recipientUserId: willing.id,
+    context: { kind: 'COMMUNITY_REQUEST', id: helpReqId },
   });
-  check('somebody who is neither the asker nor a helper cannot open one', r.status === 403,
-    { s: r.status, code: r.body?.error?.code });
+  check('somebody who is neither the asker nor a helper cannot open one', r.status === 403, {
+    s: r.status,
+    code: r.body?.error?.code,
+  });
 
-  await api(asker.token, 'POST', `/community/requests/${helpReqId}/resolve`,
-    { outcome: 'HELPED', helperUserIds: [willing.id] });
+  await api(asker.token, 'POST', `/community/requests/${helpReqId}/resolve`, {
+    outcome: 'HELPED',
+    helperUserIds: [willing.id],
+  });
 
   const titlesFor = async token => {
     for (let attempt = 0; attempt < 25; attempt += 1) {
@@ -588,13 +962,21 @@ const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness
     return [];
   };
 
-  check('the credited helper is thanked',
-    (await titlesFor(willing.token)).some(t => t.includes('credited you')), 'no credit row');
-  check('and the one who offered but was not credited is told it is over, rather than left waiting',
-    (await titlesFor(alsoWilling.token)).some(t => t.includes('has been resolved')), 'no closing row');
-  check('while somebody who only commented is not notified at all',
+  check(
+    'the credited helper is thanked',
+    (await titlesFor(willing.token)).some(t => t.includes('credited you')),
+    'no credit row',
+  );
+  check(
+    'and the one who offered but was not credited is told it is over, rather than left waiting',
+    (await titlesFor(alsoWilling.token)).some(t => t.includes('has been resolved')),
+    'no closing row',
+  );
+  check(
+    'while somebody who only commented is not notified at all',
     ((await api(stranger.token, 'GET', '/notifications?limit=10')).body?.data ?? []).length === 0,
-    'the commenter was notified');
+    'the commenter was notified',
+  );
 
   ids.push(asker.id, willing.id, alsoWilling.id, stranger.id);
 

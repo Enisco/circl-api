@@ -2,6 +2,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import 'dotenv/config';
 import { Pool } from 'pg';
+import { seedAdminAccounts } from './seeders/admin-account.seeder';
 import { seedCities } from './seeders/city.seeder';
 import { seedPermissions } from './seeders/permission.seeder';
 import { seedRiskTerms } from './seeders/risk-term.seeder';
@@ -26,6 +27,8 @@ const main = async () => {
     await seedTaxonomy(prisma);
     await seedRiskTerms(prisma);
     await seedSupportResources(prisma);
+    // After the roles, which it attaches to. Refuses to run in production.
+    await seedAdminAccounts(prisma);
 
     console.info('Database seeding completed successfully');
   } catch (error) {

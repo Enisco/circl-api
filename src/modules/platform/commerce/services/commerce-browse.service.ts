@@ -1,5 +1,14 @@
 import { Injectable } from '@nestjs/common';
-import { ActivitySubject, ActivityVerb, ItemAvailability, Prisma, SearchScope, StoreFulfilment, StoreStatus, TaxonomyKind } from '@prisma/client';
+import {
+  ActivitySubject,
+  ActivityVerb,
+  ItemAvailability,
+  Prisma,
+  SearchScope,
+  StoreFulfilment,
+  StoreStatus,
+  TaxonomyKind,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import {
   buildPageMeta,
@@ -12,6 +21,8 @@ import {
 import {
   ActivityService,
   MediaService,
+  PUBLIC_VISIBILITY,
+  TRADING_STORE,
   TaxonomyService,
   toTermView,
   withoutAllCategories,
@@ -140,7 +151,6 @@ export class CommerceBrowseService {
   // ─── 4.4.2 Browse stores ───────────────────────────────────────────────────
 
   async browseStores(viewerId: string, query: BrowseCommerceDto) {
-
     const where = await this.storeWhere(query, viewerId);
     const origin = this.originOf(query);
 
@@ -188,7 +198,13 @@ export class CommerceBrowseService {
     query: BrowseCommerceDto,
     viewerId: string,
   ): Promise<Prisma.StoreWhereInput> {
-    const where: Prisma.StoreWhereInput = { deletedAt: null };
+    // §5.7's Decision: a SUSPENDED shop is out of browse. `UNDER_REVIEW` is not — somebody is
+    // looking, which is not the same as having decided.
+    const where: Prisma.StoreWhereInput = {
+      deletedAt: null,
+      ...PUBLIC_VISIBILITY,
+      ...TRADING_STORE,
+    };
     const and: Prisma.StoreWhereInput[] = [];
 
     if (query.cityId && query.cityId !== 'ANYWHERE') where.cityId = query.cityId;
@@ -273,10 +289,9 @@ export class CommerceBrowseService {
   // ─── 4.4.3 Browse items ────────────────────────────────────────────────────
 
   async browseItems(viewerId: string, query: BrowseCommerceDto) {
-
     const where: Prisma.StoreItemWhereInput = {
       deletedAt: null,
-      store: { deletedAt: null },
+      ...PUBLIC_VISIBILITY,
       // A draft is the seller's alone, and the grid is the one surface where forgetting that
       // publishes half-written listings to a whole city. Out of stock is kept: it still tells a
       // buyer what the shop sells.
@@ -311,7 +326,22 @@ export class CommerceBrowseService {
     }
 
     // Every store-level filter reads through to the item's store (4.4.1).
-    const storeFilter: Prisma.StoreWhereInput = { deletedAt: null, ownerId: { not: viewerId } };
+    //
+    // **The gates start here**, not on `where` above. This assignment is `where.store = storeFilter`
+    // — a replacement, not a merge — so anything set on `where.store` earlier was silently
+    // discarded by it. That is how a **held** shop's items stayed in the grid while the comment
+    // above claimed "a held shop takes its whole catalogue out of the grid with it": the clause
+    // was written and then overwritten a hundred lines later, and nothing failed.
+    //
+    // §5.7 adds the compliance gate, and putting both here is what stops the next store-level
+    // filter from dropping them again: an item is only for sale if the shop selling it is public
+    // *and* trading.
+    const storeFilter: Prisma.StoreWhereInput = {
+      deletedAt: null,
+      ...PUBLIC_VISIBILITY,
+      ...TRADING_STORE,
+      ownerId: { not: viewerId },
+    };
 
     if (query.cityId && query.cityId !== 'ANYWHERE') storeFilter.cityId = query.cityId;
     if (query.type) storeFilter.typeCode = query.type;
@@ -437,6 +467,10 @@ export class CommerceBrowseService {
     const city = cityId ?? profile?.cityId ?? null;
     const base: Prisma.StoreWhereInput = {
       deletedAt: null,
+      // Every rail and count on the Commerce home is built from this object, so the rule is set
+      // once: a held shop is in none of them, and neither is a suspended one (§5.7).
+      ...PUBLIC_VISIBILITY,
+      ...TRADING_STORE,
       // Their own shop comes back as `myStore`, so every rail and every count here is about
       // somebody else's. A category counting one shop and opening on an empty grid is worse than
       // no tile at all.
@@ -447,7 +481,11 @@ export class CommerceBrowseService {
 
     // Items, not shops: the front of Commerce is a grid of things for sale, and these two rails are
     // the same shape as `/commerce/items` so the screen needs no second round trip.
-    const itemBase: Prisma.StoreItemWhereInput = { deletedAt: null, store: base };
+    const itemBase: Prisma.StoreItemWhereInput = {
+      deletedAt: null,
+      ...PUBLIC_VISIBILITY,
+      store: base,
+    };
 
     const [open, popular, newStores, categories, myStore, cityName, popularRows, newRows] =
       await Promise.all([
@@ -473,6 +511,8 @@ export class CommerceBrowseService {
           where: { store: base },
           _count: { _all: true },
         }),
+        // visibility: the caller's own shop, for the "your shop" card. Theirs to see whatever
+        // state it is in — this is the screen where they would find out it is under review.
         this.database.store.findUnique({
           where: { ownerId: viewerId },
           select: { id: true, name: true, status: true },
@@ -564,6 +604,8 @@ export class CommerceBrowseService {
       select: { name: true },
     });
 
+    // visibility: the seller's own catalogue, to work out what they do not stock yet. A held item
+    // is still stock, and suggesting they add a second one would be nonsense.
     const stocked = await this.database.storeItem.findMany({
       where: { storeId, deletedAt: null },
       select: { name: true },

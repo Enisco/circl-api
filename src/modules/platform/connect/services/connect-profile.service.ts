@@ -2,8 +2,10 @@ import { Injectable } from '@nestjs/common';
 import {
   ConnectAccent,
   ConnectProfile,
+  ContentScanTrigger,
   DmPolicy,
   Prisma,
+  ReportTargetType,
   TaxonomyKind,
   TrustCheckType,
 } from '@prisma/client';
@@ -22,6 +24,7 @@ import {
   CityService,
   displayNameOf,
   MediaService,
+  ContentSafetyService,
   TaxonomyService,
   TermView,
   toAuthorView,
@@ -110,6 +113,7 @@ export class ConnectProfileService {
     private readonly cities: CityService,
     private readonly media: MediaService,
     private readonly connectMedia: ConnectMediaService,
+    private readonly safety: ContentSafetyService,
   ) {}
 
   // ─── 3.2.2 Setup prefill ───────────────────────────────────────────────────
@@ -138,6 +142,7 @@ export class ConnectProfileService {
           trustChecks: { where: { status: 'VERIFIED', check: TrustCheckType.IDENTITY } },
         },
       }),
+      // visibility: the caller's own profile, for the set-up screen.
       this.database.connectProfile.findUnique({ where: { userId }, include: profileInclude }),
     ]);
 
@@ -178,6 +183,8 @@ export class ConnectProfileService {
 
   /** `hasProfile: false` with `profile: null` is a normal response, not a 404. */
   async me(userId: string) {
+    // visibility: their own profile. A member whose bio is under review still manages it here —
+    // this is the screen that will tell them so.
     const profile = await this.database.connectProfile.findUnique({
       where: { userId },
       include: profileInclude,
@@ -315,7 +322,7 @@ export class ConnectProfileService {
         },
       });
 
-      return tx.connectProfile.upsert({
+      const saved = await tx.connectProfile.upsert({
         where: { userId },
         update: {
           typeCode: dto.typeCode,
@@ -345,6 +352,30 @@ export class ConnectProfileService {
         },
         include: profileInclude,
       });
+
+      // §6.1 scans a Connect profile's own words — what they are looking for, and the prompt
+      // answers, which have no state of their own (§4.5 gives the column to the profile, not to
+      // each answer). So a held answer holds the profile, which is right: the profile is the post.
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.CONNECT_PROFILE,
+        targetId: saved.id,
+        authorId: userId,
+        fields: {
+          lookingFor: saved.lookingFor,
+          ...Object.fromEntries(
+            (
+              await tx.connectPromptAnswer.findMany({
+                where: { profileId: saved.id },
+                select: { code: true, answer: true },
+              })
+            ).map(row => [`prompt ${row.code}`, row.answer]),
+          ),
+        },
+        trigger: ContentScanTrigger.EDIT,
+        summary: saved.lookingFor,
+      });
+
+      return saved;
     });
 
     return this.toView(profile);
@@ -354,6 +385,7 @@ export class ConnectProfileService {
 
   /** Removes the profile and all pending requests in both directions. */
   async remove(userId: string): Promise<void> {
+    // visibility: their own profile, on the way out of Connect.
     const profile = await this.database.connectProfile.findUnique({ where: { userId } });
 
     if (!profile) return;
@@ -444,6 +476,9 @@ export class ConnectProfileService {
 
   /** Loads a profile by its own id or by the member's user id (3.2.3). */
   async findByIdOrUserId(idOrUserId: string): Promise<ConnectProfileRow | null> {
+    // visibility: the loader behind "another member's profile". The decision is `connectVisibility`,
+    // which reads `visibilityState` along with hidden, deleted and blocked — one rule, one place,
+    // so a held profile answers with the same 404 as a hidden one.
     return this.database.connectProfile.findFirst({
       where: { OR: [{ id: idOrUserId }, { userId: idOrUserId }], deletedAt: null },
       include: profileInclude,
@@ -451,6 +486,7 @@ export class ConnectProfileService {
   }
 
   async requireOwn(userId: string): Promise<ConnectProfile> {
+    // visibility: the reciprocity gate, about the caller's own profile.
     const profile = await this.database.connectProfile.findUnique({ where: { userId } });
 
     if (!profile || profile.deletedAt) {

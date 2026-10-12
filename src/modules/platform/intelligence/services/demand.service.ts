@@ -1,8 +1,15 @@
 import { Injectable } from '@nestjs/common';
-import { ActivitySubject, ActivityVerb, Prisma, SearchScope, SuggestionSurface, TaxonomyKind } from '@prisma/client';
+import {
+  ActivitySubject,
+  ActivityVerb,
+  Prisma,
+  SearchScope,
+  SuggestionSurface,
+  TaxonomyKind,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { daysAgo } from '@/common';
-import { TaxonomyService } from '../../shared';
+import { PUBLIC_VISIBILITY, TaxonomyService } from '../../shared';
 
 export interface Suggestion {
   code: string | null;
@@ -172,9 +179,12 @@ export class DemandService {
     for (const row of byTerm) {
       if (row._count._all < MIN_DEMAND) continue;
 
+      // Supply is what a member searching would actually find, so a held item is not supply.
+      // Counting one would hide real demand behind a listing nobody can see.
       const supplyCount = await this.database.storeItem.count({
         where: {
           deletedAt: null,
+          ...PUBLIC_VISIBILITY,
           name: { contains: row.term!, mode: Prisma.QueryMode.insensitive },
           ...(row.cityId ? { store: { cityId: row.cityId } } : {}),
         },
@@ -253,23 +263,39 @@ export class DemandService {
     switch (surface) {
       case SuggestionSurface.COMMUNITY_OFFER:
         return this.database.communityOffer.count({
-          where: { deletedAt: null, categoryCode: code, ...(cityId ? { cityId } : {}) },
+          where: {
+            deletedAt: null,
+            ...PUBLIC_VISIBILITY,
+            categoryCode: code,
+            ...(cityId ? { cityId } : {}),
+          },
         });
       case SuggestionSurface.PROFESSIONAL_SERVICE:
         return this.database.professionalListing.count({
           where: {
             deletedAt: null,
+            ...PUBLIC_VISIBILITY,
             categories: { some: { code } },
             ...(cityId ? { cityId } : {}),
           },
         });
       case SuggestionSurface.STORE_ITEM:
         return this.database.storeItem.count({
-          where: { deletedAt: null, categoryCode: code, ...(cityId ? { store: { cityId } } : {}) },
+          where: {
+            deletedAt: null,
+            ...PUBLIC_VISIBILITY,
+            categoryCode: code,
+            ...(cityId ? { store: { cityId } } : {}),
+          },
         });
       default:
         return this.database.communityRequest.count({
-          where: { deletedAt: null, categoryCode: code, ...(cityId ? { cityId } : {}) },
+          where: {
+            deletedAt: null,
+            ...PUBLIC_VISIBILITY,
+            categoryCode: code,
+            ...(cityId ? { cityId } : {}),
+          },
         });
     }
   }

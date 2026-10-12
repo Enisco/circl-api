@@ -33,9 +33,18 @@ model Report {
   decision     ModerationDecision? @map("decision")
   decisionNote String?             @map("decision_note")
 
+  /// The case this report was grouped into (§7.1). Three people reporting one post is one piece
+  /// of work, and one outcome to tell all three about.
+  caseId String?     @map("case_id")
+  case   ReportCase? @relation(fields: [caseId], references: [id], onDelete: SetNull)
+
+  /// When the reporter was told the outcome (§7.3). Null means they have not been.
+  outcomeNotifiedAt DateTime? @map("outcome_notified_at") @db.Timestamptz
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
+  @@index([caseId])
   @@index([state, riskLevel, createdAt])
   @@index([targetType, targetId])
   @@index([reporterId])
@@ -56,6 +65,119 @@ model Block {
   @@map("blocks")
 }
 
+/// One piece of work about one target, however many people reported it (§4.6, §7.1).
+///
+/// The reports are the evidence and the case is the job: grouping them means a reviewer reads one
+/// screen and takes one decision, and everyone who reported it gets the same answer. The partial
+/// unique index in `extra-indexes.sql` is what makes "one open case per target" true under
+/// concurrency, rather than true most of the time.
+model ReportCase {
+  id String @id @default(uuid())
+
+  targetType ReportTargetType @map("target_type")
+  targetId   String           @map("target_id")
+
+  /// The reported member, where the target has one. A group has none.
+  targetUserId String? @map("target_user_id")
+  targetUser   User?   @relation("ReportCaseSubject", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  priority ReportCasePriority @map("priority")
+  state    ReportCaseState    @default(OPEN) @map("state")
+
+  /// Every distinct reason given across the grouped reports, so a reviewer sees "spam, and also
+  /// a scam" rather than only whichever arrived first.
+  reasonCodes ReportReason[] @map("reason_codes")
+
+  reportCount         Int @default(1) @map("report_count")
+  /// Distinct reporters, which is the number that means something: one person tapping five times
+  /// is not five people.
+  uniqueReporterCount Int @default(1) @map("unique_reporter_count")
+
+  riskLevel RiskLevel @default(NONE) @map("risk_level")
+  riskScore Int       @default(0) @map("risk_score")
+
+  firstReportedAt DateTime @map("first_reported_at") @db.Timestamptz
+  lastReportedAt  DateTime @map("last_reported_at") @db.Timestamptz
+  /// `firstReportedAt + reports.slaMinutes[priority]`, wall clock (§7.1): urgent is an hour at
+  /// three in the morning too.
+  dueAt           DateTime @map("due_at") @db.Timestamptz
+
+  assignedToId String?   @map("assigned_to_id")
+  assignedTo   User?     @relation("ReportCaseAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  claimedAt    DateTime? @map("claimed_at") @db.Timestamptz
+  /// The first thing anybody did about it, for the time-to-action metric (§5.25).
+  firstActionAt DateTime? @map("first_action_at") @db.Timestamptz
+
+  decision           ModerationDecision? @map("decision")
+  decisionReasonCode AdminReasonCode?    @map("decision_reason_code")
+  policySubtype      String?             @map("policy_subtype")
+  decisionNote       String?             @map("decision_note")
+  decidedById        String?             @map("decided_by_id")
+  decidedAt          DateTime?           @map("decided_at") @db.Timestamptz
+
+  /// The reviewer's way in: one queue item per case, and the case is where the decision lives.
+  queueItemId String? @unique @map("queue_item_id")
+  /// Set when the case was escalated to Guard, which carries on in its own workflow.
+  guardThreadId String? @map("guard_thread_id")
+
+  reopenedAt DateTime? @map("reopened_at") @db.Timestamptz
+
+  reports Report[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([state, priority, dueAt])
+  @@index([targetType, targetId])
+  @@index([targetUserId, createdAt])
+  @@index([assignedToId, state])
+  @@map("report_cases")
+}
+
+/// A member arguing with a decision (§5.11).
+///
+/// Logged by staff rather than filed by the member: an appeal arrives through Support, in the
+/// member's own words, and somebody writes it down. That is also why `statement` is the member's
+/// text and `loggedById` is the staff member who took it — two different people in one row.
+///
+/// `originalDeciderId` is the whole point of R6: whoever took the decision being appealed cannot
+/// be the one who reviews the appeal. Recorded at logging time, because by the time somebody
+/// claims it the decision's trail may be several rows away.
+model Appeal {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation("AppealSubject", fields: [userId], references: [id], onDelete: Cascade)
+
+  subjectType AppealSubjectType @map("subject_type")
+  /// The case, strike, suspension or content verdict being argued with.
+  subjectId   String            @map("subject_id")
+
+  /// R6: who decided the thing being appealed, so the same person cannot review it.
+  originalDeciderId String? @map("original_decider_id")
+  /// The Support thread it came in through, where the member is answered.
+  supportConversationId String? @map("support_conversation_id")
+
+  /// The member's words, as logged.
+  statement String      @map("statement")
+  state     AppealState @default(OPEN) @map("state")
+
+  loggedById String  @map("logged_by_id")
+  reviewerId String? @map("reviewer_id")
+
+  decidedAt    DateTime? @map("decided_at") @db.Timestamptz
+  decisionNote String?   @map("decision_note")
+  /// `createdAt + appeals.slaHours`, wall clock.
+  dueAt        DateTime  @map("due_at") @db.Timestamptz
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([state, dueAt])
+  @@index([userId])
+  @@index([subjectType, subjectId])
+  @@map("appeals")
+}
+
 // The admin work queue.
 model ModerationQueueItem {
   id    String               @id @default(uuid())
@@ -69,6 +191,25 @@ model ModerationQueueItem {
   subjectUser   User?   @relation("QueueSubject", fields: [subjectUserId], references: [id], onDelete: SetNull)
 
   reportId String? @map("report_id")
+
+  /// How urgent, and when a reviewer should have reached it (§5.9).
+  ///
+  /// The same two columns `ReportCase` carries, and for the same reason: a queue a reviewer sorts
+  /// by "how bad does this look" is not the same as one sorted by "what is about to breach". The
+  /// priority is computed from the risk band rather than stored as a copy of it, because
+  /// `GUARD_RISK` is urgent whatever it scored and an anonymous post is not.
+  ///
+  /// `dueAt` is **working hours** for an ordinary anonymous post and wall clock for everything
+  /// else — see `queue-priority.ts`. A wall clock would make everything posted on Friday evening
+  /// overdue by Saturday lunchtime, and a queue that is entirely red on Monday morning has stopped
+  /// telling anybody anything.
+  /// Required, with no default, deliberately. Eight things create queue items — the content
+  /// scanner, the message scanner, auto-guides, Guard, report cases, appeals, listing reviews —
+  /// and a producer that forgot a deadline would leave an item that can never be overdue and
+  /// sorts last in a queue ordered by urgency. Silent, and invisible until somebody asks why a
+  /// disclosure sat for a week. Non-nullable turns that into a compile error.
+  priority ReportCasePriority @default(NORMAL) @map("priority")
+  dueAt    DateTime           @map("due_at") @db.Timestamptz
 
   // Ranked by urgency and pushed to the top with an alert (Guard).
   riskLevel    RiskLevel     @default(NONE) @map("risk_level")
@@ -93,6 +234,9 @@ model ModerationQueueItem {
   @@unique([type, targetType, targetId])
   @@index([state, riskScore, createdAt])
   @@index([type, state])
+  /// The two lists §5.9 asks for: "sorted by what is closest to breaching", and "how many are
+  /// already over". Both are `state` + `dueAt`, and without this they are a sort of the table.
+  @@index([state, dueAt])
   @@map("moderation_queue_items")
 }
 
@@ -146,12 +290,21 @@ model GuardThread {
   assignedToId String? @map("assigned_to_id")
   assignedTo   User?   @relation("GuardAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
 
+  /// Where the case came from (§5.12). Defaults to MEMBER because every row that existed before
+  /// this column was a member opening a thread — the two staff-raised sources did not exist yet.
+  sourceType GuardCaseSource @default(MEMBER) @map("source_type")
+  /// What it was raised off: a report case, a queue item, a piece of content. Free-form because
+  /// the referent differs per source and a foreign key to four tables is four nullable columns.
+  sourceId   String?         @map("source_id")
+
   resolvedAt DateTime? @map("resolved_at") @db.Timestamptz
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   @@index([state, riskScore, createdAt])
   @@index([userId, createdAt])
+  /// §5.12's `source` filter, and the analytics drill-down behind it.
+  @@index([sourceType, createdAt])
   @@map("guard_threads")
 }
 
@@ -173,10 +326,159 @@ model RiskTerm {
   isActive  Boolean      @default(true) @map("is_active")
   /// Why this phrase is here, for whoever inherits the lexicon. ≤ 500 characters.
   notes     String?      @map("notes")
+
+  /// Who added it and who last switched it on or off. A lexicon is a set of editorial judgements
+  /// about language, and the person who made one is part of the record.
+  createdById String? @map("created_by_id")
+  updatedById String? @map("updated_by_id")
+
+  /// The term's record, counted as decisions come in rather than derived on demand.
+  ///
+  /// Denormalised on purpose: the question "which of my two hundred terms are wasting reviewers'
+  /// time" is asked on a list page, and answering it with a `COUNT` per term per page is the
+  /// query that makes the lexicon screen slow enough that nobody opens it. `RiskTermHit` keeps the
+  /// rows, so these can always be rebuilt.
+  hitCount           Int       @default(0) @map("hit_count")
+  confirmedCount     Int       @default(0) @map("confirmed_count")
+  falsePositiveCount Int       @default(0) @map("false_positive_count")
+  lastHitAt          DateTime? @map("last_hit_at") @db.Timestamptz
+
+  hits RiskTermHit[]
+
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz
 
   @@unique([category, pattern])
   @@index([isActive])
   @@map("risk_terms")
+}
+
+/// What the platform currently believes about one piece of content (§4.5, §6).
+///
+/// One row per scannable item, polymorphic on `(targetType, targetId)`, and **not** the place a
+/// read path looks: every public content table carries its own `visibilityState` column, which is
+/// what a feed query filters on. The duplication is the design (§4.5's Decision) — scoring,
+/// reviewer data and history belong in one table so there is one queue and one set of queries,
+/// while a feed asking "is this visible" must stay a single-table predicate rather than a join
+/// against fifteen kinds of content.
+///
+/// The two copies are written in the same transaction. If they ever disagree, the content table
+/// wins for visibility, because that is the one the member-facing read actually consults.
+model ContentSafety {
+  id         String           @id @default(uuid())
+  targetType ReportTargetType @map("target_type")
+  targetId   String           @map("target_id")
+  /// Who wrote it. Nullable because some scannable things have no single author (a group's own
+  /// description outlives its creator's membership).
+  authorId String? @map("author_id")
+
+  tier            ContentRiskTier        @default(CLEAN) @map("tier")
+  /// A mirror of the content row's own column, kept so the flagged queue can be built without
+  /// fifteen joins.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
+
+  /// 0–100 (§6.3). `finalScore` is what the tier is read from; the two parts are kept beside it
+  /// because "the lexicon said 70 and the classifier said 2" is the disagreement a reviewer needs
+  /// to see, and an average hides it.
+  finalScore        Int           @default(0) @map("final_score")
+  lexiconScore      Int           @default(0) @map("lexicon_score")
+  /// `[{ termId, category, pattern, weight, field }]` — which phrase matched, and in which field,
+  /// so a reviewer is shown the evidence rather than a number.
+  lexiconSignals    Json?         @map("lexicon_signals")
+  /// The classifier's raw per-category scores, as returned.
+  classifierScores  Json?         @map("classifier_scores")
+  classifierFlagged Boolean?      @map("classifier_flagged")
+  category          RiskCategory? @map("category")
+
+  scanStatus ContentScanStatus @default(PENDING) @map("scan_status")
+  /// Increments on every scan, and is what makes the worker idempotent: a job carrying a stale
+  /// version is a no-op, so a retry cannot overwrite a newer verdict or a human's decision.
+  scanVersion Int               @default(0) @map("scan_version")
+  /// sha256 of the scanned text and media keys. An edit that does not change this skips the scan.
+  contentHash String?           @map("content_hash")
+
+  heldAt DateTime? @map("held_at") @db.Timestamptz
+  /// Why it is not VISIBLE: `AUTO_HIGH`, `AUTO_CRITICAL`, `AUTO_MEDIUM`, `STAFF_HIDE`,
+  /// `ANONYMOUS`, or `PENDING_SCAN` — the provisional state a lexicon-clean item sits in for the
+  /// second or two before the classifier answers, so nothing the classifier would hold is ever in
+  /// a feed first (§6.5).
+  heldReason String?   @map("held_reason")
+  limitedAt  DateTime? @map("limited_at") @db.Timestamptz
+
+  reviewedAt     DateTime?           @map("reviewed_at") @db.Timestamptz
+  reviewedById   String?             @map("reviewed_by_id")
+  reviewDecision ModerationDecision? @map("review_decision")
+  guardThreadId  String?             @map("guard_thread_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  scans ContentScan[]
+  hits  RiskTermHit[]
+
+  @@unique([targetType, targetId])
+  @@index([visibilityState, tier, createdAt])
+  @@index([authorId, createdAt])
+  @@map("content_safety")
+}
+
+/// Every scan that has ever run, append-only.
+///
+/// Separate from the verdict because the verdict is overwritten and the history is evidence: "this
+/// was approved by a human on Tuesday, re-scanned on Thursday after an edit, and the new text
+/// scored 70" is a sentence only a history can say. It is also how a classifier change is
+/// measured — the same content, scanned twice, with both scores kept.
+model ContentScan {
+  id              String        @id @default(uuid())
+  contentSafetyId String        @map("content_safety_id")
+  contentSafety   ContentSafety @relation(fields: [contentSafetyId], references: [id], onDelete: Cascade)
+
+  trigger     ContentScanTrigger @map("trigger")
+  scanVersion Int                @map("scan_version")
+  contentHash String             @map("content_hash")
+
+  lexiconScore     Int     @map("lexicon_score")
+  lexiconSignals   Json?   @map("lexicon_signals")
+  classifierModel  String? @map("classifier_model")
+  classifierScores Json?   @map("classifier_scores")
+  /// What went wrong, when something did. Kept rather than logged: a week of
+  /// `classifierError = 'timeout'` is the thing a safety dashboard has to be able to show.
+  classifierError  String? @map("classifier_error")
+
+  finalScore Int             @map("final_score")
+  tier       ContentRiskTier @map("tier")
+  /// The lexicon ran, the classifier did not.
+  degraded   Boolean         @default(false) @map("degraded")
+  durationMs Int?            @map("duration_ms")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([contentSafetyId, createdAt])
+  @@map("content_scans")
+}
+
+/// One match of one lexicon term on one piece of content, and what a reviewer later decided.
+///
+/// The point is the false-positive rate. A term is a guess about language, and without a row per
+/// hit the only evidence about whether the guess was good is how many reviewers complained.
+model RiskTermHit {
+  id         String   @id @default(uuid())
+  riskTermId String   @map("risk_term_id")
+  riskTerm   RiskTerm @relation(fields: [riskTermId], references: [id], onDelete: Cascade)
+
+  /// Null for a hit recorded against something that has no safety row (a private message, §6.8).
+  contentSafetyId String?        @map("content_safety_id")
+  contentSafety   ContentSafety? @relation(fields: [contentSafetyId], references: [id], onDelete: SetNull)
+
+  targetType ReportTargetType   @map("target_type")
+  targetId   String             @map("target_id")
+  outcome    RiskTermHitOutcome @default(PENDING) @map("outcome")
+
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz
+
+  @@index([riskTermId, createdAt])
+  @@index([riskTermId, outcome])
+  @@index([targetType, targetId])
+  @@map("risk_term_hits")
 }

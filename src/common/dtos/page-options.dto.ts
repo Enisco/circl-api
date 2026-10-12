@@ -32,6 +32,20 @@ export class PageOptionsDto {
     return Math.min(this.limit ?? PageOptionsDto.DEFAULT_LIMIT, PageOptionsDto.MAX_LIMIT);
   }
 
+  /**
+   * Swallows `?perPage=25`, which is **not** a member parameter — the member API pages with
+   * `limit` and the admin API pages with `perPage`.
+   *
+   * Without a setter, `class-transformer` throws while building the DTO ("Cannot set property
+   * perPage of #<PageOptionsDto> which has only a getter"), and it throws *before* the validator
+   * runs — so every member list endpoint answered a stray `perPage` with a **500** rather than
+   * the 400 naming the field that `forbidNonWhitelisted` exists to give. Assigning does nothing;
+   * the property carries no validation decorator, so the request is then refused by name.
+   */
+  set perPage(_value: number) {
+    // Deliberately ignored. See above.
+  }
+
   get currentPage(): number {
     return Math.max(this.page ?? 1, 1);
   }

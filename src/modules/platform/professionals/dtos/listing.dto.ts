@@ -117,6 +117,26 @@ export class CreateListingDto {
   @IsString()
   @IsOptional()
   coverKey?: string | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    minItems: 1,
+    maxItems: 5,
+    description:
+      'Media ids of 1 to 5 supporting documents (§2.9), **required** when any chosen profession ' +
+      'has `requiresReview: true` on `GET /taxonomy` — a qualification, a registration, a licence ' +
+      'or an insurance schedule. Upload them through `POST media/uploads` with ' +
+      '`purpose: VERIFICATION`; PDF, PNG and JPEG only.\n\n' +
+      'Sent for a profession that needs no approval: **400 `DOCUMENTS_NOT_REQUIRED`**. These are ' +
+      'identity papers, and the platform does not keep ones it has no reason to hold.\n\n' +
+      'On an edit this is the **whole** set, not an addition: anything attached and not listed ' +
+      'here stops being part of the submission.',
+  })
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @IsOptional()
+  documentIds?: string[];
 }
 
 export class UpdateListingDto {
@@ -206,6 +226,26 @@ export class UpdateListingDto {
   @IsString()
   @IsOptional()
   coverKey?: string | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    minItems: 1,
+    maxItems: 5,
+    description:
+      'Media ids of 1 to 5 supporting documents (§2.9), **required** when any chosen profession ' +
+      'has `requiresReview: true` on `GET /taxonomy` — a qualification, a registration, a licence ' +
+      'or an insurance schedule. Upload them through `POST media/uploads` with ' +
+      '`purpose: VERIFICATION`; PDF, PNG and JPEG only.\n\n' +
+      'Sent for a profession that needs no approval: **400 `DOCUMENTS_NOT_REQUIRED`**. These are ' +
+      'identity papers, and the platform does not keep ones it has no reason to hold.\n\n' +
+      'On an edit this is the **whole** set, not an addition: anything attached and not listed ' +
+      'here stops being part of the submission.',
+  })
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @IsOptional()
+  documentIds?: string[];
 }
 
 /** All optional, each one overriding the offer's value (2.1.3). */
@@ -252,6 +292,26 @@ export class PromoteOfferDto {
   @IsBoolean()
   @IsOptional()
   consentAccepted?: boolean;
+
+  @ApiPropertyOptional({
+    type: [String],
+    minItems: 1,
+    maxItems: 5,
+    description:
+      'Media ids of 1 to 5 supporting documents (§2.9), **required** when any chosen profession ' +
+      'has `requiresReview: true` on `GET /taxonomy` — a qualification, a registration, a licence ' +
+      'or an insurance schedule. Upload them through `POST media/uploads` with ' +
+      '`purpose: VERIFICATION`; PDF, PNG and JPEG only.\n\n' +
+      'Sent for a profession that needs no approval: **400 `DOCUMENTS_NOT_REQUIRED`**. These are ' +
+      'identity papers, and the platform does not keep ones it has no reason to hold.\n\n' +
+      'On an edit this is the **whole** set, not an addition: anything attached and not listed ' +
+      'here stops being part of the submission.',
+  })
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @IsOptional()
+  documentIds?: string[];
 }
 
 export class ServiceDto {

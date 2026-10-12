@@ -27,11 +27,18 @@ export class VerificationService {
     this.logger.setContext(VerificationService.name);
   }
 
+  /**
+   * One path, always: hash the code that arrived and compare it with the one that was stored.
+   *
+   * This used to return `true` early for the literal `1111` whenever `APP_ENV !== 'production'`.
+   * That branch is gone rather than corrected, because it was a second route through an
+   * authentication check whose reachability depended on configuration — and it read only
+   * `APP_ENV`, so a deployment with `NODE_ENV=production` and `APP_ENV` unset had it live.
+   *
+   * Development still gets a code it can type: `Util.generateOtp` *generates* a known one outside
+   * production, so the ordinary comparison below succeeds with no branch to reach.
+   */
   private async validateOtp(email: string, inputCode: string): Promise<boolean> {
-    const isProduction = this.configService.get<string>('APP_ENV') === 'production';
-
-    if (!isProduction && inputCode === '1111') return true;
-
     const cachedHashedCode = await this.cache.get<string>(OTP_CACHE_KEY(email));
 
     if (!cachedHashedCode) return false;
@@ -87,6 +94,11 @@ export class VerificationService {
         lastName: true,
         email: true,
         status: true,
+        // Both read by `validateUserAccount`: the end date the suspension screen shows, and the
+        // one state that is a 410 rather than a 403.
+        suspendedUntil: true,
+        isAnonymised: true,
+        anonymisedAt: true,
         userAuth: {
           select: {
             emailVerifiedAt: true,

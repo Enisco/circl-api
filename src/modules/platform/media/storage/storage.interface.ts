@@ -19,6 +19,19 @@ export abstract class StorageProvider {
   /** A ready-to-use https URL for reading one object (0.11.3). */
   abstract readUrl(storageKey: string): string;
 
+  /**
+   * A short-lived URL that **saves** rather than renders, for a file a person downloads once.
+   *
+   * Separate from `readUrl` because the two have opposite requirements. A read URL is anchored to
+   * UTC midnight and lives 48 hours so a client's cache key holds across a day of scrolling; a
+   * staff export is a one-time download of member data, where the whole point is that the link
+   * stops working almost immediately (§5.26: five minutes) and cannot be shared usefully.
+   */
+  abstract downloadUrl(
+    storageKey: string,
+    options: { expiresInSeconds: number; filename: string },
+  ): string;
+
   /** Writes an object directly, bypassing the presigned flow. */
   abstract put(storageKey: string, body: Buffer, mimeType: string): Promise<void>;
 

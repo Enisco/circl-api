@@ -5,6 +5,7 @@ import { RegisterController, TokenController, VerificationController } from './c
 import { JwtStrategy, RefreshTokenStrategy } from './strategies';
 import {
   AccountSecurityService,
+  AccountStateService,
   AuthService,
   CookieService,
   LogOutService,
@@ -37,6 +38,7 @@ import { RouterModule } from '@nestjs/core';
   ],
   providers: [
     AccountSecurityService,
+    AccountStateService,
     AuthService,
     CookieService,
     LogOutService,

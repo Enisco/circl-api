@@ -52,8 +52,11 @@ describe('the indexes Prisma cannot describe', () => {
   const partial = asserted.filter(statement => /WHERE/i.test(statement));
   const trigram = asserted.filter(statement => /gin_trgm_ops/.test(statement));
 
+  // An exact count, deliberately: it is the tripwire that makes somebody adding an index come and
+  // read this file. Four partial ones — two unique rules, the media sweep's, and the app-version
+  // index behind the admin filter bar.
   it('is the whole boot guard, partial and trigram', () => {
-    expect(partial).toHaveLength(3);
+    expect(partial).toHaveLength(4);
     expect(trigram.length).toBeGreaterThanOrEqual(15);
     expect(partial.length + trigram.length).toBe(asserted.length);
   });

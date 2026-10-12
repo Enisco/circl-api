@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
-  ModerationQueueType,
+  ContentRiskTier,
+  ContentScanTrigger,
   Prisma,
   ReportReason,
   ReportState,
@@ -11,12 +12,14 @@ import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta, Paginated, toJson } from '@/common';
 import {
   AuthorView,
+  ContentSafetyService,
   MediaService,
   RiskScannerService,
   authorSelect,
   toAuthorView,
 } from '../../shared';
 import { CreateBlockDto, CreateReportDto, ListBlocksDto } from '../dtos/moderation.dto';
+import { ReportCaseService } from './report-case.service';
 
 /**
  * Which table holds each reportable thing, and where the member who put it there is named.
@@ -65,15 +68,37 @@ const TARGETS: Record<ReportTargetType, ReportTarget | null> = {
     authorField: 'userId',
     hasReportToken: false,
   },
+  // Added with the scanner (§4.1): these four are now scanned, so they are also reportable and
+  // removable. A caption, a service, a review and the written part of a profile.
+  CONNECT_POST: { model: 'connectPost', authorField: 'profileId', hasReportToken: false },
+  PROFESSIONAL_SERVICE: {
+    model: 'professionalService',
+    authorField: 'listingId',
+    hasReportToken: false,
+    // A service belongs to a listing and a listing belongs to a member, the same read-through the
+    // store item uses rather than a column that has to be written correctly for ever.
+    authorVia: { relation: 'listing', field: 'userId' },
+  },
+  REVIEW: { model: 'review', authorField: 'reviewerId', hasReportToken: false },
+  USER_PROFILE: { model: 'userProfile', authorField: 'userId', hasReportToken: false },
+  // An image scanned in its own right (§6.1), which today means an avatar. `CONNECT_MEDIA` is the
+  // same table under the name the app reports a Connect photo by; this is the scanner's name for
+  // one that belongs to no post, and the two must not be merged: a report on a Connect photo
+  // groups under its post (§3.9) and this one has no post to group under.
+  MEDIA: { model: 'media', authorField: 'uploadedById', hasReportToken: false },
   USER: null,
 };
 
 @Injectable()
 export class ModerationService {
+  private readonly logger = new Logger(ModerationService.name);
+
   constructor(
     private readonly database: PrismaService,
     private readonly risk: RiskScannerService,
     private readonly media: MediaService,
+    private readonly safety: ContentSafetyService,
+    private readonly cases: ReportCaseService,
   ) {}
 
   // ─── 1.8.1 Reports ─────────────────────────────────────────────────────────
@@ -87,6 +112,10 @@ export class ModerationService {
     }
 
     // SAFETY_CONCERN routes into the Guard workflow rather than the standard moderation queue (1.8.1): a member reporting that someone is in danger is not the same job as a member reporting spam.
+    //
+    // The lexicon is run over the **report** — the reason and the note the reporter typed — which
+    // is what decides Guard routing. §7.1's scan of the *content* is separate and happens inside
+    // the transaction below, because it writes a verdict.
     const assessment = await this.risk.scan(dto.note, resolved.text);
     const isGuard =
       dto.reasonCode === ReportReason.SAFETY_CONCERN || this.risk.isUrgent(assessment);
@@ -121,7 +150,7 @@ export class ModerationService {
       return;
     }
 
-    await this.database.$transaction(async tx => {
+    const file = async (tx: Prisma.TransactionClient) => {
       const report = await tx.report.create({
         data: {
           reporterId,
@@ -142,34 +171,42 @@ export class ModerationService {
         },
       });
 
-      await tx.moderationQueueItem.upsert({
-        where: {
-          type_targetType_targetId: {
-            type: isGuard ? ModerationQueueType.GUARD_RISK : ModerationQueueType.REPORTED_CONTENT,
-            targetType: dto.targetType,
-            targetId: resolved.id,
-          },
-        },
-        // A second report on the same content raises its score rather than creating a second row: three people reporting one post is one job for a reviewer, and a more urgent one.
-        update: {
-          riskScore: { increment: Math.max(10, assessment.score) },
-          ...(assessment.level !== RiskLevel.NONE
-            ? { riskLevel: assessment.level, riskCategory: assessment.category }
-            : {}),
-        },
-        create: {
-          type: isGuard ? ModerationQueueType.GUARD_RISK : ModerationQueueType.REPORTED_CONTENT,
-          targetType: dto.targetType,
-          targetId: resolved.id,
-          subjectUserId: resolved.authorId,
-          reportId: report.id,
-          riskLevel: assessment.level,
-          riskCategory: assessment.category,
-          riskScore: Math.max(10, assessment.score),
-          riskSignals: toJson(assessment.signals),
-          summary: resolved.text?.slice(0, 200) ?? null,
-        },
+      // §7.1 step 2: the content is scanned by the pipeline, not by a second bare lexicon call
+      // that writes nothing down. A report is the one moment somebody is asking for a fresh look,
+      // so it re-scans even when the words have not changed — the lexicon may have grown since.
+      // Content with no row to read (a conversation, a member) scans to nothing and the report's
+      // own risk level stands.
+      const verdict = await this.safety.rescan(tx, {
+        targetType: dto.targetType,
+        targetId: resolved.id,
+        authorId: resolved.authorId,
+        trigger: ContentScanTrigger.REPORT,
       });
+
+      const grouped = await this.cases.intake(tx, {
+        reportId: report.id,
+        reporterId,
+        reasonCode: dto.reasonCode,
+        targetType: dto.targetType,
+        targetId: resolved.id,
+        targetUserId: resolved.authorId,
+        targetRemoved: resolved.removed,
+        tier: verdict?.tier ?? ContentRiskTier.CLEAN,
+        riskLevel:
+          isGuard && assessment.level === RiskLevel.NONE ? RiskLevel.MEDIUM : assessment.level,
+        riskScore: assessment.score,
+        riskSignals: assessment.signals,
+        summary: resolved.text?.slice(0, 200) ?? null,
+        guard: isGuard,
+      });
+
+      if (grouped.settled) {
+        // Answered from a case that was already decided (§7.1 step 5). Nothing more to do here:
+        // the reporter is told the outcome by §7.3's notification, which reads `outcomeNotifiedAt`.
+        this.logger.log(
+          `Report ${report.id} answered from case ${grouped.caseId}: ${grouped.settled}`,
+        );
+      }
 
       // In the same transaction as the report (1.8.1): a member who asked for both and got one is
       // worse off than one who got neither.
@@ -180,7 +217,37 @@ export class ModerationService {
           create: { blockerId: reporterId, blockedId: blockTargetId },
         });
       }
-    });
+    };
+
+    try {
+      await this.database.$transaction(file);
+    } catch (error) {
+      if (!this.lostTheCaseRace(error)) throw error;
+
+      // Two reports about the same target, arriving together: §4.6's partial unique index is what
+      // makes "one open case per target" true rather than usually true, and this is its other
+      // half. The loser's whole transaction rolled back, so the retry re-reads, finds the case the
+      // winner opened and joins it. Retried outside the transaction because a failed statement
+      // aborts a Postgres transaction — nothing can be caught and continued inside one.
+      //
+      // Not reproducible on this machine: eight reports fired at one post land as one case with
+      // eight reporters, because Prisma's connection pool serialises the transactions long before
+      // Postgres has to. A bigger pool is all it would take for that to stop being true, and the
+      // failure it would cause is a member's report lost to a 500.
+      this.logger.warn(`Report on ${dto.targetType} ${resolved.id} lost the case race; retrying`);
+      await this.database.$transaction(file);
+    }
+  }
+
+  /** Whether a write failed on §4.6's "one open case per target" index. */
+  private lostTheCaseRace(error: unknown): boolean {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+      return false;
+    }
+
+    // Prisma does not know this index — it is raw SQL in `extra-indexes.sql` — so the target it
+    // reports is the constraint's name rather than a field list.
+    return JSON.stringify(error.meta ?? {}).includes('report_cases_open_target');
   }
 
   // ─── 1.8.2 Blocks ──────────────────────────────────────────────────────────
@@ -241,12 +308,23 @@ export class ModerationService {
   private async resolveTarget(
     targetType: ReportTargetType,
     targetId: string,
-  ): Promise<{ id: string; authorId: string | null; text: string | null } | null> {
+  ): Promise<{
+    id: string;
+    authorId: string | null;
+    text: string | null;
+    /** Already taken down, which is what makes a previous decision the answer to this report (§7.1). */
+    removed: boolean;
+  } | null> {
     if (targetType === ReportTargetType.USER || targetType === ReportTargetType.CONVERSATION) {
       const id = await this.resolveUserOrToken(targetId);
 
       return id
-        ? { id, authorId: targetType === ReportTargetType.USER ? id : null, text: null }
+        ? {
+            id,
+            authorId: targetType === ReportTargetType.USER ? id : null,
+            text: null,
+            removed: false,
+          }
         : null;
     }
 
@@ -292,6 +370,11 @@ export class ModerationService {
         (row.body as string | undefined) ??
         (row.name as string | undefined) ??
         null,
+      // Reportable content is soft-deleted, so the row is still here to resolve — which is how a
+      // member reporting from a screen that has not refreshed gets an answer rather than a 404.
+      // A service is switched off rather than deleted, and that counts as taken down too.
+      removed:
+        row.deletedAt !== null && row.deletedAt !== undefined ? true : row.isActive === false,
     };
   }
 
@@ -307,6 +390,8 @@ export class ModerationService {
     if (user) return user.id;
 
     const [request, update, offer] = await Promise.all([
+      // visibility: a report is about content, so the report path has to be able to see content
+      // in any state — including the state a previous report put it in.
       this.database.communityRequest.findUnique({
         where: { reportToken: value },
         select: { authorId: true },
@@ -315,6 +400,7 @@ export class ModerationService {
         where: { reportToken: value },
         select: { authorId: true },
       }),
+      // visibility: a report is about content, so this path sees content in any state.
       this.database.communityOffer.findUnique({
         where: { reportToken: value },
         select: { authorId: true },

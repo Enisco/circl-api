@@ -1,5 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ActivitySubject, ActivityVerb, Prisma, SearchScope, SearchTermSource, TaxonomyKind } from '@prisma/client';
+import {
+  ActivitySubject,
+  ActivityVerb,
+  Prisma,
+  SearchScope,
+  SearchTermSource,
+  TaxonomyKind,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { TaxonomyService } from '../../shared';
 
@@ -146,7 +153,10 @@ export class SearchDemandService {
    * collapse to a few hundred distinct terms here, which is what makes everything after this
    * cheap — nothing downstream ever reasons about a search, only about a term.
    */
-  private async aggregate(from: Date, to: Date): Promise<Array<TermRow & { cityId: string | null }>> {
+  private async aggregate(
+    from: Date,
+    to: Date,
+  ): Promise<Array<TermRow & { cityId: string | null }>> {
     return this.database.$queryRaw<Array<TermRow & { cityId: string | null }>>`
       SELECT
         lower(btrim(regexp_replace(term, '[^[:alnum:][:space:]]', '', 'g'))) AS normalised,
@@ -216,8 +226,7 @@ export class SearchDemandService {
         // mixing "suya spice" with "Immigration Advice" reads like a bug. Sentence case is a
         // display decision and not a claim about what the words mean, which is the line a guess
         // would cross.
-        canonical:
-          resolved?.canonical ?? normalised.charAt(0).toUpperCase() + normalised.slice(1),
+        canonical: resolved?.canonical ?? normalised.charAt(0).toUpperCase() + normalised.slice(1),
         categoryCode: resolved?.code ?? null,
         // Whole enough to stand on its own, or not worth showing anybody. A fragment is not a
         // word: showing one is worse than showing a shorter list.
@@ -256,7 +265,9 @@ export class SearchDemandService {
   private static readonly SHARED_KINDS = [TaxonomyKind.HERITAGE_TAG, TaxonomyKind.LANGUAGE];
 
   /** Every code list whose labels are words a member might type, kept apart by kind. */
-  private async taxonomyLabels(): Promise<Map<TaxonomyKind, Array<{ code: string; label: string }>>> {
+  private async taxonomyLabels(): Promise<
+    Map<TaxonomyKind, Array<{ code: string; label: string }>>
+  > {
     const kinds = [
       ...new Set([
         ...Object.values(SearchDemandService.KINDS_FOR).flat(),
@@ -336,10 +347,10 @@ export class SearchDemandService {
             SELECT title AS canonical, category_code AS code FROM community_requests
             WHERE deleted_at IS NULL AND title ILIKE ${like}
             ORDER BY created_at DESC LIMIT 1`
-              // Offers and groups, because those are what the Community box searches. It used to
-              // fall through to requests here, which answered a search of one surface with the
-              // name of something on another.
-              : await this.database.$queryRaw<Array<{ canonical: string; code: string | null }>>`
+              : // Offers and groups, because those are what the Community box searches. It used to
+                // fall through to requests here, which answered a search of one surface with the
+                // name of something on another.
+                await this.database.$queryRaw<Array<{ canonical: string; code: string | null }>>`
             SELECT canonical, code FROM (
               SELECT title AS canonical, category_code AS code, view_count AS rank
                 FROM community_offers WHERE deleted_at IS NULL AND title ILIKE ${like}
@@ -387,7 +398,13 @@ export class SearchDemandService {
     const fold = (rows: Array<TermRow & { cityId: string | null }>) => {
       const out = new Map<
         string,
-        { canonical: string; code: string | null; searches: number; members: Set<number>; misses: number }
+        {
+          canonical: string;
+          code: string | null;
+          searches: number;
+          members: Set<number>;
+          misses: number;
+        }
       >();
 
       for (const row of rows) {
@@ -400,9 +417,13 @@ export class SearchDemandService {
         if (PRIVATE_SHAPES.some(shape => shape.test(entry.canonical))) continue;
 
         const key = entry.canonical.toLowerCase();
-        const seen =
-          out.get(key) ??
-          { canonical: entry.canonical, code: entry.code, searches: 0, members: new Set<number>(), misses: 0 };
+        const seen = out.get(key) ?? {
+          canonical: entry.canonical,
+          code: entry.code,
+          searches: 0,
+          members: new Set<number>(),
+          misses: 0,
+        };
 
         seen.searches += row.searches;
         seen.misses += row.misses;

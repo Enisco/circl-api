@@ -2,23 +2,29 @@ import { Injectable } from '@nestjs/common';
 import {
   ActivitySubject,
   ActivityVerb,
+  ContentScanTrigger,
   ItemAvailability,
   Media,
   Prisma,
+  ReportTargetType,
   TaxonomyKind,
   ThreadContextType,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import {
   ActivityService,
+  ContentSafetyService,
+  DIRECT_VISIBILITY,
   MediaService,
+  PUBLIC_VISIBILITY,
   TaxonomyService,
   toAuthorView,
   toMediaViews,
   toTermView,
   isAllCategories,
+  isReachable,
 } from '../../shared';
-import { ApiException, buildPageMeta, escapeLike, money, Paginated } from '@/common';
+import { ApiErrorCode, ApiException, buildPageMeta, escapeLike, money, Paginated } from '@/common';
 import { ItemDto, ListStoreItemsDto, UpdateItemDto } from '../dtos/store.dto';
 import { StoreService } from './store.service';
 
@@ -60,6 +66,7 @@ export class ItemService {
     private readonly media: MediaService,
     private readonly stores: StoreService,
     private readonly activity: ActivityService,
+    private readonly safety: ContentSafetyService,
   ) {}
 
   async create(userId: string, storeId: string, dto: ItemDto) {
@@ -101,6 +108,21 @@ export class ItemService {
         create: { storeId, code: dto.categoryCode },
       });
 
+      // An item's name, description and options are what a buyer reads (§6.1).
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.STORE_ITEM,
+        targetId: created.id,
+        authorId: userId,
+        fields: {
+          name: created.name,
+          description: created.description,
+          options: created.options,
+        },
+        mediaKeys: photos.map(photo => photo.storageKey),
+        trigger: ContentScanTrigger.CREATE,
+        summary: created.name,
+      });
+
       return created;
     });
 
@@ -126,13 +148,19 @@ export class ItemService {
         })
       : null;
 
+    // The set that will be attached once this edit lands, so an edit that does not touch the
+    // photos hashes the same (§6.2 step 2).
+    const keys = (photos ?? (await this.media.forOwner(ITEM_MEDIA_OWNER, itemId))).map(
+      photo => photo.storageKey,
+    );
+
     const updated = await this.database.$transaction(async tx => {
       if (photos) {
         await this.media.releaseOwner(tx, ITEM_MEDIA_OWNER, itemId);
         await this.media.attach(tx, photos, ITEM_MEDIA_OWNER, itemId);
       }
 
-      return tx.storeItem.update({
+      const patched = await tx.storeItem.update({
         where: { id: itemId },
         data: {
           name: dto.name,
@@ -147,18 +175,34 @@ export class ItemService {
           ...availabilityWrite(dto),
         },
       });
+
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.STORE_ITEM,
+        targetId: itemId,
+        authorId: userId,
+        fields: {
+          name: patched.name,
+          description: patched.description,
+          options: patched.options,
+        },
+        mediaKeys: keys,
+        trigger: ContentScanTrigger.EDIT,
+        summary: patched.name,
+      });
+
+      return patched;
     });
 
     return this.toView(updated, photos ?? (await this.media.forOwner(ITEM_MEDIA_OWNER, itemId)));
   }
 
   /**
- * An item is never hard-deleted while an enquiry references it, or the enquiry loses its own
- * contents (4.8.3). It is not a refusal: the seller tapped delete, and the item leaves their shop
- * and the marketplace either way — it is kept as a row so somebody's order still says what they
- * ordered. `removed` tells the two apart, and the message says which happened in words a seller
- * can act on.
- */
+   * An item is never hard-deleted while an enquiry references it, or the enquiry loses its own
+   * contents (4.8.3). It is not a refusal: the seller tapped delete, and the item leaves their shop
+   * and the marketplace either way — it is kept as a row so somebody's order still says what they
+   * ordered. `removed` tells the two apart, and the message says which happened in words a seller
+   * can act on.
+   */
   async remove(userId: string, itemId: string) {
     const item = await this.loadOwned(userId, itemId);
     const referenced = await this.database.enquiryLine.count({ where: { itemId: item.id } });
@@ -200,16 +244,27 @@ export class ItemService {
     query: ListStoreItemsDto,
     viewerId?: string,
   ): Promise<Paginated<Awaited<ReturnType<ItemService['toView']>>>> {
-    const isOwner = viewerId
-      ? (await this.database.store.findFirst({
-          where: { id: storeId, ownerId: viewerId },
-          select: { id: true },
-        })) !== null
-      : false;
+    // visibility: the shop this catalogue belongs to, for two questions at once — is the caller
+    // the shopkeeper, and may this shop be seen at all.
+    const store = await this.database.store.findUnique({
+      where: { id: storeId },
+      select: { ownerId: true, visibilityState: true, deletedAt: true },
+    });
+    const isOwner = !!viewerId && store?.ownerId === viewerId;
+
+    // A held shop takes its whole catalogue with it. Without this the shop *page* answered 404
+    // while this endpoint — the same shelves, one route along — kept serving them (§6.5).
+    if (!store || store.deletedAt || (!isOwner && !isReachable(store.visibilityState))) {
+      throw ApiException.notFound('That store could not be found.', ApiErrorCode.STORE_NOT_FOUND);
+    }
 
     const where: Prisma.StoreItemWhereInput = {
       storeId,
       deletedAt: null,
+      // A shop page is a direct read, so a limited item is still on the shelf there — but a held
+      // one is nobody's to see (§6.5). The shopkeeper sees their own catalogue whole, the same
+      // exception the draft rule makes on the line below.
+      ...(isOwner ? {} : DIRECT_VISIBILITY),
       // Out of stock stays: it still tells a buyer what the shop sells. A draft is the owner's.
       ...(isOwner ? {} : { availability: { not: ItemAvailability.DRAFT } }),
       ...(query.category && !isAllCategories(query.category)
@@ -246,12 +301,18 @@ export class ItemService {
   }
 
   async findOne(viewerId: string | null, itemId: string) {
+    // visibility: the item the caller has already been allowed to see; the check is below.
     const item = await this.database.storeItem.findUnique({
       where: { id: itemId },
       include: { store: { include: this.stores.storeInclude } },
     });
 
     if (!item || item.deletedAt) {
+      throw ApiException.notFound('That item could not be found.');
+    }
+
+    // §6.5: a held item is the shopkeeper's to see and nobody else's.
+    if (!isReachable(item.visibilityState) && item.store.ownerId !== viewerId) {
       throw ApiException.notFound('That item could not be found.');
     }
 
@@ -273,8 +334,14 @@ export class ItemService {
 
     const [media, related, storeSummary, conversation] = await Promise.all([
       this.media.forOwner(ITEM_MEDIA_OWNER, itemId),
+      // "More from this shop" is a recommendation, so only what anybody may be shown.
       this.database.storeItem.findMany({
-        where: { storeId: item.storeId, id: { not: itemId }, deletedAt: null },
+        where: {
+          storeId: item.storeId,
+          id: { not: itemId },
+          deletedAt: null,
+          ...PUBLIC_VISIBILITY,
+        },
         take: 6,
       }),
       this.stores.toSummary(item.store, null),
@@ -347,6 +414,8 @@ export class ItemService {
     const [unitLabels, categoryLabels, store] = await Promise.all([
       this.taxonomy.labels(TaxonomyKind.ITEM_UNIT),
       this.taxonomy.labels(TaxonomyKind.ITEM_CATEGORY),
+      // visibility: the shop's name and opening hours, for an item the caller has already been
+      // allowed to see.
       this.database.store.findUnique({
         where: { id: item.storeId },
         select: { name: true, status: true, timezone: true },
@@ -385,6 +454,7 @@ export class ItemService {
   }
 
   private async loadOwned(userId: string, itemId: string) {
+    // visibility: an ownership check before a write. A shopkeeper may edit or delete a held item.
     const item = await this.database.storeItem.findUnique({ where: { id: itemId } });
 
     if (!item || item.deletedAt) throw ApiException.notFound('That item could not be found.');

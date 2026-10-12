@@ -3,8 +3,10 @@ import {
   ActivitySubject,
   ActivityVerb,
   CommunityOffer,
+  ContentScanTrigger,
   ListingVerificationStatus,
   Prisma,
+  ReportTargetType,
   SearchScope,
   TaxonomyKind,
   ThreadContextType,
@@ -13,11 +15,16 @@ import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta, escapeLike, Paginated } from '@/common';
 import {
   ActivityService,
+  AuthorReviewView,
   BlockingService,
   CityService,
+  ContentReviewService,
+  ContentSafetyService,
   MediaService,
+  PUBLIC_VISIBILITY,
   TaxonomyService,
   authorSelect,
+  isReachable,
   withoutAllCategories,
 } from '../../shared';
 import { CreateOfferDto, ListOffersDto, UpdateOfferDto } from '../dtos/offer.dto';
@@ -46,6 +53,8 @@ export class OfferService {
     private readonly media: MediaService,
     private readonly blocking: BlockingService,
     private readonly activity: ActivityService,
+    private readonly safety: ContentSafetyService,
+    private readonly review: ContentReviewService,
   ) {}
 
   async list(viewerId: string, query: ListOffersDto): Promise<Paginated<OfferSummaryView>> {
@@ -73,7 +82,10 @@ export class OfferService {
     };
   }
 
-  async findOne(viewerId: string, id: string): Promise<OfferDetailView> {
+  async findOne(
+    viewerId: string,
+    id: string,
+  ): Promise<OfferDetailView & Partial<AuthorReviewView>> {
     const offer = await this.database.communityOffer.findUnique({
       where: { id },
       include: offerInclude,
@@ -81,6 +93,12 @@ export class OfferService {
 
     if (!offer) throw ApiException.notFound('This offer could not be found.');
     if (offer.deletedAt) throw ApiException.deleted('This offer');
+
+    // Held, rejected and awaiting-approval content is its author's to read and nobody else's
+    // (§6.5), answered as a 404 so the response says nothing about what was here.
+    if (!isReachable(offer.visibilityState) && offer.authorId !== viewerId) {
+      throw ApiException.notFound('This offer could not be found.');
+    }
 
     if (await this.activity.countView('offer', id, viewerId, offer.authorId)) {
       await this.database.communityOffer.update({
@@ -101,7 +119,13 @@ export class OfferService {
     const blockedIds = await this.blocking.blockedUserIds(viewerId);
     const context = await this.buildContext([offer], viewerId, blockedIds, true);
 
-    return toOfferDetail(offer, context);
+    // §6.5: the author is told their own content is held. Nobody else reaches this line.
+    const review =
+      offer.authorId === viewerId
+        ? await this.review.forAuthor(ReportTargetType.OFFER, id, offer.visibilityState)
+        : null;
+
+    return { ...toOfferDetail(offer, context), ...(review ?? {}) };
   }
 
   async create(userId: string, dto: CreateOfferDto): Promise<OfferDetailView> {
@@ -129,6 +153,16 @@ export class OfferService {
       });
 
       await this.media.attach(tx, media, OFFER_MEDIA_OWNER, created.id);
+
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.OFFER,
+        targetId: created.id,
+        authorId: userId,
+        fields: { title: created.title, description: created.description },
+        mediaKeys: media.map(item => item.storageKey),
+        trigger: ContentScanTrigger.CREATE,
+        summary: created.title,
+      });
 
       return created;
     });
@@ -163,9 +197,14 @@ export class OfferService {
     const city = dto.cityId ? await this.cities.assertValid(dto.cityId) : null;
 
     const media = dto.mediaKeys ? await this.media.validate(dto.mediaKeys, userId) : null;
+    // The set that will be attached, so an edit that does not touch the photos hashes the same
+    // (§6.2 step 2).
+    const mediaKeys = (media ?? (await this.media.forOwner(OFFER_MEDIA_OWNER, id))).map(
+      item => item.storageKey,
+    );
 
     await this.database.$transaction(async tx => {
-      await tx.communityOffer.update({
+      const patched = await tx.communityOffer.update({
         where: { id },
         data: {
           title: dto.title,
@@ -182,6 +221,16 @@ export class OfferService {
         await this.media.releaseOwner(tx, OFFER_MEDIA_OWNER, id);
         await this.media.attach(tx, media, OFFER_MEDIA_OWNER, id);
       }
+
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.OFFER,
+        targetId: id,
+        authorId: patched.authorId,
+        fields: { title: patched.title, description: patched.description },
+        mediaKeys,
+        trigger: ContentScanTrigger.EDIT,
+        summary: patched.title,
+      });
     });
 
     return this.findOne(userId, id);
@@ -201,7 +250,7 @@ export class OfferService {
     query: ListOffersDto,
     blockedIds: string[],
   ): Promise<Prisma.CommunityOfferWhereInput> {
-    const where: Prisma.CommunityOfferWhereInput = { deletedAt: null };
+    const where: Prisma.CommunityOfferWhereInput = { deletedAt: null, ...PUBLIC_VISIBILITY };
 
     const city = await this.cities.resolve(query.cityId, query.city);
 
@@ -296,6 +345,8 @@ export class OfferService {
   }
 
   private async load(id: string): Promise<CommunityOffer> {
+    // visibility: an ownership check before a write. An author may still edit or delete a held
+    // post, which is the one useful thing left to do with it.
     const offer = await this.database.communityOffer.findUnique({ where: { id } });
 
     if (!offer) throw ApiException.notFound('This offer could not be found.');
@@ -334,5 +385,4 @@ export class OfferService {
       hadResults: total > 0,
     });
   }
-
 }

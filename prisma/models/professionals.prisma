@@ -32,6 +32,18 @@ model ProfessionalListing {
   freeConsultation   Boolean                   @default(false) @map("free_consultation")
   verificationStatus ListingVerificationStatus @default(UNVERIFIED) @map("verification_status")
 
+  // ── Approval for gated professions (§2.9) ─────────────────────────────────
+  /// Where this listing is in the approval workflow. Whether the public can *see* it is
+  /// `visibilityState`, which the safety pipeline mirrors — a listing can be `PENDING` and still
+  /// public, which is exactly what a listing that was live before this shipped is: grandfathered,
+  /// queued, and not yanked out from under somebody mid-job.
+  reviewState       ListingReviewState @default(NOT_REQUIRED) @map("review_state")
+  reviewSubmittedAt DateTime?          @map("review_submitted_at") @db.Timestamptz
+  reviewDecidedAt   DateTime?          @map("review_decided_at") @db.Timestamptz
+  reviewDecidedById String?            @map("review_decided_by_id")
+  /// What the reviewer said, shown to the member verbatim on a decline so they can fix it.
+  reviewNote        String?            @map("review_note")
+
   // D13 mitigation: with no credential checks, store what was agreed and when, so an unchecked claim is at least an unchecked claim that says so.
   consentAccepted   Boolean   @default(false) @map("consent_accepted")
   consentAcceptedAt DateTime? @map("consent_accepted_at") @db.Timestamptz
@@ -57,8 +69,15 @@ model ProfessionalListing {
   availability       ListingAvailability[]
   availabilityBlocks ListingAvailabilityBlock[]
 
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
+
   @@index([cityId, isAcceptingWork])
   @@index([verificationStatus])
+  /// The review queue's own ordering: oldest submission first, within a state.
+  @@index([reviewState, reviewSubmittedAt])
   // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
   @@index([professionTitle(ops: raw("gin_trgm_ops"))], type: Gin, map: "professional_listings_title_trgm_idx")
   @@map("professional_listings")
@@ -95,6 +114,12 @@ model ProfessionalService {
   bookings Booking[]
 
   // Never hard-deleted while a booking references it, or the booking loses its own subject (2.6.3).
+
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
+
   @@index([listingId, isActive])
   @@map("professional_services")
 }

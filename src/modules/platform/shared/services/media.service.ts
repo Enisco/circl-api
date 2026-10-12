@@ -1,5 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { Media, MediaScanStatus, MediaStatus, MediaType, Prisma } from '@prisma/client';
+import {
+  Media,
+  MediaScanStatus,
+  MediaStatus,
+  MediaType,
+  Prisma,
+  ReportTargetType,
+} from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@/infrastructure';
 import { MediaDerivationService } from '../../media/derivation/media-derivation.service';
@@ -230,6 +237,18 @@ export class MediaService {
 
   /** Detaches and removes media when its owning resource is hard-deleted. */
   async releaseOwner(tx: Prisma.TransactionClient, ownerType: string, ownerId: string) {
+    const going = await tx.media.findMany({ where: { ownerType, ownerId }, select: { id: true } });
+
     await tx.media.deleteMany({ where: { ownerType, ownerId } });
+
+    if (!going.length) return;
+
+    // An image scanned in its own right (§6.1 — today an avatar) keeps its verdict in
+    // `content_safety`, which is polymorphic and so has no foreign key to cascade through.
+    // Leaving the verdict behind would leave a scan of nothing, which the rescan sweep then
+    // re-queues and the worker can never finish.
+    await tx.contentSafety.deleteMany({
+      where: { targetType: ReportTargetType.MEDIA, targetId: { in: going.map(row => row.id) } },
+    });
   }
 }

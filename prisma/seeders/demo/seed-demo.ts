@@ -29,8 +29,6 @@ const userId = (n: number) => seedId(`user:${n}`);
 
 // ─── Media ───────────────────────────────────────────────────────────────────
 
-
-
 /** Writes the object and the row together (B.2.2). */
 const putMedia = async (
   ctx: DemoSeedContext,

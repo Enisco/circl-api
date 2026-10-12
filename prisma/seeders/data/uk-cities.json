@@ -2,618 +2,721 @@
   {
     "id": "BARNSLEY",
     "name": "Barnsley",
+    "region": "Yorkshire and the Humber",
     "latitude": 53.5526,
     "longitude": -1.4797
   },
   {
     "id": "BASILDON",
     "name": "Basildon",
+    "region": "East of England",
     "latitude": 51.5761,
     "longitude": 0.4886
   },
   {
     "id": "BATH",
     "name": "Bath",
+    "region": "South West",
     "latitude": 51.3811,
     "longitude": -2.359
   },
   {
     "id": "BEDFORD",
     "name": "Bedford",
+    "region": "East of England",
     "latitude": 52.136,
     "longitude": -0.4667
   },
   {
     "id": "BIRKENHEAD",
     "name": "Birkenhead",
+    "region": "North West",
     "latitude": 53.3934,
     "longitude": -3.0148
   },
   {
     "id": "BIRMINGHAM",
     "name": "Birmingham",
+    "region": "West Midlands",
     "latitude": 52.4862,
     "longitude": -1.8904
   },
   {
     "id": "BLACKBURN",
     "name": "Blackburn",
+    "region": "North West",
     "latitude": 53.7486,
     "longitude": -2.487
   },
   {
     "id": "BLACKPOOL",
     "name": "Blackpool",
+    "region": "North West",
     "latitude": 53.8175,
     "longitude": -3.0357
   },
   {
     "id": "BOLTON",
     "name": "Bolton",
+    "region": "North West",
     "latitude": 53.5769,
     "longitude": -2.4282
   },
   {
     "id": "BOURNEMOUTH",
     "name": "Bournemouth",
+    "region": "South West",
     "latitude": 50.7192,
     "longitude": -1.8808
   },
   {
     "id": "BRADFORD",
     "name": "Bradford",
+    "region": "Yorkshire and the Humber",
     "latitude": 53.796,
     "longitude": -1.7594
   },
   {
     "id": "BRIGHTON",
     "name": "Brighton",
+    "region": "South East",
     "latitude": 50.8225,
     "longitude": -0.1372
   },
   {
     "id": "BRISTOL",
     "name": "Bristol",
+    "region": "South West",
     "latitude": 51.4545,
     "longitude": -2.5879
   },
   {
     "id": "BURNLEY",
     "name": "Burnley",
+    "region": "North West",
     "latitude": 53.789,
     "longitude": -2.248
   },
   {
     "id": "CAMBRIDGE",
     "name": "Cambridge",
+    "region": "East of England",
     "latitude": 52.2053,
     "longitude": 0.1218
   },
   {
     "id": "CANTERBURY",
     "name": "Canterbury",
+    "region": "South East",
     "latitude": 51.2802,
     "longitude": 1.0789
   },
   {
     "id": "CARLISLE",
     "name": "Carlisle",
+    "region": "North West",
     "latitude": 54.8925,
     "longitude": -2.9329
   },
   {
     "id": "CHELMSFORD",
     "name": "Chelmsford",
+    "region": "East of England",
     "latitude": 51.7356,
     "longitude": 0.4685
   },
   {
     "id": "CHELTENHAM",
     "name": "Cheltenham",
+    "region": "South West",
     "latitude": 51.8994,
     "longitude": -2.0783
   },
   {
     "id": "CHESTER",
     "name": "Chester",
+    "region": "North West",
     "latitude": 53.1934,
     "longitude": -2.8931
   },
   {
     "id": "CHICHESTER",
     "name": "Chichester",
+    "region": "South East",
     "latitude": 50.8365,
     "longitude": -0.7792
   },
   {
     "id": "COLCHESTER",
     "name": "Colchester",
+    "region": "East of England",
     "latitude": 51.8959,
     "longitude": 0.8919
   },
   {
     "id": "COVENTRY",
     "name": "Coventry",
+    "region": "West Midlands",
     "latitude": 52.4068,
     "longitude": -1.5197
   },
   {
     "id": "CRAWLEY",
     "name": "Crawley",
+    "region": "South East",
     "latitude": 51.1091,
     "longitude": -0.1872
   },
   {
     "id": "DERBY",
     "name": "Derby",
+    "region": "East Midlands",
     "latitude": 52.9225,
     "longitude": -1.4746
   },
   {
     "id": "DONCASTER",
     "name": "Doncaster",
+    "region": "Yorkshire and the Humber",
     "latitude": 53.5228,
     "longitude": -1.1285
   },
   {
     "id": "DURHAM",
     "name": "Durham",
+    "region": "North East",
     "latitude": 54.7761,
     "longitude": -1.5733
   },
   {
     "id": "EASTBOURNE",
     "name": "Eastbourne",
+    "region": "South East",
     "latitude": 50.7687,
     "longitude": 0.2842
   },
   {
     "id": "ELY",
     "name": "Ely",
+    "region": "East of England",
     "latitude": 52.399,
     "longitude": 0.262
   },
   {
     "id": "EXETER",
     "name": "Exeter",
+    "region": "South West",
     "latitude": 50.7184,
     "longitude": -3.5339
   },
   {
     "id": "GLOUCESTER",
     "name": "Gloucester",
+    "region": "South West",
     "latitude": 51.8642,
     "longitude": -2.238
   },
   {
     "id": "GRIMSBY",
     "name": "Grimsby",
+    "region": "Yorkshire and the Humber",
     "latitude": 53.5675,
     "longitude": -0.08
   },
   {
     "id": "GUILDFORD",
     "name": "Guildford",
+    "region": "South East",
     "latitude": 51.2362,
     "longitude": -0.5704
   },
   {
     "id": "HARROGATE",
     "name": "Harrogate",
+    "region": "Yorkshire and the Humber",
     "latitude": 53.9921,
     "longitude": -1.5418
   },
   {
     "id": "HEREFORD",
     "name": "Hereford",
+    "region": "West Midlands",
     "latitude": 52.0567,
     "longitude": -2.716
   },
   {
     "id": "HUDDERSFIELD",
     "name": "Huddersfield",
+    "region": "Yorkshire and the Humber",
     "latitude": 53.6458,
     "longitude": -1.785
   },
   {
     "id": "HULL",
     "name": "Hull",
+    "region": "Yorkshire and the Humber",
     "latitude": 53.7676,
     "longitude": -0.3274
   },
   {
     "id": "IPSWICH",
     "name": "Ipswich",
+    "region": "East of England",
     "latitude": 52.0567,
     "longitude": 1.1482
   },
   {
     "id": "LANCASTER",
     "name": "Lancaster",
+    "region": "North West",
     "latitude": 54.0466,
     "longitude": -2.7999
   },
   {
     "id": "LEEDS",
     "name": "Leeds",
+    "region": "Yorkshire and the Humber",
     "latitude": 53.8008,
     "longitude": -1.5491
   },
   {
     "id": "LEICESTER",
     "name": "Leicester",
+    "region": "East Midlands",
     "latitude": 52.6369,
     "longitude": -1.1398
   },
   {
     "id": "LICHFIELD",
     "name": "Lichfield",
+    "region": "West Midlands",
     "latitude": 52.6818,
     "longitude": -1.8267
   },
   {
     "id": "LINCOLN",
     "name": "Lincoln",
+    "region": "East Midlands",
     "latitude": 53.2307,
     "longitude": -0.5406
   },
   {
     "id": "LIVERPOOL",
     "name": "Liverpool",
+    "region": "North West",
     "latitude": 53.4084,
     "longitude": -2.9916
   },
   {
     "id": "LONDON",
     "name": "London",
+    "region": "London",
     "latitude": 51.5072,
     "longitude": -0.1276
   },
   {
     "id": "LUTON",
     "name": "Luton",
+    "region": "East of England",
     "latitude": 51.8787,
     "longitude": -0.42
   },
   {
     "id": "MAIDSTONE",
     "name": "Maidstone",
+    "region": "South East",
     "latitude": 51.2704,
     "longitude": 0.5227
   },
   {
     "id": "MANCHESTER",
     "name": "Manchester",
+    "region": "North West",
     "latitude": 53.4808,
     "longitude": -2.2426
   },
   {
     "id": "MIDDLESBROUGH",
     "name": "Middlesbrough",
+    "region": "North East",
     "latitude": 54.5742,
     "longitude": -1.2349
   },
   {
     "id": "MILTON_KEYNES",
     "name": "Milton Keynes",
+    "region": "South East",
     "latitude": 52.0406,
     "longitude": -0.7594
   },
   {
     "id": "NEWCASTLE",
     "name": "Newcastle upon Tyne",
+    "region": "North East",
     "latitude": 54.9783,
     "longitude": -1.6178
   },
   {
     "id": "NORTHAMPTON",
     "name": "Northampton",
+    "region": "East Midlands",
     "latitude": 52.2405,
     "longitude": -0.9027
   },
   {
     "id": "NORWICH",
     "name": "Norwich",
+    "region": "East of England",
     "latitude": 52.6309,
     "longitude": 1.2974
   },
   {
     "id": "NOTTINGHAM",
     "name": "Nottingham",
+    "region": "East Midlands",
     "latitude": 52.9548,
     "longitude": -1.1581
   },
   {
     "id": "OLDHAM",
     "name": "Oldham",
+    "region": "North West",
     "latitude": 53.5409,
     "longitude": -2.1114
   },
   {
     "id": "OXFORD",
     "name": "Oxford",
+    "region": "South East",
     "latitude": 51.752,
     "longitude": -1.2577
   },
   {
     "id": "PETERBOROUGH",
     "name": "Peterborough",
+    "region": "East of England",
     "latitude": 52.5695,
     "longitude": -0.2405
   },
   {
     "id": "PLYMOUTH",
     "name": "Plymouth",
+    "region": "South West",
     "latitude": 50.3755,
     "longitude": -4.1427
   },
   {
     "id": "PORTSMOUTH",
     "name": "Portsmouth",
+    "region": "South East",
     "latitude": 50.8198,
     "longitude": -1.088
   },
   {
     "id": "PRESTON",
     "name": "Preston",
+    "region": "North West",
     "latitude": 53.7632,
     "longitude": -2.7031
   },
   {
     "id": "READING",
     "name": "Reading",
+    "region": "South East",
     "latitude": 51.4543,
     "longitude": -0.9781
   },
   {
     "id": "RIPON",
     "name": "Ripon",
+    "region": "Yorkshire and the Humber",
     "latitude": 54.138,
     "longitude": -1.524
   },
   {
     "id": "ROCHDALE",
     "name": "Rochdale",
+    "region": "North West",
     "latitude": 53.6097,
     "longitude": -2.1561
   },
   {
     "id": "ROTHERHAM",
     "name": "Rotherham",
+    "region": "Yorkshire and the Humber",
     "latitude": 53.4302,
     "longitude": -1.3568
   },
   {
     "id": "SALFORD",
     "name": "Salford",
+    "region": "North West",
     "latitude": 53.4875,
     "longitude": -2.2901
   },
   {
     "id": "SALISBURY",
     "name": "Salisbury",
+    "region": "South West",
     "latitude": 51.0688,
     "longitude": -1.7945
   },
   {
     "id": "SHEFFIELD",
     "name": "Sheffield",
+    "region": "Yorkshire and the Humber",
     "latitude": 53.3811,
     "longitude": -1.4701
   },
   {
     "id": "SLOUGH",
     "name": "Slough",
+    "region": "South East",
     "latitude": 51.5105,
     "longitude": -0.595
   },
   {
     "id": "SOUTHAMPTON",
     "name": "Southampton",
+    "region": "South East",
     "latitude": 50.9097,
     "longitude": -1.4044
   },
   {
     "id": "SOUTHEND_ON_SEA",
     "name": "Southend-on-Sea",
+    "region": "East of England",
     "latitude": 51.5459,
     "longitude": 0.7077
   },
   {
     "id": "ST_ALBANS",
     "name": "St Albans",
+    "region": "East of England",
     "latitude": 51.752,
     "longitude": -0.336
   },
   {
     "id": "STOKE_ON_TRENT",
     "name": "Stoke-on-Trent",
+    "region": "West Midlands",
     "latitude": 53.0027,
     "longitude": -2.1794
   },
   {
     "id": "SUNDERLAND",
     "name": "Sunderland",
+    "region": "North East",
     "latitude": 54.9069,
     "longitude": -1.3838
   },
   {
     "id": "SWINDON",
     "name": "Swindon",
+    "region": "South West",
     "latitude": 51.5558,
     "longitude": -1.7797
   },
   {
     "id": "TELFORD",
     "name": "Telford",
+    "region": "West Midlands",
     "latitude": 52.6784,
     "longitude": -2.4453
   },
   {
     "id": "TRURO",
     "name": "Truro",
+    "region": "South West",
     "latitude": 50.2632,
     "longitude": -5.051
   },
   {
     "id": "WAKEFIELD",
     "name": "Wakefield",
+    "region": "Yorkshire and the Humber",
     "latitude": 53.6833,
     "longitude": -1.4977
   },
   {
     "id": "WARRINGTON",
     "name": "Warrington",
+    "region": "North West",
     "latitude": 53.39,
     "longitude": -2.597
   },
   {
     "id": "WATFORD",
     "name": "Watford",
+    "region": "East of England",
     "latitude": 51.6565,
     "longitude": -0.3903
   },
   {
     "id": "WELLS",
     "name": "Wells",
+    "region": "South West",
     "latitude": 51.2094,
     "longitude": -2.647
   },
   {
     "id": "WIGAN",
     "name": "Wigan",
+    "region": "North West",
     "latitude": 53.545,
     "longitude": -2.6318
   },
   {
     "id": "WINCHESTER",
     "name": "Winchester",
+    "region": "South East",
     "latitude": 51.0632,
     "longitude": -1.308
   },
   {
     "id": "WOLVERHAMPTON",
     "name": "Wolverhampton",
+    "region": "West Midlands",
     "latitude": 52.587,
     "longitude": -2.1288
   },
   {
     "id": "WORCESTER",
     "name": "Worcester",
+    "region": "West Midlands",
     "latitude": 52.1936,
     "longitude": -2.2216
   },
   {
     "id": "WORTHING",
     "name": "Worthing",
+    "region": "South East",
     "latitude": 50.8179,
     "longitude": -0.3729
   },
   {
     "id": "YORK",
     "name": "York",
+    "region": "Yorkshire and the Humber",
     "latitude": 53.96,
     "longitude": -1.0873
   },
   {
     "id": "ABERDEEN",
     "name": "Aberdeen",
+    "region": "Scotland",
     "latitude": 57.1497,
     "longitude": -2.0943
   },
   {
     "id": "DUNDEE",
     "name": "Dundee",
+    "region": "Scotland",
     "latitude": 56.462,
     "longitude": -2.9707
   },
   {
     "id": "EDINBURGH",
     "name": "Edinburgh",
+    "region": "Scotland",
     "latitude": 55.9533,
     "longitude": -3.1883
   },
   {
     "id": "GLASGOW",
     "name": "Glasgow",
+    "region": "Scotland",
     "latitude": 55.8642,
     "longitude": -4.2518
   },
   {
     "id": "INVERNESS",
     "name": "Inverness",
+    "region": "Scotland",
     "latitude": 57.4778,
     "longitude": -4.2247
   },
   {
     "id": "PERTH",
     "name": "Perth",
+    "region": "Scotland",
     "latitude": 56.395,
     "longitude": -3.4308
   },
   {
     "id": "STIRLING",
     "name": "Stirling",
+    "region": "Scotland",
     "latitude": 56.1165,
     "longitude": -3.9369
   },
   {
     "id": "BANGOR",
     "name": "Bangor",
+    "region": "Wales",
     "latitude": 53.2274,
     "longitude": -4.1293
   },
   {
     "id": "CARDIFF",
     "name": "Cardiff",
+    "region": "Wales",
     "latitude": 51.4816,
     "longitude": -3.1791
   },
   {
     "id": "NEWPORT",
     "name": "Newport",
+    "region": "Wales",
     "latitude": 51.5842,
     "longitude": -2.9977
   },
   {
     "id": "SWANSEA",
     "name": "Swansea",
+    "region": "Wales",
     "latitude": 51.6214,
     "longitude": -3.9436
   },
   {
     "id": "WREXHAM",
     "name": "Wrexham",
+    "region": "Wales",
     "latitude": 53.0466,
     "longitude": -2.9925
   },
   {
     "id": "ARMAGH",
     "name": "Armagh",
+    "region": "Northern Ireland",
     "latitude": 54.3503,
     "longitude": -6.6528
   },
   {
     "id": "BELFAST",
     "name": "Belfast",
+    "region": "Northern Ireland",
     "latitude": 54.5973,
     "longitude": -5.9301
   },
   {
     "id": "DERRY",
     "name": "Derry",
+    "region": "Northern Ireland",
     "latitude": 54.9966,
     "longitude": -7.3086
   },
   {
     "id": "LISBURN",
     "name": "Lisburn",
+    "region": "Northern Ireland",
     "latitude": 54.5162,
     "longitude": -6.058
   },
   {
     "id": "NEWRY",
     "name": "Newry",
+    "region": "Northern Ireland",
     "latitude": 54.1753,
     "longitude": -6.3402
   }

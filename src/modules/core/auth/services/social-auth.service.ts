@@ -14,6 +14,7 @@ import { DeviceInfo, ErrorMessage, SuccessMessage } from '@/common';
 import { SocialProvider } from '@prisma/client';
 import { SessionService } from './session.service';
 import { SignupTokenService } from './signup-token.service';
+import { AccountStateService } from './account-state.service';
 import { SocialAuthDto } from '../dtos';
 import { SocialAuthResponse } from '../types';
 
@@ -29,6 +30,7 @@ export class SocialAuthService {
     private readonly database: PrismaService,
     private readonly sessionService: SessionService,
     private readonly signupTokenService: SignupTokenService,
+    private readonly accountState: AccountStateService,
   ) {
     this.logger.setContext(SocialAuthService.name);
 
@@ -60,6 +62,10 @@ export class SocialAuthService {
       where: { email: verifiedEmail },
       select: {
         id: true,
+        status: true,
+        suspendedUntil: true,
+        isAnonymised: true,
+        anonymisedAt: true,
         socialAuths: { select: { provider: true, providerId: true } },
         profile: { select: { onboardingCompleted: true, onboardingStep: true } },
       },
@@ -75,6 +81,12 @@ export class SocialAuthService {
 
       return { isNewUser: true, signupToken };
     }
+
+    // The same check the email code path makes (§13.2). Without it this was a way around a
+    // suspension: the email flow refuses a suspended account at `validateUserAccount`, and signing
+    // in with the same address through Google or Apple issued a working session instead. A
+    // suspension that one of two front doors enforces is not a suspension.
+    await this.accountState.assertUsable(user);
 
     // Existing user — link provider if not already linked
     const alreadyLinked = user.socialAuths.some(

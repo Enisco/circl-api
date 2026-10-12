@@ -20,9 +20,11 @@ import {
   ActivityService,
   BlockingService,
   MediaService,
+  PUBLIC_VISIBILITY,
   TaxonomyService,
   authorSelect,
   isAllCategories,
+  isReachable,
   toAuthorView,
   toCityView,
   toPriceBasisLabel,
@@ -126,6 +128,10 @@ export class BrowseService {
   ) {
     const where: Prisma.ProfessionalListingWhereInput = {
       deletedAt: null,
+      // The directory is distribution, so a limited listing is out of it as well as a held one
+      // (§6.5). Set once here: every nearby-city page and count below is built from this object,
+      // so a listing cannot reappear through the "elsewhere" door.
+      ...PUBLIC_VISIBILITY,
       // A DRAFT listing is visible to its owner only, through /professionals/me.
       verificationStatus: { not: ListingVerificationStatus.DRAFT },
       // Nobody hires themselves. Their own listing is theirs through /professionals/me and on
@@ -417,6 +423,7 @@ export class BrowseService {
   ) {
     const where: Prisma.CommunityOfferWhereInput = {
       deletedAt: null,
+      ...PUBLIC_VISIBILITY,
       // `listingType=BOTH` mixes these with listings, so the same rule has to hold on both halves
       // or the caller reappears in the merged list through the other door.
       authorId: { not: viewerId, ...(blockedIds.length ? { notIn: blockedIds } : {}) },
@@ -569,10 +576,12 @@ export class BrowseService {
 
     const category = query.category && !isAllCategories(query.category) ? query.category : null;
 
+    // "Twelve plumbers in Leeds" has to count the twelve a member would actually find there.
     const grouped = await this.database.professionalListing.groupBy({
       by: ['cityId'],
       where: {
         deletedAt: null,
+        ...PUBLIC_VISIBILITY,
         cityId: { not: cityId },
         verificationStatus: { not: ListingVerificationStatus.DRAFT },
         ...(category ? { categories: { some: { code: category } } } : {}),
@@ -601,6 +610,10 @@ export class BrowseService {
 
   /** Accepts either a listing id or the professional's USER id (D9). */
   async profile(viewerId: string, idOrUserId: string) {
+    // A profile is a direct read: a limited listing is still reachable by the member who was
+    // given the link, and a held one is not (checked below, once the owner is known).
+    // visibility: the listing behind a profile page; the held check is below, once the owner is
+    // known.
     const listing = await this.database.professionalListing.findFirst({
       where: {
         OR: [{ id: idOrUserId }, { userId: idOrUserId }],
@@ -621,6 +634,15 @@ export class BrowseService {
       );
 
     const isOwner = listing.userId === viewerId;
+
+    // §6.5: a held listing is its owner's to see and nobody else's, and the refusal is the same
+    // 404 a missing listing gets.
+    if (!isOwner && !isReachable(listing.visibilityState)) {
+      throw ApiException.notFound(
+        'That professional could not be found.',
+        ApiErrorCode.LISTING_NOT_FOUND,
+      );
+    }
 
     if (!isOwner) {
       await this.database.professionalListing.update({

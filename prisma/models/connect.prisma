@@ -74,6 +74,11 @@ model ConnectProfile {
   prompts          ConnectPromptAnswer[]
   stories          ConnectStory[]
 
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
+
   @@index([isVisible, typeCode])
   @@index([isVisible, lastActiveAt])
   // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
@@ -140,6 +145,11 @@ model ConnectPost {
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz
 
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
+
   @@index([profileId, position])
   @@map("connect_posts")
 }
@@ -192,6 +202,11 @@ model ConnectStory {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz
 
   seenBy ConnectStorySeen[]
+
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
 
   @@index([profileId, postedAt])
   @@index([expiresAt])

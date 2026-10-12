@@ -214,3 +214,14 @@ export const toAdminMemberView = (
 /** The masked phone, which only the detail payload carries. */
 export const maskedPhoneOf = (source: AdminMemberSource): string | null =>
   maskPhone(source.profile?.phoneNumberDiallingCode, source.profile?.phoneNumber);
+
+/**
+ * The phone number as dialled, for the two places allowed to see it: `POST members/:id/reveal`
+ * and a MEMBERS export whose columns include it. One definition, so the number in a CSV is the
+ * number the reveal panel showed — a dialling code joined one way here and another way there is a
+ * phone call to the wrong person.
+ */
+export const phoneOf = (source: AdminMemberSource): string | null =>
+  source.profile?.phoneNumber
+    ? `${source.profile.phoneNumberDiallingCode ?? ''}${source.profile.phoneNumber}`
+    : null;

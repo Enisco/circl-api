@@ -2,6 +2,110 @@ import { JobStage, JobState } from '@prisma/client';
 import { DemoSeedContext, HOME_CITY, userId } from './seed-demo';
 import { daysAgo, daysAhead, hoursAgo, seedId } from './ids';
 
+/** The ten professions whose listings wait for a human (§2.9), as the taxonomy seeds them. */
+const GATED = new Set([
+  'IMMIGRATION',
+  'LEGAL',
+  'FINANCE_ACCOUNTING',
+  'HEALTHCARE',
+  'THERAPY_COACHING',
+  'CHILDCARE_SERVICES',
+  'PROPERTY_LETTINGS',
+  'TRADES_REPAIRS',
+  'EDUCATION_TUTORING',
+  'RECRUITMENT',
+]);
+
+/**
+ * The review state for a demo listing in a gated profession (§2.9).
+ *
+ * Approval applies to **new accounts only** (BACKEND-NOTES-NEW-ACCOUNTS-ONLY), so a listing that
+ * predates the rule is `NOT_REQUIRED` and carries no queue item at all — which is what the older
+ * demo listings are, and why they stay live with their bookings, reviews, threads and disputes
+ * intact.
+ *
+ * The queue's population comes from a listing seeded as genuinely new (`isNewAccount`), which is
+ * `PENDING` **and hidden**, like every real one. There is no longer any such thing as a listing
+ * that is pending and publicly visible: that state was the old grandfathering, and it meant
+ * `PENDING` had two different meanings depending on which listing you were looking at.
+ */
+async function seedReview(
+  prisma: DemoSeedContext['prisma'],
+  input: {
+    id: string;
+    listing: {
+      label: string;
+      categories: string[];
+      professionTitle: string;
+      user: number;
+      isNewAccount?: boolean;
+    };
+    createdAt: Date;
+  },
+): Promise<void> {
+  const gated = input.listing.categories.filter(code => GATED.has(code));
+
+  // Gated, but an account that existed before the rule: nothing to review, nothing to queue.
+  if (!gated.length || !input.listing.isNewAccount) return;
+
+  await prisma.professionalListing.update({
+    where: { id: input.id },
+    data: {
+      reviewState: 'PENDING',
+      reviewSubmittedAt: input.createdAt,
+      visibilityState: 'PENDING_APPROVAL',
+    },
+  });
+
+  // The hold the member's own write would have applied. Mirrored onto `content_safety` as well,
+  // because that is the row the read paths filter on — setting only the listing's column would
+  // leave it reading as held while still being served.
+  await prisma.contentSafety.upsert({
+    where: {
+      targetType_targetId: { targetType: 'PROFESSIONAL_LISTING', targetId: input.id },
+    },
+    update: {
+      visibilityState: 'PENDING_APPROVAL',
+      heldReason: 'AWAITING_APPROVAL',
+      heldAt: input.createdAt,
+    },
+    create: {
+      targetType: 'PROFESSIONAL_LISTING',
+      targetId: input.id,
+      authorId: userId(input.listing.user),
+      visibilityState: 'PENDING_APPROVAL',
+      heldReason: 'AWAITING_APPROVAL',
+      heldAt: input.createdAt,
+      // Nothing was scanned: the hold is the approval gate, not a safety verdict.
+      scanStatus: 'COMPLETE',
+    },
+  });
+
+  await prisma.moderationQueueItem.upsert({
+    where: {
+      type_targetType_targetId: {
+        type: 'PROFESSIONAL_REVIEW',
+        targetType: 'PROFESSIONAL_LISTING',
+        targetId: input.id,
+      },
+    },
+    update: { summary: input.listing.professionTitle },
+    create: {
+      id: seedId(`review:${input.listing.label}`),
+      type: 'PROFESSIONAL_REVIEW',
+      targetType: 'PROFESSIONAL_LISTING',
+      targetId: input.id,
+      subjectUserId: userId(input.listing.user),
+      summary: input.listing.professionTitle,
+      payload: { gatedCategories: gated },
+      createdAt: input.createdAt,
+      // The ordinary band's clock, from when the listing was created. Written out rather than
+      // computed through `QueueDeadlineService`: the seeders run outside the Nest container.
+      dueAt: new Date(input.createdAt.getTime() + 24 * 3_600_000),
+    },
+  });
+}
+
 /** Sections 2.1 to 2.9 (B.4). */
 const LISTINGS = [
   {
@@ -25,9 +129,27 @@ const LISTINGS = [
     profileViews: 612,
     daysAgo: 380,
     services: [
-      ['consult', 'Initial consultation', 'One hour on your case and what the next step is', 6500, 'PER_HOUR'],
-      ['student', 'Student visa application review', 'I read the whole application before you submit it', 18000, 'PER_JOB'],
-      ['dependant', 'Dependant application', 'Start to finish, including the document list', 32000, 'PER_JOB'],
+      [
+        'consult',
+        'Initial consultation',
+        'One hour on your case and what the next step is',
+        6500,
+        'PER_HOUR',
+      ],
+      [
+        'student',
+        'Student visa application review',
+        'I read the whole application before you submit it',
+        18000,
+        'PER_JOB',
+      ],
+      [
+        'dependant',
+        'Dependant application',
+        'Start to finish, including the document list',
+        32000,
+        'PER_JOB',
+      ],
     ],
   },
   {
@@ -72,8 +194,54 @@ const LISTINGS = [
     profileViews: 287,
     daysAgo: 290,
     services: [
-      ['letter', 'Letter or document translation', 'Per document, turnaround two days', 4000, 'PER_JOB'],
-      ['appointment', 'Interpreting at an appointment', 'I come with you and speak for you', 5500, 'PER_HOUR'],
+      [
+        'letter',
+        'Letter or document translation',
+        'Per document, turnaround two days',
+        4000,
+        'PER_JOB',
+      ],
+      [
+        'appointment',
+        'Interpreting at an appointment',
+        'I come with you and speak for you',
+        5500,
+        'PER_HOUR',
+      ],
+    ],
+  },
+  {
+    label: 'tomiwa',
+    user: 6,
+    professionTitle: 'Immigration Adviser',
+    categories: ['IMMIGRATION'],
+    // The one account approval actually applies to: registered after the rule, so the listing is
+    // PENDING and hidden until somebody reads the papers. It carries no bookings, reviews or
+    // threads on purpose — a held listing is a 404 to everybody but its owner, so anything hanging
+    // off it would be unreachable in the demo.
+    isNewAccount: true,
+    experienceLevel: 'MID_LEVEL',
+    yearsExperience: 4,
+    about:
+      'Four years on family and dependant routes. I am just setting up on here, so there is not ' +
+      'much to see yet beyond the paperwork I have sent in.',
+    priceFrom: 5000,
+    priceBasis: 'PER_HOUR',
+    deliveryMode: 'ONLINE',
+    isAcceptingWork: true,
+    freeConsultation: true,
+    jobsCompleted: 0,
+    medianResponseMinutes: null,
+    profileViews: 4,
+    daysAgo: 2,
+    services: [
+      [
+        'consult',
+        'Initial consultation',
+        'One hour on your case and what the next step is',
+        5000,
+        'PER_HOUR',
+      ],
     ],
   },
 ];
@@ -93,17 +261,108 @@ const BOOKINGS: Array<{
   flexible?: boolean;
 }> = [
   // Member 1 is the demo account, so it holds the one that needs their action.
-  { label: 'b1', listing: 'blessing', client: 1, service: 'consult', state: JobState.PENDING_ACCEPTANCE, amount: 6500, hoursAgo: 6, preferredInDays: 3, timeSlot: 'Weekday mornings' },
-  { label: 'b2', listing: 'blessing', client: 2, service: 'student', state: JobState.ACCEPTED, amount: 18000, hoursAgo: 40, preferredInDays: 6, timeSlot: 'Afternoons' },
-  { label: 'b3', listing: 'blessing', client: 6, service: 'consult', state: JobState.IN_PROGRESS, amount: 6500, hoursAgo: 90, preferredInDays: 1, timeSlot: 'Evening, after six' },
-  { label: 'b4', listing: 'blessing', client: 10, service: 'dependant', state: JobState.DELIVERED, amount: 32000, hoursAgo: 150, flexible: true },
-  { label: 'b5', listing: 'farida', client: 1, service: 'letter', state: JobState.CHANGES_REQUESTED, amount: 4000, hoursAgo: 200, preferredInDays: -6, timeSlot: 'Any time' },
+  {
+    label: 'b1',
+    listing: 'blessing',
+    client: 1,
+    service: 'consult',
+    state: JobState.PENDING_ACCEPTANCE,
+    amount: 6500,
+    hoursAgo: 6,
+    preferredInDays: 3,
+    timeSlot: 'Weekday mornings',
+  },
+  {
+    label: 'b2',
+    listing: 'blessing',
+    client: 2,
+    service: 'student',
+    state: JobState.ACCEPTED,
+    amount: 18000,
+    hoursAgo: 40,
+    preferredInDays: 6,
+    timeSlot: 'Afternoons',
+  },
+  {
+    label: 'b3',
+    listing: 'blessing',
+    client: 6,
+    service: 'consult',
+    state: JobState.IN_PROGRESS,
+    amount: 6500,
+    hoursAgo: 90,
+    preferredInDays: 1,
+    timeSlot: 'Evening, after six',
+  },
+  {
+    label: 'b4',
+    listing: 'blessing',
+    client: 10,
+    service: 'dependant',
+    state: JobState.DELIVERED,
+    amount: 32000,
+    hoursAgo: 150,
+    flexible: true,
+  },
+  {
+    label: 'b5',
+    listing: 'farida',
+    client: 1,
+    service: 'letter',
+    state: JobState.CHANGES_REQUESTED,
+    amount: 4000,
+    hoursAgo: 200,
+    preferredInDays: -6,
+    timeSlot: 'Any time',
+  },
   // The one waiting on the demo account: delivered, and the client confirms (B.5).
-  { label: 'b10', listing: 'farida', client: 1, service: 'appointment', state: JobState.DELIVERED, amount: 5500, hoursAgo: 30, preferredInDays: 2, timeSlot: 'Thursday morning' },
-  { label: 'b6', listing: 'blessing', client: 8, service: 'consult', state: JobState.COMPLETED, amount: 6500, hoursAgo: 400 },
-  { label: 'b7', listing: 'farida', client: 6, service: 'appointment', state: JobState.COMPLETED, amount: 5500, hoursAgo: 600 },
-  { label: 'b8', listing: 'blessing', client: 9, service: 'consult', state: JobState.CANCELLED, amount: 6500, hoursAgo: 300 },
-  { label: 'b9', listing: 'farida', client: 10, service: 'letter', state: JobState.DISPUTED, amount: 4000, hoursAgo: 260 },
+  {
+    label: 'b10',
+    listing: 'farida',
+    client: 1,
+    service: 'appointment',
+    state: JobState.DELIVERED,
+    amount: 5500,
+    hoursAgo: 30,
+    preferredInDays: 2,
+    timeSlot: 'Thursday morning',
+  },
+  {
+    label: 'b6',
+    listing: 'blessing',
+    client: 8,
+    service: 'consult',
+    state: JobState.COMPLETED,
+    amount: 6500,
+    hoursAgo: 400,
+  },
+  {
+    label: 'b7',
+    listing: 'farida',
+    client: 6,
+    service: 'appointment',
+    state: JobState.COMPLETED,
+    amount: 5500,
+    hoursAgo: 600,
+  },
+  {
+    label: 'b8',
+    listing: 'blessing',
+    client: 9,
+    service: 'consult',
+    state: JobState.CANCELLED,
+    amount: 6500,
+    hoursAgo: 300,
+  },
+  {
+    label: 'b9',
+    listing: 'farida',
+    client: 10,
+    service: 'letter',
+    state: JobState.DISPUTED,
+    amount: 4000,
+    hoursAgo: 260,
+  },
 ];
 
 /** A range of ratings, not all five (B.4). */
@@ -118,13 +377,76 @@ const REVIEWS: Array<{
   daysAgo: number;
   tags?: string[];
 }> = [
-  { label: 'r1', subject: 3, reviewer: 8, rating: 5, comment: 'Answered on a Sunday and did not make me feel stupid for asking. Application went through first time.', context: 'BOOKING', booking: 'b6', daysAgo: 15, tags: ['CLEAR_EXPLANATION', 'WENT_ABOVE_AND_BEYOND'] },
-  { label: 'r2', subject: 3, reviewer: 6, rating: 5, comment: 'Knows the rules properly rather than repeating what is on the website.', context: 'BOOKING', daysAgo: 40 },
-  { label: 'r3', subject: 3, reviewer: 2, rating: 4, comment: 'Good advice, though it took a couple of days to get the first reply.', context: 'BOOKING', daysAgo: 8 },
-  { label: 'r4', subject: 5, reviewer: 6, rating: 5, comment: 'Came to the appointment with me and it changed how the whole thing went.', context: 'BOOKING', booking: 'b7', daysAgo: 22, tags: ['ON_TIME'] },
-  { label: 'r5', subject: 5, reviewer: 10, rating: 3, comment: 'The translation was accurate but it came back three days late and I had to chase twice.', context: 'BOOKING', daysAgo: 10 },
-  { label: 'r6', subject: 6, reviewer: 1, rating: 5, comment: 'Answered my bank question in ten minutes and it was the right answer.', context: 'COMMUNITY', daysAgo: 5, tags: ['QUICK_TO_REPLY'] },
-  { label: 'r7', subject: 1, reviewer: 9, rating: 4, comment: 'Gave me a lift to the airport at 4am and would not take extra for it.', context: 'COMMUNITY', daysAgo: 30 },
+  {
+    label: 'r1',
+    subject: 3,
+    reviewer: 8,
+    rating: 5,
+    comment:
+      'Answered on a Sunday and did not make me feel stupid for asking. Application went through first time.',
+    context: 'BOOKING',
+    booking: 'b6',
+    daysAgo: 15,
+    tags: ['CLEAR_EXPLANATION', 'WENT_ABOVE_AND_BEYOND'],
+  },
+  {
+    label: 'r2',
+    subject: 3,
+    reviewer: 6,
+    rating: 5,
+    comment: 'Knows the rules properly rather than repeating what is on the website.',
+    context: 'BOOKING',
+    daysAgo: 40,
+  },
+  {
+    label: 'r3',
+    subject: 3,
+    reviewer: 2,
+    rating: 4,
+    comment: 'Good advice, though it took a couple of days to get the first reply.',
+    context: 'BOOKING',
+    daysAgo: 8,
+  },
+  {
+    label: 'r4',
+    subject: 5,
+    reviewer: 6,
+    rating: 5,
+    comment: 'Came to the appointment with me and it changed how the whole thing went.',
+    context: 'BOOKING',
+    booking: 'b7',
+    daysAgo: 22,
+    tags: ['ON_TIME'],
+  },
+  {
+    label: 'r5',
+    subject: 5,
+    reviewer: 10,
+    rating: 3,
+    comment:
+      'The translation was accurate but it came back three days late and I had to chase twice.',
+    context: 'BOOKING',
+    daysAgo: 10,
+  },
+  {
+    label: 'r6',
+    subject: 6,
+    reviewer: 1,
+    rating: 5,
+    comment: 'Answered my bank question in ten minutes and it was the right answer.',
+    context: 'COMMUNITY',
+    daysAgo: 5,
+    tags: ['QUICK_TO_REPLY'],
+  },
+  {
+    label: 'r7',
+    subject: 1,
+    reviewer: 9,
+    rating: 4,
+    comment: 'Gave me a lift to the airport at 4am and would not take extra for it.',
+    context: 'COMMUNITY',
+    daysAgo: 30,
+  },
 ];
 
 /** States a booking has stopped moving in, and states it has been delivered in. */
@@ -143,12 +465,35 @@ const STAGES_REACHED: Partial<Record<JobState, JobStage[]>> = {
   [JobState.PENDING_ACCEPTANCE]: [JobStage.REQUESTED],
   [JobState.ACCEPTED]: [JobStage.REQUESTED, JobStage.ACCEPTED],
   [JobState.IN_PROGRESS]: [JobStage.REQUESTED, JobStage.ACCEPTED, JobStage.IN_PROGRESS],
-  [JobState.DELIVERED]: [JobStage.REQUESTED, JobStage.ACCEPTED, JobStage.IN_PROGRESS, JobStage.DELIVERED],
-  [JobState.CHANGES_REQUESTED]: [JobStage.REQUESTED, JobStage.ACCEPTED, JobStage.IN_PROGRESS, JobStage.DELIVERED, JobStage.CHANGES_REQUESTED],
-  [JobState.COMPLETED]: [JobStage.REQUESTED, JobStage.ACCEPTED, JobStage.IN_PROGRESS, JobStage.DELIVERED, JobStage.DONE],
+  [JobState.DELIVERED]: [
+    JobStage.REQUESTED,
+    JobStage.ACCEPTED,
+    JobStage.IN_PROGRESS,
+    JobStage.DELIVERED,
+  ],
+  [JobState.CHANGES_REQUESTED]: [
+    JobStage.REQUESTED,
+    JobStage.ACCEPTED,
+    JobStage.IN_PROGRESS,
+    JobStage.DELIVERED,
+    JobStage.CHANGES_REQUESTED,
+  ],
+  [JobState.COMPLETED]: [
+    JobStage.REQUESTED,
+    JobStage.ACCEPTED,
+    JobStage.IN_PROGRESS,
+    JobStage.DELIVERED,
+    JobStage.DONE,
+  ],
   // A cancelled or disputed job never reached DONE, and the timeline appends those rather than pretending it did.
   [JobState.CANCELLED]: [JobStage.REQUESTED, JobStage.ACCEPTED, JobStage.CANCELLED],
-  [JobState.DISPUTED]: [JobStage.REQUESTED, JobStage.ACCEPTED, JobStage.IN_PROGRESS, JobStage.DELIVERED, JobStage.DISPUTED],
+  [JobState.DISPUTED]: [
+    JobStage.REQUESTED,
+    JobStage.ACCEPTED,
+    JobStage.IN_PROGRESS,
+    JobStage.DELIVERED,
+    JobStage.DISPUTED,
+  ],
 };
 
 /** Stages spread across the elapsed window, so the timeline reads as progress rather than one instant. */
@@ -199,6 +544,8 @@ export const seedProfessionals = async (ctx: DemoSeedContext) => {
       create: { id, ...data },
     });
 
+    await seedReview(prisma, { id, listing, createdAt });
+
     for (const [index, code] of listing.categories.entries()) {
       await prisma.professionalListingCategory.upsert({
         where: { listingId_code: { listingId: id, code } },
@@ -208,7 +555,13 @@ export const seedProfessionals = async (ctx: DemoSeedContext) => {
     }
 
     for (const [index, service] of listing.services.entries()) {
-      const [slug, name, description, price, basis] = service as [string, string, string, number, string];
+      const [slug, name, description, price, basis] = service as [
+        string,
+        string,
+        string,
+        number,
+        string,
+      ];
       const serviceId = seedId(`service:${listing.label}:${slug}`);
       const serviceData = {
         listingId: id,
@@ -263,11 +616,14 @@ export const seedProfessionals = async (ctx: DemoSeedContext) => {
       deliveredAt: DELIVERED_STATES.includes(booking.state)
         ? (stamps.get(JobStage.DELIVERED) ?? null)
         : null,
-      completedAt: booking.state === JobState.COMPLETED ? (stamps.get(JobStage.DONE) ?? null) : null,
+      completedAt:
+        booking.state === JobState.COMPLETED ? (stamps.get(JobStage.DONE) ?? null) : null,
       cancelledAt:
         booking.state === JobState.CANCELLED ? (stamps.get(JobStage.CANCELLED) ?? null) : null,
       cancelReason:
-        booking.state === JobState.CANCELLED ? 'Sorted it another way, sorry for the trouble.' : null,
+        booking.state === JobState.CANCELLED
+          ? 'Sorted it another way, sorry for the trouble.'
+          : null,
       firstClientMessageAt: createdAt,
       firstProReplyAt:
         booking.state === JobState.PENDING_ACCEPTANCE ? null : hoursAgo(booking.hoursAgo - 2),

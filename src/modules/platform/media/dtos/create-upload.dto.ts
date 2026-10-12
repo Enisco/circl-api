@@ -11,6 +11,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -19,7 +20,8 @@ export class UploadFileDto {
   @ApiProperty({
     example: 'image/jpeg',
     description:
-      'One of the accepted image, video or audio types. The presigned signature is minted ' +
+      'One of the accepted image, video or audio types — plus `application/pdf`, which is ' +
+      'accepted for `VERIFICATION` and nowhere else (§2.9). The presigned signature is minted ' +
       'against this exact value, so a mismatch on the PUT is an opaque S3 rejection.',
   })
   @IsString()
@@ -32,6 +34,19 @@ export class UploadFileDto {
   @IsInt()
   @Min(1)
   byteSize: number;
+
+  @ApiPropertyOptional({
+    example: 'RICS-certificate.pdf',
+    maxLength: 255,
+    description:
+      'The name the device gave the file. **Display only** — a reviewer seeing ' +
+      '`RICS-certificate.pdf` rather than a uuid. It never builds a key, a path or a header: the ' +
+      'key is minted server-side and the type comes from the bytes.',
+  })
+  @IsString()
+  @MaxLength(255)
+  @IsOptional()
+  fileName?: string;
 
   @ApiPropertyOptional({
     example: 14000,

@@ -21,7 +21,12 @@ const peopleIn = (node, path = '$', found = []) => {
 
   if (node && typeof node === 'object') {
     if (typeof node.displayName === 'string') {
-      found.push({ path, has: 'countryCode' in node, value: node.countryCode, isAnonymous: node.isAnonymous });
+      found.push({
+        path,
+        has: 'countryCode' in node,
+        value: node.countryCode,
+        isAnonymous: node.isAnonymous,
+      });
     }
 
     for (const [key, value] of Object.entries(node)) peopleIn(value, `${path}.${key}`, found);
@@ -45,18 +50,27 @@ const peopleIn = (node, path = '$', found = []) => {
   check('a member with a country carries its ISO code', mine?.value === 'NG', mine);
 
   r = await api(me.token, 'GET', `/users/${other.id}/profile`);
-  check('"Other" is null, because there is no flag for it',
-    peopleIn(r.body?.data)[0]?.value === null, peopleIn(r.body?.data)[0]);
+  check(
+    '"Other" is null, because there is no flag for it',
+    peopleIn(r.body?.data)[0]?.value === null,
+    peopleIn(r.body?.data)[0],
+  );
 
   r = await api(me.token, 'GET', `/users/${nowhere.id}/profile`);
   const unset = peopleIn(r.body?.data)[0];
 
-  check('a member who has not said is null, and the key is still there',
-    unset?.has === true && unset?.value === null, unset);
+  check(
+    'a member who has not said is null, and the key is still there',
+    unset?.has === true && unset?.value === null,
+    unset,
+  );
 
   r = await api(me.token, 'GET', '/users/profile');
-  check('your own profile carries it beside your own name',
-    r.body?.data?.countryCode === 'NG', r.body?.data?.countryCode);
+  check(
+    'your own profile carries it beside your own name',
+    r.body?.data?.countryCode === 'NG',
+    r.body?.data?.countryCode,
+  );
 
   console.log('\n── Anonymity ──────────────────────────────────────────────');
 
@@ -70,8 +84,11 @@ const peopleIn = (node, path = '$', found = []) => {
   const anonymous = peopleIn(r.body?.data)[0];
 
   check('an anonymous author has the key', anonymous?.has === true, anonymous);
-  check('and it is null, because a rare nationality in one city is not anonymous',
-    anonymous?.isAnonymous === true && anonymous?.value === null, anonymous);
+  check(
+    'and it is null, because a rare nationality in one city is not anonymous',
+    anonymous?.isAnonymous === true && anonymous?.value === null,
+    anonymous,
+  );
 
   console.log('\n── Every endpoint that returns a person ────────────────────');
 
@@ -123,10 +140,16 @@ const peopleIn = (node, path = '$', found = []) => {
     holes.push(...found.filter(person => !person.has).map(person => `${path} ${person.path}`));
   }
 
-  check(`every person across ${endpoints.length} endpoints carries countryCode (${seen} people)`,
-    holes.length === 0, holes.slice(0, 5));
-  check('and the walk actually found people, rather than passing on an empty response',
-    seen >= 10, seen);
+  check(
+    `every person across ${endpoints.length} endpoints carries countryCode (${seen} people)`,
+    holes.length === 0,
+    holes.slice(0, 5),
+  );
+  check(
+    'and the walk actually found people, rather than passing on an empty response',
+    seen >= 10,
+    seen,
+  );
 
   await sweep('country-code');
   await finish();

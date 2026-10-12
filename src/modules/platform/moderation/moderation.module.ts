@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { RouterModule } from '@nestjs/core';
 import { ModerationController } from './controllers/moderation.controller';
 import { ModerationService } from './services/moderation.service';
+import { ReportCaseService } from './services/report-case.service';
 
 @Module({
   imports: [
@@ -10,7 +11,7 @@ import { ModerationService } from './services/moderation.service';
     ]),
   ],
   controllers: [ModerationController],
-  providers: [ModerationService],
-  exports: [ModerationService],
+  providers: [ModerationService, ReportCaseService],
+  exports: [ModerationService, ReportCaseService],
 })
 export class ModerationModule {}

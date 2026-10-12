@@ -3,26 +3,33 @@ import {
   ActivitySubject,
   ActivityVerb,
   CommunityUpdate,
+  ContentScanTrigger,
   Media,
-  ModerationQueueType,
   NotificationKind,
   PostVisibility,
   Prisma,
   ReportTargetType,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException, Paginated, buildPageMeta, excerpt, toJson } from '@/common';
+import { ApiErrorCode, ApiException, Paginated, buildPageMeta, excerpt } from '@/common';
 import {
   ActivityService,
   AuthorView,
   BlockingService,
+  AuthorReviewView,
   CityService,
   CityView,
+  ContentReviewService,
+  ContentSafetyService,
+  ReviewStatus,
+  DIRECT_VISIBILITY,
   MediaService,
   MediaView,
-  RiskScannerService,
+  PUBLIC_VISIBILITY,
   authorSelect,
   displayNameOf,
+  isReachable,
+  reviewStatusOf,
   toAuthorView,
   toCityView,
   toMediaViews,
@@ -60,6 +67,8 @@ export interface UpdateReplyView {
   /** The viewer's own permission, decided here. Mirrored inside `viewer` for existing callers. */
   canDelete: boolean;
   viewer: { isOwner: boolean; canDelete: boolean };
+  /** Set on the author's own comment when it is not public (§6.5). */
+  reviewStatus?: Exclude<ReviewStatus, null>;
   createdAt: string;
 }
 
@@ -79,14 +88,21 @@ export class UpdateService {
     private readonly media: MediaService,
     private readonly blocking: BlockingService,
     private readonly activity: ActivityService,
-    private readonly risk: RiskScannerService,
+    private readonly safety: ContentSafetyService,
+    private readonly review: ContentReviewService,
     private readonly notifications: NotificationFeedService,
   ) {}
 
   async list(viewerId: string, query: ListUpdatesDto): Promise<Paginated<UpdateView>> {
     const blockedIds = await this.blocking.blockedUserIds(viewerId);
+    // A list filtered to one author is that member's profile tab, where a limited post is still
+    // shown; an unfiltered list is a feed, where it is not (§6.5). And a member looking at their
+    // own posts sees everything they wrote, including what is under review — hiding it would
+    // leave them wondering where it went.
+    const own = !!query.authorId && query.authorId === viewerId;
     const where: Prisma.CommunityUpdateWhereInput = {
       deletedAt: null,
+      ...(own ? {} : query.authorId ? DIRECT_VISIBILITY : PUBLIC_VISIBILITY),
       ...(query.cityId ? { cityId: query.cityId } : {}),
       ...(query.authorId ? { authorId: query.authorId } : {}),
       ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
@@ -120,7 +136,7 @@ export class UpdateService {
     };
   }
 
-  async findOne(viewerId: string, id: string): Promise<UpdateView> {
+  async findOne(viewerId: string, id: string): Promise<UpdateView & Partial<AuthorReviewView>> {
     const update = await this.database.communityUpdate.findUnique({
       where: { id },
       include: updateInclude,
@@ -128,6 +144,12 @@ export class UpdateService {
 
     if (!update) throw ApiException.notFound('This post could not be found.');
     if (update.deletedAt) throw ApiException.deleted('This post');
+
+    // §6.5: a held, rejected or awaiting-approval post belongs to its author alone until a human
+    // has looked at it. A 404 rather than a 403, so the answer says nothing about what was here.
+    if (!isReachable(update.visibilityState) && update.authorId !== viewerId) {
+      throw ApiException.notFound('This post could not be found.');
+    }
 
     if (await this.activity.countView('update', id, viewerId, update.authorId)) {
       await this.database.communityUpdate.update({
@@ -142,7 +164,15 @@ export class UpdateService {
       this.blocking.blockedUserIds(viewerId),
     ]);
 
-    return this.toView(update, viewerId, media, liked, new Set(blockedIds));
+    const review =
+      update.authorId === viewerId
+        ? await this.review.forAuthor(ReportTargetType.UPDATE, id, update.visibilityState)
+        : null;
+
+    return {
+      ...this.toView(update, viewerId, media, liked, new Set(blockedIds)),
+      ...(review ?? {}),
+    };
   }
 
   async create(userId: string, dto: CreateUpdateDto): Promise<UpdateView> {
@@ -174,6 +204,17 @@ export class UpdateService {
           skipDuplicates: true,
         });
       }
+
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.UPDATE,
+        targetId: update.id,
+        authorId: userId,
+        fields: { content: update.content },
+        mediaKeys: media.map(item => item.storageKey),
+        isAnonymous: update.visibility === PostVisibility.ANONYMOUS,
+        trigger: ContentScanTrigger.CREATE,
+        summary: excerpt(update.content, 120),
+      });
 
       return update;
     });
@@ -270,6 +311,7 @@ export class UpdateService {
       });
     }
 
+    // visibility: re-read of the row this call just reacted to, for the new count.
     const fresh = await this.database.communityUpdate.findUniqueOrThrow({
       where: { id },
       select: { reactionCount: true, reactionCountHidden: true, authorId: true },
@@ -292,12 +334,15 @@ export class UpdateService {
     query: { skip: number; take: number; currentPage: number; perPage: number },
   ): Promise<Paginated<UpdateReplyView>> {
     // The post's author can remove a reply on their own post, not only its writer.
-    const update = await this.load(id);
+    const update = await this.loadVisible(viewerId, id);
 
     const blockedIds = await this.blocking.blockedUserIds(viewerId);
+    // A reply that was held or rejected is shown to nobody but its author (§6.5). The thread is a
+    // direct read rather than a feed, so a limited reply still appears.
     const where: Prisma.UpdateReplyWhereInput = {
       updateId: id,
       deletedAt: null,
+      OR: [{ ...DIRECT_VISIBILITY }, { authorId: viewerId }],
       ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
     };
 
@@ -325,6 +370,9 @@ export class UpdateService {
           isOwner: row.authorId === viewerId,
           canDelete: row.authorId === viewerId || update.authorId === viewerId,
         },
+        ...(row.authorId === viewerId && reviewStatusOf(row.visibilityState)
+          ? { reviewStatus: reviewStatusOf(row.visibilityState)! }
+          : {}),
         createdAt: row.createdAt.toISOString(),
       })),
       meta: buildPageMeta(query, total),
@@ -336,7 +384,7 @@ export class UpdateService {
     id: string,
     dto: CreateUpdateReplyDto,
   ): Promise<UpdateReplyView> {
-    const update = await this.load(id);
+    const update = await this.loadVisible(userId, id);
 
     // The client hides the reply bar when comments are off, but the check has to exist here too (1.5.4).
     if (!update.commentsEnabled) {
@@ -353,6 +401,15 @@ export class UpdateService {
       });
 
       await tx.communityUpdate.update({ where: { id }, data: { replyCount: { increment: 1 } } });
+
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.UPDATE_REPLY,
+        targetId: created.id,
+        authorId: userId,
+        fields: { content: created.content },
+        trigger: ContentScanTrigger.CREATE,
+        summary: excerpt(created.content, 120),
+      });
 
       return created;
     });
@@ -383,6 +440,8 @@ export class UpdateService {
   }
 
   async removeReply(userId: string, updateId: string, replyId: string): Promise<void> {
+    // visibility: an ownership check before a delete. Either author may remove a held reply, and
+    // being able to take it down is the last useful thing anybody can do with one.
     const reply = await this.database.updateReply.findUnique({
       where: { id: replyId },
       include: { update: { select: { authorId: true } } },
@@ -478,7 +537,25 @@ export class UpdateService {
     return users.map(user => user.id);
   }
 
+  /**
+   * The post, refused to anybody it is not visible to (§6.5).
+   *
+   * Reading its replies and writing one both go through here: a held post is nobody's to read,
+   * and a reply to one joins a conversation that is not happening.
+   */
+  private async loadVisible(viewerId: string, id: string): Promise<CommunityUpdate> {
+    const update = await this.load(id);
+
+    if (!isReachable(update.visibilityState) && update.authorId !== viewerId) {
+      throw ApiException.notFound('This post could not be found.');
+    }
+
+    return update;
+  }
+
   private async load(id: string): Promise<CommunityUpdate> {
+    // visibility: an ownership check before a write. Callers that serve the post or its replies
+    // use `loadVisible`.
     const update = await this.database.communityUpdate.findUnique({ where: { id } });
 
     if (!update) throw ApiException.notFound('This post could not be found.');
@@ -497,33 +574,8 @@ export class UpdateService {
       weight: 2,
     });
 
-    const assessment = await this.risk.scan(update.content);
-    const isAnonymous = update.visibility === PostVisibility.ANONYMOUS;
-
-    if (!this.risk.isUrgent(assessment) && !isAnonymous) return;
-
-    await this.database.moderationQueueItem
-      .upsert({
-        where: {
-          type_targetType_targetId: {
-            type: isAnonymous ? ModerationQueueType.ANONYMOUS_POST : ModerationQueueType.GUARD_RISK,
-            targetType: ReportTargetType.UPDATE,
-            targetId: update.id,
-          },
-        },
-        update: {},
-        create: {
-          type: isAnonymous ? ModerationQueueType.ANONYMOUS_POST : ModerationQueueType.GUARD_RISK,
-          targetType: ReportTargetType.UPDATE,
-          targetId: update.id,
-          subjectUserId: update.authorId,
-          riskLevel: assessment.level,
-          riskCategory: assessment.category,
-          riskScore: assessment.score,
-          riskSignals: toJson(assessment.signals),
-          summary: update.content.slice(0, 200),
-        },
-      })
-      .catch(() => undefined);
+    // The scan, the verdict and the queue item are `ContentSafetyService`'s now (§6.2): this hook
+    // carried a second copy of them that scanned a body where `request.service.ts` scanned a title
+    // and a description, and neither wrote down what it found.
   }
 }

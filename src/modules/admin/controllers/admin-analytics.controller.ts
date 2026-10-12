@@ -1,9 +1,44 @@
 import { Controller, Get, HttpCode, HttpStatus, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiExcludeController, ApiOperation, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
-import { JoinPolicy, PostVisibility, RequestStatus } from '@prisma/client';
-import { ApiErrorCode, ApiException, CsvArray, CurrentUser, SuccessMessage } from '@/common';
+import {
+  BriefUrgency,
+  DealTiming,
+  DealTrack,
+  ExperienceLevel,
+  DmPolicy,
+  Fulfilment,
+  JoinPolicy,
+  PostVisibility,
+  ModerationQueueType,
+  ReportReason,
+  ReportState,
+  ReportTargetType,
+  RequestStatus,
+  RiskCategory,
+  RiskLevel,
+  SearchScope,
+  StoreComplianceState,
+  StoreStatus,
+} from '@prisma/client';
+import {
+  ApiErrorCode,
+  ApiException,
+  CsvArray,
+  CurrentUser,
+  SuccessMessage,
+  ToBoolean,
+} from '@/common';
 import { AdminJwtGuard } from '@/common/guards/admin-jwt.guard';
-import { ArrayMaxSize, IsArray, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+} from 'class-validator';
 import { AdminBffGuard } from '../common/admin-bff.guard';
 import { AdminPermissionGuard } from '../common/admin-permission.guard';
 import { AdminAnyPermission, AdminAuthenticated, AdminPrincipal } from '../common/admin-principal';
@@ -16,10 +51,11 @@ import {
 } from '../dtos/admin-analytics.dto';
 import { AnalyticsFilterDto } from '../dtos/analytics-filter.dto';
 import { AdminAnalyticsService } from '../services/admin-analytics.service';
+import { AdminFilterOptionsService } from '../services/admin-filter-options.service';
 import { AdminDashboardService } from '../services/admin-dashboard.service';
 
 /** The shared filter, plus the chart selector the portal uses to lazy-load and re-fetch one chart. */
-class AnalyticsTabQueryDto extends AnalyticsFilterDto {
+export class AnalyticsTabQueryDto extends AnalyticsFilterDto {
   @ApiPropertyOptional({
     description: 'Limit the response to these chart ids. An unknown id is a 400, never silence.',
   })
@@ -73,6 +109,201 @@ class AnalyticsTabQueryDto extends AnalyticsFilterDto {
   @IsOptional()
   joinPolicy?: string[];
 
+  @ApiPropertyOptional({ description: 'Professionals: `PROFESSION` codes.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(60, { each: true })
+  @IsOptional()
+  professions?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Professionals: only regulated professions, or only unregulated ones.',
+  })
+  @ToBoolean()
+  @IsBoolean()
+  @IsOptional()
+  regulated?: boolean;
+
+  @ApiPropertyOptional({ enum: ExperienceLevel, isArray: true, description: 'Professionals.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(4)
+  @IsIn(Object.values(ExperienceLevel), { each: true })
+  @IsOptional()
+  experienceLevels?: string[];
+
+  @ApiPropertyOptional({ enum: BriefUrgency, isArray: true, description: 'Professionals: briefs.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(4)
+  @IsIn(Object.values(BriefUrgency), { each: true })
+  @IsOptional()
+  urgency?: string[];
+
+  @ApiPropertyOptional({ description: 'Connect: `CONNECTION_TYPE` codes.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(30)
+  @IsString({ each: true })
+  @MaxLength(60, { each: true })
+  @IsOptional()
+  connectionTypes?: string[];
+
+  @ApiPropertyOptional({ enum: DmPolicy, isArray: true, description: 'Connect.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(2)
+  @IsIn(Object.values(DmPolicy), { each: true })
+  @IsOptional()
+  dmPolicy?: string[];
+
+  @ApiPropertyOptional({ description: 'Connect: profiles visible in the directory.' })
+  @ToBoolean()
+  @IsBoolean()
+  @IsOptional()
+  isVisible?: boolean;
+
+  @ApiPropertyOptional({ description: 'Commerce: `STORE_TYPE` codes.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(30)
+  @IsString({ each: true })
+  @MaxLength(60, { each: true })
+  @IsOptional()
+  storeTypes?: string[];
+
+  @ApiPropertyOptional({ description: 'Commerce: `ITEM_CATEGORY` codes.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(60, { each: true })
+  @IsOptional()
+  itemCategories?: string[];
+
+  @ApiPropertyOptional({ enum: StoreStatus, isArray: true, description: 'Commerce.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(3)
+  @IsIn(Object.values(StoreStatus), { each: true })
+  @IsOptional()
+  storeStatus?: string[];
+
+  @ApiPropertyOptional({ enum: StoreComplianceState, isArray: true, description: 'Commerce.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(3)
+  @IsIn(Object.values(StoreComplianceState), { each: true })
+  @IsOptional()
+  complianceState?: string[];
+
+  @ApiPropertyOptional({ enum: Fulfilment, isArray: true, description: 'Commerce.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(2)
+  @IsIn(Object.values(Fulfilment), { each: true })
+  @IsOptional()
+  fulfilment?: string[];
+
+  @ApiPropertyOptional({ enum: DealTrack, isArray: true, description: 'Deals.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(2)
+  @IsIn(Object.values(DealTrack), { each: true })
+  @IsOptional()
+  track?: string[];
+
+  @ApiPropertyOptional({ enum: DealTiming, isArray: true, description: 'Deals.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(2)
+  @IsIn(Object.values(DealTiming), { each: true })
+  @IsOptional()
+  timing?: string[];
+
+  @ApiPropertyOptional({ enum: SearchScope, isArray: true, description: 'Search & Demand.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsIn(Object.values(SearchScope), { each: true })
+  @IsOptional()
+  scopes?: string[];
+
+  @ApiPropertyOptional({ enum: ReportReason, isArray: true, description: 'Trust & Safety.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsIn(Object.values(ReportReason), { each: true })
+  @IsOptional()
+  reasonCodes?: string[];
+
+  @ApiPropertyOptional({ enum: ReportTargetType, isArray: true, description: 'Trust & Safety.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsIn(Object.values(ReportTargetType), { each: true })
+  @IsOptional()
+  targetTypes?: string[];
+
+  @ApiPropertyOptional({ enum: RiskLevel, isArray: true, description: 'Trust & Safety.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsIn(Object.values(RiskLevel), { each: true })
+  @IsOptional()
+  riskLevels?: string[];
+
+  @ApiPropertyOptional({ enum: RiskCategory, isArray: true, description: 'Trust & Safety.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(12)
+  @IsIn(Object.values(RiskCategory), { each: true })
+  @IsOptional()
+  riskCategories?: string[];
+
+  @ApiPropertyOptional({
+    enum: ModerationQueueType,
+    isArray: true,
+    description: 'Trust & Safety: the moderation queue.',
+  })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsIn(Object.values(ModerationQueueType), { each: true })
+  @IsOptional()
+  queueTypes?: string[];
+
+  @ApiPropertyOptional({
+    enum: ReportState,
+    isArray: true,
+    description: 'Trust & Safety: report states.',
+  })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(4)
+  @IsIn(Object.values(ReportState), { each: true })
+  @IsOptional()
+  states?: string[];
+
+  @ApiPropertyOptional({ description: 'Support: `SUPPORT_THREAD_TYPE` codes.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(60, { each: true })
+  @IsOptional()
+  threadTypes?: string[];
+
+  @ApiPropertyOptional({ description: 'Support: staff ids.' })
+  @CsvArray()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsUUID('4', { each: true })
+  @IsOptional()
+  assigneeIds?: string[];
+
   @ApiPropertyOptional({
     enum: POPULATIONS,
     default: 'all',
@@ -91,6 +322,7 @@ export class AdminAnalyticsController {
   constructor(
     private readonly analytics: AdminAnalyticsService,
     private readonly dashboard: AdminDashboardService,
+    private readonly filterOptionsService: AdminFilterOptionsService,
   ) {}
 
   // ─── Dashboard (§5.24) ─────────────────────────────────────────────────────
@@ -159,6 +391,33 @@ export class AdminAnalyticsController {
 
   // ─── Analytics tabs (§5.25) ────────────────────────────────────────────────
 
+  /**
+   * Declared **before** `analytics/:tab`, and that is load-bearing.
+   *
+   * Nest matches routes in declaration order, so a parameterised route registered first swallows
+   * every literal that follows it — `filter-options` would arrive as a tab name and answer "no
+   * such tab: filter-options". There is an e2e check on this, because the symptom is a 400 that
+   * reads exactly like a portal sending the wrong path.
+   */
+  @Get('analytics/filter-options')
+  @AdminAnyPermission('analytics:read', 'analytics:safety', 'members:read')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Every value the filter bar can offer, in one call',
+    description:
+      'Built from the same constants the filter itself validates against, so the bar can never ' +
+      'offer a value this API would reject \u2014 a staff member cannot tell a refused filter ' +
+      'from an empty result.\n\n' +
+      'The dynamic lists come from the data: cities that are active, countries members actually ' +
+      'gave, builds still seen in the last 180 days. A country fewer than ten members gave is ' +
+      'left out of the **list** (\u00a72.7): offering it is itself the disclosure.',
+  })
+  async filterOptions() {
+    const data = await this.filterOptionsService.options();
+
+    return { data, message: SuccessMessage.RESOURCE_FETCHED('Filter options') };
+  }
+
   @Get('analytics/:tab')
   @AdminAnyPermission('analytics:read', 'analytics:safety')
   @HttpCode(HttpStatus.OK)
@@ -195,6 +454,30 @@ export class AdminAnalyticsController {
         requestStatuses: query.requestStatuses,
         visibility: query.visibility,
         joinPolicy: query.joinPolicy,
+        track: query.track,
+        timing: query.timing,
+        connectionTypes: query.connectionTypes,
+        dmPolicy: query.dmPolicy,
+        isVisible: query.isVisible,
+        storeTypes: query.storeTypes,
+        itemCategories: query.itemCategories,
+        storeStatus: query.storeStatus,
+        complianceState: query.complianceState,
+        fulfilment: query.fulfilment,
+        professions: query.professions,
+        regulated: query.regulated,
+        experienceLevels: query.experienceLevels,
+        urgency: query.urgency,
+        scopes: query.scopes,
+        reasonCodes: query.reasonCodes,
+        targetTypes: query.targetTypes,
+        riskLevels: query.riskLevels,
+        riskCategories: query.riskCategories,
+        queueTypes: query.queueTypes,
+        states: query.states,
+        threadTypes: query.threadTypes,
+        assigneeIds: query.assigneeIds,
+        hasMemberFilters: query.hasMemberAttributeFilters,
       },
     );
 

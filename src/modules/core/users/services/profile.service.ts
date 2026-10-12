@@ -11,6 +11,8 @@ import { PrismaService } from '@/infrastructure';
 import {
   AVATAR_MEDIA_OWNER,
   CityService,
+  ContentReviewService,
+  ContentSafetyService,
   isCountryCode,
   MediaService,
   NO_COUNTRY,
@@ -19,7 +21,12 @@ import {
   toCountryCode,
 } from '@/modules/platform/shared';
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { TaxonomyKind } from '@prisma/client';
+import {
+  ContentScanTrigger,
+  ContentVisibilityState,
+  ReportTargetType,
+  TaxonomyKind,
+} from '@prisma/client';
 import { PinoLogger } from 'nestjs-pino';
 import { UpdateProfileDto } from '../dtos';
 
@@ -31,6 +38,8 @@ export class ProfileService {
     private readonly taxonomy: TaxonomyService,
     private readonly cities: CityService,
     private readonly media: MediaService,
+    private readonly safety: ContentSafetyService,
+    private readonly review: ContentReviewService,
   ) {
     this.logger.setContext(ProfileService.name);
   }
@@ -78,6 +87,7 @@ export class ProfileService {
     const profile = user.profile;
 
     const { avatarKey, ...rest } = user;
+    const photoReview = await this.avatarReview(userId, avatarKey);
 
     return {
       message: 'Profile retrieved successfully',
@@ -85,6 +95,10 @@ export class ProfileService {
         ...rest,
         // Signed at read time, and falling back to the social provider's URL for a member who never uploaded one of their own (0.11.3).
         avatarUrl: avatarKey ? this.media.sign(avatarKey) : user.profileImageUrl,
+        // §6.5: the author is told. A held photo is simply absent everywhere else — which is the
+        // whole design, forty read sites need no new rule — so this is the one screen that can
+        // say why it went, and the only place it would make sense to ask.
+        avatarReview: photoReview,
         // Beside the name, exactly as it is on the shared author object (0.9), so the screen that
         // draws your own row does not need a different rule from the one that draws everybody else's.
         countryCode: toCountryCode(profile?.countryOfOrigin),
@@ -101,6 +115,31 @@ export class ProfileService {
           : null,
       },
     };
+  }
+
+  /**
+   * What the member is told about a photo that was taken down (§6.5, §6.1).
+   *
+   * Only asked when they are wearing nothing: a held avatar has had its key cleared, so "no key"
+   * is the only state in which there is anything to explain, and a member who never uploaded one
+   * costs a single indexed lookup that finds nothing.
+   */
+  private async avatarReview(userId: string, avatarKey: string | null) {
+    if (avatarKey) return null;
+
+    const held = await this.database.media.findFirst({
+      where: {
+        ownerType: AVATAR_MEDIA_OWNER,
+        ownerId: userId,
+        moderationState: { not: ContentVisibilityState.VISIBLE },
+      },
+      select: { id: true, moderationState: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    if (!held) return null;
+
+    return this.review.forAuthor(ReportTargetType.MEDIA, held.id, held.moderationState);
   }
 
   async checkUsername(username: string) {
@@ -174,7 +213,48 @@ export class ProfileService {
         // The previous avatar is released whether it is being replaced or cleared, otherwise it stays ATTACHED forever and the orphan sweep, which only collects unattached objects, never reaches it.
         await this.media.releaseOwner(tx, AVATAR_MEDIA_OWNER, userId);
 
-        if (avatar?.length) await this.media.attach(tx, avatar, AVATAR_MEDIA_OWNER, userId);
+        if (avatar?.length) {
+          await this.media.attach(tx, avatar, AVATAR_MEDIA_OWNER, userId);
+
+          // §6.1 scans avatars. On its own target, not as part of the profile's text scan: a
+          // photo nobody should see is no reason to hold a paragraph that is fine, and the
+          // verdict has somewhere of its own to go (`media.moderationState`, §4.5). A held
+          // avatar clears `avatarKey`, which is the one effect forty read sites already handle.
+          await this.safety.assess(tx, {
+            targetType: ReportTargetType.MEDIA,
+            targetId: avatar[0].id,
+            authorId: userId,
+            // Nothing for a lexicon to read, which is why an avatar's verdict is the
+            // classifier's alone — and why this scan concludes nothing while it is switched off.
+            fields: {},
+            mediaKeys: [avatar[0].storageKey],
+            trigger: ContentScanTrigger.CREATE,
+            summary: 'Profile photo',
+          });
+        }
+      }
+
+      // §6.1 scans the written part of a profile: the headline, the bio and what somebody says
+      // they can help with. Held with `bioVisibilityState` rather than the row's own state, so a
+      // paragraph under review does not make the member disappear (§4.5).
+      const saved = await tx.userProfile.findUnique({
+        where: { userId },
+        select: { id: true, headline: true, bio: true, canHelpWith: true },
+      });
+
+      if (saved) {
+        await this.safety.assess(tx, {
+          targetType: ReportTargetType.USER_PROFILE,
+          targetId: saved.id,
+          authorId: userId,
+          fields: {
+            headline: saved.headline,
+            bio: saved.bio,
+            canHelpWith: saved.canHelpWith,
+          },
+          trigger: ContentScanTrigger.EDIT,
+          summary: saved.headline,
+        });
       }
     });
 

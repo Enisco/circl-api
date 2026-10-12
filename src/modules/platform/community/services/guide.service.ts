@@ -2,11 +2,13 @@ import { Injectable } from '@nestjs/common';
 import {
   ActivitySubject,
   ActivityVerb,
+  ContentScanTrigger,
   DeflectionOutcome,
   Guide,
   GuideBlockType,
   NotificationKind,
   Prisma,
+  ReportTargetType,
   SearchScope,
   TaxonomyKind,
 } from '@prisma/client';
@@ -28,12 +30,17 @@ import {
   AuthorView,
   CityService,
   CityView,
+  AuthorReviewView,
+  ContentReviewService,
+  ContentSafetyService,
   MediaService,
   MediaView,
+  PUBLIC_VISIBILITY,
   TaxonomyService,
   TermView,
   authorSelect,
   displayNameOf,
+  isReachable,
   toAuthorView,
   toCityView,
   toMediaViews,
@@ -99,12 +106,18 @@ export class GuideService {
     private readonly media: MediaService,
     private readonly activity: ActivityService,
     private readonly notifications: NotificationFeedService,
+    private readonly safety: ContentSafetyService,
+    private readonly review: ContentReviewService,
   ) {}
 
   // ─── 1.6.1 List ────────────────────────────────────────────────────────────
 
   async list(viewerId: string, query: ListGuidesDto): Promise<Paginated<GuideSummaryView>> {
-    const where: Prisma.GuideWhereInput = { deletedAt: null, publishedAt: { not: null } };
+    const where: Prisma.GuideWhereInput = {
+      deletedAt: null,
+      ...PUBLIC_VISIBILITY,
+      publishedAt: { not: null },
+    };
 
     if (query.topic) {
       where.topicCode = query.topic;
@@ -179,7 +192,10 @@ export class GuideService {
 
   // ─── 1.6.2 Detail ──────────────────────────────────────────────────────────
 
-  async findOne(viewerId: string, id: string): Promise<GuideDetailView> {
+  async findOne(
+    viewerId: string,
+    id: string,
+  ): Promise<GuideDetailView & Partial<AuthorReviewView>> {
     const guide = await this.database.guide.findUnique({
       where: { id },
       include: { ...guideInclude, sources: true },
@@ -187,6 +203,12 @@ export class GuideService {
 
     if (!guide) throw ApiException.notFound('This guide could not be found.');
     if (guide.deletedAt) throw ApiException.deleted('This guide');
+
+    // §6.5: held, rejected and awaiting-approval content is its author's alone, and the refusal
+    // is a 404 so it says nothing about what was here.
+    if (!isReachable(guide.visibilityState) && guide.authorId !== viewerId) {
+      throw ApiException.notFound('This guide could not be found.');
+    }
 
     if (await this.activity.countView('guide', id, viewerId, guide.authorId)) {
       await this.database.guide.update({ where: { id }, data: { viewCount: { increment: 1 } } });
@@ -230,6 +252,9 @@ export class GuideService {
           }
         : null,
       relatedGuideIds: related,
+      ...((guide.authorId === viewerId
+        ? await this.review.forAuthor(ReportTargetType.GUIDE, id, guide.visibilityState)
+        : null) ?? {}),
     };
   }
 
@@ -269,6 +294,23 @@ export class GuideService {
       });
 
       await this.media.attach(tx, media, GUIDE_MEDIA_OWNER, created.id);
+
+      // §6.1 scans a guide's title, intro and every block. The blocks are numbered so a signal
+      // says which step it matched in, which is the whole point of per-field scanning in a
+      // document this long.
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.GUIDE,
+        targetId: created.id,
+        authorId: userId,
+        fields: {
+          title: created.title,
+          intro: created.intro,
+          ...Object.fromEntries(steps.map((text, index) => [`step ${index + 1}`, text])),
+        },
+        mediaKeys: media.map(item => item.storageKey),
+        trigger: ContentScanTrigger.CREATE,
+        summary: created.title,
+      });
 
       return created;
     });
@@ -441,6 +483,7 @@ export class GuideService {
       });
     }
 
+    // visibility: re-read of the guide this call just reacted to, for the new count.
     const fresh = await this.database.guide.findUniqueOrThrow({
       where: { id },
       select: { likeCount: true },
@@ -542,6 +585,8 @@ export class GuideService {
         id: { not: guide.id },
         topicCode: guide.topicCode,
         deletedAt: null,
+        // A recommendation is distribution, so limited guides are out as well as held ones.
+        ...PUBLIC_VISIBILITY,
         publishedAt: { not: null },
       },
       orderBy: [{ viewCount: 'desc' }],
@@ -553,6 +598,7 @@ export class GuideService {
   }
 
   private async assertExists(id: string): Promise<Guide> {
+    // visibility: existence and ownership, for the write paths and the bookmark/like toggles.
     const guide = await this.database.guide.findUnique({ where: { id } });
 
     if (!guide) throw ApiException.notFound('This guide could not be found.');
@@ -582,5 +628,4 @@ export class GuideService {
       hadResults: total > 0,
     });
   }
-
 }

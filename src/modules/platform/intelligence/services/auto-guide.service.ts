@@ -8,6 +8,12 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { daysAgo, keywordSimilarity, keywords, readTimeMinutes, toJson } from '@/common';
+// One path to the shared module rather than two, which this file previously had: the alias on one
+// line and the relative path on the next. Tidiness rather than a fix — the `Cannot read properties
+// of undefined (reading 'stamp')` that prompted the change came from `intelligence-deletion.e2e`
+// constructing this service by hand (`new AutoGuideService(prisma)`) and so never passing the
+// second argument at all. Nest resolves it correctly; nothing outside the container does.
+import { PUBLIC_VISIBILITY, QueueDeadlineService } from '../../shared';
 
 /** "When three or more members ask the same question" — the threshold is the spec's. */
 const CLUSTER_THRESHOLD = 3;
@@ -23,10 +29,15 @@ const WINDOW_DAYS = 120;
 export class AutoGuideService {
   private readonly logger = new Logger(AutoGuideService.name);
 
-  constructor(private readonly database: PrismaService) {}
+  constructor(
+    private readonly database: PrismaService,
+    private readonly deadlines: QueueDeadlineService,
+  ) {}
 
   /** Finds clusters of repeated questions and drafts one guide per cluster that has enough answered material to be worth a human's time. */
   async run(): Promise<{ clusters: number; drafted: number }> {
+    // visibility: clustering questions to decide whether a guide is worth drafting. The draft
+    // quotes answers, and those are filtered where they are read.
     const requests = await this.database.communityRequest.findMany({
       where: {
         deletedAt: null,
@@ -177,10 +188,13 @@ export class AutoGuideService {
     },
   ): Promise<string | null> {
     // Only credited or well-received answers.
+    // An Auto-Guide quotes members' answers back to the city, which is publication: a held or
+    // limited reply is not source material (§6.5).
     const responses = await this.database.requestResponse.findMany({
       where: {
         requestId: { in: cluster.requestIds },
         deletedAt: null,
+        ...PUBLIC_VISIBILITY,
         isPrivate: false,
         content: { not: '' },
       },
@@ -253,6 +267,10 @@ export class AutoGuideService {
         data: { draftedGuideId: created.id },
       });
 
+      // A draft guide waiting for a human. Nothing is at risk while it waits, so the ordinary
+      // band and the ordinary clock.
+      const stamp = await this.deadlines.stamp({ type: ModerationQueueType.AUTO_GUIDE });
+
       await tx.moderationQueueItem.upsert({
         where: {
           type_targetType_targetId: {
@@ -266,6 +284,7 @@ export class AutoGuideService {
           type: ModerationQueueType.AUTO_GUIDE,
           targetType: ReportTargetType.GUIDE,
           targetId: created.id,
+          ...stamp,
           summary: created.title,
           payload: toJson({
             askCount: cluster.askers.size,
@@ -285,6 +304,7 @@ export class AutoGuideService {
 
   /** Publishes an approved draft. Called by the admin decision path. */
   async publish(guideId: string, reviewerId: string): Promise<void> {
+    // visibility: the draft this job just wrote, read back by id.
     const guide = await this.database.guide.findUnique({
       where: { id: guideId },
       include: { sources: true },

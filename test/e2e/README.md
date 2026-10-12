@@ -54,13 +54,36 @@ The safety is in the file, not the command: `deploy` will run whatever a migrati
 | `spec-conformance.e2e.cjs` | The defects the spec audit found, so they cannot come back |
 | `rate-limits.e2e.cjs` | 0.14 limits are per member, not per IP |
 | `deals.e2e.cjs` | Deal progress: the spine, who may mark what, confirmed-only earnings, and the review gate |
+| `admin-meta.e2e.cjs` | §5.27: the portal's vocabularies, assignable staff per queue, and the command palette |
+| `content-safety.e2e.cjs` | §6.2–6.7: the lexicon pipeline — tiers, the safeguarding floor, the queue item, the hash that stops a no-op edit re-scanning, and every community write path |
+| `content-visibility.e2e.cjs` | §6.5: what a held or limited piece of content does to every surface that reads it — lists, feed, search, threads, directory, shop, discovery, and the single-item 404 |
+| `message-safety.e2e.cjs` | §6.8: the private-message scan — what it watches, who the case is about, the group and Guard-thread rules, and the message staying delivered and unmarked whatever it found |
+| `image-safety.e2e.cjs` | §6.1's last row: an avatar scanned on its own target, its verdict on the image rather than on the profile, a replacement scanned in turn, and staff removing one leaving the member standing |
+| `report-cases.e2e.cjs` | §7.1: reports grouped into one case per target, the priority rules, the SLA clock, a dismissal that stands for a week, and a decision on removed content answering the next report |
+| `report-workflow.e2e.cjs` | §5.10 and §7.2: the report queue a reviewer works, claiming and releasing, the four-role permission matrix, and everything a decision sets off — content, reports, strike, queue item and the reporters |
+| `appeals.e2e.cjs` | §5.11: an appeal logged by staff in the member's words, R6 stopping the original decider reviewing it, and what overturning undoes — the post back, the strike withdrawn, the case marked reversed |
+| `moderation-queue.e2e.cjs` | §5.9: the queue a reviewer works — CSV filters, a band and a deadline on every item, `allowedDecisions` from the server, claim/release/assign, and the three decisions that used to do nothing (a warning that warns, an approval that publishes, a rejection the author can read) |
+| `moderation-queue.e2e.cjs` | §5.9: the queue a reviewer works — CSV filters, a band and a deadline on every item, `allowedDecisions` from the server, claim/release/assign, and the three decisions that used to do nothing (a warning that warns, an approval that publishes, a rejection the author can read) |
+| `listing-documents.e2e.cjs` | §2.9 documents: PDFs for this purpose only, 1–5 enforced, the bytes deciding the type over the declared one, EXIF stripped before storage, one listing per document, Support refused, the audit entry throttled, and a resubmission superseding what it replaced without deleting it |
+| `listing-review.e2e.cjs` | §2.9 and §13.2: a listing in a gated profession held until somebody approves it, a decline the member can act on, a fix that resubmits, an approval that publishes — and a suspended member who is finally told they are suspended, with the end date and where to appeal |
+| `admin-exports.e2e.cjs` | §5.26: the column allowlist, contact columns, the filters being the list's filters, twenty an hour, owner-only downloads, and the seven-day sweep |
 
-Run them all:
+Run them all, and **read the report rather than the last line**:
 
 ```bash
 redis-cli FLUSHDB                                   # clears rate-limit counters
-for f in test/e2e/*.e2e.cjs; do node "$f" || exit 1; done
+: > /tmp/sweep.txt
+for f in test/e2e/*.e2e.cjs; do
+  echo "═══ running $f" >> /tmp/sweep.txt
+  node "$f" >> /tmp/sweep.txt 2>&1
+done
+node scripts/sweep-report.mjs /tmp/sweep.txt
 ```
+
+Summing the `N passed, M failed` lines is not enough: a suite that **crashes** never prints one, so
+its checks are missing from both totals and the sweep reads as clean. Three suites crashed on a
+newly-required column for two stages while the tally said "0 failed" every time.
+`sweep-report.mjs` reports suites started against suites finished, and exits non-zero on either.
 
 Flush Redis first. The suites create a lot of content per member and the
 per-member limits from 0.14 are real, so a run straight after another one can

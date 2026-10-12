@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   ActivitySubject,
   ActivityVerb,
+  ContentScanTrigger,
   Group,
   GroupMembershipState,
   GroupVisibility,
@@ -9,6 +10,7 @@ import {
   NotificationKind,
   ParticipantRole,
   Prisma,
+  ReportTargetType,
   SearchScope,
   TaxonomyKind,
   ThreadContextType,
@@ -30,13 +32,21 @@ import {
   ActivityService,
   AuthorView,
   BlockingService,
+  AuthorReviewView,
   CityService,
   CityView,
+  ContentReviewService,
+  ContentSafetyService,
+  ReviewStatus,
+  DIRECT_VISIBILITY,
   MediaService,
   MediaView,
+  PUBLIC_VISIBILITY,
   TaxonomyService,
   TermView,
   authorSelect,
+  isReachable,
+  reviewStatusOf,
   toAuthorView,
   toCityView,
   toMediaViews,
@@ -172,6 +182,8 @@ export interface GroupPostView {
   counts: { replies: number };
   author: AuthorView;
   viewer: { isOwner: boolean; canDelete: boolean };
+  /** Set on the author's own post when it is not public (§6.5). */
+  reviewStatus?: Exclude<ReviewStatus, null>;
   createdAt: string;
 }
 
@@ -186,12 +198,14 @@ export class GroupService {
     private readonly notifications: NotificationFeedService,
     private readonly taxonomy: TaxonomyService,
     private readonly conversations: ConversationFactoryService,
+    private readonly safety: ContentSafetyService,
+    private readonly review: ContentReviewService,
   ) {}
 
   // ─── 1.7.1 List ────────────────────────────────────────────────────────────
 
   async list(viewerId: string, query: ListGroupsDto): Promise<Paginated<GroupSummaryView>> {
-    const where: Prisma.GroupWhereInput = { deletedAt: null };
+    const where: Prisma.GroupWhereInput = { deletedAt: null, ...PUBLIC_VISIBILITY };
     // `scope` and `membership` are two filters that both read the membership relation, so they
     // are ANDed rather than written to the same slot: assigning both left the second one silently
     // deciding, and `?scope=MINE&membership=PENDING` answered as though scope had not been sent.
@@ -331,7 +345,10 @@ export class GroupService {
 
   // ─── 1.7.2 Detail ──────────────────────────────────────────────────────────
 
-  async findOne(viewerId: string, id: string): Promise<GroupDetailView> {
+  async findOne(
+    viewerId: string,
+    id: string,
+  ): Promise<GroupDetailView & Partial<AuthorReviewView>> {
     const group = await this.database.group.findUnique({
       where: { id },
       include: { city: { select: { id: true, name: true, region: true } } },
@@ -339,6 +356,14 @@ export class GroupService {
 
     if (!group) throw ApiException.notFound('This group could not be found.');
     if (group.deletedAt) throw ApiException.deleted('This group');
+
+    const membership = await this.membershipOf(viewerId, id);
+
+    // A held group is not browsable while it is reviewed (§6.5). Its members are not locked out of
+    // their own conversation by a scanner, though — the rule is about who can find it.
+    if (!isReachable(group.visibilityState) && membership === 'NONE') {
+      throw ApiException.notFound('This group could not be found.');
+    }
 
     const [standing, threads, labels] = await Promise.all([
       this.standingFor(viewerId, [group]),
@@ -382,7 +407,14 @@ export class GroupService {
       });
     }
 
-    return detail;
+    // A group has no author (§4.5), so the people told it is held are the people who can do
+    // something about it: its admins. The rest of the members see the group as normal.
+    const review =
+      membership === 'ADMIN'
+        ? await this.review.forAuthor(ReportTargetType.GROUP, id, group.visibilityState)
+        : null;
+
+    return { ...detail, ...(review ?? {}) };
   }
 
   // ─── 1.7.3 Create ──────────────────────────────────────────────────────────
@@ -390,6 +422,8 @@ export class GroupService {
   async create(userId: string, dto: CreateGroupDto): Promise<GroupDetailView> {
     const city = await this.cities.assertValid(dto.cityId);
 
+    // visibility: a uniqueness check. A held group still holds its name — releasing it would let
+    // somebody take the name of a group that is about to be published again.
     const clash = await this.database.group.findFirst({
       where: { cityId: city.id, name: dto.name, deletedAt: null },
       select: { id: true },
@@ -475,6 +509,24 @@ export class GroupService {
 
       if (avatar) await this.media.attach(tx, [avatar], GROUP_AVATAR_MEDIA_OWNER, created.id);
 
+      // A group's own words are scanned like any other content (§6.1). `authorId` is null: the
+      // name and rules outlive whoever typed them, and a held group is not one person's post.
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.GROUP,
+        targetId: created.id,
+        authorId: null,
+        fields: {
+          name: created.name,
+          description: created.description,
+          ...Object.fromEntries(
+            (toRuleList(dto.rules) ?? []).map((rule, index) => [`rule ${index + 1}`, rule]),
+          ),
+        },
+        mediaKeys: avatar ? [avatar.storageKey] : [],
+        trigger: ContentScanTrigger.CREATE,
+        summary: created.name,
+      });
+
       return created;
     });
 
@@ -550,6 +602,26 @@ export class GroupService {
           tx,
         );
       }
+
+      // A rename is a content edit (§6.1): the name is the part of a group everybody sees.
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.GROUP,
+        targetId: id,
+        authorId: null,
+        fields: {
+          name: updated.name,
+          description: updated.description,
+          ...Object.fromEntries(
+            ((updated.rules as string[] | null) ?? []).map((rule, index) => [
+              `rule ${index + 1}`,
+              rule,
+            ]),
+          ),
+        },
+        mediaKeys: updated.avatarKey ? [updated.avatarKey] : [],
+        trigger: ContentScanTrigger.EDIT,
+        summary: updated.name,
+      });
     });
 
     return this.findOne(userId, id);
@@ -587,7 +659,8 @@ export class GroupService {
     id: string,
     dto: JoinGroupDto = {},
   ): Promise<{ membership: MembershipView; memberCount: number }> {
-    const group = await this.load(id);
+    // Nobody joins a group they cannot see (§6.5).
+    const group = await this.loadReachable(userId, id);
     const [existing, invitation] = await Promise.all([
       this.database.groupMembership.findUnique({
         where: { groupId_userId: { groupId: id, userId } },
@@ -1189,7 +1262,7 @@ export class GroupService {
     id: string,
     query: { skip: number; take: number; currentPage: number; perPage: number },
   ): Promise<Paginated<GroupPostView> & { meta: { preview?: boolean } }> {
-    const group = await this.load(id);
+    const group = await this.loadReachable(viewerId, id);
 
     const membership = await this.membershipOf(viewerId, id);
     const isMember = membership === 'MEMBER' || membership === 'ADMIN';
@@ -1208,9 +1281,12 @@ export class GroupService {
     const take = isMember ? query.take : 3;
     const blockedIds = await this.blocking.blockedUserIds(viewerId);
 
+    // A group wall is a direct read, not a feed, so a limited post still appears to the members
+    // who are standing in front of it — but a held or rejected one is its author's alone (§6.5).
     const where: Prisma.GroupPostWhereInput = {
       groupId: id,
       deletedAt: null,
+      OR: [{ ...DIRECT_VISIBILITY }, { authorId: viewerId }],
       ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
     };
 
@@ -1251,6 +1327,9 @@ export class GroupService {
           isOwner: row.authorId === viewerId,
           canDelete: row.authorId === viewerId || membership === 'ADMIN',
         },
+        ...(row.authorId === viewerId && reviewStatusOf(row.visibilityState)
+          ? { reviewStatus: reviewStatusOf(row.visibilityState)! }
+          : {}),
         createdAt: row.createdAt.toISOString(),
       })),
       meta: {
@@ -1277,6 +1356,16 @@ export class GroupService {
         data: { postCount: { increment: 1 }, lastPostAt: new Date() },
       });
 
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.GROUP_POST,
+        targetId: created.id,
+        authorId: userId,
+        fields: { content: created.content },
+        mediaKeys: media.map(item => item.storageKey),
+        trigger: ContentScanTrigger.CREATE,
+        summary: excerpt(created.content, 120),
+      });
+
       return created;
     });
 
@@ -1295,6 +1384,8 @@ export class GroupService {
   }
 
   async removePost(userId: string, groupId: string, postId: string): Promise<void> {
+    // visibility: an ownership check before a delete. An author or an admin may take down a held
+    // post, which is the last useful thing to do with one.
     const post = await this.database.groupPost.findUnique({ where: { id: postId } });
 
     if (!post || post.groupId !== groupId)
@@ -1331,10 +1422,15 @@ export class GroupService {
       throw ApiException.notFound('This post could not be found.');
     if (post.deletedAt) throw ApiException.deleted('This post');
 
+    if (!isReachable(post.visibilityState) && post.authorId !== viewerId) {
+      throw ApiException.notFound('This post could not be found.');
+    }
+
     const blockedIds = await this.blocking.blockedUserIds(viewerId);
     const where: Prisma.GroupPostReplyWhereInput = {
       postId,
       deletedAt: null,
+      OR: [{ ...DIRECT_VISIBILITY }, { authorId: viewerId }],
       ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
     };
 
@@ -1381,11 +1477,17 @@ export class GroupService {
   ) {
     await this.assertMember(userId, groupId);
 
+    // visibility: the parent of a new reply. A held post is not a conversation anybody else
+    // should be joining, so replying to one is refused rather than filtered.
     const post = await this.database.groupPost.findUnique({ where: { id: postId } });
 
     if (!post || post.groupId !== groupId)
       throw ApiException.notFound('This post could not be found.');
     if (post.deletedAt) throw ApiException.deleted('This post');
+
+    if (!isReachable(post.visibilityState) && post.authorId !== userId) {
+      throw ApiException.notFound('This post could not be found.');
+    }
 
     const reply = await this.database.$transaction(async tx => {
       const created = await tx.groupPostReply.create({
@@ -1395,6 +1497,15 @@ export class GroupService {
 
       await tx.groupPost.update({ where: { id: postId }, data: { replyCount: { increment: 1 } } });
       await tx.group.update({ where: { id: groupId }, data: { lastPostAt: new Date() } });
+
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.GROUP_POST_REPLY,
+        targetId: created.id,
+        authorId: userId,
+        fields: { content: created.content },
+        trigger: ContentScanTrigger.CREATE,
+        summary: excerpt(created.content, 120),
+      });
 
       return created;
     });
@@ -1426,6 +1537,7 @@ export class GroupService {
   }
 
   async removePostReply(userId: string, groupId: string, postId: string, replyId: string) {
+    // visibility: an ownership check before a delete, as `removePost`.
     const reply = await this.database.groupPostReply.findUnique({
       where: { id: replyId },
       include: { post: { select: { groupId: true } } },
@@ -1653,10 +1765,13 @@ export class GroupService {
     // One grouped query rather than one count per group. Each group has its own threshold, which
     // is why this is an OR of pairs instead of a single range: a page of twenty groups was twenty
     // round trips on a list endpoint, for a number that is now the deprecated one of the two.
+    // The unread badge counts what the member will actually find on the wall, so it follows the
+    // wall's own rule.
     const counts = await this.database.groupPost.groupBy({
       by: ['groupId'],
       where: {
         deletedAt: null,
+        ...DIRECT_VISIBILITY,
         authorId: { not: userId },
         OR: rows.map(row => ({
           groupId: row.groupId,
@@ -1669,7 +1784,28 @@ export class GroupService {
     return new Map(counts.map(row => [row.groupId, row._count._all] as const));
   }
 
+  /**
+   * The group, refused to anybody who may not see it (§6.5).
+   *
+   * `load` answers "does this exist", which is the right question for a member acting inside their
+   * own group. This is the question every way *in* has to ask instead: a held group is not
+   * browsable, not joinable, and not readable by anybody who was not already a member. Shared,
+   * because the first version of this check lived in `findOne` alone and the wall one route along
+   * kept serving the same group's posts.
+   */
+  private async loadReachable(viewerId: string, id: string): Promise<Group> {
+    const group = await this.load(id);
+
+    if (!isReachable(group.visibilityState) && (await this.membershipOf(viewerId, id)) === 'NONE') {
+      throw ApiException.notFound('This group could not be found.');
+    }
+
+    return group;
+  }
+
   private async load(id: string): Promise<Group> {
+    // visibility: existence and ownership for the membership and write paths. Callers that serve
+    // the group to somebody use `loadReachable`.
     const group = await this.database.group.findUnique({ where: { id } });
 
     if (!group) throw ApiException.notFound('This group could not be found.');
@@ -1732,5 +1868,4 @@ export class GroupService {
       hadResults: total > 0,
     });
   }
-
 }

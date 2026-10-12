@@ -33,6 +33,24 @@ export const RATE_LIMITS = {
   ADMIN_REAUTH: { limit: 5, ttl: 900_000 },
   /** Admin writes. */
   ADMIN_WRITE: { limit: 120, ttl: 60_000 },
+  /**
+   * The command palette and the member search (§3.3): sixty a minute per staff member.
+   *
+   * Looser than it sounds — somebody typing into a palette with a debounce makes a handful a
+   * second in bursts — and tighter than `ADMIN_WRITE` is in the way that matters: these are the
+   * two endpoints that take a name or an email address and say whether it is on the platform, so
+   * the limit is what stops the palette being used to enumerate members one guess at a time.
+   */
+  ADMIN_SEARCH: { limit: 60, ttl: 60_000 },
+  /**
+   * The lexicon phrase tester (§5.13): sixty a minute.
+   *
+   * Its own bucket rather than `ADMIN_WRITE` because it writes nothing and because, with
+   * `includeClassifier`, each call is a paid request to a third party — so the limit is a cost
+   * ceiling as much as an abuse one. Tuning a term is an iterative job, so sixty leaves room to
+   * work without leaving a text box that bills per keystroke.
+   */
+  PHRASE_TEST: { limit: 60, ttl: 60_000 },
 } as const;
 
 type LimitName = keyof typeof RATE_LIMITS;

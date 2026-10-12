@@ -1,15 +1,42 @@
 import { Injectable } from '@nestjs/common';
-import { RiskCategory, RiskTerm, TaxonomyKind } from '@prisma/client';
+import { Prisma, RiskCategory, RiskTerm, TaxonomyKind } from '@prisma/client';
 import { CacheService, PrismaService } from '@/infrastructure';
 import { AuditService } from '../audit/audit.service';
-import { ApiErrorCode, ApiException, buildPageMeta, toJsonOrUndefined } from '@/common';
-import { RiskScannerService, TaxonomyService, normalisePattern } from '@/modules/platform/shared';
+import {
+  ApiErrorCode,
+  ApiException,
+  SYSTEM_CONFIG_KEYS,
+  buildPageMeta,
+  toJsonOrUndefined,
+} from '@/common';
+import {
+  MediaService,
+  RiskScannerService,
+  SafetyClassifierService,
+  SystemConfigService,
+  TaxonomyService,
+  actionFor,
+  normalisePattern,
+  scoreOf,
+} from '@/modules/platform/shared';
 import {
   ListRiskTermsDto,
   PatchRiskTermDto,
+  RISK_TERM_SORTS,
+  TestPhraseDto,
   UpsertRiskTermDto,
   UpsertTaxonomyTermDto,
 } from '../dtos/admin.dto';
+import { staffRefSelect, toStaffRef } from '../serializers/admin-staff.serializer';
+
+/**
+ * How many resolved hits a term needs before its false-positive rate means anything.
+ *
+ * §5.13's rule. Under this, the rate is null rather than a number: a single reviewer's first
+ * decision about a phrase is not a measurement of it, and a list sorted on a 1-of-1 rate would
+ * put the newest terms at the top and call them the worst.
+ */
+const MIN_RESOLVED_FOR_RATE = 5;
 
 /** Taxonomy and lexicon administration. */
 @Injectable()
@@ -19,6 +46,10 @@ export class AdminTaxonomyService {
     private readonly taxonomy: TaxonomyService,
     private readonly cache: CacheService,
     private readonly audit: AuditService,
+    private readonly risk: RiskScannerService,
+    private readonly classifier: SafetyClassifierService,
+    private readonly config: SystemConfigService,
+    private readonly media: MediaService,
   ) {}
 
   async list(kind: TaxonomyKind) {
@@ -96,18 +127,144 @@ export class AdminTaxonomyService {
   // ─── Guard lexicon ─────────────────────────────────────────────────────────
 
   async listRiskTerms(query: ListRiskTermsDto) {
-    const [total, rows] = await this.database.$transaction([
-      this.database.riskTerm.count(),
+    const where: Prisma.RiskTermWhereInput = {
+      ...(query.category?.length
+        ? { category: { in: query.category.map(code => this.assertRiskCategory(code)) } }
+        : {}),
+      ...(query.isActive === undefined ? {} : { isActive: query.isActive }),
+      ...(query.q ? { pattern: { contains: normalisePattern(query.q) } } : {}),
+    };
+
+    const sort = query.sortField([...RISK_TERM_SORTS], 'pattern');
+    const direction = query.order ?? (sort === 'pattern' ? 'asc' : 'desc');
+
+    const [total, rows] = await Promise.all([
+      this.database.riskTerm.count({ where }),
       this.database.riskTerm.findMany({
-        orderBy: [{ category: 'asc' }, { weight: 'desc' }],
-        skip: query.skip,
-        take: query.take,
+        where,
+        // `falsePositiveRate` is derived from two columns, so it cannot be an ORDER BY. The rows
+        // for that sort are ordered in memory below, over the page the filters selected — which
+        // is the honest limit of sorting a derived field without storing it.
+        orderBy:
+          sort === 'falsePositiveRate'
+            ? [{ falsePositiveCount: direction }, { pattern: 'asc' }]
+            : sort === 'pattern'
+              ? [{ category: 'asc' }, { pattern: direction }]
+              : [{ [sort]: direction }, { pattern: 'asc' }],
+        skip: (query.currentPage - 1) * query.size,
+        take: query.size,
       }),
     ]);
 
+    const staff = await this.database.user.findMany({
+      where: {
+        id: {
+          in: [...new Set(rows.map(row => row.updatedById).filter((id): id is string => !!id))],
+        },
+      },
+      select: staffRefSelect,
+    });
+    const byId = new Map(staff.map(person => [person.id, person]));
+
+    const data = rows.map(row => this.riskTermView(row, byId));
+
+    if (sort === 'falsePositiveRate') {
+      // Nulls last, whichever direction: a term with too few resolved hits to have a rate is not
+      // "the best" or "the worst", it is unmeasured, and sorting it to either end of the list
+      // would read as a judgement nothing has made.
+      data.sort((a, b) => {
+        if (a.falsePositiveRate === null) return b.falsePositiveRate === null ? 0 : 1;
+        if (b.falsePositiveRate === null) return -1;
+
+        return direction === 'asc'
+          ? a.falsePositiveRate - b.falsePositiveRate
+          : b.falsePositiveRate - a.falsePositiveRate;
+      });
+    }
+
     return {
-      data: rows.map(row => this.riskTermView(row)),
-      meta: buildPageMeta(query, total),
+      data,
+      meta: buildPageMeta({ currentPage: query.currentPage, perPage: query.size }, total),
+    };
+  }
+
+  /**
+   * One phrase against one piece of text, before it goes live (§5.13).
+   *
+   * Not audited and not rate-limited here (the route carries 60/min): it changes nothing. What it
+   * is *for* is the false positive — the phrase that matched inside a longer innocent word — which
+   * a list of term names will never show and an offset into the text will.
+   *
+   * The offsets index `lexicon.normalisedText`, not the text submitted: matching happens on
+   * normalised text and every normalisation step can change the string's length, so an index taken
+   * against one does not point at the same character in the other. Returning it as though it did
+   * would misplace a highlight, worst on exactly the evasive input this exists to study.
+   */
+  async testPhrase(dto: TestPhraseDto) {
+    const draft = dto.draftTerm
+      ? {
+          category: this.assertRiskCategory(dto.draftTerm.category),
+          pattern: dto.draftTerm.pattern,
+          weight: dto.draftTerm.weight,
+        }
+      : null;
+
+    if (draft) {
+      const normalised = normalisePattern(draft.pattern);
+
+      this.assertPatternLength(normalised, draft.pattern);
+      draft.pattern = normalised;
+    }
+
+    const [lexicon, thresholds, criticalCategories, settings] = await Promise.all([
+      this.risk.test(dto.text, draft),
+      this.risk.thresholds(),
+      this.risk.criticalCategories(),
+      this.config.get(SYSTEM_CONFIG_KEYS.CLASSIFIER),
+    ]);
+
+    const classified = dto.includeClassifier
+      ? await this.classifier.classify({ fields: { text: dto.text }, mediaKeys: [] })
+      : null;
+
+    const verdict = scoreOf({
+      lexiconScore: lexicon.score,
+      lexiconCategory: lexicon.category,
+      lexiconCriticalHit: lexicon.criticalHit,
+      classifier: classified?.result ?? null,
+      thresholds,
+      criticalCategories,
+      weight: settings.weight,
+    });
+
+    return {
+      lexicon: {
+        normalisedText: lexicon.normalisedText,
+        score: lexicon.score,
+        level: lexicon.level,
+        category: lexicon.category,
+        matches: lexicon.matches,
+      },
+      classifier: classified?.result
+        ? {
+            // `flagged` is the spec's name for it; the column it comes from is `confident` —
+            // "any single category was confident on its own". The score and category come too,
+            // because a bare boolean beside a `finalScore` does not explain the number.
+            flagged: classified.result.confident,
+            scores: classified.result.scores,
+            score: classified.result.score,
+            category: classified.result.category,
+          }
+        : null,
+      // Said plainly rather than left to be inferred from `classifier: null`, which has two
+      // meanings: the caller did not ask for it, or it was asked for and did not answer. Those
+      // lead to different conclusions about the score beside them.
+      classifierRan: Boolean(classified?.result),
+      classifierError: classified?.error ?? null,
+      finalScore: verdict.finalScore,
+      tier: verdict.tier,
+      degraded: verdict.degraded,
+      action: actionFor(verdict.tier),
     };
   }
 
@@ -298,15 +455,34 @@ export class AdminTaxonomyService {
       .catch(() => undefined);
   }
 
-  private riskTermView(term: {
-    id: string;
-    category: RiskCategory;
-    pattern: string;
-    weight: number;
-    isActive: boolean;
-    notes: string | null;
-    updatedAt: Date;
-  }) {
+  /**
+   * One term, with the evidence staff judge it on (§5.13's `RiskTermView`).
+   *
+   * The counts were in the table and absent from the response, which made the lexicon screen a
+   * list of phrases and weights with no way to tell a term that is working from one that is
+   * wasting reviewers' time — the exact question the screen exists to answer.
+   */
+  private riskTermView(
+    term: {
+      id: string;
+      category: RiskCategory;
+      pattern: string;
+      weight: number;
+      isActive: boolean;
+      notes: string | null;
+      updatedAt: Date;
+      updatedById?: string | null;
+      hitCount?: number;
+      confirmedCount?: number;
+      falsePositiveCount?: number;
+      lastHitAt?: Date | null;
+    },
+    staff?: Map<string, Parameters<typeof toStaffRef>[0]>,
+  ) {
+    const confirmed = term.confirmedCount ?? 0;
+    const falsePositives = term.falsePositiveCount ?? 0;
+    const resolved = confirmed + falsePositives;
+
     return {
       id: term.id,
       category: term.category,
@@ -314,7 +490,22 @@ export class AdminTaxonomyService {
       weight: term.weight,
       isActive: term.isActive,
       notes: term.notes,
+      hitCount: term.hitCount ?? 0,
+      confirmedCount: confirmed,
+      falsePositiveCount: falsePositives,
+      // Derived rather than stored: it is `hitCount` minus the two resolved counts by definition,
+      // and a fourth counter is a fourth thing that can fall out of step with the other three.
+      pendingCount: Math.max(0, (term.hitCount ?? 0) - resolved),
+      // Null under five resolved hits, deliberately. One false positive out of one hit is not a
+      // 100% false-positive rate, but it renders as one — and a term would be retired on the
+      // strength of a single reviewer's first decision about it.
+      falsePositiveRate: resolved >= MIN_RESOLVED_FOR_RATE ? falsePositives / resolved : null,
+      lastHitAt: term.lastHitAt?.toISOString() ?? null,
       updatedAt: term.updatedAt.toISOString(),
+      updatedBy:
+        term.updatedById && staff?.has(term.updatedById)
+          ? toStaffRef(staff.get(term.updatedById)!, this.media.sign)
+          : null,
     };
   }
 

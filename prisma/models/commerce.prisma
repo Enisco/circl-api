@@ -59,6 +59,11 @@ model Store {
   categories   StoreCategory[]
   enquiries    Enquiry[]
 
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
+
   @@index([cityId, status])
   @@index([typeCode])
   // Trigram search (0.5). Declared so `migrate dev` stops proposing to drop it.
@@ -163,6 +168,12 @@ model StoreItem {
   enquiryLines EnquiryLine[]
 
   // Never hard-deleted while an open enquiry references it, or the enquiry loses its own contents (4.8.3).
+
+  /// Whether the public can see this (§6.5). Mirrors `ContentSafety.visibilityState`, and this is
+  /// the copy every read path filters on — one column on the table being queried, rather than a
+  /// join against a polymorphic safety table on every feed page.
+  visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
+
   @@index([storeId, isAvailable])
   @@index([storeId, availability])
   @@index([categoryCode, price])

@@ -1,10 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import {
+  ContentScanTrigger,
   ExperienceLevel,
   JobState,
+  ListingReviewState,
   ListingVerificationStatus,
   Prisma,
   ProfessionalListing,
+  ReportTargetType,
   TaxonomyKind,
   ThreadContextType,
 } from '@prisma/client';
@@ -12,6 +15,9 @@ import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, money } from '@/common';
 import {
   CityService,
+  ContentSafetyService,
+  ListingDocumentService,
+  ListingReviewService,
   MediaService,
   TaxonomyService,
   authorSelect,
@@ -32,6 +38,19 @@ import {
 import { ReputationService } from '../../trust/services/reputation.service';
 import { VerificationService } from '../../trust/services/verification.service';
 import { toListingPictures, toServiceView } from '../serializers/listing.serializer';
+
+/**
+ * The states in which a listing is **live**, and its professions therefore fixed (§2.9).
+ *
+ * `NOT_REQUIRED` is as live as `APPROVED` — it is a listing in a profession that needs no
+ * approval, or one that predates its profession being gated — and both are publicly visible. The
+ * two that stay editable are the ones nobody can see yet: `PENDING` is waiting, and `REJECTED` was
+ * declined, where changing the profession is the point of resubmitting.
+ */
+const LIVE_REVIEW_STATES: ListingReviewState[] = [
+  ListingReviewState.APPROVED,
+  ListingReviewState.NOT_REQUIRED,
+];
 
 /** The consent text version stored with a listing, so what was agreed is recoverable. */
 const CONSENT_VERSION = '2026-08-professional-listing-v1';
@@ -59,6 +78,9 @@ export class ListingService {
     private readonly reputation: ReputationService,
     private readonly verification: VerificationService,
     private readonly media: MediaService,
+    private readonly safety: ContentSafetyService,
+    private readonly reviews: ListingReviewService,
+    private readonly documents: ListingDocumentService,
   ) {}
 
   // ─── 2.1.2 Registration prefill ────────────────────────────────────────────
@@ -88,6 +110,7 @@ export class ListingService {
           },
         },
       }),
+      // visibility: the caller's own listing, on their own screen.
       this.database.professionalListing.findUnique({
         where: { userId },
         include: {
@@ -97,6 +120,7 @@ export class ListingService {
         },
       }),
       // Community offers by this member that could become the listing (2.1.3).
+      // visibility: the caller's own offers, as candidates to promote into a listing.
       this.database.communityOffer.findMany({
         where: { authorId: userId, deletedAt: null, promotedToListingId: null },
         orderBy: { createdAt: 'desc' },
@@ -158,9 +182,10 @@ export class ListingService {
     userId: string,
     categoryCode?: string,
   ): Promise<RegistrationStep[]> {
+    // visibility: whether the caller has a listing yet, for the registration steps.
     const listing = await this.database.professionalListing.findUnique({
       where: { userId },
-      select: { id: true },
+      select: { id: true, reviewState: true, categories: { select: { code: true } } },
     });
 
     const steps: RegistrationStep[] = [
@@ -171,8 +196,27 @@ export class ListingService {
       },
     ];
 
-    // D13: verification does not ship this release, so no IDENTITY, RIGHT_TO_WORK or CREDENTIAL step is emitted.
-    void categoryCode;
+    // D13: verification does not ship this release, so no IDENTITY, RIGHT_TO_WORK or CREDENTIAL
+    // step is emitted.
+
+    // §2.9's step, which is the thing this array was built to make possible: a stepper that reads
+    // its steps from the server can gain one without an app release. Emitted for the category the
+    // member is choosing *before* they have a listing, so the form can say up front that this one
+    // is reviewed rather than surprising them after they submit.
+    const codes = categoryCode
+      ? [categoryCode]
+      : (listing?.categories.map(category => category.code) ?? []);
+    const gated = await this.reviews.gatedCodes(codes);
+
+    if (gated.length) {
+      steps.push({
+        key: 'REVIEW',
+        // Only approval satisfies it. A decline is `REQUIRED` again, which is the honest reading:
+        // there is still something for the member to do.
+        status: listing?.reviewState === ListingReviewState.APPROVED ? 'SATISFIED' : 'REQUIRED',
+        source: gated[0],
+      });
+    }
 
     return steps;
   }
@@ -180,6 +224,7 @@ export class ListingService {
   // ─── 2.6.1 Create ──────────────────────────────────────────────────────────
 
   async create(userId: string, dto: CreateListingDto) {
+    // visibility: the caller's own listing, to refuse a second one.
     const existing = await this.database.professionalListing.findUnique({
       where: { userId },
       include: { city: true, categories: true, services: true },
@@ -212,6 +257,18 @@ export class ListingService {
       this.singleImage(dto.photoKey, userId),
       this.singleImage(dto.coverKey, userId),
     ]);
+
+    // §2.9: whether a human has to approve this before anybody can find it. Worked out before the
+    // transaction because it is a taxonomy read per code, and the write below needs the answer.
+    const gated = await this.reviews.gatedCodes(dto.categoryCodes);
+    // §2.9's documents. Both halves run **before** the transaction: the count check so a refusal
+    // leaves nothing behind, and the preparation because it reads and rewrites bytes in storage —
+    // holding a database transaction open across that would make a listing write wait on S3.
+    const documentIds = this.documents.assertCount({
+      documentIds: dto.documentIds,
+      needsApproval: gated.length > 0,
+    });
+    const documents = await this.documents.prepare({ documentIds, uploaderId: userId });
 
     const listing = await this.database.$transaction(async tx => {
       const created = await tx.professionalListing.create({
@@ -250,12 +307,31 @@ export class ListingService {
         });
       }
 
+      // §6.1 scans a listing's published copy: the title somebody browses and the paragraph they
+      // read before hiring.
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.PROFESSIONAL_LISTING,
+        targetId: created.id,
+        authorId: userId,
+        fields: { professionTitle: created.professionTitle, about: created.about },
+        trigger: ContentScanTrigger.CREATE,
+        summary: created.professionTitle,
+        requiresApproval: gated.length > 0,
+      });
+
+      // Merged rather than discarded: `created` was read before the hold and before `assess`
+      // mirrored the visibility onto it, so serialising it as-is told the member their listing was
+      // live while the database said it was held. The includes stay; only the scalars move.
+      if (documents.length) await this.documents.setCurrent(tx, created.id, documents);
+
+      if (gated.length) Object.assign(created, await this.reviews.hold(tx, created, gated));
+
       return created;
     });
 
     return {
       listing: await this.toOwnerView(listing),
-      steps: await this.registrationSteps(userId),
+      steps: await this.registrationSteps(userId, dto.categoryCodes[0]),
     };
   }
 
@@ -263,6 +339,7 @@ export class ListingService {
 
   /** A member who already posted "I can help with UK visa paperwork" has written the listing. */
   async promoteOffer(userId: string, offerId: string, dto: PromoteOfferDto) {
+    // visibility: the caller's own offer, before it becomes a listing.
     const offer = await this.database.communityOffer.findUnique({ where: { id: offerId } });
 
     if (!offer || offer.deletedAt || offer.authorId !== userId) {
@@ -270,6 +347,7 @@ export class ListingService {
     }
 
     if (offer.promotedToListingId) {
+      // visibility: the listing their offer already became — also theirs.
       const listing = await this.database.professionalListing.findUnique({
         where: { id: offer.promotedToListingId },
         include: { city: true, categories: true, services: true },
@@ -282,6 +360,7 @@ export class ListingService {
       );
     }
 
+    // visibility: the caller's own listing, to refuse a second one.
     const existing = await this.database.professionalListing.findUnique({
       where: { userId },
       include: { city: true, categories: true, services: true },
@@ -313,6 +392,15 @@ export class ListingService {
     await this.cities.assertValid(cityId);
 
     const about = dto.about ?? offer.description;
+    // Promoting an offer is a listing like any other, and "I can help with UK visa paperwork" is
+    // the exact case §2.9 exists for: the bridge from a community offer must not be a way around
+    // the gate the create path applies.
+    const gated = await this.reviews.gatedCodes([professionCode]);
+    const documentIds = this.documents.assertCount({
+      documentIds: dto.documentIds,
+      needsApproval: gated.length > 0,
+    });
+    const documents = await this.documents.prepare({ documentIds, uploaderId: userId });
 
     const listing = await this.database.$transaction(async tx => {
       const created = await tx.professionalListing.create({
@@ -343,12 +431,28 @@ export class ListingService {
         data: { promotedToListingId: created.id },
       });
 
+      // §6.1 scans a listing's published copy: the title somebody browses and the paragraph they
+      // read before hiring.
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.PROFESSIONAL_LISTING,
+        targetId: created.id,
+        authorId: userId,
+        fields: { professionTitle: created.professionTitle, about: created.about },
+        trigger: ContentScanTrigger.CREATE,
+        summary: created.professionTitle,
+        requiresApproval: gated.length > 0,
+      });
+
+      if (documents.length) await this.documents.setCurrent(tx, created.id, documents);
+
+      if (gated.length) Object.assign(created, await this.reviews.hold(tx, created, gated));
+
       return created;
     });
 
     return {
       listing: await this.toOwnerView(listing),
-      steps: await this.registrationSteps(userId),
+      steps: await this.registrationSteps(userId, professionCode),
     };
   }
 
@@ -370,6 +474,109 @@ export class ListingService {
       this.singleImage(dto.photoKey, userId),
       this.singleImage(dto.coverKey, userId),
     ]);
+
+    // §2.9. Three questions, and the answers have to be worked out from the row as it stands now,
+    // before the patch overwrites it.
+    //
+    // `copyChanged` is only the two fields a reviewer actually reads. A member fixing their price
+    // or turning off "accepting work" is not asking to be approved again, and sending them back
+    // through the queue for it would teach them to avoid editing their listing at all.
+    const current = await this.database.professionalListingCategory.findMany({
+      where: { listingId: listing.id },
+      select: { code: true },
+    });
+    const currentCodes = current.map(row => row.code);
+    const codes = dto.categoryCodes?.length ? dto.categoryCodes : currentCodes;
+    const copyChanged =
+      (dto.professionTitle !== undefined && dto.professionTitle !== listing.professionTitle) ||
+      (dto.about !== undefined && dto.about !== listing.about);
+    const categoriesChanged =
+      codes.length !== currentCodes.length || codes.some(code => !currentCodes.includes(code));
+
+    // §2.9: a live listing's professions are fixed (BACKEND-NOTES-PROFESSION-LOCK, 2026-10-12).
+    //
+    // Enforced here rather than by hiding the picker, because a hidden picker stops nobody with a
+    // modified client — and this is the control that closes the bypass the gating rule was holding
+    // shut: register in an unrestricted profession, go live, then add a restricted one.
+    //
+    // `APPROVED` and `NOT_REQUIRED` are both live. A declined or waiting listing stays editable:
+    // changing the profession is the whole point of a resubmission, and it is then judged as a new
+    // account in the new profession.
+    //
+    // Checked against the **set**, not the array: the app sends `categoryCodes` on every edit
+    // including a price change, so refusing an identical list would refuse every edit a live
+    // professional ever makes. `categoriesChanged` above is already order-independent.
+    if (categoriesChanged && LIVE_REVIEW_STATES.includes(listing.reviewState)) {
+      throw ApiException.conflict(
+        ApiErrorCode.PROFESSION_LOCKED,
+        "Your profession can't be changed once your profile is live.",
+        {
+          data: { current: currentCodes, requested: codes, reviewState: listing.reviewState },
+        },
+      );
+    }
+
+    // What the listing is gated under *today*. The post-patch set is `gated`, which `verdictFor`
+    // returns; this one decides whether there are documents to compare against at all.
+    const gatedBefore = await this.reviews.gatedCodes(currentCodes);
+    const attachedNow = gatedBefore.length ? await this.documents.current(listing.id) : [];
+    const attachedNowIds = attachedNow.map(row => row.id);
+    const documentsChanged =
+      dto.documentIds !== undefined &&
+      (dto.documentIds.length !== attachedNowIds.length ||
+        dto.documentIds.some(id => !attachedNowIds.includes(id)));
+
+    const { needsApproval, gated } = await this.reviews.verdictFor({
+      codes,
+      reviewState: listing.reviewState,
+      copyChanged,
+      categoriesChanged,
+      documentsChanged,
+      // What it was already gated on, so a listing that never needed a review is only pulled into
+      // one by **adding** a profession that needs approving — not by editing its price.
+      gatedBefore,
+    });
+
+    // §2.9's documents on an edit.
+    //
+    // `documentIds` absent means "leave them as they are", which is what a member changing their
+    // price is doing. Present means it is the **whole** new set — so a resubmission that dropped
+    // one is a list without it, and the count rule still applies to the result. Absent on a
+    // still-gated listing is therefore checked against what is already attached, not against
+    // nothing: otherwise every price change on a gated listing would be refused for having no
+    // documents.
+    //
+    // Keyed on `needsApproval`, **not** on `gated.length`. A listing that existed before its
+    // profession was gated needs no review (BACKEND-NOTES-NEW-ACCOUNTS-ONLY rule 3) and therefore
+    // needs no documents — and it has none, because nobody ever asked. Reading `gated.length` here
+    // refused every edit such a member made with `DOCUMENTS_REQUIRED`, asking for papers for a
+    // review that was never going to happen: the same mistake as `verdictFor`, one field across.
+    // Two independent questions, and conflating them broke both in turn:
+    //
+    //  - **Which documents does this listing have afterwards?** Absent means the ones it already
+    //    has. Passing `[]` instead supersedes every one of them, so a member changing their price
+    //    would silently destroy the papers their approval rests on — which is what keying this on
+    //    `needsApproval` alone did.
+    //  - **Does the count have to be met?** Only when this write needs approving. A listing that
+    //    predates its profession being gated has no documents and needs none
+    //    (BACKEND-NOTES-NEW-ACCOUNTS-ONLY rule 3); reading `gated.length` here refused every edit
+    //    such a member made with `DOCUMENTS_REQUIRED`, demanding papers for a review that was
+    //    never going to happen.
+    const documentIds =
+      dto.documentIds === undefined
+        ? // Keep what is attached. Validated only when this write needs approving — passing them
+          // through `assertCount` with `needsApproval: false` would *refuse* them, because for a
+          // caller-supplied set "documents on a listing that needs none" is a mistake worth
+          // naming. Here they are not supplied; they are simply already there.
+          needsApproval
+          ? this.documents.assertCount({ documentIds: attachedNowIds, needsApproval: true })
+          : attachedNowIds
+        : this.documents.assertCount({ documentIds: dto.documentIds, needsApproval });
+    const documents = await this.documents.prepare({
+      documentIds,
+      uploaderId: userId,
+      listingId: listing.id,
+    });
 
     const updated = await this.database.$transaction(async tx => {
       if (dto.categoryCodes?.length) {
@@ -396,7 +603,7 @@ export class ListingService {
         await this.media.releaseOwner(tx, LISTING_COVER_OWNER, listing.id);
       }
 
-      return tx.professionalListing.update({
+      const patched = await tx.professionalListing.update({
         where: { id: listing.id },
         data: {
           professionTitle: dto.professionTitle,
@@ -415,6 +622,38 @@ export class ListingService {
         },
         include: { city: true, categories: true, services: true },
       });
+
+      // §6.1 scans a listing's published copy: the title somebody browses and the paragraph they
+      // read before hiring.
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.PROFESSIONAL_LISTING,
+        targetId: listing.id,
+        authorId: userId,
+        fields: { professionTitle: patched.professionTitle, about: patched.about },
+        trigger: ContentScanTrigger.EDIT,
+        summary: patched.professionTitle,
+        requiresApproval: needsApproval,
+      });
+
+      if (gated.length) {
+        await this.documents.setCurrent(tx, listing.id, documents);
+      } else {
+        // No longer asking to do anything that needs proving, so the platform stops holding their
+        // certificates — after the retention window, so a decision taken while they were gated can
+        // still be appealed against the evidence it was taken on.
+        await this.documents.supersedeAll(tx, listing.id);
+      }
+
+      if (needsApproval) {
+        Object.assign(patched, await this.reviews.hold(tx, patched, gated));
+      } else if (!gated.length && listing.reviewState !== ListingReviewState.NOT_REQUIRED) {
+        // The release half. A member who swapped a gated profession for an ungated one is no
+        // longer asking to do the thing that needed approving, and must not be left waiting for a
+        // review that is never coming.
+        Object.assign(patched, await this.reviews.release(tx, listing.id));
+      }
+
+      return patched;
     });
 
     return this.toOwnerView(updated);
@@ -424,6 +663,7 @@ export class ListingService {
 
   async addService(userId: string, listingId: string, dto: ServiceDto) {
     const listing = await this.assertOwned(userId, listingId);
+    // visibility: the caller's own services, counted against the limit.
     const count = await this.database.professionalService.count({
       where: { listingId: listing.id },
     });
@@ -440,11 +680,25 @@ export class ListingService {
       },
     });
 
+    // A service's name and description are published copy (§6.1), so they are scanned like any
+    // other. One transaction, because the verdict and the row belong together.
+    await this.database.$transaction(tx =>
+      this.safety.assess(tx, {
+        targetType: ReportTargetType.PROFESSIONAL_SERVICE,
+        targetId: service.id,
+        authorId: userId,
+        fields: { name: service.name, description: service.description },
+        trigger: ContentScanTrigger.CREATE,
+        summary: service.name,
+      }),
+    );
+
     return toServiceView(service);
   }
 
   async updateService(userId: string, listingId: string, serviceId: string, dto: UpdateServiceDto) {
     const listing = await this.assertOwned(userId, listingId);
+    // visibility: the caller's own service, before an edit.
     const service = await this.database.professionalService.findUnique({
       where: { id: serviceId },
     });
@@ -464,12 +718,26 @@ export class ListingService {
       },
     });
 
+    // A service's name and description are published copy (§6.1), so they are scanned like any
+    // other. One transaction, because the verdict and the row belong together.
+    await this.database.$transaction(tx =>
+      this.safety.assess(tx, {
+        targetType: ReportTargetType.PROFESSIONAL_SERVICE,
+        targetId: updated.id,
+        authorId: userId,
+        fields: { name: updated.name, description: updated.description },
+        trigger: ContentScanTrigger.EDIT,
+        summary: updated.name,
+      }),
+    );
+
     return toServiceView(updated);
   }
 
   /** A service is never hard-deleted while a booking references it: the booking would lose its own subject (2.6.3). */
   async removeService(userId: string, listingId: string, serviceId: string) {
     const listing = await this.assertOwned(userId, listingId);
+    // visibility: the caller's own service, before a delete.
     const service = await this.database.professionalService.findUnique({
       where: { id: serviceId },
     });
@@ -499,6 +767,7 @@ export class ListingService {
     const listing = await this.assertOwned(userId, listingId);
 
     await this.database.$transaction(async tx => {
+      // visibility: the caller's own services, replaced wholesale.
       const existing = await tx.professionalService.findMany({
         where: { listingId: listing.id },
         select: { id: true },
@@ -535,9 +804,25 @@ export class ListingService {
       });
     });
 
+    // visibility: the caller's own services, read back after the write.
     const services = await this.database.professionalService.findMany({
       where: { listingId: listing.id },
       orderBy: { sort: 'asc' },
+    });
+
+    // The whole set is replaced, so the whole set is scanned. The content hash means the ones
+    // whose words did not change cost a lookup and nothing else.
+    await this.database.$transaction(async tx => {
+      for (const service of services) {
+        await this.safety.assess(tx, {
+          targetType: ReportTargetType.PROFESSIONAL_SERVICE,
+          targetId: service.id,
+          authorId: userId,
+          fields: { name: service.name, description: service.description },
+          trigger: ContentScanTrigger.EDIT,
+          summary: service.name,
+        });
+      }
     });
 
     return services.map(toServiceView);
@@ -561,6 +846,7 @@ export class ListingService {
 
   /** `GET /professionals/me`: the caller's own listing, or 404 (2.4). */
   async findMine(userId: string) {
+    // visibility: `GET /professionals/me` — their own listing, in whatever state it is in.
     const listing = await this.database.professionalListing.findUnique({
       where: { userId },
       include: { city: true, categories: true, services: true },
@@ -614,6 +900,9 @@ export class ListingService {
       freeConsultation: listing.freeConsultation,
       verificationStatus: listing.verificationStatus,
       isRegulated: regulated,
+      // §2.9. Null for the great majority of listings, which are in no gated profession and have
+      // nothing to wait for — the client renders the banner only when this is present.
+      review: await this.reviews.ownerView(listing),
       rating: this.reputation.toRatingView(summary),
       serviceCount: listing.services?.length ?? 0,
       services: (listing.services ?? []).map(toServiceView),
@@ -722,6 +1011,7 @@ export class ListingService {
   }
 
   private async assertOwned(userId: string, listingId: string) {
+    // visibility: an ownership check before a write.
     const listing = await this.database.professionalListing.findUnique({
       where: { id: listingId },
     });

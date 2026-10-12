@@ -1,3 +1,4 @@
+import { BullModule } from '@nestjs/bullmq';
 import { MiddlewareConsumer, Module, RequestMethod } from '@nestjs/common';
 import { DiscoveryModule, RouterModule } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
@@ -5,18 +6,40 @@ import { PassportModule } from '@nestjs/passport';
 import { NotificationModule } from '@/modules/infrastructure/notification/notification.module';
 import { AccountCoreModule } from '@/modules/platform/account';
 import { MessagingCoreModule } from '@/modules/platform/messaging';
+import { GuardCoreModule } from '@/modules/platform/guard';
+import { IntelligenceCoreModule } from '@/modules/platform/intelligence';
 import { AdminController } from './controllers/admin.controller';
 import { AdminAuthController } from './controllers/admin-auth.controller';
 import { AdminMeController } from './controllers/admin-me.controller';
 import { AdminAnalyticsController } from './controllers/admin-analytics.controller';
+import { AdminExportController } from './controllers/admin-export.controller';
 import { AdminMemberActionController } from './controllers/admin-member-action.controller';
 import { AdminMemberController } from './controllers/admin-member.controller';
 import { AdminNoteController } from './controllers/admin-note.controller';
+import { AdminContentController } from './content/admin-content.controller';
+import { AdminGuideController } from './content/admin-guide.controller';
+import { AdminGuideService } from './content/admin-guide.service';
+import { AdminContentService } from './content/admin-content.service';
+import { AdminEnforcementController } from './controllers/admin-enforcement.controller';
+import { AdminFlagController } from './controllers/admin-flag.controller';
+import { AdminQueueController } from './controllers/admin-queue.controller';
+import { AdminQueueService } from './services/admin-queue.service';
+import { AdminEnforcementService } from './services/admin-enforcement.service';
+import { AdminContentTargetService } from './services/admin-content-target.service';
+import { AdminListingReviewController } from './controllers/admin-listing-review.controller';
+import { AdminListingReviewService } from './services/admin-listing-review.service';
+import { AdminAppealController } from './controllers/admin-appeal.controller';
+import { AdminReportController } from './controllers/admin-report.controller';
 import { AdminMetaController } from './controllers/admin-meta.controller';
 import { AdminTeamController } from './controllers/admin-team.controller';
 import { AdminThreadController } from './controllers/admin-thread.controller';
+import { AdminEnforcementLogService } from './services/admin-enforcement-log.service';
+import { AdminFlagService } from './services/admin-flag.service';
 import { AdminGuardService } from './services/admin-guard.service';
+import { AdminHistoryService } from './services/admin-history.service';
 import { AdminMemberService } from './services/admin-member.service';
+import { AdminAppealService } from './services/admin-appeal.service';
+import { AdminReportCaseService } from './services/admin-report-case.service';
 import { AdminAnalyticsService } from './services/admin-analytics.service';
 import { AdminDashboardService } from './services/admin-dashboard.service';
 import { AdminMemberActionService } from './services/admin-member-action.service';
@@ -44,10 +67,24 @@ import { AdminPolicyService } from './common/admin-policy.service';
 import { AdminRouteAuditService } from './common/admin-route-audit.service';
 import { AnalyticsRunnerService } from './analytics/analytics-runner.service';
 import { DemographicsAnalytics } from './analytics/demographics.analytics';
+import { CommerceAnalytics } from './analytics/commerce.analytics';
 import { CommunityAnalytics } from './analytics/community.analytics';
+import { ConnectAnalytics } from './analytics/connect.analytics';
+import { DealsAnalytics } from './analytics/deals.analytics';
+import { ProfessionalsAnalytics } from './analytics/professionals.analytics';
+import { AdminAssigneeService } from './services/admin-assignee.service';
+import { AdminFilterOptionsService } from './services/admin-filter-options.service';
+import { AdminSearchService } from './services/admin-search.service';
+import { SafetyAnalytics } from './analytics/safety.analytics';
+import { SearchAnalytics } from './analytics/search.analytics';
+import { SupportAnalytics } from './analytics/support.analytics';
 import { GrowthAnalytics } from './analytics/growth.analytics';
 import { OverviewAnalytics } from './analytics/overview.analytics';
 import { MemberFilterBuilder } from './filters/member-filter.builder';
+import { ADMIN_EXPORTS_QUEUE, AdminExportQueue } from './exports/admin-export.queue';
+import { AdminExportProcessor } from './exports/admin-export.processor';
+import { AdminExportRunner } from './exports/admin-export-runner.service';
+import { AdminExportService } from './exports/admin-export.service';
 import { AdminJobRunnerService } from './jobs/admin-job-runner.service';
 import { AdminJobsService } from './jobs/admin-jobs.service';
 
@@ -59,7 +96,16 @@ const CONTROLLERS = [
   AdminMemberActionController,
   AdminAnalyticsController,
   AdminNoteController,
+  AdminAppealController,
+  AdminListingReviewController,
+  AdminQueueController,
+  AdminFlagController,
+  AdminContentController,
+  AdminGuideController,
+  AdminEnforcementController,
+  AdminReportController,
   AdminMetaController,
+  AdminExportController,
   AdminThreadController,
   AdminController,
 ];
@@ -78,6 +124,15 @@ const CONTROLLERS = [
     NotificationModule,
     MessagingCoreModule,
     AccountCoreModule,
+    // §5.12's escalation opens the member's existing Guard thread, and that rule lives in
+    // `GuardService`. The core module, so no member Guard route is mounted here.
+    GuardCoreModule,
+    // `AutoGuideService`, for publishing a draft guide a reviewer approved (§5.9).
+    IntelligenceCoreModule,
+    // The export queue is registered here, by the admin module, so a member-only process has
+    // neither the producer nor a worker for it: an export reads member data under a staff
+    // member's permissions, and the member API has no business being able to build one.
+    BullModule.registerQueue({ name: ADMIN_EXPORTS_QUEUE }),
     RouterModule.register([{ path: 'api/v1', module: AdminModule, children: CONTROLLERS }]),
   ],
   controllers: CONTROLLERS,
@@ -109,6 +164,22 @@ const CONTROLLERS = [
     DemographicsAnalytics,
     GrowthAnalytics,
     CommunityAnalytics,
+    DealsAnalytics,
+    ConnectAnalytics,
+    CommerceAnalytics,
+    ProfessionalsAnalytics,
+    AdminAssigneeService,
+    AdminFilterOptionsService,
+    AdminSearchService,
+    SafetyAnalytics,
+    SearchAnalytics,
+    SupportAnalytics,
+
+    // Exports.
+    AdminExportService,
+    AdminExportQueue,
+    AdminExportRunner,
+    AdminExportProcessor,
 
     // Surfaces.
     AdminMeService,
@@ -117,11 +188,22 @@ const CONTROLLERS = [
     AdminMemberTabsService,
     AdminMemberActionService,
     AdminNoteService,
+    AdminAppealService,
+    AdminListingReviewService,
+    AdminQueueService,
+    AdminContentTargetService,
+    AdminEnforcementService,
+    AdminReportCaseService,
     AdminAnalyticsService,
     AdminDashboardService,
     EnforcementService,
     AdminModerationService,
+    AdminContentService,
+    AdminGuideService,
+    AdminEnforcementLogService,
+    AdminFlagService,
     AdminGuardService,
+    AdminHistoryService,
     AdminTaxonomyService,
   ],
   exports: [AdminModerationService, AuditService, EnforcementService],

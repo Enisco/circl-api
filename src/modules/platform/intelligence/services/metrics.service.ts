@@ -1,8 +1,15 @@
 import { Injectable } from '@nestjs/common';
-import { ActivitySubject, JobState, RequestStatus, SearchScope, SearchTermSource, TaxonomyKind } from '@prisma/client';
+import {
+  ActivitySubject,
+  JobState,
+  RequestStatus,
+  SearchScope,
+  SearchTermSource,
+  TaxonomyKind,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { daysAgo, toJson } from '@/common';
-import { TaxonomyService } from '../../shared';
+import { PUBLIC_VISIBILITY, TaxonomyService } from '../../shared';
 
 export type MetricSection = 'COMMUNITY' | 'PROFESSIONALS' | 'CONNECT' | 'COMMERCE';
 export type MetricPeriod = 'WEEK' | 'MONTH' | 'ALL_TIME';
@@ -71,6 +78,10 @@ export class MetricsService {
     return written;
   }
 
+  // Every rollup below filters `PUBLIC_VISIBILITY` (§6.5). Pulse is published to members — "the
+  // top five things Manchester is asking about" — so a held post must not be able to become a
+  // headline, and a count that includes one is a count of something nobody can open.
+
   // ─── Community ─────────────────────────────────────────────────────────────
 
   private async rebuildCommunity(cityId: string | null, period: MetricPeriod, since: Date) {
@@ -80,7 +91,7 @@ export class MetricsService {
     const [topAsks, unanswered, guides, groups] = await Promise.all([
       this.database.communityRequest.groupBy({
         by: ['categoryCode'],
-        where: { deletedAt: null, createdAt: { gte: since }, ...scope },
+        where: { deletedAt: null, ...PUBLIC_VISIBILITY, createdAt: { gte: since }, ...scope },
         _count: { _all: true },
         orderBy: { _count: { categoryCode: 'desc' } },
         take: 10,
@@ -90,6 +101,7 @@ export class MetricsService {
         by: ['categoryCode'],
         where: {
           deletedAt: null,
+          ...PUBLIC_VISIBILITY,
           createdAt: { gte: since },
           status: RequestStatus.OPEN,
           replyCount: 0,
@@ -100,13 +112,18 @@ export class MetricsService {
         take: 10,
       }),
       this.database.guide.findMany({
-        where: { deletedAt: null, publishedAt: { not: null }, ...(cityId ? { cityId } : {}) },
+        where: {
+          deletedAt: null,
+          ...PUBLIC_VISIBILITY,
+          publishedAt: { not: null },
+          ...(cityId ? { cityId } : {}),
+        },
         orderBy: { viewCount: 'desc' },
         select: { id: true, title: true, viewCount: true, likeCount: true },
         take: 10,
       }),
       this.database.group.findMany({
-        where: { deletedAt: null, ...scope },
+        where: { deletedAt: null, ...PUBLIC_VISIBILITY, ...scope },
         orderBy: [{ memberCount: 'desc' }],
         select: { id: true, name: true, memberCount: true },
         take: 10,
@@ -156,14 +173,14 @@ export class MetricsService {
     const [inDemand, prices, jobs, response] = await Promise.all([
       this.database.professionalListingCategory.groupBy({
         by: ['code'],
-        where: { listing: { deletedAt: null, ...scope } },
+        where: { listing: { deletedAt: null, ...PUBLIC_VISIBILITY, ...scope } },
         _count: { _all: true },
         orderBy: { _count: { code: 'desc' } },
         take: 10,
       }),
       this.database.professionalListing.groupBy({
         by: ['priceBasis'],
-        where: { deletedAt: null, priceFrom: { not: null }, ...scope },
+        where: { deletedAt: null, ...PUBLIC_VISIBILITY, priceFrom: { not: null }, ...scope },
         _avg: { priceFrom: true },
         _count: { _all: true },
       }),
@@ -171,7 +188,12 @@ export class MetricsService {
         where: { state: JobState.COMPLETED, completedAt: { gte: since } },
       }),
       this.database.professionalListing.aggregate({
-        where: { deletedAt: null, medianResponseMinutes: { not: null }, ...scope },
+        where: {
+          deletedAt: null,
+          ...PUBLIC_VISIBILITY,
+          medianResponseMinutes: { not: null },
+          ...scope,
+        },
         _avg: { medianResponseMinutes: true },
         _count: { _all: true },
       }),
@@ -242,7 +264,7 @@ export class MetricsService {
       }),
       this.database.storeItem.groupBy({
         by: ['categoryCode'],
-        where: { deletedAt: null, ...storeScope },
+        where: { deletedAt: null, ...PUBLIC_VISIBILITY, ...storeScope },
         _avg: { price: true },
         _count: { _all: true },
         orderBy: { _count: { categoryCode: 'desc' } },
@@ -250,7 +272,7 @@ export class MetricsService {
       }),
       this.database.storeCategory.groupBy({
         by: ['code'],
-        where: { store: { deletedAt: null, ...(cityId ? { cityId } : {}) } },
+        where: { store: { deletedAt: null, ...PUBLIC_VISIBILITY, ...(cityId ? { cityId } : {}) } },
         _count: { _all: true },
         orderBy: { _count: { code: 'desc' } },
         take: 10,
@@ -263,7 +285,7 @@ export class MetricsService {
     const categoryOf = new Map(
       (
         await this.database.storeItem.findMany({
-          where: { name: { in: topItems.map(row => row.name) } },
+          where: { name: { in: topItems.map(row => row.name) }, ...PUBLIC_VISIBILITY },
           select: { name: true, categoryCode: true },
         })
       ).map(item => [item.name, item.categoryCode]),
@@ -312,7 +334,7 @@ export class MetricsService {
     const [types, heritage] = await Promise.all([
       this.database.connectProfile.groupBy({
         by: ['typeCode'],
-        where: { deletedAt: null, isVisible: true, ...scope },
+        where: { deletedAt: null, ...PUBLIC_VISIBILITY, isVisible: true, ...scope },
         _count: { _all: true },
         orderBy: { _count: { typeCode: 'desc' } },
       }),
@@ -368,17 +390,17 @@ export class MetricsService {
       case 'COMMUNITY': {
         const [requests, offers, updates] = await Promise.all([
           this.database.communityRequest.findMany({
-            where: { deletedAt: null, createdAt: { gte: since }, ...scope },
+            where: { deletedAt: null, ...PUBLIC_VISIBILITY, createdAt: { gte: since }, ...scope },
             select: { authorId: true },
             distinct: ['authorId'],
           }),
           this.database.communityOffer.findMany({
-            where: { deletedAt: null, createdAt: { gte: since }, ...scope },
+            where: { deletedAt: null, ...PUBLIC_VISIBILITY, createdAt: { gte: since }, ...scope },
             select: { authorId: true },
             distinct: ['authorId'],
           }),
           this.database.communityUpdate.findMany({
-            where: { deletedAt: null, createdAt: { gte: since }, ...scope },
+            where: { deletedAt: null, ...PUBLIC_VISIBILITY, createdAt: { gte: since }, ...scope },
             select: { authorId: true },
             distinct: ['authorId'],
           }),
@@ -389,7 +411,7 @@ export class MetricsService {
 
       case 'PROFESSIONALS': {
         const listings = await this.database.professionalListing.findMany({
-          where: { deletedAt: null, ...scope },
+          where: { deletedAt: null, ...PUBLIC_VISIBILITY, ...scope },
           select: { userId: true },
           distinct: ['userId'],
         });
@@ -399,7 +421,7 @@ export class MetricsService {
 
       case 'COMMERCE': {
         const stores = await this.database.store.findMany({
-          where: { deletedAt: null, ...scope },
+          where: { deletedAt: null, ...PUBLIC_VISIBILITY, ...scope },
           select: { ownerId: true },
           distinct: ['ownerId'],
         });
@@ -412,6 +434,7 @@ export class MetricsService {
         const profiles = await this.database.connectProfile.findMany({
           where: {
             deletedAt: null,
+            ...PUBLIC_VISIBILITY,
             ...(cityId
               ? {
                   OR: [

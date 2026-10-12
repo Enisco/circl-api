@@ -20,7 +20,10 @@ const { api, makeUser, check, finish, sweep, prisma } = require('./harness.cjs')
     ['hyphenated', 'milton-keynes'],
   ]) {
     const r = await api(u.token, 'GET', `/community/requests?cityId=${encodeURIComponent(value)}`);
-    check(`list resolves ${label} ("${value}")`, r.status === 200, { status: r.status, body: r.body });
+    check(`list resolves ${label} ("${value}")`, r.status === 200, {
+      status: r.status,
+      body: r.body,
+    });
   }
 
   const bad = await api(u.token, 'GET', '/community/requests?cityId=Atlantis');
@@ -28,23 +31,38 @@ const { api, makeUser, check, finish, sweep, prisma } = require('./harness.cjs')
 
   // A composer must persist the resolved id, not the name it was handed.
   const created = await api(u.token, 'POST', '/community/requests', {
-    categoryCode: 'ACCOMMODATION', title: 'City resolution check', cityId: 'Manchester',
+    categoryCode: 'ACCOMMODATION',
+    title: 'City resolution check',
+    cityId: 'Manchester',
   });
-  check('create accepts a picked name', created.status === 201, { s: created.status, b: created.body });
+  check('create accepts a picked name', created.status === 201, {
+    s: created.status,
+    b: created.body,
+  });
 
   if (created.status === 201) {
     const row = await prisma.communityRequest.findUnique({
-      where: { id: created.body.data.id }, select: { cityId: true },
+      where: { id: created.body.data.id },
+      select: { cityId: true },
     });
     check('create stored the resolved id, not the name', row.cityId === 'MANCHESTER', row);
-    check('response echoes the city object so the client learns the id',
-      created.body.data.city?.id === 'MANCHESTER', created.body.data.city);
+    check(
+      'response echoes the city object so the client learns the id',
+      created.body.data.city?.id === 'MANCHESTER',
+      created.body.data.city,
+    );
   }
 
   const rejected = await api(u.token, 'POST', '/community/requests', {
-    categoryCode: 'ACCOMMODATION', title: 'Bad city', cityId: 'Atlantis',
+    categoryCode: 'ACCOMMODATION',
+    title: 'Bad city',
+    cityId: 'Atlantis',
   });
-  check('create rejects a genuinely unknown city with 422', rejected.status === 422, rejected.status);
+  check(
+    'create rejects a genuinely unknown city with 422',
+    rejected.status === 422,
+    rejected.status,
+  );
 
   // The deprecated `city` parameter, and cityId winning when both arrive.
   const dep = await api(u.token, 'GET', '/community/requests?city=Manchester');

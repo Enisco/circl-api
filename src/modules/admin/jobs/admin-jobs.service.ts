@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '@/infrastructure';
+import { AdminExportService } from '../exports/admin-export.service';
 import { EnforcementService } from '../services/enforcement.service';
 
 /**
@@ -20,6 +21,7 @@ export class AdminJobsService {
     private readonly config: ConfigService,
     private readonly database: PrismaService,
     private readonly enforcement: EnforcementService,
+    private readonly exports: AdminExportService,
   ) {}
 
   /**
@@ -61,6 +63,25 @@ export class AdminJobsService {
     });
   }
 
+  /**
+   * Hourly, which is as late as a seven-day deletion may be.
+   *
+   * §13.6 keeps an export's file for seven days and the row for a year. A daily sweep would leave
+   * a file of member contact details in the bucket for up to a day after it was promised gone,
+   * and the whole point of the seven days is that the file stops existing on its own. The row
+   * purge and the abandoned-job cleanup ride along in the same pass (see `expire`).
+   */
+  @Cron(CronExpression.EVERY_HOUR, { name: 'exports.expire' })
+  async expireExports() {
+    await this.run('exports.expire', async () => {
+      const { expired, purged, abandoned } = await this.exports.expire();
+
+      return expired || purged || abandoned
+        ? `expired ${expired} file(s), failed ${abandoned} abandoned, purged ${purged} row(s)`
+        : null;
+    });
+  }
+
   private onDemand = false;
 
   private readonly onDemandJobs: Record<string, () => Promise<void>> = {
@@ -68,6 +89,9 @@ export class AdminJobsService {
     // On demand as well as on a schedule, because the first thing anybody does after a seed or a
     // backfill is open the dashboard and find it fifteen minutes out of date.
     'analytics.refresh-member-dimensions': () => this.refreshMemberDimensions(),
+    // On demand as well, so an operator can make the seven-day boundary happen now rather than
+    // waiting for the hour — and so the end-to-end checks can prove the sweep rather than trust it.
+    'exports.expire': () => this.expireExports(),
   };
 
   async runNow(name: string): Promise<boolean> {

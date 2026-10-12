@@ -699,12 +699,16 @@ export class CommunityAnalytics {
           JOIN pop ON pop."user_id" = u."author_id"
           WHERE u."created_at" >= ${range.fromInstant} AND u."created_at" < ${range.toInstant}
           UNION ALL
-          SELECT 'replies', (r."created_at" AT TIME ZONE 'Europe/London')::date
+          -- Every arm names its columns, although a UNION only reads the first arm's names.
+          -- Without that, reordering the arms silently renames the result and the outer SELECT
+          -- fails with "column does not exist" -- which is how ?targetType=GUIDE broke the member
+          -- content tab.
+          SELECT 'replies' AS kind, (r."created_at" AT TIME ZONE 'Europe/London')::date AS day
           FROM "update_replies" r
           JOIN pop ON pop."user_id" = r."author_id"
           WHERE r."created_at" >= ${range.fromInstant} AND r."created_at" < ${range.toInstant}
           UNION ALL
-          SELECT 'reactions', (x."created_at" AT TIME ZONE 'Europe/London')::date
+          SELECT 'reactions' AS kind, (x."created_at" AT TIME ZONE 'Europe/London')::date AS day
           FROM "update_reactions" x
           JOIN pop ON pop."user_id" = x."user_id"
           WHERE x."created_at" >= ${range.fromInstant} AND x."created_at" < ${range.toInstant}

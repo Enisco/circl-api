@@ -11,15 +11,30 @@
  * doubling, and that a token FCM rejects as dead is dropped rather than retried forever. The last
  * of those reaches Google, so it needs the network and valid Firebase credentials, the same way
  * the media suite needs S3. */
-const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness.cjs');
+const {
+  approveListing,
+  api,
+  check,
+  fail,
+  finish,
+  makeUser,
+  prisma,
+  sweep,
+} = require('./harness.cjs');
 
-const allDay = () => ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY','SUNDAY']
-  .map(day => ({ day, openMinutes: 0, closeMinutes: 1439 }));
+const allDay = () =>
+  ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'].map(day => ({
+    day,
+    openMinutes: 0,
+    closeMinutes: 1439,
+  }));
 
 /** The recipient's list, newest first. */
 const inbox = async token => (await api(token, 'GET', '/notifications?limit=20')).body?.data ?? [];
 const has = (rows, kind, fragment) =>
-  rows.some(row => row.kind === kind && (row.title ?? '').toLowerCase().includes(fragment.toLowerCase()));
+  rows.some(
+    row => row.kind === kind && (row.title ?? '').toLowerCase().includes(fragment.toLowerCase()),
+  );
 
 /**
  * A notification is raised fire-and-forget, deliberately: a failed notification must never fail
@@ -54,7 +69,8 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
   let r = await api(owner.token, 'POST', '/community/requests', {
     title: 'Which GP surgeries take new patients without proof of address?',
     description: 'I moved three weeks ago and have no utility bill in my name yet.',
-    categoryCode: 'LANGUAGE_HELP', cityId: 'MANCHESTER',
+    categoryCode: 'LANGUAGE_HELP',
+    cityId: 'MANCHESTER',
   });
   const requestId = r.body?.data?.id;
 
@@ -64,9 +80,15 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
     content: 'Most surgeries near the university register you on a signed letter alone.',
   });
   check('reply posted', r.status === 201, r.body?.error);
-  check('a reply to your request notifies you',
-    has(await waitFor(owner.token, 'REPLY', 'replied to your request'), 'REPLY', 'replied to your request'),
-    'no REPLY row');
+  check(
+    'a reply to your request notifies you',
+    has(
+      await waitFor(owner.token, 'REPLY', 'replied to your request'),
+      'REPLY',
+      'replied to your request',
+    ),
+    'no REPLY row',
+  );
 
   r = await api(owner.token, 'POST', '/community/updates', {
     content: 'Three weeks in and the paperwork is finally done. Thank you all.',
@@ -75,21 +97,35 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
   const updateId = r.body?.data?.id;
 
   await api(other.token, 'POST', `/community/updates/${updateId}/reactions`, { liked: true });
-  check('a like on your post notifies you',
-    has(await waitFor(owner.token, 'LIKE', 'liked your post'), 'LIKE', 'liked your post'), 'no LIKE row');
+  check(
+    'a like on your post notifies you',
+    has(await waitFor(owner.token, 'LIKE', 'liked your post'), 'LIKE', 'liked your post'),
+    'no LIKE row',
+  );
 
   await api(third.token, 'POST', `/community/updates/${updateId}/reactions`, { liked: true });
   let rows = await waitFor(owner.token, 'LIKE', '1 other');
-  const likeRows = rows.filter(row => row.kind === 'LIKE' && (row.title ?? '').includes('your post'));
-  check('a second like collapses onto the first row rather than adding one',
-    likeRows.length === 1 && likeRows[0].title.includes('1 other'), likeRows.map(row => row.title));
+  const likeRows = rows.filter(
+    row => row.kind === 'LIKE' && (row.title ?? '').includes('your post'),
+  );
+  check(
+    'a second like collapses onto the first row rather than adding one',
+    likeRows.length === 1 && likeRows[0].title.includes('1 other'),
+    likeRows.map(row => row.title),
+  );
 
   await api(other.token, 'POST', `/community/updates/${updateId}/replies`, {
     content: 'Congratulations, that first month is the hardest part of the whole thing.',
   });
-  check('a comment on your post notifies you',
-    has(await waitFor(owner.token, 'REPLY', 'replied to your post'), 'REPLY', 'replied to your post'),
-    'no REPLY row');
+  check(
+    'a comment on your post notifies you',
+    has(
+      await waitFor(owner.token, 'REPLY', 'replied to your post'),
+      'REPLY',
+      'replied to your post',
+    ),
+    'no REPLY row',
+  );
 
   console.log('\n── Community: guides ────────────────────────────────────────');
 
@@ -97,65 +133,99 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
     topicCode: 'FINANCE',
     title: 'Opening a UK bank account with no proof of address',
     intro: 'Most branches will tell you no. Here is the route that actually works, step by step.',
-    steps: ['Book the appointment online first.', 'Take your BRP and your employer letter.',
-      'Ask for a basic account if a current account is refused.'],
+    steps: [
+      'Book the appointment online first.',
+      'Take your BRP and your employer letter.',
+      'Ask for a basic account if a current account is refused.',
+    ],
     cityId: 'MANCHESTER',
   });
   const guideId = r.body?.data?.id;
 
   await api(other.token, 'POST', `/community/guides/${guideId}/bookmark`, { bookmarked: true });
-  check('saving your guide notifies you',
+  check(
+    'saving your guide notifies you',
     has(await waitFor(owner.token, 'BOOKMARK', 'saved your guide'), 'BOOKMARK', 'saved your guide'),
-    'no BOOKMARK row');
+    'no BOOKMARK row',
+  );
 
   await api(other.token, 'POST', `/community/guides/${guideId}/reactions`, { liked: true });
-  check('and liking it does too, which it did not before',
+  check(
+    'and liking it does too, which it did not before',
     has(await waitFor(owner.token, 'LIKE', 'liked your guide'), 'LIKE', 'liked your guide'),
-    'no LIKE row for the guide');
+    'no LIKE row for the guide',
+  );
 
   await api(other.token, 'POST', `/community/guides/${guideId}/reactions`, { liked: true });
   rows = (await inbox(owner.token)).filter(row => (row.title ?? '').includes('liked your guide'));
-  check('a repeat tap on an existing like stays silent', rows.length === 1, rows.map(row => row.title));
+  check(
+    'a repeat tap on an existing like stays silent',
+    rows.length === 1,
+    rows.map(row => row.title),
+  );
 
   console.log('\n── Community: being credited for helping ────────────────────');
 
   await api(owner.token, 'POST', `/community/requests/${requestId}/resolve`, {
-    outcome: 'HELPED', helperUserIds: [other.id],
+    outcome: 'HELPED',
+    helperUserIds: [other.id],
   });
-  check('being credited as a helper notifies the helper',
+  check(
+    'being credited as a helper notifies the helper',
     has(await waitFor(other.token, 'HELP_OFFER', 'credited you'), 'HELP_OFFER', 'credited you'),
-    'no credit row');
+    'no credit row',
+  );
 
   console.log('\n── Groups: joining and being let in ─────────────────────────');
 
   r = await api(owner.token, 'POST', '/community/groups', {
     name: `E2E Notify Group ${Date.now()}`,
     description: 'A group that needs approval, so the owner has something to approve.',
-    cityId: 'MANCHESTER', joinPolicy: 'APPROVAL',
+    cityId: 'MANCHESTER',
+    joinPolicy: 'APPROVAL',
   });
   const groupId = r.body?.data?.id;
 
   await api(other.token, 'POST', `/community/groups/${groupId}/join`);
-  check('a request to join your group notifies the owner',
+  check(
+    'a request to join your group notifies the owner',
     has(await waitFor(owner.token, 'GROUP', 'asked to join'), 'GROUP', 'asked to join'),
-    'no join-request row');
+    'no join-request row',
+  );
 
   await api(third.token, 'POST', `/community/groups/${groupId}/join`);
-  rows = (await waitFor(owner.token, 'GROUP', '1 other')).filter(row => (row.title ?? '').includes('asked to join'));
-  check('two requests are one row, not two', rows.length === 1 && rows[0].title.includes('1 other'),
-    rows.map(row => row.title));
+  rows = (await waitFor(owner.token, 'GROUP', '1 other')).filter(row =>
+    (row.title ?? '').includes('asked to join'),
+  );
+  check(
+    'two requests are one row, not two',
+    rows.length === 1 && rows[0].title.includes('1 other'),
+    rows.map(row => row.title),
+  );
 
-  await api(owner.token, 'POST', `/community/groups/${groupId}/join-requests/${other.id}`, { decision: 'APPROVE' });
-  check('being approved notifies the member',
-    has(await waitFor(other.token, 'GROUP', 'you are in'), 'GROUP', 'you are in'), 'no approval row');
+  await api(owner.token, 'POST', `/community/groups/${groupId}/join-requests/${other.id}`, {
+    decision: 'APPROVE',
+  });
+  check(
+    'being approved notifies the member',
+    has(await waitFor(other.token, 'GROUP', 'you are in'), 'GROUP', 'you are in'),
+    'no approval row',
+  );
 
-  await api(owner.token, 'POST', `/community/groups/${groupId}/join-requests/${third.id}`, { decision: 'REJECT' });
+  await api(owner.token, 'POST', `/community/groups/${groupId}/join-requests/${third.id}`, {
+    decision: 'REJECT',
+  });
   rows = await waitFor(third.token, 'GROUP', 'declined');
-  check('and so does being declined, rather than leaving them waiting',
-    has(rows, 'GROUP', 'declined'), 'no decline row');
-  check('the declined row has nowhere to go, so it carries no route',
+  check(
+    'and so does being declined, rather than leaving them waiting',
+    has(rows, 'GROUP', 'declined'),
+    'no decline row',
+  );
+  check(
+    'the declined row has nowhere to go, so it carries no route',
     rows.find(row => (row.title ?? '').includes('declined'))?.route === null,
-    rows.find(row => (row.title ?? '').includes('declined')));
+    rows.find(row => (row.title ?? '').includes('declined')),
+  );
 
   console.log('\n── The owner is never told about their own action ───────────');
 
@@ -163,8 +233,11 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
 
   await api(owner.token, 'POST', `/community/updates/${updateId}/reactions`, { liked: true });
   await api(owner.token, 'POST', `/community/guides/${guideId}/bookmark`, { bookmarked: true });
-  check('liking and saving your own content raises nothing',
-    (await inbox(owner.token)).length === before, { before, after: (await inbox(owner.token)).length });
+  check(
+    'liking and saving your own content raises nothing',
+    (await inbox(owner.token)).length === before,
+    { before, after: (await inbox(owner.token)).length },
+  );
 
   console.log('\n── Commerce: a seller hears about an order ──────────────────');
 
@@ -172,33 +245,51 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
   const buyer = await makeUser('notif-buyer');
 
   r = await api(seller.token, 'POST', '/commerce/stores', {
-    name: `E2E Notify Shop ${Date.now()}`, type: 'LOCAL',
+    name: `E2E Notify Shop ${Date.now()}`,
+    type: 'LOCAL',
     description: 'West African groceries, frozen fish and fresh produce.',
-    area: 'Moss Side', delivers: true, openingHours: allDay(),
+    area: 'Moss Side',
+    delivers: true,
+    openingHours: allDay(),
   });
   const storeId = r.body?.data?.id;
 
   r = await api(seller.token, 'POST', `/commerce/stores/${storeId}/items`, {
-    name: 'Egusi', price: 1300, categoryCode: 'FOOD_GROCERIES',
+    name: 'Egusi',
+    price: 1300,
+    categoryCode: 'FOOD_GROCERIES',
   });
   const itemId = r.body?.data?.id;
 
   r = await api(buyer.token, 'POST', '/commerce/enquiries', {
-    storeId, lines: [{ itemId, quantity: 1 }], fulfilment: 'COLLECTION',
+    storeId,
+    lines: [{ itemId, quantity: 1 }],
+    fulfilment: 'COLLECTION',
   });
   const enquiryId = r.body?.data?.id;
-  check('an order reaches the seller',
-    has(await waitFor(seller.token, 'BOOKING', 'sent you an order'), 'BOOKING', 'sent you an order'),
-    'the seller was never told');
+  check(
+    'an order reaches the seller',
+    has(
+      await waitFor(seller.token, 'BOOKING', 'sent you an order'),
+      'BOOKING',
+      'sent you an order',
+    ),
+    'the seller was never told',
+  );
 
   await api(seller.token, 'POST', `/commerce/enquiries/${enquiryId}/accept`);
-  check('accepting it tells the buyer',
+  check(
+    'accepting it tells the buyer',
     has(await waitFor(buyer.token, 'BOOKING', 'was accepted'), 'BOOKING', 'was accepted'),
-    'the buyer was never told');
+    'the buyer was never told',
+  );
 
   await api(seller.token, 'POST', `/commerce/enquiries/${enquiryId}/ready`);
-  check('and so does marking it ready',
-    has(await waitFor(buyer.token, 'BOOKING', 'is ready'), 'BOOKING', 'is ready'), 'no ready row');
+  check(
+    'and so does marking it ready',
+    has(await waitFor(buyer.token, 'BOOKING', 'is ready'), 'BOOKING', 'is ready'),
+    'no ready row',
+  );
 
   console.log('\n── Professionals: a booking reaches the professional ────────');
 
@@ -206,17 +297,25 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
   const client = await makeUser('notif-client');
 
   r = await api(pro.token, 'POST', '/professionals/listings', {
-    categoryCodes: ['LEGAL'], professionTitle: 'Immigration Lawyer', experienceLevel: 'EXPERT',
+    categoryCodes: ['BUSINESS_CONSULTING'],
+    professionTitle: 'Immigration Lawyer',
+    experienceLevel: 'EXPERT',
     about: 'I specialise in UK immigration law and have done for nine years now.',
     consentAccepted: true,
   });
   const listingId = r.body?.data?.listing?.id;
 
+  // §2.9: a listing in a gated profession is held until staff approve it, and this suite reads
+  // it as a non-owner from here on. Not what it is about.
+  await approveListing(listingId);
+
   check('listing created', r.status === 201 && !!listingId, r.body?.error);
 
   r = await api(pro.token, 'POST', `/professionals/listings/${listingId}/services`, {
-    name: 'Initial Consultation', description: '1-hour session covering your case and next steps',
-    price: 6500, priceBasis: 'PER_HOUR',
+    name: 'Initial Consultation',
+    description: '1-hour session covering your case and next steps',
+    price: 6500,
+    priceBasis: 'PER_HOUR',
   });
   const serviceId = r.body?.data?.id;
 
@@ -224,34 +323,47 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
   const bookingId = r.body?.data?.id;
 
   check('booking created', r.status === 201 && !!bookingId, r.body?.error);
-  check('a booking request reaches the professional',
-    has(await waitFor(pro.token, 'BOOKING', 'requested a booking'), 'BOOKING', 'requested a booking'),
-    'the professional was never told');
+  check(
+    'a booking request reaches the professional',
+    has(
+      await waitFor(pro.token, 'BOOKING', 'requested a booking'),
+      'BOOKING',
+      'requested a booking',
+    ),
+    'the professional was never told',
+  );
 
   r = await api(pro.token, 'POST', `/bookings/${bookingId}/accept`);
   check('booking accepted', r.status === 200, r.body?.error);
-  check('accepting it tells the client',
+  check(
+    'accepting it tells the client',
     has(await waitFor(client.token, 'BOOKING', 'was accepted'), 'BOOKING', 'was accepted'),
-    'the client was never told');
+    'the client was never told',
+  );
 
   await api(pro.token, 'POST', `/bookings/${bookingId}/decline`, { reason: 'Double booked.' });
   check('an invalid transition raises nothing new', true, 'guarded by the state machine');
 
   console.log('\n── Connect: an accepted request ─────────────────────────────');
 
-  const setUpConnect = async user => api(user.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP',
-    lookingFor: 'Somebody to walk around the city with at the weekend.',
-    isVisible: true, dmPolicy: 'REQUEST_FIRST',
-  });
+  const setUpConnect = async user =>
+    api(user.token, 'PUT', '/connect/me', {
+      typeCode: 'FRIENDSHIP',
+      lookingFor: 'Somebody to walk around the city with at the weekend.',
+      isVisible: true,
+      dmPolicy: 'REQUEST_FIRST',
+    });
 
   await setUpConnect(owner);
 
   // The PUT answers with the profile itself; `GET /connect/me` wraps it in `hasProfile`.
   const otherProfile = await setUpConnect(other);
 
-  check('both Connect profiles set up', otherProfile.status === 200 && !!otherProfile.body?.data?.id,
-    otherProfile.body?.error);
+  check(
+    'both Connect profiles set up',
+    otherProfile.status === 200 && !!otherProfile.body?.data?.id,
+    otherProfile.body?.error,
+  );
 
   r = await api(owner.token, 'POST', '/connect/requests', {
     toProfileId: otherProfile.body?.data?.id,
@@ -260,41 +372,61 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
   const connectionId = r.body?.data?.id;
 
   if (connectionId) {
-    check('a connection request notifies the recipient',
+    check(
+      'a connection request notifies the recipient',
       has(await waitFor(other.token, 'CONNECTION', 'connect'), 'CONNECTION', 'connect'),
-      'no CONNECTION row');
+      'no CONNECTION row',
+    );
 
     await api(other.token, 'POST', `/connect/requests/${connectionId}/accept`);
-    check('and accepting it notifies the sender, unlike a decline (3.5.3)',
+    check(
+      'and accepting it notifies the sender, unlike a decline (3.5.3)',
       has(await waitFor(owner.token, 'CONNECTION', 'accepted'), 'CONNECTION', 'accepted'),
-      'the sender was never told');
+      'the sender was never told',
+    );
   } else {
     check('connect request created', false, r.body?.error);
   }
 
   console.log('\n── Every notification knows where it goes ───────────────────');
 
-  const inboxOf = async token => (await api(token, 'GET', '/notifications?limit=40')).body?.data ?? [];
+  const inboxOf = async token =>
+    (await api(token, 'GET', '/notifications?limit=40')).body?.data ?? [];
   const routed = await inboxOf(owner.token);
 
-  check('every row carries a route and a matching target, or neither',
+  check(
+    'every row carries a route and a matching target, or neither',
     routed.every(row => (row.route === null) === (row.target === null)),
-    routed.filter(row => (row.route === null) !== (row.target === null))
-      .map(row => ({ kind: row.kind, route: row.route, target: row.target })));
+    routed
+      .filter(row => (row.route === null) !== (row.target === null))
+      .map(row => ({ kind: row.kind, route: row.route, target: row.target })),
+  );
 
-  check('a target names a type and an id, never half of one',
+  check(
+    'a target names a type and an id, never half of one',
     routed.every(row => !row.target || (!!row.target.type && !!row.target.id)),
-    routed.map(row => row.target).filter(Boolean).slice(0, 3));
+    routed
+      .map(row => row.target)
+      .filter(Boolean)
+      .slice(0, 3),
+  );
 
-  check('and the target id appears in the route it agrees with',
-    routed.every(row => !row.target || row.route.includes(row.target.id)
-      || row.target.type === 'CONNECT_REQUEST'),
-    routed.filter(row => row.target && !row.route.includes(row.target.id))
-      .map(row => ({ r: row.route, t: row.target }))); 
+  check(
+    'and the target id appears in the route it agrees with',
+    routed.every(
+      row =>
+        !row.target || row.route.includes(row.target.id) || row.target.type === 'CONNECT_REQUEST',
+    ),
+    routed
+      .filter(row => row.target && !row.route.includes(row.target.id))
+      .map(row => ({ r: row.route, t: row.target })),
+  );
 
-  check('every row carries a collapse count, 1 when it did not collapse',
+  check(
+    'every row carries a collapse count, 1 when it did not collapse',
     routed.every(row => typeof row.count === 'number' && row.count >= 1),
-    routed.map(row => row.count).slice(0, 5));
+    routed.map(row => row.count).slice(0, 5),
+  );
 
   // The one that was broken: a like and a reply on the same post went to different screens.
   r = await api(owner.token, 'POST', '/community/updates', {
@@ -311,16 +443,19 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
 
   const both = (await inboxOf(owner.token)).filter(row => row.route?.includes(agreeId));
 
-  check('a like and a reply on one post route to the same screen',
+  check(
+    'a like and a reply on one post route to the same screen',
     both.length >= 2 && new Set(both.map(row => row.route)).size === 1,
-    both.map(row => `${row.kind}:${row.route}`));
+    both.map(row => `${row.kind}:${row.route}`),
+  );
 
   // A group post is the one target that cannot be opened from its own id: its replies live under
   // its group, and nothing resolves a post to its group.
   r = await api(owner.token, 'POST', '/community/groups', {
     name: `Notify Post Group ${Date.now()}`,
     description: 'A group whose post reply notification has to be openable.',
-    cityId: 'MANCHESTER', joinPolicy: 'OPEN',
+    cityId: 'MANCHESTER',
+    joinPolicy: 'OPEN',
   });
   const postGroupId = r.body?.data?.id;
 
@@ -340,55 +475,88 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
   // The wall was retired on 2026-10-02 and there is no post screen left, so this points at the
   // group — the one thing that still exists. It used to carry the post id and its group as a
   // parent, which was right while there was something for the post id to open.
-  check('a group post reply points at the group, since the post has no screen',
-    postRow?.target?.type === 'GROUP' && postRow?.target?.id === postGroupId, postRow?.target);
-  check('and its route is the group, not a path nothing resolves',
-    postRow?.route === `/community/group/${postGroupId}`, postRow?.route);
-  check('the post id is gone from the target rather than left to dangle',
-    postRow?.target?.id !== groupPostId && postRow?.target?.parent === undefined, postRow?.target);
+  check(
+    'a group post reply points at the group, since the post has no screen',
+    postRow?.target?.type === 'GROUP' && postRow?.target?.id === postGroupId,
+    postRow?.target,
+  );
+  check(
+    'and its route is the group, not a path nothing resolves',
+    postRow?.route === `/community/group/${postGroupId}`,
+    postRow?.route,
+  );
+  check(
+    'the post id is gone from the target rather than left to dangle',
+    postRow?.target?.id !== groupPostId && postRow?.target?.parent === undefined,
+    postRow?.target,
+  );
 
   r = await api(owner.token, 'GET', `/community/groups/${postRow?.target?.id}`);
-  check('and the one id off the notification opens that group with no other lookup',
-    r.status === 200 && r.body?.data?.id === postGroupId, { s: r.status, id: r.body?.data?.id });
+  check(
+    'and the one id off the notification opens that group with no other lookup',
+    r.status === 200 && r.body?.data?.id === postGroupId,
+    { s: r.status, id: r.body?.data?.id },
+  );
 
   console.log('\n── Push: every device, not the last one to register ─────────');
 
   const register = (user, token) =>
     api(user.token, 'POST', '/users/notification-preferences/device-token', { token });
   const devicesOf = user =>
-    prisma.pushDevice.findMany({ where: { userId: user.id }, select: { token: true, platform: true } });
+    prisma.pushDevice.findMany({
+      where: { userId: user.id },
+      select: { token: true, platform: true },
+    });
 
   await register(third, 'e2e-phone-token');
   await register(third, 'e2e-tablet-token');
 
   let devices = await devicesOf(third);
-  check('a second device joins the first rather than replacing it',
-    devices.length === 2, devices.map(row => row.token));
+  check(
+    'a second device joins the first rather than replacing it',
+    devices.length === 2,
+    devices.map(row => row.token),
+  );
 
   await register(third, 'e2e-phone-token');
   devices = await devicesOf(third);
-  check('re-registering the same token is an update, not a duplicate',
-    devices.length === 2, devices.map(row => row.token));
+  check(
+    're-registering the same token is an update, not a duplicate',
+    devices.length === 2,
+    devices.map(row => row.token),
+  );
 
   r = await api(third.token, 'POST', '/users/notification-preferences/device-token', {
-    token: 'e2e-ios-token', platform: 'IOS',
+    token: 'e2e-ios-token',
+    platform: 'IOS',
   });
-  check('platform is accepted and stored', r.status === 200
-    && (await devicesOf(third)).some(row => row.platform === 'IOS'), r.body?.error);
+  check(
+    'platform is accepted and stored',
+    r.status === 200 && (await devicesOf(third)).some(row => row.platform === 'IOS'),
+    r.body?.error,
+  );
 
   // The same handset, now signed in as somebody else.
   await register(other, 'e2e-tablet-token');
-  check('a handset that changes hands moves rather than sitting on both accounts',
-    (await prisma.pushDevice.count({ where: { token: 'e2e-tablet-token' } })) === 1
-      && (await devicesOf(other)).some(row => row.token === 'e2e-tablet-token'),
-    await prisma.pushDevice.findMany({ where: { token: 'e2e-tablet-token' }, select: { userId: true } }));
+  check(
+    'a handset that changes hands moves rather than sitting on both accounts',
+    (await prisma.pushDevice.count({ where: { token: 'e2e-tablet-token' } })) === 1 &&
+      (await devicesOf(other)).some(row => row.token === 'e2e-tablet-token'),
+    await prisma.pushDevice.findMany({
+      where: { token: 'e2e-tablet-token' },
+      select: { userId: true },
+    }),
+  );
 
   await api(third.token, 'DELETE', '/users/notification-preferences/device-token', {
     token: 'e2e-phone-token',
   });
   devices = await devicesOf(third);
-  check('signing out of one device leaves the others receiving',
-    devices.length === 1 && devices[0].token === 'e2e-ios-token', devices.map(row => row.token));
+  check(
+    'signing out of one device leaves the others receiving',
+    devices.length === 1 && devices[0].token === 'e2e-ios-token',
+    devices.map(row => row.token),
+  );
 
   console.log('\n── Push: a dead device token is forgotten ──────────────────');
 
@@ -401,7 +569,9 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
     content: 'A post whose author is carrying one dead device token.',
     cityId: 'MANCHESTER',
   });
-  await api(owner.token, 'POST', `/community/updates/${r.body?.data?.id}/reactions`, { liked: true });
+  await api(owner.token, 'POST', `/community/updates/${r.body?.data?.id}/reactions`, {
+    liked: true,
+  });
 
   let remaining = before2;
 
@@ -416,16 +586,22 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
     await new Promise(resolve => setTimeout(resolve, 200));
   }
 
-  check('FCM rejecting a token as dead deletes that device, rather than failing forever',
-    remaining.length === 0, remaining);
+  check(
+    'FCM rejecting a token as dead deletes that device, rather than failing forever',
+    remaining.length === 0,
+    remaining,
+  );
 
   console.log('\n── Preferences actually silence a category ──────────────────');
 
   r = await api(owner.token, 'GET', '/users/notification-preferences');
-  check('the matrix carries a row for every category used above',
-    ['REPLIES', 'OFFERS', 'GROUPS', 'CONNECTIONS', 'BOOKINGS', 'REACTIONS']
-      .every(code => (r.body?.data?.categories ?? []).some(row => row.code === code)),
-    (r.body?.data?.categories ?? []).map(row => row.code));
+  check(
+    'the matrix carries a row for every category used above',
+    ['REPLIES', 'OFFERS', 'GROUPS', 'CONNECTIONS', 'BOOKINGS', 'REACTIONS'].every(code =>
+      (r.body?.data?.categories ?? []).some(row => row.code === code),
+    ),
+    (r.body?.data?.categories ?? []).map(row => row.code),
+  );
 
   await sweep('notifications');
   await finish();

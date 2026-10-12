@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import {
+  ContentScanTrigger,
   DealStage,
   DealTrack,
   Prisma,
+  ReportTargetType,
   Store,
   StoreFulfilment,
   TaxonomyKind,
@@ -13,9 +15,13 @@ import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, daysAgo, money } from '@/common';
 import {
   CityService,
+  ContentSafetyService,
+  DIRECT_VISIBILITY,
   MediaService,
+  PUBLIC_VISIBILITY,
   TaxonomyService,
   authorSelect,
+  isReachable,
   toAuthorView,
   toCityView,
   toTermView,
@@ -59,6 +65,7 @@ export class StoreService {
     private readonly cities: CityService,
     private readonly media: MediaService,
     private readonly reputation: ReputationService,
+    private readonly safety: ContentSafetyService,
     private readonly staticMap: StaticMapService,
   ) {}
 
@@ -83,6 +90,7 @@ export class StoreService {
           },
         },
       }),
+      // visibility: their own shop, on their own management screen.
       this.database.store.findUnique({ where: { ownerId: userId }, include: storeInclude }),
     ]);
 
@@ -123,6 +131,7 @@ export class StoreService {
   // ─── 4.8.1 Create / patch ──────────────────────────────────────────────────
 
   async create(userId: string, dto: CreateStoreDto) {
+    // visibility: whether the caller already has a shop, to refuse a second one.
     const existing = await this.database.store.findUnique({
       where: { ownerId: userId },
       include: storeInclude,
@@ -190,6 +199,17 @@ export class StoreService {
 
       if (logo) await this.media.attach(tx, [logo], STORE_LOGO_OWNER, created.id);
       if (cover) await this.media.attach(tx, [cover], STORE_COVER_OWNER, created.id);
+
+      // A shop's name and description are the copy a whole city reads (§6.1).
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.STORE,
+        targetId: created.id,
+        authorId: userId,
+        fields: { name: created.name, description: created.description },
+        mediaKeys: [logo?.storageKey, cover?.storageKey].filter((key): key is string => !!key),
+        trigger: ContentScanTrigger.CREATE,
+        summary: created.name,
+      });
 
       return created;
     });
@@ -261,7 +281,7 @@ export class StoreService {
       if (dto.logoKey === null) await this.media.releaseOwner(tx, STORE_LOGO_OWNER, id);
       if (dto.coverKey === null) await this.media.releaseOwner(tx, STORE_COVER_OWNER, id);
 
-      return tx.store.update({
+      const patched = await tx.store.update({
         where: { id },
         data: {
           name: dto.name,
@@ -296,6 +316,18 @@ export class StoreService {
         },
         include: storeInclude,
       });
+
+      await this.safety.assess(tx, {
+        targetType: ReportTargetType.STORE,
+        targetId: id,
+        authorId: userId,
+        fields: { name: patched.name, description: patched.description },
+        mediaKeys: [patched.logoKey, patched.coverKey].filter((key): key is string => !!key),
+        trigger: ContentScanTrigger.EDIT,
+        summary: patched.name,
+      });
+
+      return patched;
     });
 
     return this.toDetail(updated, userId, null);
@@ -342,6 +374,7 @@ export class StoreService {
   // ─── 4.8.4 My store ────────────────────────────────────────────────────────
 
   async findMine(userId: string) {
+    // visibility: their own shop. Held or not, this is the screen they manage it from.
     const store = await this.database.store.findUnique({
       where: { ownerId: userId },
       include: storeInclude,
@@ -354,6 +387,7 @@ export class StoreService {
 
     const [pendingEnquiryCount, itemCount] = await Promise.all([
       this.database.enquiry.count({ where: { storeId: store.id, state: 'ACCEPTED' } }),
+      // visibility: the owner's own item count, on their own management screen.
       this.database.storeItem.count({ where: { storeId: store.id, deletedAt: null } }),
     ]);
 
@@ -382,6 +416,7 @@ export class StoreService {
       }),
     ]);
 
+    // visibility: names for the owner's own best-sellers, read by id.
     const items = await this.database.storeItem.findMany({
       where: { id: { in: topItems.map(row => row.itemId!).filter(Boolean) } },
       select: { id: true, name: true },
@@ -411,8 +446,10 @@ export class StoreService {
       this.taxonomy.labels(TaxonomyKind.HERITAGE_TAG),
       this.taxonomy.labels(TaxonomyKind.ITEM_CATEGORY),
       this.reputation.summaryFor(store.ownerId),
+      // The three-item teaser on a shop card, which is distribution: it rides along in browse,
+      // search and the Commerce home.
       this.database.storeItem.findMany({
-        where: { storeId: store.id, deletedAt: null },
+        where: { storeId: store.id, deletedAt: null, ...PUBLIC_VISIBILITY },
         select: { id: true, name: true },
         take: 3,
       }),
@@ -464,9 +501,15 @@ export class StoreService {
 
     const isOwner = viewerId === store.ownerId;
     const [catalogue, canReview, conversation, ownerStats] = await Promise.all([
+      // The shop page's category counts have to match the shelves behind them, so they follow
+      // the same rule `ItemService.listForStore` does — including the owner seeing their own.
       this.database.storeItem.groupBy({
         by: ['categoryCode'],
-        where: { storeId: store.id, deletedAt: null },
+        where: {
+          storeId: store.id,
+          deletedAt: null,
+          ...(isOwner ? {} : DIRECT_VISIBILITY),
+        },
         _count: { _all: true },
       }),
       viewerId ? this.canReview(viewerId, store) : Promise.resolve(false),
@@ -544,6 +587,8 @@ export class StoreService {
 
     if (!sourceIds.length) return false;
 
+    // visibility: has this member already reviewed this order? Their own review counts whatever
+    // state it is in — offering them a second go at it would be worse than saying nothing.
     const reviewed = await this.database.review.count({
       where: {
         reviewerId: viewerId,
@@ -564,6 +609,7 @@ export class StoreService {
    */
   private async ownerStats(store: Store): Promise<{ views: number; responseRate: number | null }> {
     const [items, enquiries] = await Promise.all([
+      // visibility: the seller's own catalogue, to work out what they do not stock yet.
       this.database.storeItem.findMany({ where: { storeId: store.id }, select: { id: true } }),
       this.database.enquiry.findMany({ where: { storeId: store.id }, select: { id: true } }),
     ]);
@@ -732,6 +778,7 @@ export class StoreService {
   }
 
   async assertOwned(userId: string, id: string): Promise<Store> {
+    // visibility: an ownership check before a write.
     const store = await this.database.store.findUnique({ where: { id } });
 
     if (!store || store.deletedAt) {
@@ -746,10 +793,16 @@ export class StoreService {
   }
 
   /** Loads a store for public viewing, with everything the profile renders. */
-  async storeOrThrow(id: string): Promise<StoreRow> {
+  async storeOrThrow(id: string, viewerId?: string | null): Promise<StoreRow> {
     const store = await this.database.store.findUnique({ where: { id }, include: storeInclude });
 
     if (!store || store.deletedAt) {
+      throw ApiException.notFound('That store could not be found.', ApiErrorCode.STORE_NOT_FOUND);
+    }
+
+    // §6.5: a held shop is its owner's to see and nobody else's — the same 404 a missing one
+    // gets, so the answer says nothing about what was here.
+    if (!isReachable(store.visibilityState) && store.ownerId !== viewerId) {
       throw ApiException.notFound('That store could not be found.', ApiErrorCode.STORE_NOT_FOUND);
     }
 

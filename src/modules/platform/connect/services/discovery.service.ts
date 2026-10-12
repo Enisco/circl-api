@@ -2,7 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, TaxonomyKind, ThreadContextType, TrustCheckType } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiException, birthDateRangeForAges, buildPageMeta, escapeLike } from '@/common';
-import { BlockingService, connectVisibility, countryNameOf, TaxonomyService } from '../../shared';
+import {
+  BlockingService,
+  PUBLIC_VISIBILITY,
+  connectVisibility,
+  countryNameOf,
+  TaxonomyService,
+} from '../../shared';
 import { CONNECT_MINIMUM_AGE } from '../../taxonomy/services/taxonomy-catalogue.service';
 import { DiscoveryDto } from '../dtos/connect.dto';
 import { normaliseTerm, termVariants } from '../../search/services/search-terms';
@@ -146,6 +152,9 @@ export class DiscoveryService {
   ): Promise<Prisma.ConnectProfileWhereInput> {
     const where: Prisma.ConnectProfileWhereInput = {
       deletedAt: null,
+      // A profile whose own words are under review is not put in front of strangers (§6.5). This
+      // is the grid and the facet lists both, because the facets are built from the same `where`.
+      ...PUBLIC_VISIBILITY,
       // Never returned in discovery: anyone hidden, anyone blocked in either direction, and the caller themselves (3.4).
       isVisible: true,
       userId: { not: viewerId, ...(blockedIds.length ? { notIn: blockedIds } : {}) },

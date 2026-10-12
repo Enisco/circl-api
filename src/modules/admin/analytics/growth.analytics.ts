@@ -556,6 +556,8 @@ export class GrowthAnalytics {
 
     return {
       kind: 'funnel',
+      // Members: each step is a count of people who got that far, so the floor applies.
+      unit: 'members',
       steps: FUNNEL_STEPS.map((step, index) => ({
         key: step.key,
         label: step.label,

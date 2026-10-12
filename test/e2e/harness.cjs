@@ -96,6 +96,82 @@ async function makeUser(tag, profile = {}) {
   };
 }
 
+/**
+ * Approves a listing in a gated profession, so a suite can get on with what it is about (§2.9).
+ *
+ * Ten professions — immigration, legal, finance, healthcare, therapy, childcare, lettings, trades,
+ * tutoring and recruitment — hold their listings until a staff member approves them, which means a
+ * fixture written as "a listing by an immigration lawyer" is now a 404 to everybody but its owner.
+ * Suites that are about bookings, threads, pictures or response shapes want a *reachable* listing,
+ * not an approval workflow, and this is one line instead of a staff login.
+ *
+ * Written straight to the database on purpose: going through `admin/professional-reviews` would
+ * make every one of those suites depend on the admin surface being deployed, and
+ * `listing-review.e2e.cjs` is where the endpoint itself is tested.
+ *
+ * A no-op for a listing that needed no approval, so it is safe to call after any create.
+ */
+async function approveListing(listingId) {
+  if (!listingId) return;
+
+  const listing = await prisma.professionalListing.findUnique({
+    where: { id: listingId },
+    select: { reviewState: true },
+  });
+
+  if (!listing || listing.reviewState === 'NOT_REQUIRED') return;
+
+  await prisma.professionalListing.update({
+    where: { id: listingId },
+    data: {
+      reviewState: 'APPROVED',
+      reviewDecidedAt: new Date(),
+      visibilityState: 'VISIBLE',
+    },
+  });
+
+  await prisma.contentSafety.updateMany({
+    where: { targetType: 'PROFESSIONAL_LISTING', targetId: listingId },
+    data: { visibilityState: 'VISIBLE', heldReason: null, heldAt: null },
+  });
+
+  await prisma.moderationQueueItem.updateMany({
+    where: { type: 'PROFESSIONAL_REVIEW', targetId: listingId },
+    data: { state: 'RESOLVED', decision: 'APPROVE', decidedAt: new Date() },
+  });
+}
+
+/**
+ * Publishes an anonymous post or request, the way a reviewer would (§7.4).
+ *
+ * Anonymous content is **pre-moderated** since §5.9's queue rework: it is created
+ * `PENDING_APPROVAL` and invisible to everybody but its author until somebody approves it. So a
+ * suite that creates an anonymous post and then reads it as another member has to approve it
+ * first, or it is asserting a 404.
+ *
+ * Written straight to the database, like `approveListing`: the real decision path is tested by
+ * `moderation-queue.e2e.cjs` and `guard-admin.e2e.cjs`, and every other suite wants a *published*
+ * anonymous post rather than an approval workflow.
+ *
+ * `table` is the content's table — `community_updates` or `community_requests`.
+ */
+async function approveAnonymous(table, targetId) {
+  if (!targetId) return;
+
+  await prisma.$executeRawUnsafe(
+    `UPDATE "${table}" SET "visibility_state" = 'VISIBLE' WHERE "id" = $1`,
+    targetId,
+  );
+  await prisma.contentSafety.updateMany({
+    where: { targetId },
+    data: { visibilityState: 'VISIBLE', heldReason: null, heldAt: null },
+  });
+  await prisma.moderationQueueItem.updateMany({
+    where: { type: 'ANONYMOUS_POST', targetId },
+    data: { state: 'RESOLVED', decision: 'APPROVE', decidedAt: new Date() },
+  });
+}
+
 /** Removes every user any e2e script has ever created, and everything hanging off them. */
 async function sweep(label = 'sweep') {
   const users = await prisma.user.findMany({
@@ -184,13 +260,60 @@ async function sweep(label = 'sweep') {
     },
   });
 
-  if (!ids.length && !orphaned.count && !emptyThreads.count && !staleQueue.count) return 0;
+  // Every other kind of item whose content is gone.
+  //
+  // The same problem as the two above and the one that bit hardest: `subjectUser` is `SetNull`, so
+  // deleting a test member *keeps* their queue items and only forgets whose they were. With
+  // anonymous pre-moderation on (§7.4) every anonymous post leaves an `ANONYMOUS_POST` item, so
+  // the queue filled with rows pointing at content that no longer existed — and a suite looking
+  // for the item it had just filed found somebody else's instead, or found a row with no content
+  // on it and no way to tell why.
+  //
+  // One `DELETE … WHERE NOT EXISTS` per target type rather than a hand-maintained id list,
+  // because the list is the thing that would be forgotten the next time a scannable kind is added.
+  const ORPHAN_TABLES = {
+    REQUEST: 'community_requests',
+    RESPONSE: 'request_responses',
+    OFFER: 'community_offers',
+    UPDATE: 'community_updates',
+    UPDATE_REPLY: 'update_replies',
+    GROUP: 'groups',
+    GROUP_POST: 'group_posts',
+    GROUP_POST_REPLY: 'group_post_replies',
+    MESSAGE: 'messages',
+    CONVERSATION: 'conversations',
+    STORE: 'stores',
+    STORE_ITEM: 'store_items',
+    CONNECT_PROFILE: 'connect_profiles',
+    CONNECT_POST: 'connect_posts',
+    CONNECT_STORY: 'connect_stories',
+    CONNECT_MEDIA: 'media',
+    MEDIA: 'media',
+    PROFESSIONAL_LISTING: 'professional_listings',
+    PROFESSIONAL_SERVICE: 'professional_services',
+    REVIEW: 'reviews',
+  };
+
+  let orphanedItems = 0;
+
+  for (const [targetType, table] of Object.entries(ORPHAN_TABLES)) {
+    orphanedItems += await prisma.$executeRawUnsafe(
+      `DELETE FROM "moderation_queue_items" q
+        WHERE q."target_type" = $1::"ReportTargetType"
+          AND NOT EXISTS (SELECT 1 FROM "${table}" t WHERE t."id" = q."target_id")`,
+      targetType,
+    );
+  }
+
+  const stale = staleQueue.count + orphanedItems;
+
+  if (!ids.length && !orphaned.count && !emptyThreads.count && !stale) return 0;
 
   console.log(
     `  ${label}: removed ${ids.length} test users, their content` +
       `${orphaned.count ? ` and ${orphaned.count} authorless guides` : ''}` +
       `${emptyThreads.count ? ` and ${emptyThreads.count} empty threads` : ''}` +
-      `${staleQueue.count ? ` and ${staleQueue.count} stale queue items` : ''}`,
+      `${stale ? ` and ${stale} stale queue items` : ''}`,
   );
 
   return ids.length;
@@ -223,7 +346,22 @@ const dobFor = years => {
  * ten a minute keyed on the IP, and a whole sweep shares one IP, so a suite late in the run can be
  * refused for something no member would ever hit. Waits out the window the API itself names.
  */
-async function verifyEmailCode(email, code = '1111', attempt = 0) {
+// The dev code is generated, not bypassed: `Util.generateOtp` returns a prefix of 123456 outside
+// production, so the four-digit sign-in code is 1234 and the ordinary hash comparison runs.
+async function verifyEmailCode(email, code = '1234', attempt = 0) {
+  // Request the code first. This used to go straight to `verify/email`, which worked only because
+  // `validateOtp` had a bypass that returned true for a literal `1111` with nothing in the cache
+  // at all. That bypass is gone, so the suites now drive the real flow: a code is sent, hashed and
+  // stored, and the comparison runs. Outside production the code generated is deterministic
+  // (`dev-otp.constant.ts`), which is what makes it typeable here.
+  if (attempt === 0) {
+    await fetch(`${BASE}/auth/verify/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    }).catch(() => undefined);
+  }
+
   const res = await fetch(`${BASE}/auth/verify/email`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -310,6 +448,75 @@ async function uploadPng(token, purpose, width, height) {
   return slot.key;
 }
 
+/** A minimal but structurally real PDF, with a page tree the page-count reader can find. */
+function realPdf(pages = 2) {
+  const kids = Array.from({ length: pages }, (_, i) => `${i + 4} 0 R`).join(' ');
+  const pageObjects = Array.from(
+    { length: pages },
+    (_, i) => `${i + 4} 0 obj\n<< /Type /Page /Parent 3 0 R >>\nendobj\n`,
+  ).join('');
+
+  return Buffer.from(
+    `%PDF-1.7\n` +
+      `1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n` +
+      `3 0 obj\n<< /Type /Pages /Kids [${kids}] /Count ${pages} >>\nendobj\n` +
+      pageObjects +
+      `trailer\n<< /Root 1 0 R >>\n%%EOF\n`,
+    'latin1',
+  );
+}
+
+/** A JPEG carrying an EXIF block with something that looks like a GPS tag in it. */
+function jpegWithExif() {
+  const exifBody = Buffer.concat([
+    Buffer.from('Exif\0\0', 'latin1'),
+    Buffer.from('GPSLatitude 51.5074 GPSLongitude -0.1278'),
+  ]);
+  const app1 = Buffer.alloc(4);
+
+  app1[0] = 0xff;
+  app1[1] = 0xe1;
+  app1.writeUInt16BE(exifBody.length + 2, 2);
+
+  return Buffer.concat([
+    Buffer.from([0xff, 0xd8]),
+    app1,
+    exifBody,
+    Buffer.from([0xff, 0xc0, 0x00, 0x11]),
+    Buffer.alloc(15),
+    Buffer.from([0xff, 0xda, 0x00, 0x08, 0, 0, 0, 0, 0, 0]),
+    Buffer.from([0x11, 0x22, 0x33, 0xff, 0xd9]),
+  ]);
+}
+
+/**
+ * Uploads a supporting document and returns its **id** (§2.9).
+ *
+ * Documents are referenced by id rather than by storage key — unlike photos — because a document
+ * is a record with a decision attached to it. The id comes back on the upload ticket.
+ */
+async function uploadDocument(token, options = {}) {
+  const mimeType = options.mimeType ?? 'application/pdf';
+  const bytes =
+    options.bytes ??
+    (mimeType === 'application/pdf' ? realPdf(options.pages ?? 2) : realPng(400, 400));
+  const minted = await api(token, 'POST', '/media/uploads', {
+    purpose: options.purpose ?? 'VERIFICATION',
+    files: [{ mimeType, byteSize: bytes.length, fileName: options.fileName ?? 'certificate.pdf' }],
+  });
+  const slot = minted.body?.data?.[0];
+
+  if (!slot) return { id: null, key: null, status: minted.status, error: minted.body?.error };
+
+  await fetch(slot.uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': mimeType },
+    body: bytes,
+  });
+
+  return { id: slot.id, key: slot.key, bytes };
+}
+
 /**
  * A clip, for the paths that only exist for video. Deliberately a stub with no readable `moov`:
  * nothing here plays it, and a server that cannot read a length has to say so rather than let it
@@ -364,7 +571,8 @@ async function makeAdmin(tag, roleCode = 'super_admin') {
         create: {
           // Not a usable password: these suites do not sign in through the password step, and a
           // hash that verifies against a known string would be a credential sitting in a test file.
-          passwordHash: '$argon2id$v=19$m=19456,p=1,t=2$dGVzdC1vbmx5LW5vdC1hLWhhc2g$' + 'x'.repeat(43),
+          passwordHash:
+            '$argon2id$v=19$m=19456,p=1,t=2$dGVzdC1vbmx5LW5vdC1hLWhhc2g$' + 'x'.repeat(43),
           passwordUpdatedAt: new Date(),
           totpEnabledAt: new Date(),
         },
@@ -436,9 +644,31 @@ const adminHeaders = admin => ({
   ...(process.env.ADMIN_BFF_SECRET ? { 'X-Circl-Admin-Client': process.env.ADMIN_BFF_SECRET } : {}),
 });
 
+/**
+ * Every field name in a payload, nested ones included.
+ *
+ * For asserting that a shape does *not* carry something. The obvious way — searching the serialised
+ * JSON for the word — quietly tests the values too, and ids are hexadecimal: `fee` is three valid
+ * hex digits, so roughly one dashboard in thirty held a uuid like `3fee1a2b-…` and the assertion
+ * failed on a payload that was perfectly clean. Names are what such a check is actually about.
+ */
+const fieldNames = (value, path = '') => {
+  if (Array.isArray(value)) return value.flatMap(item => fieldNames(item, path));
+
+  if (value === null || typeof value !== 'object') return [];
+
+  return Object.entries(value).flatMap(([key, nested]) => [
+    path ? `${path}.${key}` : key,
+    ...fieldNames(nested, path ? `${path}.${key}` : key),
+  ]);
+};
+
 module.exports = {
   adminHeaders,
+  approveAnonymous,
+  approveListing,
   api,
+  fieldNames,
   clearRateLimits,
   forgetCacheKeys,
   check,
@@ -448,8 +678,11 @@ module.exports = {
   makeAdmin,
   makeUser,
   prisma,
+  realPdf,
   realPng,
   sweep,
+  uploadDocument,
+  jpegWithExif,
   uploadPng,
   uploadStubVideo,
   verifyEmailCode,

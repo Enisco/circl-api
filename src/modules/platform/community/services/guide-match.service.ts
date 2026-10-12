@@ -34,7 +34,11 @@ export class GuideMatchService {
 
     const [guides, requests, topicLabels, categoryLabels] = await Promise.all([
       guideIds.length
-        ? this.database.guide.findMany({
+        ? // visibility: hydrates the ids the matcher picked, which it picked from visible content
+          // only (`guide-matcher.service.ts`). Filtering again here would hide the fault rather
+          // than fix it if that ever stopped being true — so the rule lives at the one place that
+          // chooses, and this is a read by id.
+          this.database.guide.findMany({
             where: { id: { in: guideIds } },
             include: {
               author: { select: authorSelect },
@@ -43,7 +47,8 @@ export class GuideMatchService {
           })
         : [],
       requestIds.length
-        ? this.database.communityRequest.findMany({
+        ? // visibility: as above — hydration of ids the matcher chose.
+          this.database.communityRequest.findMany({
             where: { id: { in: requestIds } },
             include: {
               author: { select: authorSelect },

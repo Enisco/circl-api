@@ -45,6 +45,45 @@ export class OpenAIProvider {
     }
   }
 
+  /**
+   * The moderation endpoint (§6.2 step 5), which is not a chat completion and is not billed.
+   *
+   * Deliberately **not** wrapped in the `InternalServerErrorException` the two methods above
+   * throw: the content pipeline has to tell a timeout from a refusal from a bad response, because
+   * each one has a different fail-safe (§6.7), and a 500 from here would be caught by a worker
+   * that cannot see what happened. The error is passed through as it arrived.
+   *
+   * `timeoutMs` comes from `safety.classifier.timeoutMs`. It is enforced here rather than left to
+   * the SDK's default, because the whole point of the provisional hold in §6.5 is that it lasts
+   * seconds — a request that hangs for a minute holds a member's post for a minute.
+   */
+  async moderate(
+    input: Array<
+      { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }
+    >,
+    model: string,
+    timeoutMs: number,
+  ): Promise<{ flagged: boolean; scores: Record<string, number> }> {
+    const response = await this.client.moderations.create(
+      { model, input },
+      { signal: AbortSignal.timeout(timeoutMs) },
+    );
+    const result = response.results[0];
+
+    if (!result) throw new Error('The moderation endpoint returned no result.');
+
+    return {
+      flagged: result.flagged,
+      // The SDK types these as a fixed record of its own category names; the pipeline reads them
+      // by key, so they are flattened to numbers here and the multipliers decide what matters.
+      scores: Object.fromEntries(
+        Object.entries(result.category_scores as unknown as Record<string, number | null>).map(
+          ([category, score]) => [category, typeof score === 'number' ? score : 0],
+        ),
+      ),
+    };
+  }
+
   async createResponse(systemPrompt: string, userPrompt: string): Promise<string> {
     try {
       const response = await this.client.responses.create({

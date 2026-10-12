@@ -534,7 +534,16 @@ const STORES = [
       ['rug', 'Floor rug, two metre', 'Ordered in, choose the colour', 8500, 'EACH', 'HOME', false],
       // A draft, so the state the boolean could never express renders somewhere: the owner sees
       // it on their own management screen and nobody else sees it at all.
-      ['lamps', 'Brass floor lamp', 'Half written up, not ready to sell', 6400, 'EACH', 'HOME', false, 'DRAFT'],
+      [
+        'lamps',
+        'Brass floor lamp',
+        'Half written up, not ready to sell',
+        6400,
+        'EACH',
+        'HOME',
+        false,
+        'DRAFT',
+      ],
     ],
   },
 ];
@@ -728,8 +737,7 @@ export const seedCommerce = async (ctx: DemoSeedContext) => {
         categoryCode,
         // Three states, not two. A row that says nothing takes the state its boolean implied,
         // which is what the migration did to every existing item.
-        availability: (availability ??
-          (isAvailable ? 'ON_SALE' : 'OUT_OF_STOCK')) as never,
+        availability: (availability ?? (isAvailable ? 'ON_SALE' : 'OUT_OF_STOCK')) as never,
         isAvailable: availability ? availability === 'ON_SALE' : isAvailable,
         viewCount: 10 + (price % 40),
         reportToken: reportToken(`item:${store.label}:${slug}`),

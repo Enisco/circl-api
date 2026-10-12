@@ -379,6 +379,8 @@ export class ConversationService {
 
     if (userId !== author && recipientUserId !== author) throw refuse();
 
+    // visibility: whether the caller replied to this request, which decides if they may open a
+    // thread about it.
     const offered = await this.database.requestResponse.findFirst({
       where: {
         requestId: subject.contextId,
@@ -527,6 +529,9 @@ export class ConversationService {
     }
 
     if (contextType === ThreadContextType.ITEM) {
+      // visibility: what a thread is about, by id. A buyer who already has a thread about an item
+      // keeps it when the item is held: the conversation is between two people and is not content
+      // either of them published.
       const item = await this.database.storeItem.findFirst({
         where: { id: contextId, deletedAt: null },
         include: { store: { select: { id: true, ownerId: true, name: true } } },
@@ -553,6 +558,7 @@ export class ConversationService {
     }
 
     if (contextType === ThreadContextType.REQUEST) {
+      // visibility: as above — thread context by id.
       const request = await this.database.communityRequest.findFirst({
         where: { id: contextId, deletedAt: null },
         select: { id: true, title: true, authorId: true, status: true, categoryCode: true },
@@ -583,6 +589,7 @@ export class ConversationService {
     }
 
     if (contextType === ThreadContextType.PROFESSIONAL) {
+      // visibility: as above — thread context by id.
       const listing = await this.database.professionalListing.findFirst({
         where: { id: contextId, deletedAt: null },
         select: {
@@ -614,6 +621,7 @@ export class ConversationService {
     }
 
     if (contextType === ThreadContextType.SERVICE) {
+      // visibility: as above — thread context by id.
       const service = await this.database.professionalService.findFirst({
         where: { id: contextId, listing: { deletedAt: null } },
         select: {
@@ -655,6 +663,7 @@ export class ConversationService {
     }
 
     if (contextType === ThreadContextType.CONNECT_PROFILE) {
+      // visibility: as above — thread context by id.
       const profile = await this.database.connectProfile.findFirst({
         where: { id: contextId },
         select: {
@@ -697,6 +706,7 @@ export class ConversationService {
     }
 
     if (contextType === ThreadContextType.STORE) {
+      // visibility: as above — thread context by id.
       const store = await this.database.store.findFirst({
         where: { id: contextId, deletedAt: null },
         select: {
@@ -724,6 +734,7 @@ export class ConversationService {
       };
     }
 
+    // visibility: as above — thread context by id.
     const offer = await this.database.communityOffer.findFirst({
       where: { id: contextId, deletedAt: null },
       select: { id: true, title: true, authorId: true, priceFrom: true, currency: true },
@@ -952,6 +963,8 @@ export class ConversationService {
     const people = [...new Set(counterpartOf.values())];
 
     const [reviewed, booked] = await Promise.all([
+      // visibility: the viewer's own reviews, so a thread does not offer a second one. Their own
+      // review counts whatever state it is in.
       this.database.review.findMany({
         where: {
           reviewerId: userId,
@@ -1014,13 +1027,15 @@ export class ConversationService {
 
     const [listings, services] = await Promise.all([
       listingIds.length
-        ? this.database.professionalListing.findMany({
+        ? // visibility: who owns the listings these existing threads are about, to label them.
+          this.database.professionalListing.findMany({
             where: { id: { in: listingIds } },
             select: { id: true, userId: true },
           })
         : [],
       serviceIds.length
-        ? this.database.professionalService.findMany({
+        ? // visibility: who owns the services these existing threads are about, to label them.
+          this.database.professionalService.findMany({
             where: { id: { in: serviceIds } },
             select: { id: true, listing: { select: { userId: true } } },
           })

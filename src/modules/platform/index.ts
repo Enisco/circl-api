@@ -9,6 +9,8 @@ import { PlatformJobsModule } from './jobs/jobs.module';
 import { CommunityModule } from './community/community.module';
 import { ConnectModule } from './connect/connect.module';
 import { CirclGuardModule } from './guard/guard.module';
+import { GuardCoreModule } from './guard/guard-core.module';
+import { IntelligenceCoreModule } from './intelligence/intelligence-core.module';
 import { IntelligenceModule } from './intelligence/intelligence.module';
 import { MediaModule } from './media/media.module';
 import { MessagingCoreModule } from './messaging/messaging.module';
@@ -66,6 +68,15 @@ export const PLATFORM_MODULES = [
  * (`AdminJobRunnerService`), and §5.22 replaces even that with a queued run.
  */
 export const ADMIN_SURFACE_DEPENDENCIES = [
+  // Intelligence (one service): approving an `AUTO_GUIDE` queue item publishes the draft guide,
+  // so the staff process needs `AutoGuideService`. Not `IntelligenceModule`, which mounts the
+  // Pulse controller and eight services the admin API never calls.
+  IntelligenceCoreModule,
+  // Guard (core only): §5.12's manual escalation opens the member's **existing** private thread
+  // (D36), and that rule lives in one transaction in `GuardService`. The *core* module, because
+  // `CirclGuardModule` mounts `GuardController` and a staff process serving `POST guard/threads`
+  // would be a member endpoint in a place nobody is looking for one.
+  GuardCoreModule,
   PlatformSharedModule,
   NotificationsModule,
   MessagingCoreModule,

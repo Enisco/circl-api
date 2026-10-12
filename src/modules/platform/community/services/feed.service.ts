@@ -16,6 +16,7 @@ import {
   AuthorSource,
   BlockingService,
   MediaService,
+  PUBLIC_VISIBILITY,
   TaxonomyService,
   authorSelect,
   toAuthorView,
@@ -211,6 +212,7 @@ export class FeedService {
 
     const where: Prisma.CommunityRequestWhereInput = {
       deletedAt: null,
+      ...PUBLIC_VISIBILITY,
       visibility: { not: PostVisibility.PRIVATE_TO_CIRCL },
       // Applies to REQUEST items only, and defaults to OPEN.
       status: query.status ?? RequestStatus.OPEN,
@@ -242,6 +244,7 @@ export class FeedService {
     return this.database.communityOffer.findMany({
       where: {
         deletedAt: null,
+        ...PUBLIC_VISIBILITY,
         promotedToListingId: null,
         ...(cityId ? { cityId } : {}),
         ...(categories.length ? { categoryCode: { in: categories } } : {}),
@@ -266,6 +269,7 @@ export class FeedService {
     return this.database.communityUpdate.findMany({
       where: {
         deletedAt: null,
+        ...PUBLIC_VISIBILITY,
         ...(cityId ? { cityId } : {}),
         ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
         ...(ranking === 'PERSONALISED' ? { createdAt: { gte: daysAgo(CANDIDATE_DAYS) } } : {}),
@@ -285,6 +289,7 @@ export class FeedService {
     return this.database.guide.findMany({
       where: {
         deletedAt: null,
+        ...PUBLIC_VISIBILITY,
         publishedAt: { not: null },
         ...(cityId ? { OR: [{ cityId }, { cityId: null }] } : {}),
       },
@@ -466,7 +471,10 @@ export class FeedService {
 
     const [offers, likes, bookmarks, guideLikes] = await Promise.all([
       requestIds.length
-        ? this.database.requestResponse.findMany({
+        ? // visibility: the viewer's own help offers, to mark the cards they have already answered.
+          // Not a read of anybody else's content, so a visibility filter would only hide the
+          // viewer's own row from themselves.
+          this.database.requestResponse.findMany({
             where: {
               requestId: { in: requestIds },
               authorId: viewerId,

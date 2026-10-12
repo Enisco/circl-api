@@ -25,6 +25,17 @@ export interface BreakdownOptions {
    */
   total?: number;
   unit?: BreakdownChart['unit'];
+  /**
+   * Whether the values can meaningfully be added together. Default true.
+   *
+   * False for a breakdown of a **measure** rather than a count — a median response time per
+   * profession, say. Summing medians gives a number that means nothing, and dividing by it gives a
+   * "share" of minutes: "Finance & Accounting: 280 minutes, 32% of the total" invites a reader to
+   * conclude that finance takes up a third of everybody's waiting, which is not a statement the
+   * data supports. With this false the chart reports no total and no shares, and the bars are read
+   * against each other as the magnitudes they are.
+   */
+  additive?: boolean;
 }
 
 const UNKNOWN_KEY = 'UNKNOWN';
@@ -46,35 +57,51 @@ export const toBreakdown = (rows: CountedRow[], options: BreakdownOptions = {}):
     counts.set(key, (counts.get(key) ?? 0) + Number(row.total));
   }
 
+  const bySize = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([key]) => key);
+
+  // Which groups get named is always decided by **size**, even when a vocabulary supplies an
+  // order: `other` has to be the small groups, or it is a bucket holding whatever happened to be
+  // late in the list. The order is then applied to the ones that survived.
+  const named = options.top ? bySize.slice(0, options.top) : bySize;
+  const dropped = options.top ? bySize.slice(options.top) : [];
+
   // A vocabulary's own order, with the values it defines kept even at zero: a journey stage nobody
   // has selected is information, and a bar chart that silently drops it reads as though the stage
-  // does not exist.
-  const keys = options.order
-    ? [...options.order, ...[...counts.keys()].filter(key => !options.order!.includes(key))]
-    : [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([key]) => key);
+  // does not exist. Anything the vocabulary does not know about follows, largest first, so the
+  // order is deterministic rather than whatever the query returned.
+  const ordered = options.order
+    ? [
+        ...options.order.filter(key => !options.top || named.includes(key)),
+        ...named.filter(key => !options.order!.includes(key)),
+      ]
+    : named;
 
-  const named = options.top ? keys.slice(0, options.top) : keys;
-  const dropped = options.top ? keys.slice(options.top) : [];
-
+  const additive = options.additive !== false;
   const sum = [...counts.values()].reduce((running, value) => running + value, 0);
-  const total = options.total ?? sum;
+  const total = additive ? (options.total ?? sum) : null;
   const other = dropped.reduce((running, key) => running + (counts.get(key) ?? 0), 0);
+
+  // `other` is omitted where the denominator was overridden, which is the multi-valued case.
+  // A member holding four interests is counted in four groups, so a sum of the dropped groups is
+  // not a quantity comparable to a member count — it can exceed the total outright, and a bar
+  // reading "other: 120 of 80 members" is worse than no bar.
+  const comparable = options.total === undefined;
 
   return {
     kind: 'breakdown',
     unit: options.unit ?? 'members',
     total,
-    items: named.map(key => {
+    items: ordered.map(key => {
       const value = counts.get(key) ?? 0;
 
       return {
         key,
         label: labelFor(key, options),
         value,
-        share: total > 0 ? Math.round((value / total) * 10_000) / 10_000 : null,
+        share: total !== null && total > 0 ? Math.round((value / total) * 10_000) / 10_000 : null,
       };
     }),
-    ...(dropped.length ? { other } : {}),
+    ...(dropped.length && comparable && additive ? { other } : {}),
   };
 };
 

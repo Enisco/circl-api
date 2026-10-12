@@ -38,6 +38,7 @@ const ALL_ADMIN_PERMISSIONS = [
   'guard:read',
   'guard:manage',
   'risk_terms:manage',
+  'professions:gate',
   'support:read',
   'support:manage',
   'managed:manage',
@@ -96,6 +97,10 @@ const defaultRoles: RoleData[] = [
       'guard:read',
       'guard:manage',
       'risk_terms:manage',
+      // §2.9: T&S decides which professions are gated. The same judgement as the risk lexicon, and
+      // the reason this is its own permission rather than `config:taxonomy` — which they do not
+      // hold, and which would have come with every other vocabulary attached.
+      'professions:gate',
       // Read-only on managed work, so an escalation can be understood without being acted on.
       'support:read',
       'disputes:manage',

@@ -1,3 +1,4 @@
+export * from './dev-otp.constant';
 export * from './api-error-code.constant';
 export * from './event.constant';
 export * from './notification.constant';

@@ -112,8 +112,7 @@ const REQUESTS: SeedRequest[] = [
     author: 9,
     categoryCode: 'AIRPORT_PICKUP',
     title: 'Anyone driving near Manchester Airport on the 14th?',
-    description:
-      'My sister lands at 6am and the trams do not run that early. Happy to cover fuel.',
+    description: 'My sister lands at 6am and the trams do not run that early. Happy to cover fuel.',
     hoursAgo: 50,
     status: 'OPEN',
   },
@@ -184,7 +183,12 @@ const REQUESTS: SeedRequest[] = [
     status: 'OPEN',
     hasPhoto: true,
     replies: [
-      { author: 4, content: 'I can do Saturday morning. Sent you a message.', isHelpOffer: true, hoursAgo: 66 },
+      {
+        author: 4,
+        content: 'I can do Saturday morning. Sent you a message.',
+        isHelpOffer: true,
+        hoursAgo: 66,
+      },
     ],
   },
   // B.3: aggregate rows are suppressed below a floor of 3, so activity spread one-per-category
@@ -390,7 +394,12 @@ interface SeedGroup {
   rules: string[];
   createdBy: number;
   daysAgo: number;
-  members: Array<{ user: number; isAdmin?: boolean; state?: 'MEMBER' | 'ADMIN' | 'PENDING'; daysAgo: number }>;
+  members: Array<{
+    user: number;
+    isAdmin?: boolean;
+    state?: 'MEMBER' | 'ADMIN' | 'PENDING';
+    daysAgo: number;
+  }>;
   /** The group's chat, which is the part that makes a group a group (1.7.7). */
   chat: Array<{ from: number; body: string; hoursAgo: number }>;
   posts: Array<{
@@ -433,10 +442,22 @@ const GROUPS: SeedGroup[] = [
       { from: 6, body: 'Anyone driving to London Saturday? Happy to share petrol.', hoursAgo: 260 },
       { from: 3, body: 'I am, leaving about seven from Fallowfield.', hoursAgo: 256 },
       { from: 1, body: 'Two of us would take you up on that if there is room.', hoursAgo: 252 },
-      { from: 5, body: 'Save me a seat on the way back if anyone is returning Sunday.', hoursAgo: 200 },
-      { from: 6, body: 'Room for three. I will put the address in here Friday night.', hoursAgo: 120 },
+      {
+        from: 5,
+        body: 'Save me a seat on the way back if anyone is returning Sunday.',
+        hoursAgo: 200,
+      },
+      {
+        from: 6,
+        body: 'Room for three. I will put the address in here Friday night.',
+        hoursAgo: 120,
+      },
       { from: 4, body: 'This group is the only reason I know how to get anywhere.', hoursAgo: 30 },
-      { from: 3, body: 'Address is *14 Wilmslow Road* — outside the chemist, seven sharp.', hoursAgo: 6 },
+      {
+        from: 3,
+        body: 'Address is *14 Wilmslow Road* — outside the chemist, seven sharp.',
+        hoursAgo: 6,
+      },
     ],
     posts: [
       {
@@ -447,14 +468,19 @@ const GROUPS: SeedGroup[] = [
           'the trip if you have been going to the small one in town.',
         hoursAgo: 100,
         replies: [
-          { author: 1, content: 'I go most Saturdays, happy to show you where it is.', hoursAgo: 98 },
+          {
+            author: 1,
+            content: 'I go most Saturdays, happy to show you where it is.',
+            hoursAgo: 98,
+          },
           { author: 5, content: 'Parking is easier round the back.', hoursAgo: 90 },
         ],
       },
       {
         label: 'schools',
         author: 3,
-        content: 'Has anyone applied mid-year for a Year 4 place? Trying to work out how long it takes.',
+        content:
+          'Has anyone applied mid-year for a Year 4 place? Trying to work out how long it takes.',
         hoursAgo: 26,
         replies: [],
       },
@@ -483,8 +509,16 @@ const GROUPS: SeedGroup[] = [
     chat: [
       { from: 1, body: 'Welcome to the four of you who joined this week.', hoursAgo: 320 },
       { from: 2, body: 'Thank you. Is there a bus that goes past the hospital?', hoursAgo: 312 },
-      { from: 1, body: 'The 42 and the 142. Get a Beeline pass, it pays for itself in a week.', hoursAgo: 300 },
-      { from: 4, body: 'Seconding the pass. I wasted about forty pounds before anyone told me.', hoursAgo: 220 },
+      {
+        from: 1,
+        body: 'The 42 and the 142. Get a Beeline pass, it pays for itself in a week.',
+        hoursAgo: 300,
+      },
+      {
+        from: 4,
+        body: 'Seconding the pass. I wasted about forty pounds before anyone told me.',
+        hoursAgo: 220,
+      },
       { from: 2, body: 'Noted. And where do people register with a GP round here?', hoursAgo: 120 },
       { from: 1, body: 'There is a guide in the Guides tab for exactly that one.', hoursAgo: 100 },
       { from: 4, body: 'It is the one I used. Took twenty minutes.', hoursAgo: 26 },
@@ -493,16 +527,24 @@ const GROUPS: SeedGroup[] = [
       {
         label: 'buses',
         author: 2,
-        content: 'Is there one app that actually works for the buses here, or is it different per company?',
+        content:
+          'Is there one app that actually works for the buses here, or is it different per company?',
         hoursAgo: 20,
-        replies: [{ author: 1, content: 'Bee Network for the buses and trams. The rest you can ignore.', hoursAgo: 18 }],
+        replies: [
+          {
+            author: 1,
+            content: 'Bee Network for the buses and trams. The rest you can ignore.',
+            hoursAgo: 18,
+          },
+        ],
       },
     ],
   },
   {
     label: 'london-west-african',
     name: 'West African London',
-    description: 'South London mostly, but everyone is welcome. Food, church, and where to get your hair done.',
+    description:
+      'South London mostly, but everyone is welcome. Food, church, and where to get your hair done.',
     cityId: 'LONDON',
     joinPolicy: 'OPEN',
     visibility: 'OPEN',
@@ -515,12 +557,28 @@ const GROUPS: SeedGroup[] = [
       { user: 8, daysAgo: 90 },
     ],
     chat: [
-      { from: 7, body: 'Does anyone know a plumber south of the river who answers the phone?', hoursAgo: 420 },
-      { from: 8, body: 'The one on Rye Lane. Ask for Kwame, say you are from here.', hoursAgo: 412 },
+      {
+        from: 7,
+        body: 'Does anyone know a plumber south of the river who answers the phone?',
+        hoursAgo: 420,
+      },
+      {
+        from: 8,
+        body: 'The one on Rye Lane. Ask for Kwame, say you are from here.',
+        hoursAgo: 412,
+      },
       { from: 7, body: 'Rang him, he is coming Thursday. Thank you.', hoursAgo: 380 },
       { from: 8, body: 'He did my boiler in January and did not overcharge me.', hoursAgo: 370 },
-      { from: 7, body: 'Good to know. I will put his number in the rules so it stops getting asked.', hoursAgo: 300 },
-      { from: 8, body: 'Church is at eleven on Sunday if anyone new wants to come along.', hoursAgo: 20 },
+      {
+        from: 7,
+        body: 'Good to know. I will put his number in the rules so it stops getting asked.',
+        hoursAgo: 300,
+      },
+      {
+        from: 8,
+        body: 'Church is at eleven on Sunday if anyone new wants to come along.',
+        hoursAgo: 20,
+      },
     ],
     posts: [
       {
@@ -725,7 +783,8 @@ export const seedCommunity = async (ctx: DemoSeedContext) => {
           joinedAt,
           decidedAt: joinedAt,
           // Behind the newest post on one member, so the unread dot on the pill has somewhere to show.
-          lastReadAt: member.user === 1 && group.label === 'manchester-nigerians' ? daysAgo(2) : joinedAt,
+          lastReadAt:
+            member.user === 1 && group.label === 'manchester-nigerians' ? daysAgo(2) : joinedAt,
         },
       });
 

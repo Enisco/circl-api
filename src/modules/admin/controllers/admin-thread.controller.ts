@@ -27,6 +27,16 @@ import { AdminPermissions, AdminPrincipal } from '../common/admin-principal';
 import { AuditService } from '../audit/audit.service';
 
 /**
+ * How long one recorded read covers.
+ *
+ * The key carries the calendar date, so the window is "today" in the ordinary sense rather than a
+ * rolling 24 hours — somebody reading a case at 23:55 and again at 00:05 has read it on two days,
+ * and the trail should say so. The TTL is a day and a bit, so a key cannot outlive the date it
+ * names and silently suppress tomorrow's first read.
+ */
+const THREAD_READ_WINDOW_SECONDS = 26 * 3600;
+
+/**
  * Staff replies in Guard cases and support threads.
  *
  * Here because member authentication now refuses staff accounts, and staff used to reply by
@@ -69,14 +79,20 @@ export class AdminThreadController {
     // a case whose assignee is away must still be readable by their colleagues.
     const result = await this.messages.pageWithoutAuthorisation(actor.id, conversationId, query);
 
-    // One entry per page read, naming the conversation. Reading somebody's private disclosure is
-    // an act, and an act that leaves no trace is one nobody can be asked about.
-    await this.audit.note({
-      action: 'thread.read',
-      targetType: 'CONVERSATION',
-      targetId: conversationId,
-      metadata: { guardThreadId: id, messages: result.data?.length ?? 0 },
-    });
+    // Reading somebody's private disclosure is an act, and an act that leaves no trace is one
+    // nobody can be asked about. But the portal polls this every thirty seconds, so one entry per
+    // request is thousands a day per staff member per case — a trail in which every genuine act is
+    // buried, which is the same as not having one. §5.12: once per staff member per case per day.
+    await this.audit.noteOncePer(
+      `audit:guard-read:${actor.id}:${id}:${new Date().toISOString().slice(0, 10)}`,
+      THREAD_READ_WINDOW_SECONDS,
+      {
+        action: 'guard.thread_read',
+        targetType: 'CONVERSATION',
+        targetId: conversationId,
+        metadata: { guardThreadId: id, messages: result.data?.length ?? 0 },
+      },
+    );
 
     return { ...result, message: SuccessMessage.RESOURCE_FETCHED('Messages') };
   }
@@ -129,12 +145,18 @@ export class AdminThreadController {
 
     const result = await this.messages.pageWithoutAuthorisation(actor.id, conversationId, query);
 
-    await this.audit.note({
-      action: 'thread.read',
-      targetType: 'CONVERSATION',
-      targetId: conversationId,
-      metadata: { messages: result.data?.length ?? 0 },
-    });
+    // Throttled for the same reason as the Guard thread above: the support inbox polls too, and
+    // the entry that matters is "this person read this thread today", not each refresh of it.
+    await this.audit.noteOncePer(
+      `audit:support-read:${actor.id}:${conversationId}:${new Date().toISOString().slice(0, 10)}`,
+      THREAD_READ_WINDOW_SECONDS,
+      {
+        action: 'thread.read',
+        targetType: 'CONVERSATION',
+        targetId: conversationId,
+        metadata: { messages: result.data?.length ?? 0 },
+      },
+    );
 
     return { ...result, message: SuccessMessage.RESOURCE_FETCHED('Messages') };
   }

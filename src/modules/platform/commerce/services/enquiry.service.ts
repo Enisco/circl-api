@@ -15,7 +15,14 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { addDays, ApiErrorCode, ApiException, buildPageMeta, money } from '@/common';
-import { ActivityService, authorSelect, MediaService, toAuthorView } from '../../shared';
+import {
+  ActivityService,
+  authorSelect,
+  isReachable,
+  MediaService,
+  PUBLIC_VISIBILITY,
+  toAuthorView,
+} from '../../shared';
 import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
 import { NotificationFeedService } from '../../notifications';
 import { CreateEnquiryDto, ListEnquiriesDto, ValidateCartDto } from '../dtos/store.dto';
@@ -55,8 +62,10 @@ export class EnquiryService {
 
   /** The cart is client-side and in memory (D20), so an item that changes price or sells out while it sits there is caught here rather than at enquiry time. */
   async validateCart(dto: ValidateCartDto) {
+    // A held item cannot be bought while it is under review, so it validates as unavailable
+    // rather than as missing: the buyer is told the shop cannot sell it, which is true.
     const items = await this.database.storeItem.findMany({
-      where: { id: { in: dto.lines.map(line => line.itemId) } },
+      where: { id: { in: dto.lines.map(line => line.itemId) }, ...PUBLIC_VISIBILITY },
       select: {
         id: true,
         name: true,
@@ -108,12 +117,19 @@ export class EnquiryService {
   // ─── 4.7.1 Create ──────────────────────────────────────────────────────────
 
   async create(buyerId: string, dto: CreateEnquiryDto) {
+    // visibility: the shop an enquiry is for. Whether it may trade is decided below.
     const store = await this.database.store.findUnique({
       where: { id: dto.storeId },
       include: { owner: { select: { id: true } } },
     });
 
     if (!store || store.deletedAt) {
+      throw ApiException.notFound('That store could not be found.', ApiErrorCode.STORE_NOT_FOUND);
+    }
+
+    // A shop under review is not trading (§6.5). Refused with the same 404 the shop page gives,
+    // so a stale cart cannot be turned into an order against it.
+    if (!isReachable(store.visibilityState)) {
       throw ApiException.notFound('That store could not be found.', ApiErrorCode.STORE_NOT_FOUND);
     }
 
@@ -159,8 +175,14 @@ export class EnquiryService {
     }
 
     // The server re-prices every line from the catalogue and never trusts a price sent by the client (4.6.1).
+    // Re-priced from the catalogue a buyer may actually buy from, so a held line fails the
+    // availability check below rather than being quietly priced and ordered.
     const items = await this.database.storeItem.findMany({
-      where: { id: { in: dto.lines.map(line => line.itemId) }, storeId: store.id },
+      where: {
+        id: { in: dto.lines.map(line => line.itemId) },
+        storeId: store.id,
+        ...PUBLIC_VISIBILITY,
+      },
     });
     const byId = new Map(items.map(item => [item.id, item] as const));
 
@@ -298,6 +320,7 @@ export class EnquiryService {
     const role = query.role ?? 'BUYER';
 
     if (role === 'SELLER') {
+      // visibility: the caller's own shop, to decide whether they have a seller's view at all.
       const store = await this.database.store.findUnique({
         where: { ownerId: userId },
         select: { id: true },

@@ -16,6 +16,13 @@ model Media {
   mimeType String @map("mime_type")
   byteSize Int    @map("byte_size")
 
+  /// The name the member's device gave the file, for display only (§2.9 documents).
+  ///
+  /// Never used to build a key, serve a path or pick a handler: a filename is attacker-controlled
+  /// text that happens to arrive next to a file. The key is minted server-side and the type comes
+  /// from the bytes. This exists so a reviewer sees "RICS-certificate.pdf" rather than a uuid.
+  fileName String? @map("file_name")
+
   /// The object key, and the only durable reference to the bytes (0.11.2).
   storageKey String @unique @map("storage_key")
 
@@ -38,6 +45,19 @@ model Media {
   durationMs Int?  @map("duration_ms")
   waveform   Json? @map("waveform") // up to 40 floats, 0..1
 
+  /// PDFs only, read from the page tree after upload. Null when it could not be read: a page count
+  /// is a convenience for the reviewer, and guessing one is worse than leaving it blank.
+  pageCount Int? @map("page_count")
+
+  /// When this file stopped being part of the current submission (§2.9 retention).
+  ///
+  /// A professional listing's documents are replaced as a whole on each resubmission, and the ones
+  /// that were dropped are kept for ninety days after the decision they informed — long enough for
+  /// an appeal to be about the evidence that was actually looked at. Superseded rows stay attached
+  /// to their listing so the trail holds; they are simply no longer the current submission, and
+  /// `retention.purge-documents` deletes them when the window closes.
+  supersededAt DateTime? @map("superseded_at") @db.Timestamptz
+
   // Polymorphic attachment. Null until the media is used by a post.
   ownerType String? @map("owner_type")
   ownerId   String? @map("owner_id")
@@ -50,6 +70,10 @@ model Media {
 
   messageAttachments MessageAttachment[]
   aiDrafts           AiItemDraft[]
+
+  /// Set when image moderation holds an avatar or a photo (§4.5). Separate from `scanStatus`,
+  /// which is about malware: a file can be clean and still not be publishable.
+  moderationState ContentVisibilityState @default(VISIBLE) @map("moderation_state")
 
   @@index([uploadedById])
   @@index([ownerType, ownerId, position])

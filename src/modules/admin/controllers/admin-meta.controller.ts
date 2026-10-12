@@ -1,5 +1,6 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
-import { ApiExcludeController, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { ApiExcludeController, ApiOperation, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
+import { IsIn } from 'class-validator';
 import {
   AdminReasonCode,
   ModerationDecision,
@@ -15,8 +16,15 @@ import { AdminJwtGuard } from '@/common/guards/admin-jwt.guard';
 import { SuccessMessage } from '@/common';
 import { AdminBffGuard } from '../common/admin-bff.guard';
 import { AdminPermissionGuard } from '../common/admin-permission.guard';
-import { AdminAuthenticated } from '../common/admin-principal';
+import { AdminAnyPermission, AdminAuthenticated } from '../common/admin-principal';
 import { auditActionList } from '../audit/audit-actions';
+import { ASSIGNEE_QUEUES, AdminAssigneeService } from '../services/admin-assignee.service';
+
+class AssigneeQueryDto {
+  @ApiPropertyOptional({ enum: ASSIGNEE_QUEUES, description: 'Which queue the work sits in.' })
+  @IsIn(ASSIGNEE_QUEUES)
+  for!: string;
+}
 
 /** Which rule a `POLICY_VIOLATION` was. Free codes rather than an enum: the list will grow. */
 const POLICY_SUBTYPES = [
@@ -54,6 +62,8 @@ const codes = (values: readonly string[]) => values.map(code => ({ code, label: 
 @Controller('admin/meta')
 @UseGuards(AdminBffGuard, AdminJwtGuard, AdminPermissionGuard)
 export class AdminMetaController {
+  constructor(private readonly assignees: AdminAssigneeService) {}
+
   @Get('reason-codes')
   @AdminAuthenticated()
   @ApiOperation({ summary: 'Reason codes, and the policy subtypes behind POLICY_VIOLATION' })
@@ -89,6 +99,28 @@ export class AdminMetaController {
       },
       message: SuccessMessage.RESOURCE_FETCHED('Enums'),
     };
+  }
+
+  /**
+   * Who a queue's work can be given to (§5.27).
+   *
+   * Opens on the **read** permissions so Trust & Safety and Support can fill an assignee dropdown
+   * without `team:read` — the alternative was handing every moderator the staff directory, with
+   * its names, roles, sessions and invite state, to populate one select.
+   */
+  @Get('assignees')
+  @AdminAnyPermission('moderation:read', 'guard:read', 'support:read')
+  @ApiOperation({
+    summary: 'The staff a piece of work can be assigned to',
+    description:
+      'Keyed on who can **act** on the queue, not who can see it: assigning a thread to somebody ' +
+      'who can only read it puts it in a queue they cannot clear and stops it reading as ' +
+      'unassigned to everybody else. Deactivated accounts are left out for the same reason.',
+  })
+  async assigneesFor(@Query() query: AssigneeQueryDto) {
+    const data = await this.assignees.forQueue(query.for);
+
+    return { data, message: SuccessMessage.RESOURCE_FETCHED('Assignees') };
   }
 
   @Get('audit-actions')

@@ -96,6 +96,26 @@ enum UserAccountStatus {
 // ─── Taxonomy ────────────────────────────────────────────────────────────────
 // One table, many vocabularies. `kind` selects the list.
 
+/// Where a Guard case came from (§5.12).
+///
+/// Stored rather than derived. After the fact the only clues are the category and the first
+/// message, and both are written by whoever opened it — so a case raised by staff off a report
+/// reads exactly like one a member started. Staff triage differently depending on which it is: a
+/// member asking for help is a conversation, and a case opened off a scan is an intervention
+/// nobody asked for.
+enum GuardCaseSource {
+  /// The member opened it themselves (§6.3.1).
+  MEMBER
+  /// A content scan raised it (§6.5).
+  AUTO_CONTENT
+  /// A message scan raised it (§6.8.1).
+  AUTO_MESSAGE
+  /// Staff escalated a report case to Guard.
+  REPORT
+  /// Staff escalated something else — a queue item, or an escalation record.
+  ESCALATION
+}
+
 enum TaxonomyKind {
   COMMUNITY_CATEGORY
   GUIDE_TOPIC
@@ -313,7 +333,19 @@ enum ReportTargetType {
   STORE
   STORE_ITEM
   CONNECT_PROFILE
+  /// One photo post on a Connect profile (§3.9), scanned for its caption.
+  CONNECT_POST
   PROFESSIONAL_LISTING
+  /// One service off a listing: its name and description are published copy (§6.1).
+  PROFESSIONAL_SERVICE
+  /// A review somebody wrote about somebody else, and the subject's one reply.
+  REVIEW
+  /// The written part of a member's profile — bio, headline, what they can help with. The member
+  /// is `USER`; this is the paragraph, which can be held without hiding the person (§4.5).
+  USER_PROFILE
+  /// One image with no content of its own to be part of: an avatar (§6.1). Every other photo is
+  /// scanned as part of the post it belongs to, whose verdict holds it.
+  MEDIA
   USER
 }
 
@@ -331,6 +363,44 @@ enum ReportReason {
   OTHER
 }
 
+/// §5.11. `WITHDRAWN` is the member changing their mind, which is theirs to do and not a staff
+/// decision — so it is a state rather than an outcome.
+enum AppealState {
+  OPEN
+  IN_REVIEW
+  UPHELD
+  OVERTURNED
+  WITHDRAWN
+}
+
+/// What is being appealed. Four of these point at a decision somebody took; `ANONYMOUS_REJECTION`
+/// points at content that was refused before it was ever published (§7.4).
+enum AppealSubjectType {
+  REPORT_CASE
+  STRIKE
+  SUSPENSION
+  CONTENT_DECISION
+  ANONYMOUS_REJECTION
+}
+
+/// How quickly a report case has to be looked at (§7.1). The SLA per level is configuration
+/// (`reports.slaMinutes`), because an hour is a staffing decision rather than a schema one.
+enum ReportCasePriority {
+  URGENT
+  HIGH
+  NORMAL
+}
+
+/// §7.2's state machine. `ESCALATED` means it went to Guard, which is a different workflow with a
+/// different outcome, so the case stops here rather than being closed on Guard's behalf.
+enum ReportCaseState {
+  OPEN
+  IN_REVIEW
+  ACTIONED
+  DISMISSED
+  ESCALATED
+}
+
 enum ReportState {
   RECEIVED
   TRIAGED
@@ -345,6 +415,19 @@ enum ModerationDecision {
   WARN_AUTHOR
   SUSPEND_AUTHOR
   NO_ACTION
+  /// Publish a LIMITED item: the reach was the only thing held back, so there is nothing to
+  /// approve, only to restore (§5.9).
+  RESTORE_REACH
+  /// Remove, and tell the author why, with a strike (§5.10). Two effects named as one decision,
+  /// because a reviewer picks an outcome rather than assembling one.
+  REMOVE_AND_WARN
+  REMOVE_AND_SUSPEND
+  /// Not a moderation outcome at all: the case belongs to safeguarding, and Guard answers it.
+  ESCALATE_GUARD
+  /// Staff hiding and unhiding content from the content page (§5.7), as distinct from removing
+  /// it: the row stays, its visibility changes.
+  HIDE_CONTENT
+  RESTORE_CONTENT
 }
 
 enum ModerationQueueType {
@@ -353,6 +436,16 @@ enum ModerationQueueType {
   GUARD_RISK
   AUTO_GUIDE
   MANAGED_REQUEST
+  /// Content a scan held or limited, waiting for a human (§6). The queue's own producer: nobody
+  /// reported this and nobody is accused of anything — a scanner thought it was worth a look.
+  FLAGGED_CONTENT
+  /// A professional listing in a gated category, waiting for approval before anybody can find it
+  /// (§2.9). Not `FLAGGED_CONTENT`: nothing is wrong with it, and a reviewer is answering "may
+  /// this person offer immigration advice here", not "did this break a rule".
+  PROFESSIONAL_REVIEW
+  /// A member arguing with a decision (§5.11). The item is the reviewer's way in; the `Appeal`
+  /// row is where the member's words and R6's original decider live.
+  APPEAL
 }
 
 enum ModerationQueueState {
@@ -423,6 +516,23 @@ enum ExperienceLevel {
   BEGINNER
   MID_LEVEL
   EXPERT
+}
+
+/// Whether a human has approved this listing to be offered at all (§2.9).
+///
+/// Deliberately **not** `ListingVerificationStatus`, which answers a different question and must
+/// keep answering it: verification is "we checked a credential" and prints a trust badge, and D13
+/// is explicit that Circl checks none yet. This is "somebody read this listing and allowed it",
+/// which is a far weaker claim and the only one the platform can honestly make. Conflating them
+/// would put a Verified badge on a profile nobody verified.
+///
+/// `NOT_REQUIRED` is the common case: most professions are not gated, and a listing that never
+/// needed approving should not read as one that is still waiting for it.
+enum ListingReviewState {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum ListingVerificationStatus {
@@ -831,4 +941,87 @@ enum NoteSubjectType {
   BRIEF
   DEAL
   ESCALATION
+}
+
+/// What a staff export is of (§5.26). One row per kind the portal can ask for, even where the
+/// list behind it is not built yet: the enum is the contract, and a kind that is refused at
+/// request time is a clearer answer than a kind the portal cannot name.
+enum AdminExportKind {
+  MEMBERS
+  AUDIT
+  REPORTS
+  ENFORCEMENT
+  CONTENT
+  SUPPORT_THREADS
+  /// Reserved. Chart CSVs are produced in the browser from the payload the staff member already
+  /// has, so no new data leaves the API (§5.26); the kind exists so the portal's audit event and
+  /// this enum agree about what a chart download is called.
+  ANALYTICS_CHART
+}
+
+/// Where an export has got to. `EXPIRED` is the file going away after seven days (S12.2), not the
+/// row: the row is kept a year, because "who exported every member's email address in March" is a
+/// question the trail has to be able to answer.
+enum AdminExportState {
+  QUEUED
+  RUNNING
+  READY
+  FAILED
+  EXPIRED
+}
+
+/// How risky a piece of content scored (§6.3). The tiers are the thresholds staff tune in
+/// `SystemConfig`, not constants in code: a lexicon that cannot be retuned without a deploy is one
+/// nobody retunes.
+enum ContentRiskTier {
+  CLEAN
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+/// Whether the public can see a piece of content, and if not, how far it is hidden (§6.5).
+///
+/// Deliberately not a boolean, and deliberately not the same thing as removal: staff removal stays
+/// `deletedAt`, because "removed" is a decision and these are states a scan or an approval queue
+/// puts content into. The difference between LIMITED and HELD is the one members feel — a limited
+/// post is still on its author's profile and reachable by link, a held one is not visible to
+/// anybody but its author, who is told it is under review.
+enum ContentVisibilityState {
+  VISIBLE
+  /// Medium tier: out of feeds, search, Pulse and recommendations; still on the author's profile
+  /// and at a direct link.
+  LIMITED
+  /// High or critical, or a staff hide: not public at all. The author sees "under review".
+  HELD
+  /// An anonymous post waiting for Trust & Safety (§7.4).
+  PENDING_APPROVAL
+  /// Rejected — an anonymous post refused, or a held item turned down. The author sees why.
+  REJECTED
+}
+
+/// How far a scan got. `DEGRADED` is the honest one: the lexicon ran and the classifier did not,
+/// so the verdict stands on half the evidence and `safety.rescan-degraded` will try again (§6.7).
+enum ContentScanStatus {
+  PENDING
+  COMPLETE
+  DEGRADED
+  FAILED
+}
+
+enum ContentScanTrigger {
+  CREATE
+  EDIT
+  RESCAN
+  REPORT
+  MANUAL
+}
+
+/// What a reviewer's decision said about a term that matched. This is how a lexicon gets better:
+/// a term whose hits are mostly `FALSE_POSITIVE` is a term that is costing staff time.
+enum RiskTermHitOutcome {
+  PENDING
+  CONFIRMED
+  FALSE_POSITIVE
 }

@@ -4,7 +4,14 @@ import { ApiErrorCode, ApiException } from '@/common';
 import { AnalyticsRunnerService } from '../analytics/analytics-runner.service';
 import { AnalyticsResponse, Chart } from '../analytics/chart.types';
 import { DemographicsAnalytics } from '../analytics/demographics.analytics';
+import { CommerceAnalytics } from '../analytics/commerce.analytics';
 import { CommunityAnalytics } from '../analytics/community.analytics';
+import { ConnectAnalytics } from '../analytics/connect.analytics';
+import { DealsAnalytics } from '../analytics/deals.analytics';
+import { ProfessionalsAnalytics } from '../analytics/professionals.analytics';
+import { SafetyAnalytics } from '../analytics/safety.analytics';
+import { SearchAnalytics } from '../analytics/search.analytics';
+import { SupportAnalytics } from '../analytics/support.analytics';
 import { GrowthAnalytics } from '../analytics/growth.analytics';
 import { OverviewAnalytics } from '../analytics/overview.analytics';
 import { suppressEverything } from '../analytics/suppression';
@@ -12,8 +19,15 @@ import { AdminPrincipal } from '../common/admin-principal';
 import { AnalyticsFilterDto } from '../dtos/analytics-filter.dto';
 import {
   AnalyticsTab,
+  CommerceFilters,
   CommunityFilters,
+  ConnectFilters,
+  DealFilters,
   PopulationMode,
+  ProfessionalFilters,
+  SafetyFilters,
+  SearchFilters,
+  SupportFilters,
   TAB_PERMISSIONS,
 } from '../dtos/admin-analytics.dto';
 import { MemberFilterBuilder } from '../filters/member-filter.builder';
@@ -36,6 +50,13 @@ export class AdminAnalyticsService {
     'growth',
     'demographics',
     'community',
+    'professionals',
+    'connect',
+    'commerce',
+    'deals',
+    'search',
+    'trust-safety',
+    'support',
   ]);
 
   constructor(
@@ -45,6 +66,13 @@ export class AdminAnalyticsService {
     private readonly demographics: DemographicsAnalytics,
     private readonly growth: GrowthAnalytics,
     private readonly community: CommunityAnalytics,
+    private readonly deals: DealsAnalytics,
+    private readonly connect: ConnectAnalytics,
+    private readonly commerce: CommerceAnalytics,
+    private readonly professionals: ProfessionalsAnalytics,
+    private readonly search: SearchAnalytics,
+    private readonly safety: SafetyAnalytics,
+    private readonly support: SupportAnalytics,
   ) {}
 
   async tab(
@@ -53,7 +81,14 @@ export class AdminAnalyticsService {
     dto: AnalyticsFilterDto,
     only?: string[],
     population: PopulationMode = 'all',
-    extra: CommunityFilters = {},
+    extra: CommunityFilters &
+      DealFilters &
+      ConnectFilters &
+      CommerceFilters &
+      ProfessionalFilters &
+      SearchFilters &
+      SafetyFilters &
+      SupportFilters = {},
   ): Promise<{ data: AnalyticsResponse; meta: Record<string, unknown> }> {
     this.assertMayRead(actor, tab);
 
@@ -73,7 +108,24 @@ export class AdminAnalyticsService {
           ? this.growth.charts(filter, range, dto)
           : tab === 'community'
             ? this.community.charts(filter, range, { ...extra, cityIds: dto.cityIds })
-            : this.overview.charts(filter, range);
+            : tab === 'deals'
+              ? this.deals.charts(filter, range, extra)
+              : tab === 'connect'
+                ? this.connect.charts(filter, range, extra)
+                : tab === 'commerce'
+                  ? this.commerce.charts(filter, range, { ...extra, cityIds: dto.cityIds })
+                  : tab === 'professionals'
+                    ? this.professionals.charts(filter, range, {
+                        ...extra,
+                        cityIds: dto.cityIds,
+                      })
+                    : tab === 'search'
+                      ? this.search.charts(filter, range, { ...extra, cityIds: dto.cityIds })
+                      : tab === 'trust-safety'
+                        ? this.safety.charts(filter, range, extra)
+                        : tab === 'support'
+                          ? this.support.charts(filter, range, extra)
+                          : this.overview.charts(filter, range);
 
     // `charts=` lets the portal lazy-load a tab and re-fetch one chart when its own date selector
     // moves. An unknown id is refused rather than ignored: a chart the portal asked for and did
@@ -126,6 +178,13 @@ export class AdminAnalyticsService {
           // narrows the content's own city rather than the author's, and a reader comparing two
           // tabs has no other way to know which (§2.5).
           ...(tab === 'community' ? { filterSemantics: CommunityAnalytics.FILTER_SEMANTICS } : {}),
+          ...(tab === 'commerce' ? { filterSemantics: CommerceAnalytics.FILTER_SEMANTICS } : {}),
+          ...(tab === 'professionals'
+            ? { filterSemantics: ProfessionalsAnalytics.FILTER_SEMANTICS }
+            : {}),
+          ...(tab === 'search' ? { filterSemantics: SearchAnalytics.FILTER_SEMANTICS } : {}),
+          ...(tab === 'trust-safety' ? { filterSemantics: SafetyAnalytics.FILTER_SEMANTICS } : {}),
+          ...(tab === 'support' ? { filterSemantics: SupportAnalytics.FILTER_SEMANTICS } : {}),
           cache,
           ...(narrowed ? { populationSuppressed: true } : {}),
         },

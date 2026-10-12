@@ -64,6 +64,28 @@ export class AdminPageOptionsDto {
   }
 
   /**
+   * Aliases, and the reason they have setters at all.
+   *
+   * These two are read-only views of `page` and `perPage` — but they are *declared properties*, so
+   * `whitelist` does not strip them from a query string, and class-transformer assigned straight
+   * onto the getter. `?size=100` on any admin list was a TypeError from inside the validation
+   * pipe: a 500, with "which has only a getter" in the body, for a mistyped query parameter.
+   *
+   * Accepted as aliases rather than refused, so the caller gets the page they asked for. Coerced
+   * because the `@Type(() => Number)` above is on the real field and never runs for these, and a
+   * string `perPage` would then fail `@IsInt` with a message naming a parameter the caller did not
+   * send. Everything else — the minimum, the maximum of 100, the depth limit — still applies,
+   * because this only moves the value onto the field all of that is declared on.
+   */
+  set currentPage(value: number) {
+    this.page = Number(value);
+  }
+
+  set size(value: number) {
+    this.perPage = Number(value);
+  }
+
+  /**
    * Refuses a page so deep that the database would scan everything before it.
    *
    * Told to narrow the filters rather than handed an empty page, because an empty page looks like

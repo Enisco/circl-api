@@ -111,6 +111,28 @@ export class S3Storage extends StorageProvider {
     return url;
   }
 
+  /**
+   * A presigned GET that expires when it is told to, with the save-as name signed in.
+   *
+   * Not cached, unlike `readUrl`: caching a URL whose purpose is to expire would hand the second
+   * caller the first caller's remaining seconds, and every download is audited individually.
+   */
+  downloadUrl(storageKey: string, options: { expiresInSeconds: number; filename: string }): string {
+    return presignGetV4({
+      bucket: this.bucket,
+      region: this.region,
+      key: storageKey,
+      accessKeyId: this.accessKeyId,
+      secretAccessKey: this.secretAccessKey,
+      expiresIn: options.expiresInSeconds,
+      signingDate: new Date(),
+      extraQuery: [
+        ['response-content-disposition', `attachment; filename="${options.filename}"`],
+        ['response-content-type', 'text/csv; charset=utf-8'],
+      ],
+    });
+  }
+
   async put(storageKey: string, body: Buffer, mimeType: string): Promise<void> {
     await this.client.send(
       new PutObjectCommand({

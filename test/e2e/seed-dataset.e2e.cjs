@@ -139,11 +139,22 @@ async function objectExists(url) {
   });
   const bare = seededProfiles.filter(row => row._count.posts === 0).map(row => row.user.email);
 
-  check('every seeded Connect profile has a gallery', seededProfiles.length > 0 && !bare.length, bare);
+  check(
+    'every seeded Connect profile has a gallery',
+    seededProfiles.length > 0 && !bare.length,
+    bare,
+  );
 
-  const seededMembers = await prisma.user.count({ where: { email: { endsWith: '@circl.test' } } });
+  // Members only. The portal's staff accounts are seeded at the same `@circl.test` domain and are
+  // not Connect members: they have no profile, no city and no activity, which is the point of them.
+  const seededMembers = await prisma.user.count({
+    where: { email: { endsWith: '@circl.test' }, isStaff: false },
+  });
 
-  check('and every seeded member has a profile at all', seededProfiles.length === seededMembers, { profiles: seededProfiles.length, members: seededMembers });
+  check('and every seeded member has a profile at all', seededProfiles.length === seededMembers, {
+    profiles: seededProfiles.length,
+    members: seededMembers,
+  });
 
   // A second city with a grid worth scrolling. Manchester keeps its own cohort because the Pulse
   // floor is counted per city, so London needed one of its own rather than a share of that.
@@ -151,13 +162,35 @@ async function objectExists(url) {
   const londonRows = r.body?.data ?? [];
 
   check('London has a grid rather than a handful', londonRows.length >= 12, londonRows.length);
-  check('and all six connection types in it', new Set(londonRows.map(row => row.type?.code)).size === 6, [...new Set(londonRows.map(row => row.type?.code))]);
-  check('with a gallery on every seeded one', londonRows.filter(row => (row.posts ?? []).length === 0).every(row => !/@circl\.test$/.test(row.user?.username ?? '')), londonRows.filter(row => !(row.posts ?? []).length).map(row => row.user?.displayName));
-  check('a tile to draw on the first card', !!londonRows[0]?.posts?.[0]?.items?.[0]?.url, londonRows[0]?.posts?.[0]?.items?.[0]);
-  check('and somebody with a live story in it', londonRows.some(row => row.hasStory), londonRows.filter(row => row.hasStory).length);
+  check(
+    'and all six connection types in it',
+    new Set(londonRows.map(row => row.type?.code)).size === 6,
+    [...new Set(londonRows.map(row => row.type?.code))],
+  );
+  check(
+    'with a gallery on every seeded one',
+    londonRows
+      .filter(row => (row.posts ?? []).length === 0)
+      .every(row => !/@circl\.test$/.test(row.user?.username ?? '')),
+    londonRows.filter(row => !(row.posts ?? []).length).map(row => row.user?.displayName),
+  );
+  check(
+    'a tile to draw on the first card',
+    !!londonRows[0]?.posts?.[0]?.items?.[0]?.url,
+    londonRows[0]?.posts?.[0]?.items?.[0],
+  );
+  check(
+    'and somebody with a live story in it',
+    londonRows.some(row => row.hasStory),
+    londonRows.filter(row => row.hasStory).length,
+  );
 
   r = await api(token, 'GET', '/connect/profiles?cityId=LONDON&type=FLATMATE&limit=30');
-  check('a type narrows London rather than emptying it', (r.body?.data ?? []).length > 0, (r.body?.data ?? []).length);
+  check(
+    'a type narrows London rather than emptying it',
+    (r.body?.data ?? []).length > 0,
+    (r.body?.data ?? []).length,
+  );
 
   r = await api(token, 'GET', '/messages');
   check('the inbox has threads', (r.body?.data ?? []).length > 0, r.body?.meta);
@@ -241,7 +274,13 @@ async function objectExists(url) {
   const stamp = Date.now();
   const admin = await makeAdmin('pulse-rebuild', 'super_admin');
 
-  const rebuilt = await api(null, 'POST', '/admin/jobs/intelligence.metrics/run', null, adminHeaders(admin));
+  const rebuilt = await api(
+    null,
+    'POST',
+    '/admin/jobs/intelligence.metrics/run',
+    null,
+    adminHeaders(admin),
+  );
   check('the Pulse rollup can be rebuilt on demand', rebuilt.status === 200, rebuilt.status);
 
   const pulses = {};
@@ -419,8 +458,12 @@ async function objectExists(url) {
 
   const profiles = await prisma.userProfile.findMany({
     select: {
-      userId: true, interests: true, languages: true,
-      heritageTag: true, journeyStage: true, countryOfOrigin: true,
+      userId: true,
+      interests: true,
+      languages: true,
+      heritageTag: true,
+      journeyStage: true,
+      countryOfOrigin: true,
     },
   });
 
@@ -437,8 +480,11 @@ async function objectExists(url) {
     }
   }
 
-  check('no profile holds a code the picker no longer offers', strays.length === 0,
-    [...new Set(strays)].slice(0, 8));
+  check(
+    'no profile holds a code the picker no longer offers',
+    strays.length === 0,
+    [...new Set(strays)].slice(0, 8),
+  );
 
   // Countries are not a vocabulary we keep, so the check is that ICU knows them.
   const regions = new Intl.DisplayNames(['en'], { type: 'region' });
@@ -450,8 +496,11 @@ async function objectExists(url) {
     code => code !== 'OTHER' && regions.of(code) === code,
   );
 
-  check('and every country of origin is a code ICU knows', unknownCountries.length === 0,
-    unknownCountries);
+  check(
+    'and every country of origin is a code ICU knows',
+    unknownCountries.length === 0,
+    unknownCountries,
+  );
 
   await prisma.user.deleteMany({ where: { id: admin.id } });
   await finish();

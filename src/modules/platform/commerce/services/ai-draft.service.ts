@@ -220,6 +220,7 @@ export class AiDraftService {
 
   /** What this shop already charges, so a suggestion is anchored rather than guessed. */
   private async priceAnchors(storeId: string) {
+    // visibility: the seller's own catalogue, as context for a draft of their next item.
     const items = await this.database.storeItem.findMany({
       where: { storeId, deletedAt: null },
       select: { name: true, price: true },
