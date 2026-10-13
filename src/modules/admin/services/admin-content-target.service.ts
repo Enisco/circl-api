@@ -37,6 +37,19 @@ export interface ContentTargetView {
   visibilityState: ContentVisibilityState | null;
   /** Every scanned field, by name, for the detail page's highlight offsets (§5.9). */
   fields: Record<string, string | null>;
+  /**
+   * The rest of §5.0's `ContentRef`, which the queue and the report case both publish.
+   *
+   * Read off the row the resolver already has — it selects `*` — rather than fetched again: a
+   * queue page was showing `{ targetType, targetId, title }` and nothing else, so the portal's
+   * content card had no excerpt, no author, no date and no link to open.
+   */
+  excerpt: string | null;
+  authorId: string | null;
+  /** `PUBLIC`, `ANONYMOUS`, `PRIVATE_TO_CIRCL` — where the kind has the concept. */
+  visibility: string | null;
+  deletedAt: string | null;
+  createdAt: string | null;
 }
 
 @Injectable()
@@ -74,6 +87,13 @@ export class AdminContentTargetService {
           const first = Object.values(fields).find(value => !!value?.trim());
           const visibility = item[column];
 
+          // The longest scanned field, trimmed: a title is the first non-empty one and an excerpt
+          // should be the body where there is one. 280 characters, as §5.0 specifies — enough to
+          // recognise a post by and not enough to read one in a list.
+          const longest = Object.values(fields)
+            .filter((value): value is string => !!value?.trim())
+            .sort((a, b) => b.length - a.length)[0];
+
           result.set(`${targetType}:${item.id as string}`, {
             targetType,
             targetId: item.id as string,
@@ -83,6 +103,13 @@ export class AdminContentTargetService {
             visibilityState:
               typeof visibility === 'string' ? (visibility as ContentVisibilityState) : null,
             fields,
+            excerpt: longest ? longest.slice(0, 280) : null,
+            // `author_id` on most, `user_id` on the ones that belong to a member rather than being
+            // written by one — a listing, a store, a Connect profile.
+            authorId: (item.author_id as string | null) ?? (item.user_id as string | null) ?? null,
+            visibility: typeof item.visibility === 'string' ? item.visibility : null,
+            deletedAt: toIso(item.deleted_at),
+            createdAt: toIso(item.created_at ?? item.posted_at),
           });
         }
       }),
@@ -96,3 +123,10 @@ export class AdminContentTargetService {
     return `${row.targetType}:${row.targetId}`;
   }
 }
+
+/** A raw column, which comes back as a `Date` from pg and as a string from nothing else. */
+const toIso = (value: unknown): string | null => {
+  if (value instanceof Date) return value.toISOString();
+
+  return typeof value === 'string' ? value : null;
+};

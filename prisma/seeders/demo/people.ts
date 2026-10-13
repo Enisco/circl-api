@@ -246,6 +246,46 @@ interface ConnectExtra {
   birthYear: number;
 }
 
+/**
+ * The hobby window every seeded profile that is not one of the ten full members draws from (v2 §2).
+ *
+ * Declared here, with the fixtures, and imported by the bulk Pulse members so there is one list
+ * rather than two that drift. Rotated by `n` so neighbouring cards differ — the discovery grid is
+ * read as a wall of them, and forty identical chip rows reads as a rendering bug rather than as a
+ * population.
+ *
+ * The ten full members in `social.ts` get **hand-picked** trios instead, because those are the
+ * profiles a reviewer actually opens and reads. These exist to give the grid, the filters and the
+ * demand charts something to count.
+ */
+export const HOBBY_WINDOW = [
+  'FOOTBALL',
+  'COOKING',
+  'READING',
+  'GYM',
+  'MUSIC',
+  'HIKING',
+  'FILM_TV',
+  'COFFEE',
+  'DANCING',
+  'VOLUNTEERING',
+  'GARDENING',
+  'BOARD_GAMES',
+  'TRAVEL',
+  'FAITH',
+  'THRIFTING',
+  'PHOTOGRAPHY',
+  'SWIMMING',
+  'EATING_OUT',
+];
+
+/** Three from the window, spread so two consecutive members do not share a row of chips. */
+export const hobbiesFor = (n: number): string[] => [
+  HOBBY_WINDOW[n % HOBBY_WINDOW.length],
+  HOBBY_WINDOW[(n + 5) % HOBBY_WINDOW.length],
+  HOBBY_WINDOW[(n + 11) % HOBBY_WINDOW.length],
+];
+
 const MANCHESTER_EXTRAS: ConnectExtra[] = [
   {
     n: 100,

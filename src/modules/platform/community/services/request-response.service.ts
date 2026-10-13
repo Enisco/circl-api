@@ -20,6 +20,7 @@ import {
   toDateOnly,
 } from '@/common';
 import {
+  ACTIVE_AUTHOR,
   ActivityService,
   AuthorView,
   ContentSafetyService,
@@ -99,7 +100,9 @@ export class RequestResponseService {
       requestId,
       deletedAt: null,
       AND: [
-        { OR: [{ ...DIRECT_VISIBILITY }, { authorId: viewerId }] },
+        // The author filter belongs on the **public** branch only: the second branch is the
+        // viewer's own reply, and a member always sees what they wrote.
+        { OR: [{ ...DIRECT_VISIBILITY, author: ACTIVE_AUTHOR }, { authorId: viewerId }] },
         ...(isRequestOwner ? [] : [{ OR: [{ isPrivate: false }, { authorId: viewerId }] }]),
       ],
     };

@@ -203,6 +203,13 @@ export class CaseDecisionDto extends ReasonedDto {
     type: SuspensionLengthDto,
     description: 'How long, for the two decisions that suspend. Defaults to 7 days if omitted.',
   })
+  // `@ValidateNested` **and** `@Type`, without which the object's own fields were never checked:
+  // `class-validator` does not walk into a nested object unless told to, and `class-transformer`
+  // leaves it a plain object rather than an instance — so `{ duration: 'forever' }` reached the
+  // service as a value no decorator had looked at, and suspended somebody for a length the enum
+  // does not have.
+  @ValidateNested()
+  @Type(() => SuspensionLengthDto)
   @IsOptional()
   suspension?: SuspensionLengthDto;
 

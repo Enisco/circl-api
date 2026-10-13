@@ -19,7 +19,7 @@ import {
   toAuthorView,
 } from '../../shared';
 import { CreateBlockDto, CreateReportDto, ListBlocksDto } from '../dtos/moderation.dto';
-import { ReportCaseService } from './report-case.service';
+import { IntakeResult, ReportCaseService } from './report-case.service';
 
 /**
  * Which table holds each reportable thing, and where the member who put it there is named.
@@ -103,8 +103,20 @@ export class ModerationService {
 
   // ─── 1.8.1 Reports ─────────────────────────────────────────────────────────
 
-  /** Returns 202. */
-  async report(reporterId: string, dto: CreateReportDto): Promise<void> {
+  /**
+   * Returns 202 to the member, and the case the report landed in to a caller that needs it.
+   *
+   * The return value exists for §5.10's escalations: a staff escalation with a target files a
+   * staff report, and the escalation has to record **which case** that was. Working it out
+   * afterwards would mean guessing from the newest report of that type, which is right until two
+   * staff escalate two different posts in the same second. The member-facing controller ignores
+   * it, as it did when this returned nothing.
+   *
+   * Where this reporter had already filed an open report about the same target, nothing new is
+   * written and the case their first report is in comes back — with a null `priority`, because
+   * nothing was re-prioritised. Null only when there is no case at all to point at.
+   */
+  async report(reporterId: string, dto: CreateReportDto): Promise<IntakeResult | null> {
     const resolved = await this.resolveTarget(dto.targetType, dto.targetId);
 
     if (!resolved) {
@@ -129,7 +141,7 @@ export class ModerationService {
         targetId: resolved.id,
         state: { in: [ReportState.RECEIVED, ReportState.TRIAGED] },
       },
-      select: { id: true },
+      select: { id: true, caseId: true },
     });
 
     // Named explicitly, because "also block" on a reported post means block its author and on a
@@ -147,9 +159,15 @@ export class ModerationService {
         });
       }
 
-      return;
+      // The case their first report is already in, rather than null. Nothing new was filed, but
+      // the question a caller asks of this method is "where did this land" and that is still the
+      // answer — §5.10's escalation has to link to the case either way, and it is the same case.
+      return existing.caseId
+        ? { caseId: existing.caseId, priority: null, settled: null, late: false }
+        : null;
     }
 
+    let grouping: IntakeResult | null = null;
     const file = async (tx: Prisma.TransactionClient) => {
       const report = await tx.report.create({
         data: {
@@ -200,6 +218,10 @@ export class ModerationService {
         guard: isGuard,
       });
 
+      // Assigned rather than returned, because `file` is the retried half below: the winner of a
+      // case race runs it twice and the second run is the one whose answer is true.
+      grouping = grouped;
+
       if (grouped.settled) {
         // Answered from a case that was already decided (§7.1 step 5). Nothing more to do here:
         // the reporter is told the outcome by §7.3's notification, which reads `outcomeNotifiedAt`.
@@ -237,6 +259,8 @@ export class ModerationService {
       this.logger.warn(`Report on ${dto.targetType} ${resolved.id} lost the case race; retrying`);
       await this.database.$transaction(file);
     }
+
+    return grouping;
   }
 
   /** Whether a write failed on §4.6's "one open case per target" index. */

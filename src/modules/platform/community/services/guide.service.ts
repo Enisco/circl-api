@@ -26,11 +26,12 @@ import {
   toJson,
 } from '@/common';
 import {
+  ACTIVE_OR_NO_AUTHOR,
   ActivityService,
+  AuthorReviewView,
   AuthorView,
   CityService,
   CityView,
-  AuthorReviewView,
   ContentReviewService,
   ContentSafetyService,
   MediaService,
@@ -116,6 +117,9 @@ export class GuideService {
     const where: Prisma.GuideWhereInput = {
       deletedAt: null,
       ...PUBLIC_VISIBILITY,
+      // The **nullable** form: a guide Circl wrote has no author, and a plain relation filter
+      // does not match a null relation — it would hide every staff-written guide on the platform.
+      author: ACTIVE_OR_NO_AUTHOR,
       publishedAt: { not: null },
     };
 
@@ -587,6 +591,7 @@ export class GuideService {
         deletedAt: null,
         // A recommendation is distribution, so limited guides are out as well as held ones.
         ...PUBLIC_VISIBILITY,
+        author: ACTIVE_OR_NO_AUTHOR,
         publishedAt: { not: null },
       },
       orderBy: [{ viewCount: 'desc' }],

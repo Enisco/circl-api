@@ -8,10 +8,11 @@ import {
 import { PrismaService } from '@/infrastructure';
 import { daysAgo, money } from '@/common';
 import {
-  authorSelect,
+  ACTIVE_AUTHOR,
   MediaService,
   PUBLIC_VISIBILITY,
   TaxonomyService,
+  authorSelect,
   toAuthorView,
   toCityView,
   toPriceBasisLabel,
@@ -60,6 +61,7 @@ export class ProfessionalsHomeService {
         }),
         this.database.professionalListing.findMany({
           where: {
+            user: ACTIVE_AUTHOR,
             deletedAt: null,
             ...PUBLIC_VISIBILITY,
             isAcceptingWork: true,
@@ -200,6 +202,9 @@ export class ProfessionalsHomeService {
       this.database.trustCheck.count({ where: { status: 'VERIFIED', check: { not: 'EMAIL' } } }),
       this.database.reputationSummary.count({ where: { countedTotal: { gt: 0 } } }),
       // The trust strip counts reviews a member could read.
+      // author-status: the trust strip counts how much review activity the platform holds, which
+      // does not stop being true while one reviewer is suspended. §13.2 keeps a suspended member
+      // counted as a member and excludes them from "active" metrics; this is neither.
       this.database.review.count({ where: { deletedAt: null, ...PUBLIC_VISIBILITY } }),
     ]);
 

@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { NoteSubjectType, Prisma, TaxonomyKind } from '@prisma/client';
+import {
+  NoteSubjectType,
+  Prisma,
+  SupportThreadState,
+  SupportThreadType,
+  TaxonomyKind,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import {
   ApiException,
@@ -677,18 +683,60 @@ export class AdminMemberService {
   private async openCases(
     id: string,
   ): Promise<{ reports: number; guard: number; support: number; disputes: number }> {
-    const [reports, guard, disputes] = await Promise.all([
+    const [reports, guard, support, disputes] = await Promise.all([
       this.database.report.count({
         where: { targetUserId: id, state: { in: ['RECEIVED', 'TRIAGED'] } },
       }),
       this.database.guardThread.count({
         where: { userId: id, state: { in: ['OPEN', 'IN_PROGRESS'] } },
       }),
+      // `GUARD` excluded, not hidden: a safeguarding thread is counted in `guard` beside this, and
+      // counting it twice would make one case look like two pieces of work to whoever opens the
+      // member. Read nothing else into the exclusion — this number went from a hard-coded zero to
+      // a real count when §4.8's `SupportThread` landed.
+      this.database.supportThread.count({
+        where: {
+          memberId: id,
+          type: { not: SupportThreadType.GUARD },
+          state: { in: [SupportThreadState.NEW, SupportThreadState.OPEN] },
+        },
+      }),
       this.database.dispute.count({
         where: { raisedById: id, state: { in: ['OPEN', 'IN_REVIEW'] } },
       }),
     ]);
 
-    return { reports, guard, support: 0, disputes };
+    return { reports, guard, support, disputes };
+  }
+
+  /**
+   * The member panel beside a support thread (§5.15).
+   *
+   * Narrower than `detail()` on purpose. The thread endpoint opens on `support:read`, and a caller
+   * holding that without `members:read` must not come away with the member page by asking for the
+   * conversation — so this is the list row, the strikes, how much is open and what colleagues have
+   * pinned, and nothing that the detail endpoint exists to serve.
+   */
+  async summary(id: string): Promise<
+    AdminMemberRowView & {
+      openCases: number;
+      pinnedNotes: InternalNoteView[];
+    }
+  > {
+    const source = await this.memberOrFail(id);
+
+    const [reportsReceived, activeStrikes, pinnedNotes, openCases, context] = await Promise.all([
+      this.database.report.count({ where: { targetUserId: id } }),
+      this.enforcement.activeStrikeCount(id),
+      this.notes.pinned(NoteSubjectType.MEMBER, id),
+      this.openCases(id),
+      this.context(),
+    ]);
+
+    return {
+      ...toAdminMemberView(source, { activeStrikes, reportsReceived }, context),
+      openCases: openCases.reports + openCases.guard + openCases.support + openCases.disputes,
+      pinnedNotes,
+    };
   }
 }

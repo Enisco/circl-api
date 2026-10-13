@@ -9,12 +9,12 @@ model User {
   avatarKey String? @map("avatar_key")
 
   /// A plain URL from a social provider, which is NOT Circl's media and is therefore never signed (0.11.3).
-  profileImageUrl String?           @map("profile_image_url")
-  isStaff         Boolean           @default(false) @map("is_staff")
+  profileImageUrl String?       @map("profile_image_url")
+  isStaff         Boolean       @default(false) @map("is_staff")
   /// How the account was created. Recorded at sign-up because it cannot be recovered later: a
   /// member who links Google afterwards is indistinguishable from one who started there. Null for
   /// staff accounts, which are created by invitation and never sign up.
-  signupMethod    SignupMethod?     @map("signup_method")
+  signupMethod    SignupMethod? @map("signup_method")
 
   /// The last time this member did anything, to the nearest fifteen minutes.
   ///
@@ -22,11 +22,11 @@ model User {
   /// nothing this feeds — "active in the last 7 days", a staff member asking when somebody was
   /// last here — can tell the difference. `UserSession.lastActiveAt` is not a substitute: it moves
   /// only when a session is created or refreshed, so a member using the app all day looked idle.
-  lastActiveAt    DateTime?         @map("last_active_at") @db.Timestamptz
+  lastActiveAt DateTime? @map("last_active_at") @db.Timestamptz
 
   /// When a suspension ends. Null with `status = SUSPENDED` means permanent — which is why the
   /// column cannot be read as "suspended until, or not suspended": the status says which.
-  suspendedUntil  DateTime?         @map("suspended_until") @db.Timestamptz
+  suspendedUntil DateTime? @map("suspended_until") @db.Timestamptz
 
   /// The platform and build this member was last seen on.
   ///
@@ -39,13 +39,13 @@ model User {
   /// session table that is `DISTINCT ON (user_id) … ORDER BY last_active_at DESC`, which cannot be
   /// a `WHERE` clause, cannot be an index lookup, and would be a correlated subquery per row of
   /// every page. As columns, the filter and the display are both free.
-  lastPlatform    DevicePlatform?   @map("last_platform")
-  lastAppVersion  String?           @map("last_app_version")
-  email           String            @unique @map("email")
-  status          UserAccountStatus @default(PENDING) @map("status")
-  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt       DateTime?         @map("deleted_at") @db.Timestamptz
+  lastPlatform   DevicePlatform?   @map("last_platform")
+  lastAppVersion String?           @map("last_app_version")
+  email          String            @unique @map("email")
+  status         UserAccountStatus @default(PENDING) @map("status")
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt      DateTime?         @map("deleted_at") @db.Timestamptz
 
   // ── Account deletion (spec 0.15) ────────────────────────────────────────── Anonymised is not a status flag on a row that still holds the data: the personal data is destroyed in the same transaction.
   isAnonymised     Boolean   @default(false) @map("is_anonymised")
@@ -95,17 +95,19 @@ model User {
   groupPostReplies GroupPostReply[]
 
   // ── Moderation & Guard ────────────────────────────────────────────────────
-  reportsFiled      Report[]              @relation("ReportFiler")
-  reportsAbout      Report[]              @relation("ReportSubject")
-  blocksMade        Block[]               @relation("Blocker")
-  blocksReceived    Block[]               @relation("Blocked")
-  appeals           Appeal[]              @relation("AppealSubject")
-  reportCasesAbout  ReportCase[]          @relation("ReportCaseSubject")
-  reportCasesTaken  ReportCase[]          @relation("ReportCaseAssignee")
-  queueSubjectOf    ModerationQueueItem[] @relation("QueueSubject")
-  queueAssignedTo   ModerationQueueItem[] @relation("QueueAssignee")
-  guardThreads      GuardThread[]
-  guardAssignedTo   GuardThread[]         @relation("GuardAssignee")
+  reportsFiled     Report[]              @relation("ReportFiler")
+  reportsAbout     Report[]              @relation("ReportSubject")
+  blocksMade       Block[]               @relation("Blocker")
+  blocksReceived   Block[]               @relation("Blocked")
+  appeals          Appeal[]              @relation("AppealSubject")
+  escalations      Escalation[]          @relation("EscalationSubject")
+  supportThreads   SupportThread[]       @relation("SupportThreadMember")
+  reportCasesAbout ReportCase[]          @relation("ReportCaseSubject")
+  reportCasesTaken ReportCase[]          @relation("ReportCaseAssignee")
+  queueSubjectOf   ModerationQueueItem[] @relation("QueueSubject")
+  queueAssignedTo  ModerationQueueItem[] @relation("QueueAssignee")
+  guardThreads     GuardThread[]
+  guardAssignedTo  GuardThread[]         @relation("GuardAssignee")
 
   // ── Trust ─────────────────────────────────────────────────────────────────
   trustChecks       TrustCheck[]
@@ -214,10 +216,10 @@ model UserProfile {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // ── Identity ──────────────────────────────────────────────────────────────
-  gender          Gender? @map("gender")
-  cityId          String? @map("city_id")
-  city            City?   @relation(fields: [cityId], references: [id])
-  countryOfOrigin String? @map("country_of_origin")
+  gender              Gender? @map("gender")
+  cityId              String? @map("city_id")
+  city                City?   @relation(fields: [cityId], references: [id])
+  countryOfOrigin     String? @map("country_of_origin")
   /// The same country as an ISO 3166-1 alpha-2 code.
   ///
   /// `countryOfOrigin` holds whatever the member's client sent — sometimes a code, sometimes a
@@ -289,26 +291,26 @@ model UserProfile {
 }
 
 model UserSession {
-  id                String    @id() @default(uuid())
-  userId            String    @map("user_id")
-  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userAgent         String    @map("user_agent")
-  deviceType        String    @map("device_type")
-  browserName       String    @map("browser_name")
-  operatingSystem   String    @map("operating_system")
-  ipAddress         String    @map("ip_address")
-  isActive          Boolean   @default(false) @map("is_active")
-  deviceFingerprint String    @map("device_fingerprint")
-  refreshToken      String?   @map("refresh_token")
+  id                String  @id() @default(uuid())
+  userId            String  @map("user_id")
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userAgent         String  @map("user_agent")
+  deviceType        String  @map("device_type")
+  browserName       String  @map("browser_name")
+  operatingSystem   String  @map("operating_system")
+  ipAddress         String  @map("ip_address")
+  isActive          Boolean @default(false) @map("is_active")
+  deviceFingerprint String  @map("device_fingerprint")
+  refreshToken      String? @map("refresh_token")
 
   /// Which build and which platform, from `x-app-version` and `x-client-platform`. Recorded on
   /// create and on refresh, because "how many people are still on 2.1" cannot be answered later.
-  appVersion        String?         @map("app_version")
-  platform          DevicePlatform? @map("platform")
-  osVersion         String?         @map("os_version")
-  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  lastActiveAt      DateTime  @default(now()) @map("last_active_at") @db.Timestamptz
-  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz
+  appVersion   String?         @map("app_version")
+  platform     DevicePlatform? @map("platform")
+  osVersion    String?         @map("os_version")
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  lastActiveAt DateTime        @default(now()) @map("last_active_at") @db.Timestamptz
+  revokedAt    DateTime?       @map("revoked_at") @db.Timestamptz
 
   @@unique([userId, deviceFingerprint])
   @@index([userId])
@@ -324,8 +326,8 @@ model UserSession {
 /// query anybody wants on a dashboard — and because the city and the app build are snapshotted
 /// here, as they were on the day, which the live profile cannot tell you afterwards.
 model UserDailyActivity {
-  userId String @map("user_id")
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String   @map("user_id")
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// The London calendar day. Every bucket in the admin portal is London-local.
   day    DateTime @map("day") @db.Date
 
@@ -404,7 +406,17 @@ model DataExportRequest {
   expiresAt   DateTime? @map("expires_at") @db.Timestamptz
   failedAt    DateTime? @map("failed_at") @db.Timestamptz
 
+  /// How many times the builder has tried (§13.7: three, then it stays FAILED).
+  ///
+  /// Needed because a failure returns the request to PENDING for retry, and the builder picks up
+  /// every PENDING row every five minutes — so without a count, an export that cannot be built
+  /// (a corrupt row, a bucket that refuses the key) is retried every five minutes for ever, and
+  /// the member is told three times a day that we are still working on it.
+  attempts Int @default(0) @map("attempts")
+
   @@index([userId, requestedAt])
+  /// What the builder polls: the oldest unbuilt request first.
+  @@index([status, requestedAt])
   @@map("data_export_requests")
 }
 

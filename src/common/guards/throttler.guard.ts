@@ -28,6 +28,14 @@ export class CustomThrottlerGuard extends ThrottlerGuard {
   /**
    * The member, falling back to the IP when there is no token. Read unverified because this only
    * picks a bucket: the guard runs before JwtAuthGuard, so `req.user` is not set yet.
+   *
+   * **`req.adminClientIp` before `req.ip`.** Admin requests arrive through the portal's own
+   * server, so `req.ip` is the portal for every member of staff — one bucket for the whole team,
+   * which meant the sixth sign-in attempt in fifteen minutes *by anybody* was refused, and on a
+   * loopback (`::1`) the fifth local login did it too. The admin context middleware resolves the
+   * real client address from the forwarded chain, having verified the portal's credential, and
+   * leaves it on the request; this reads it where it is there. Set by the admin middleware and
+   * nothing else, so a member request cannot choose its own bucket by sending a header.
    */
   protected async getTracker(req: Record<string, any>): Promise<string> {
     const authenticated = req.user?.id;
@@ -42,7 +50,24 @@ export class CustomThrottlerGuard extends ThrottlerGuard {
       if (subject) return `user:${subject}`;
     }
 
-    return `ip:${req.ip}`;
+    const ip = typeof req.adminClientIp === 'string' ? req.adminClientIp : req.ip;
+
+    // A refresh carries its token in the body: keyed on the account it belongs to, so one
+    // session's retry storm cannot lock out the rest of the team.
+    const refreshSubject =
+      typeof req.body?.refreshToken === 'string' ? subjectOf(req.body.refreshToken) : null;
+
+    if (refreshSubject) return `user:${refreshSubject}`;
+
+    // Sign-in is keyed on the address **and** the account. The limit exists to slow down guessing
+    // at one account's password, and the lock behind it is per account — so a bucket shared by
+    // everybody signing in from one office is the wrong shape in both directions: it refuses
+    // colleagues and it lets an attacker spend somebody else's allowance.
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : null;
+
+    if (email) return `ip:${ip}|email:${email}`;
+
+    return `ip:${ip}`;
   }
 }
 

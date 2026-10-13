@@ -123,6 +123,12 @@ enum TaxonomyKind {
   HERITAGE_TAG
   JOURNEY_STAGE
   INTEREST
+  /// What somebody is *into*, for the Connect profile and the Meet card — deliberately not
+  /// `INTEREST`, whose first fifteen codes are community categories so the feed ranker can match
+  /// a post against them. That overlap is right for the feed and wrong here: "Airport Pickup" and
+  /// "Bank Account" are things people need help with, not things they are into, and a profile
+  /// built from them says nothing about the person.
+  HOBBY
   LANGUAGE
   COUNTRY_OF_ORIGIN
   CONNECTION_TYPE
@@ -361,6 +367,42 @@ enum ReportReason {
   NUDITY
   ILLEGAL_ITEM
   OTHER
+}
+
+/// §4.8. What a support thread is **about**, which decides who may read it.
+///
+/// `GUARD` is the one that is not a label: §5.15 excludes Guard threads from the support inbox
+/// entirely for anybody without `guard:read`, so this value is an access control and not a
+/// category. It is also **sticky** — see `support-thread.rules.ts`.
+enum SupportThreadType {
+  SUPPORT
+  MANAGED
+  DISPUTE
+  GUARD
+  DEAL_PROBLEM
+}
+
+/// §7.6. `NEW` is "nobody has answered yet", which is not the same as `OPEN` — a thread somebody
+/// has replied to and the member has come back on. The inbox's unanswered count is the first.
+enum SupportThreadState {
+  NEW
+  OPEN
+  WAITING_ON_MEMBER
+  RESOLVED
+  CLOSED
+}
+
+/// §5.10. Support raises an escalation, Trust & Safety answer it.
+///
+/// `ACKNOWLEDGED` is not decoration: it is the difference between "nobody has looked at this" and
+/// "somebody has, and it is in hand". Without it the raiser's only two readings of an open
+/// escalation are *ignored* and *done*, and the first is wrong far more often than it is right.
+/// `RESOLVED` is final — an escalation reopened is a new escalation, because the thing being
+/// escalated has moved on.
+enum EscalationState {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
 }
 
 /// §5.11. `WITHDRAWN` is the member changing their mind, which is theirs to do and not a staff
@@ -745,6 +787,22 @@ enum SystemMessageType {
   DEAL_PROPOSED
   DEAL_STEP_MARKED
   DEAL_PROBLEM_FLAGGED
+  /// §5.16: staff moved a managed request along. The member sees that somebody is on it, which is
+  /// the whole promise of a managed request — a pipeline that moves silently is one the member
+  /// experiences as nothing happening.
+  MANAGED_STATE_CHANGED
+  /// §5.16: staff placed a brief with a professional on the member's behalf.
+  MANAGED_PLACED
+  /// §5.17: staff picked a dispute up and both parties are told so, with the date they were
+  /// promised an answer. Its own value rather than reusing `DISPUTE_OPENED`, which is the member's
+  /// own act of raising it — a thread where "an issue was raised" appears twice reads as two
+  /// issues.
+  DISPUTE_IN_REVIEW
+  /// §5.17: a dispute was decided. Posted into the thread **both** parties can read, because a
+  /// finding told to one of them is half a resolution.
+  DISPUTE_RESOLVED
+  /// §5.17: staff settled a flagged deal, in the support thread of whoever raised the flag.
+  DEAL_PROBLEM_RESOLVED
 }
 
 // ─── Deals ───────────────────────────────────────────────────────────────────
@@ -931,6 +989,54 @@ enum EnforcementSourceType {
 }
 
 /// What an internal note is about. One note table serves every subject, so the kinds live here.
+/// Why a managed request was closed (§5.16). The spec types this as a free string on the model and
+/// then constrains the five values on the endpoint; an enum is the same contract expressed once,
+/// and this is a vocabulary the support pipeline reports on — a typo in a string column becomes a
+/// sixth category on a chart nobody can explain.
+enum ManagedRequestClosedReason {
+  /// The member was placed with a professional.
+  PLACED
+  /// Their shop was set up for them.
+  STORE_SET_UP
+  MEMBER_WITHDREW
+  /// Circl could not help with this one, which is a legitimate ending and not a failure to record.
+  NOT_POSSIBLE
+  OTHER
+}
+
+/// How a dispute ended (§5.17). Circl never moves money, so none of these is a payment decision:
+/// they are findings, and `resolutionNote` is what both parties are actually shown.
+enum DisputeOutcome {
+  RESOLVED_FOR_RAISER
+  RESOLVED_FOR_OTHER
+  /// Both of them have a point, or they settled it between themselves.
+  MUTUAL
+  /// Looked at, nothing to find. Distinct from `WITHDRAWN`, which is the raiser's own decision.
+  NO_FINDING
+  WITHDRAWN
+}
+
+/// Whether somebody is still working on a flagged deal (§5.17). A deal's `hasProblem` says a member
+/// raised a hand; this says what staff did about it.
+enum DealProblemState {
+  OPEN
+  RESOLVED
+}
+
+/// What a thread-access grant is tied to (S9.1). Deliberately **not** `NoteSubjectType`, which it
+/// otherwise resembles: a note can be written about a member, a brief, a managed request or a deal,
+/// and none of those is a reason to read two members' private conversation. This enum is the list
+/// of records that are, and it carries `QUEUE_ITEM`, which notes have no use for — reading the
+/// thread around a flagged message (§6.8) is precisely what that one is for.
+enum ThreadAccessLinkType {
+  REPORT_CASE
+  SUPPORT_THREAD
+  GUARD_CASE
+  DISPUTE
+  ESCALATION
+  QUEUE_ITEM
+}
+
 enum NoteSubjectType {
   MEMBER
   SUPPORT_THREAD

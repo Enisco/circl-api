@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, SupportThreadType } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException } from '@/common';
 import { AdminPrincipal } from './admin-principal';
@@ -112,6 +112,59 @@ export class AdminPolicyService {
     if (!user || user.isStaff || user.isAnonymised || user.deletedAt) {
       throw ApiException.notFound('No such member.');
     }
+  }
+
+  /**
+   * R7: a `GUARD` support thread is not the support team's to see.
+   *
+   * The permission split is the whole protection here — `guard:read` is held by Trust & Safety,
+   * managers and super admins, and deliberately not by Support, because a member disclosing abuse
+   * is a different job from answering a question about a delivery. What makes it fragile is that a
+   * safeguarding disclosure and an ordinary support thread are the **same kind of conversation**:
+   * both are `ThreadKind.SUPPORT` with `contextType: SUPPORT` and a null context id (D36), so
+   * nothing about the conversation distinguishes them. `SupportThread.type` is the only thing that
+   * does, which is why §5.15's inbox has to consult it on every single path rather than relying on
+   * the route's permission.
+   *
+   * **404 and not 403** where the caller cannot read it. A 403 confirms that the id names a Guard
+   * thread, which for a member who disclosed something is itself the disclosure — "this person has
+   * a safeguarding case" is most of what a leak would have told you.
+   *
+   * `write` is separated from `read` because R7 asks for `guard:manage` to answer one, and holding
+   * `guard:read` without it is a reviewer who may read a case and not speak into it.
+   */
+  assertMaySeeSupportThread(
+    actor: AdminPrincipal,
+    type: SupportThreadType,
+    intent: 'read' | 'write' = 'read',
+  ): void {
+    const required =
+      type === SupportThreadType.GUARD
+        ? { read: 'guard:read', write: 'guard:manage' }
+        : { read: 'support:read', write: 'support:manage' };
+
+    if (!actor.permissions.has(required.read)) throw ApiException.notFound('No such thread.');
+
+    if (intent === 'write' && !actor.permissions.has(required.write)) {
+      throw ApiException.forbidden(
+        ApiErrorCode.FORBIDDEN,
+        type === SupportThreadType.GUARD
+          ? 'Answering a Guard thread needs `guard:manage`.'
+          : 'Answering a support thread needs `support:manage`.',
+      );
+    }
+  }
+
+  /**
+   * Whether the caller may see `GUARD` threads at all, for the list and its counts.
+   *
+   * Separate from the assertion above because a list does not refuse, it narrows: a support agent
+   * asking for the inbox gets the inbox they are allowed, not an error. The counts use the same
+   * predicate, so the number on the tab and the rows under it are the same population — a count
+   * that included Guard threads would tell Support exactly how many exist.
+   */
+  maySeeGuardThreads(actor: AdminPrincipal): boolean {
+    return actor.permissions.has('guard:read');
   }
 
   /** Whether the caller may manage this staff row, so the portal can grey out what it must not offer. */

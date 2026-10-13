@@ -1,5 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { MediaType, MessageKind, MessageStatus, Prisma, ThreadKind } from '@prisma/client';
+import {
+  MediaType,
+  MessageKind,
+  MessageStatus,
+  ParticipantRole,
+  Prisma,
+  ThreadKind,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, toJson } from '@/common';
 import {
@@ -13,6 +20,7 @@ import {
 } from '../../shared';
 import { ListMessagesDto, MentionDto, SendMessageDto } from '../dtos/message.dto';
 import { ConversationService } from './conversation.service';
+import { stateAfterMessage, waitingSince } from './support-thread.rules';
 
 /** How long a sender has to withdraw or edit what they said. One window, one definition (5.3.6). */
 const DELETE_WINDOW_MS = 15 * 60 * 1000;
@@ -235,8 +243,21 @@ export class MessageService {
 
   // ─── 5.3.4 Send ────────────────────────────────────────────────────────────
 
-  /** The REST fallback for sending. */
-  async send(userId: string, conversationId: string, dto: SendMessageDto) {
+  /**
+   * The REST fallback for sending.
+   *
+   * `options.keepOpen` is §5.15's "I am not waiting on them" and reaches the support thread rather
+   * than the message. Threaded through rather than applied afterwards by the admin service,
+   * because the thread's state is written inside this transaction: a correction applied after it
+   * would leave the thread briefly saying it was waiting on the member, and would overwrite a
+   * member's message that arrived in between.
+   */
+  async send(
+    userId: string,
+    conversationId: string,
+    dto: SendMessageDto,
+    options: { keepOpen?: boolean } = {},
+  ) {
     const conversation = await this.conversations.requireParticipant(userId, conversationId);
 
     const others = conversation.participants
@@ -366,6 +387,17 @@ export class MessageService {
         data: { hasSentMessage: true, lastReadAt: created.sentAt, isArchived: false },
       });
 
+      if (conversation.kind === ThreadKind.SUPPORT) {
+        await this.touchSupportThread(
+          tx,
+          conversationId,
+          userId,
+          created.sentAt,
+          conversation,
+          options,
+        );
+      }
+
       return created;
     });
 
@@ -374,6 +406,84 @@ export class MessageService {
     await this.messageSafety.enqueue(message.id);
 
     return this.toView(message, userId);
+  }
+
+  /**
+   * The staff side of a support thread, moved on by a message (§4.8, §7.6).
+   *
+   * In the send transaction rather than after it: a member's reply that reopens a resolved thread
+   * and then fails to say so is a thread nobody is watching with a question sitting in it. The
+   * message and the state it puts the thread in are one fact.
+   *
+   * Who sent it is read from the **participant role**, not from `isStaff` on the user. A staff
+   * member writing in a thread they are a MEMBER participant of — their own support thread, as a
+   * member of the platform — is writing as a member, and the inbox should treat them as one.
+   */
+  private async touchSupportThread(
+    tx: Prisma.TransactionClient,
+    conversationId: string,
+    senderId: string,
+    sentAt: Date,
+    conversation: { participants: Array<{ userId: string; role: ParticipantRole }> },
+    options: { keepOpen?: boolean } = {},
+  ): Promise<void> {
+    const thread = await tx.supportThread.findUnique({
+      where: { conversationId },
+      select: {
+        state: true,
+        firstMemberMessageAt: true,
+        firstResponseAt: true,
+        lastMemberMessageAt: true,
+        lastStaffMessageAt: true,
+      },
+    });
+
+    // No row means a support conversation that predates §4.8 and was not backfilled — which the
+    // migration should have made impossible. Skipped rather than created here: inventing one on a
+    // message would give the platform's oldest thread a creation date of today.
+    if (!thread) return;
+
+    const byStaff =
+      conversation.participants.find(participant => participant.userId === senderId)?.role ===
+      ParticipantRole.STAFF;
+    const change = stateAfterMessage(thread.state, byStaff, options);
+    const lastMemberMessageAt = byStaff ? thread.lastMemberMessageAt : sentAt;
+    const lastStaffMessageAt = byStaff ? sentAt : thread.lastStaffMessageAt;
+
+    await tx.supportThread.update({
+      where: { conversationId },
+      data: {
+        state: change.state,
+        // Recomputed from what the row is **about to** hold rather than what it holds now, by the
+        // same function the inbox serialises with, so the stored sort key and the published value
+        // can only ever disagree by being stale and never by being two different rules (§7.6).
+        waitingSince: waitingSince({
+          state: change.state,
+          lastMemberMessageAt,
+          lastStaffMessageAt,
+        }),
+        ...(change.reopened ? { reopenCount: { increment: 1 }, resolvedAt: null } : {}),
+        ...(byStaff
+          ? {
+              lastStaffMessageAt: sentAt,
+              // Staff writing in a thread have read it. Zeroed here as well as on the thread read
+              // endpoint, because answering from a notification without opening the inbox is a
+              // thing people do, and a badge that survives the reply is one nobody trusts again.
+              unreadForStaff: 0,
+              // The first staff message **after** the member's first, and only once. A thread
+              // Circl opened gets its response time from the reply to the member, not from the
+              // opening line.
+              ...(!thread.firstResponseAt && thread.firstMemberMessageAt
+                ? { firstResponseAt: sentAt }
+                : {}),
+            }
+          : {
+              lastMemberMessageAt: sentAt,
+              unreadForStaff: { increment: 1 },
+              ...(thread.firstMemberMessageAt ? {} : { firstMemberMessageAt: sentAt }),
+            }),
+      },
+    });
   }
 
   /** The other participants in a thread, for delivery and push decisions. */

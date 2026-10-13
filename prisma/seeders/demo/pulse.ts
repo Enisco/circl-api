@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { DemoSeedContext, putMedia, userId } from './seed-demo';
 import { daysAgo, hoursAgo, reportToken, seedId } from './ids';
+import { hobbiesFor } from './people';
 
 /**
  * What the four Pulse dashboards need before they will print a number (6.2).
@@ -418,9 +419,16 @@ const seedMembers = async (ctx: DemoSeedContext) => {
       create: { id: seedId(`profile:${member.n}`), userId: id, ...profile },
     });
 
+    // `limits.minHobbies` of them at least, because a profile cannot be created with fewer (v2
+    // §2) — so a seeded profile without them is a state the app cannot produce. The same window
+    // the city extras use, so there is one list rather than two that drift.
+    const hobbies = hobbiesFor(member.n);
+
     await prisma.connectProfile.upsert({
       where: { userId: id },
-      update: { lookingFor: member.lookingFor },
+      // Hobbies on the update branch as well, so a reseed fills the profiles that predate them
+      // rather than leaving the first run's rows short for ever.
+      update: { lookingFor: member.lookingFor, hobbies },
       create: {
         id: seedId(`connect:${member.n}`),
         userId: id,
@@ -428,6 +436,10 @@ const seedMembers = async (ctx: DemoSeedContext) => {
         lookingFor: member.lookingFor,
         dmPolicy: 'REQUEST_FIRST',
         isVisible: true,
+        hobbies,
+        // No `cardPhotoIds`: these have one photograph each, so the fallback — the first photos in
+        // post order — is already the only card they could have. Which is the point of the
+        // fallback, and worth having most of the demo exercise it.
         lastActiveAt: hoursAgo(member.n % 7 === 0 ? 3 : 18 + (member.n % 23) * 7),
         createdAt: joined,
       },

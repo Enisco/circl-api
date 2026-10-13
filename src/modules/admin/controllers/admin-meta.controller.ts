@@ -3,6 +3,20 @@ import { ApiExcludeController, ApiOperation, ApiPropertyOptional, ApiTags } from
 import { IsIn } from 'class-validator';
 import {
   AdminReasonCode,
+  BriefState,
+  BriefUrgency,
+  DealProblemState,
+  DealTrack,
+  DisputeOutcome,
+  DisputeReason,
+  DisputeState,
+  DisputeSubjectType,
+  ManagedRequestClosedReason,
+  ManagedRequestState,
+  ManagedRequestSubject,
+  ThreadAccessLinkType,
+  AppealState,
+  EscalationState,
   ModerationDecision,
   ModerationQueueState,
   ModerationQueueType,
@@ -11,13 +25,18 @@ import {
   ReportTargetType,
   RiskCategory,
   RiskLevel,
+  SupportThreadState,
+  SupportThreadType,
+  TaxonomyKind,
 } from '@prisma/client';
 import { AdminJwtGuard } from '@/common/guards/admin-jwt.guard';
 import { SuccessMessage } from '@/common';
 import { AdminBffGuard } from '../common/admin-bff.guard';
 import { AdminPermissionGuard } from '../common/admin-permission.guard';
 import { AdminAnyPermission, AdminAuthenticated } from '../common/admin-principal';
+import { TaxonomyService } from '@/modules/platform/shared';
 import { auditActionList } from '../audit/audit-actions';
+import { ESCALATION_CATEGORIES } from '../dtos/admin-escalation.dto';
 import { ASSIGNEE_QUEUES, AdminAssigneeService } from '../services/admin-assignee.service';
 
 class AssigneeQueryDto {
@@ -62,7 +81,18 @@ const codes = (values: readonly string[]) => values.map(code => ({ code, label: 
 @Controller('admin/meta')
 @UseGuards(AdminBffGuard, AdminJwtGuard, AdminPermissionGuard)
 export class AdminMetaController {
-  constructor(private readonly assignees: AdminAssigneeService) {}
+  constructor(
+    private readonly assignees: AdminAssigneeService,
+    // For `guardCategories`, which comes from the vocabulary rather than a constant.
+    private readonly taxonomy: TaxonomyService,
+  ) {}
+
+  /** The safeguarding categories, active ones only: a retired one is not something to pick. */
+  private async guardCategories() {
+    const terms = await this.taxonomy.list(TaxonomyKind.GUARD_CATEGORY, true);
+
+    return terms.map(term => ({ code: term.code, label: term.label }));
+  }
 
   @Get('reason-codes')
   @AdminAuthenticated()
@@ -83,7 +113,7 @@ export class AdminMetaController {
     summary: 'Every enum the portal draws',
     description: 'With labels, so the portal holds no copy of this vocabulary to drift from.',
   })
-  enums() {
+  async enums() {
     return {
       data: {
         queueTypes: codes(Object.values(ModerationQueueType)),
@@ -94,7 +124,40 @@ export class AdminMetaController {
         reportTargetTypes: codes(Object.values(ReportTargetType)),
         riskCategories: codes(Object.values(RiskCategory)),
         riskLevels: codes(Object.values(RiskLevel)),
-        // Appeals arrive with the safety milestone; the enum does not exist yet.
+        appealStates: codes(Object.values(AppealState)),
+        escalationStates: codes(Object.values(EscalationState)),
+        // Not a Prisma enum — `Escalation.category` is a string, because it is a routing hint
+        // Support picks from a list rather than a state anything branches on, and a sixth
+        // category should not be a migration. Published here all the same, so the portal still
+        // holds no copy of the vocabulary.
+        escalationCategories: codes([...ESCALATION_CATEGORIES]),
+        // §5.15's two. Here rather than in `filter-options`, which publishes the **analytics**
+        // filter vocabulary — a key there is a parameter the analytics endpoint accepts, and an
+        // inbox filter is not one. Its own e2e asserts that, and caught the mistake.
+        supportThreadTypes: codes(Object.values(SupportThreadType)),
+        supportThreadStates: codes(Object.values(SupportThreadState)),
+        // The safeguarding categories, from the taxonomy rather than a constant: the portal held
+        // the seven codes as a fixed list because nothing served them, so rewording one here would
+        // have left the escalation sheet offering the old label and an eighth would never have
+        // appeared. Beside `escalationCategories`, which is the same kind of picker.
+        guardCategories: await this.guardCategories(),
+        // §5.6's. The grant dialog is built from `linkedType`, and a portal holding its own copy of
+        // this list is a portal that offers a seventh kind the API refuses.
+        threadAccessLinkTypes: codes(Object.values(ThreadAccessLinkType)),
+        // §5.16's five. `managedClosedReasons` is the one that matters most: it is a required
+        // field on a form, and the five values are what the pipeline is reported on.
+        managedRequestStates: codes(Object.values(ManagedRequestState)),
+        managedRequestSubjects: codes(Object.values(ManagedRequestSubject)),
+        managedClosedReasons: codes(Object.values(ManagedRequestClosedReason)),
+        briefStates: codes(Object.values(BriefState)),
+        briefUrgencies: codes(Object.values(BriefUrgency)),
+        // §5.17's five.
+        disputeStates: codes(Object.values(DisputeState)),
+        disputeReasons: codes(Object.values(DisputeReason)),
+        disputeSubjectTypes: codes(Object.values(DisputeSubjectType)),
+        disputeOutcomes: codes(Object.values(DisputeOutcome)),
+        dealProblemStates: codes(Object.values(DealProblemState)),
+        dealTracks: codes(Object.values(DealTrack)),
         auditAreas: codes([...new Set(auditActionList().map(entry => entry.area))]),
       },
       message: SuccessMessage.RESOURCE_FETCHED('Enums'),
@@ -109,7 +172,16 @@ export class AdminMetaController {
    * its names, roles, sessions and invite state, to populate one select.
    */
   @Get('assignees')
-  @AdminAnyPermission('moderation:read', 'guard:read', 'support:read')
+  // `disputes:manage` and `managed:manage` joined the list when §5.16 and §5.17 landed: both
+  // pipelines assign work, and a lead who holds one of them without `support:read` could not
+  // populate the dropdown for a queue they are the ones clearing.
+  @AdminAnyPermission(
+    'moderation:read',
+    'guard:read',
+    'support:read',
+    'managed:manage',
+    'disputes:manage',
+  )
   @ApiOperation({
     summary: 'The staff a piece of work can be assigned to',
     description:

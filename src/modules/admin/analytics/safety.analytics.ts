@@ -1,14 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import {
+  AppealState,
+  ContentRiskTier,
   ModerationDecision,
   ModerationQueueType,
   Prisma,
+  ReportCasePriority,
+  ReportCaseState,
   ReportReason,
   ReportTargetType,
   RiskCategory,
+  // Still needed by `guardCases`: a Guard thread carries a `risk_level`, which is the one place on
+  // this tab that charts the level rather than a scan's tier or a case's priority.
   RiskLevel,
 } from '@prisma/client';
-import { ApiErrorCode } from '@/common';
 import { AnalyticsRunnerService } from './analytics-runner.service';
 import {
   BreakdownChart,
@@ -31,34 +36,50 @@ const TARGET_ROWS = 12;
 /** How many terms the lexicon table returns. */
 const TERM_ROWS = 20;
 
-/**
- * The risk levels this tab charts, and the three buckets `timeToAction` reports.
- *
- * `NONE` is excluded from the flagged matrix: a scan that found nothing is not a flag, and a
- * column of them would dwarf every real one.
- */
-const FLAGGED_LEVELS = [
-  RiskLevel.LOW,
-  RiskLevel.MEDIUM,
-  RiskLevel.HIGH,
-  RiskLevel.CRITICAL,
+export const PRIORITIES = [
+  ReportCasePriority.URGENT,
+  ReportCasePriority.HIGH,
+  ReportCasePriority.NORMAL,
 ] as const;
 
 /**
- * How a risk level becomes a response-time bucket.
+ * The two state names `ReportState` and `ReportCaseState` share.
  *
- * §5.25 asks for `URGENT`, `HIGH` and `NORMAL`, which are priorities rather than levels — the
- * mapping is the one the dashboard already uses when it calls `CRITICAL` scans urgent.
+ * The `states` filter is declared over the first and three charts are sourced from a table that
+ * carries the second, so these are the values that mean the same thing on both.
  */
-const PRIORITY_OF: Record<RiskLevel, 'URGENT' | 'HIGH' | 'NORMAL'> = {
-  [RiskLevel.CRITICAL]: 'URGENT',
-  [RiskLevel.HIGH]: 'HIGH',
-  [RiskLevel.MEDIUM]: 'NORMAL',
-  [RiskLevel.LOW]: 'NORMAL',
-  [RiskLevel.NONE]: 'NORMAL',
-};
+export const CASE_STATES = [ReportCaseState.ACTIONED, ReportCaseState.DISMISSED] as const;
 
-const PRIORITIES = ['URGENT', 'HIGH', 'NORMAL'] as const;
+/**
+ * An appeal that was actually answered.
+ *
+ * `WITHDRAWN` is the member changing their mind, which is theirs to do and says nothing about
+ * whether the decision was right; an open one has no outcome at all. Both would sit in the
+ * denominator and push the overturn rate down — and a number whose job is to catch a reviewer
+ * being wrong too often must not be flattered by the appeals nobody answered.
+ */
+export const APPEAL_OUTCOMES = [AppealState.UPHELD, AppealState.OVERTURNED] as const;
+
+/** The tiers the flagged matrix charts. `CLEAN` is not a flag, and would dwarf every real row. */
+export const FLAGGED_TIERS = [
+  ContentRiskTier.LOW,
+  ContentRiskTier.MEDIUM,
+  ContentRiskTier.HIGH,
+  ContentRiskTier.CRITICAL,
+] as const;
+
+/**
+ * §5.25: "`REMOVE_AND_*` count under their strongest action."
+ *
+ * A suspension outlives the removal that came with it, so `REMOVE_AND_SUSPEND` reads as a
+ * suspension; a warning does not outlive the removal, so `REMOVE_AND_WARN` reads as a removal.
+ * Folded so the bar has the five bands §5.25 names rather than seven, two of which would
+ * double-count the same severity under a longer label.
+ */
+export const FOLDED_DECISION: Partial<Record<ModerationDecision, ModerationDecision>> = {
+  [ModerationDecision.REMOVE_AND_SUSPEND]: ModerationDecision.SUSPEND_AUTHOR,
+  [ModerationDecision.REMOVE_AND_WARN]: ModerationDecision.REMOVE_CONTENT,
+};
 
 /**
  * Queue types this tab must never count.
@@ -68,47 +89,44 @@ const PRIORITIES = ['URGENT', 'HIGH', 'NORMAL'] as const;
  * verbs and no accusation attached. Counting it among decided moderation items makes every figure
  * on this tab wrong in a way that looks like the platform got slower.
  */
-const NOT_MODERATION: readonly string[] = ['PROFESSIONAL_REVIEW'];
+export const NOT_MODERATION: readonly string[] = ['PROFESSIONAL_REVIEW'];
 
 /**
- * Which decisions count as the term having been right, and which as a false positive.
+ * The decision mix, strongest action first, so the bar reads as a severity scale.
  *
- * An undecided item is neither. Counting it as a false positive would make every fresh term look
- * useless, and counting it as confirmed would make every term look infallible — the rate is only
- * meaningful over the items somebody actually looked at.
+ * The five bands §5.25 names, which are also exactly what survives the fold of `CASE_DECISIONS`:
+ * a case can be decided seven ways and `REMOVE_AND_*` count under their strongest action.
+ * `ESCALATE_GUARD` sits at the end rather than by severity — it is not a moderation outcome at
+ * all, it is the case being handed to safeguarding, and putting it between two outcomes would read
+ * as a verdict somewhere in the middle.
  */
-const CONFIRMING = [
-  ModerationDecision.REMOVE_CONTENT,
-  ModerationDecision.WARN_AUTHOR,
-  ModerationDecision.SUSPEND_AUTHOR,
-  ModerationDecision.REJECT,
-] as const;
-
-const EXONERATING = [ModerationDecision.APPROVE, ModerationDecision.NO_ACTION] as const;
-
-/** The decision mix, strongest action first, so the bar reads as a severity scale. */
-const DECISION_ORDER = [
+export const DECISION_ORDER = [
   ModerationDecision.SUSPEND_AUTHOR,
   ModerationDecision.REMOVE_CONTENT,
   ModerationDecision.WARN_AUTHOR,
-  ModerationDecision.REJECT,
-  ModerationDecision.APPROVE,
   ModerationDecision.NO_ACTION,
+  ModerationDecision.ESCALATE_GUARD,
 ] as const;
 
 /**
- * Trust & Safety (§5.25).
+ * Trust & Safety (§5.25). All ten charts, each from the source §5.25 names.
  *
- * Nine of the tab's ten charts, and the tenth says why it is missing. The spec sources this tab
- * from tables the safety milestone has not built yet — `report_cases`, `moderation_backlog_daily`,
- * `content_safety`, `risk_term_hits`, appeals — so every chart here is sourced from what the
- * schema actually holds, and each substitution is recorded in §12 of the spec rather than left for
- * a reader to discover from a number that does not match.
+ * It did not start that way. This tab was written while the safety milestone was half-built, so
+ * five charts read substitutes — the moderation queue standing in for `report_cases` and for
+ * `content_safety`, matched phrases unnested out of a JSON column standing in for
+ * `risk_term_hits` — and `appealOverturn` was a `NOT_AVAILABLE_YET` slot because appeals had no
+ * table at all. Those tables now exist and every chart has been moved onto its own, which changed
+ * four of the numbers: see each method for what it used to measure and why that was wrong.
  *
- * The one chart with no source at all is `appealOverturn`: there is no appeal table, in any shape.
- * It returns `{ kind: 'error', code: 'NOT_AVAILABLE_YET' }`, which §5.25 names for exactly this —
- * a slot the portal can render as "coming soon" rather than an empty chart it cannot tell apart
- * from a quiet month.
+ * One substitution **stays**, and it is an improvement rather than a shortfall: `queueBacklog`
+ * derives the backlog from openings and closures instead of reading `moderation_backlog_daily`, a
+ * nightly snapshot table. Derived, the series is exact and cannot drift from the live queue the
+ * dashboard counts. The snapshot table is not worth building to make a chart less accurate.
+ *
+ * The one thing to keep in mind when reading any of it: a filter bar shared by ten charts over
+ * five tables means the same filter reaches different columns, and in two cases a different enum.
+ * `FILTER_SEMANTICS` says so in the payload rather than leaving somebody to infer it from a count
+ * that did not move.
  */
 @Injectable()
 export class SafetyAnalytics {
@@ -119,7 +137,24 @@ export class SafetyAnalytics {
       'narrow by the **reported or authoring** member, not the reporter. A report whose subject ' +
       'cannot be resolved to a member is therefore excluded whenever a member filter is in force, ' +
       'and counted when none is.',
-    states: 'report states (`ReportState`); the moderation queue is filtered by `queueTypes`.',
+    queueTypes:
+      'only `queueBacklog`, which is the one chart still read from the moderation queue — every ' +
+      'other chart on this tab now reads reports, cases, scans, hits, appeals or suspensions, ' +
+      'none of which has a queue type.',
+    states:
+      'report states (`ReportState`). The three charts read from `report_cases` carry ' +
+      '`ReportCaseState` instead, so only the two names the enums share — `ACTIONED` and ' +
+      '`DISMISSED` — reach them; the rest is ignored there rather than applied to a column it ' +
+      'does not describe. The moderation queue is filtered by `queueTypes`.',
+    riskLevels:
+      '`RiskLevel` on reports, cases and the queue. `flaggedByTierCategory` reads ' +
+      '`content_safety.tier`, whose values are the same but for its floor (`CLEAN`, not `NONE`), ' +
+      'and the filter applies to it. `topRiskTerms` ignores it: a hit is a phrase matching a ' +
+      'string, and the tier is a verdict on the whole item.',
+    riskCategories:
+      "the scan's category everywhere except `topRiskTerms`, which reads the **term's** own " +
+      'category — "show me the harassment terms" is a question about what a phrase is for, not ' +
+      'about what the scanner concluded after weighing every other phrase in the post.',
   };
 
   charts(
@@ -136,7 +171,7 @@ export class SafetyAnalytics {
       flaggedByTierCategory: () => this.flaggedByTierCategory(filter, range, extra),
       topRiskTerms: () => this.topRiskTerms(filter, range, extra),
       guardCases: () => this.guardCases(filter, range, extra),
-      appealOverturn: () => this.appealOverturn(),
+      appealOverturn: () => this.appealOverturn(filter, range, extra),
       activeSuspensions: () => this.activeSuspensions(filter, range),
     };
   }
@@ -190,20 +225,117 @@ export class SafetyAnalytics {
     return parts.length ? Prisma.sql`AND ${Prisma.join(parts, ' AND ')}` : Prisma.empty;
   }
 
-  /** The queue filters. A queue item has a type and a risk, and no reason code. */
+  /**
+   * The case filters, for the three charts sourced from `report_cases`.
+   *
+   * `states` is the awkward one. The filter is declared as `ReportState` — the state of an
+   * individual report — and a case carries `ReportCaseState`, a different enum that happens to
+   * share `ACTIONED` and `DISMISSED`. Rather than refuse the filter or apply it to a column it
+   * does not describe, the shared values are applied and the rest ignored: asking for
+   * `state=ACTIONED` means the same thing on both tables, and asking for `RECEIVED` is a question
+   * about reports that a case cannot answer. Said out loud in `FILTER_SEMANTICS` rather than left
+   * for somebody to infer from a count that did not move.
+   *
+   * `reasonCodes` is an array overlap, because a case collects the reasons of every report in it.
+   * A case reported once for spam and once for a scam matches either filter, which is the only
+   * reading that does not make "cases reported as a scam" miss the ones that were also spam.
+   */
+  private caseScope(extra: SafetyFilters): Prisma.Sql {
+    const parts: Prisma.Sql[] = [];
+
+    if (extra.reasonCodes?.length) {
+      parts.push(
+        Prisma.sql`c."reason_codes" && ARRAY[${Prisma.join(extra.reasonCodes)}]::"ReportReason"[]`,
+      );
+    }
+
+    if (extra.targetTypes?.length) {
+      parts.push(Prisma.sql`c."target_type"::text IN (${Prisma.join(extra.targetTypes)})`);
+    }
+
+    if (extra.riskLevels?.length) {
+      parts.push(Prisma.sql`c."risk_level"::text IN (${Prisma.join(extra.riskLevels)})`);
+    }
+
+    const shared = (extra.states ?? []).filter(state =>
+      (CASE_STATES as readonly string[]).includes(state),
+    );
+
+    if (shared.length) {
+      parts.push(Prisma.sql`c."state"::text IN (${Prisma.join(shared)})`);
+    }
+
+    return parts.length ? Prisma.sql`AND ${Prisma.join(parts, ' AND ')}` : Prisma.empty;
+  }
+
+  /**
+   * The scan filters, for the matrix and the lexicon table.
+   *
+   * `content_safety` has a `tier` where the rest of this tab has a `risk_level`, and the two enums
+   * share every value but their floor — `NONE` against `CLEAN`. The `riskLevels` filter is applied
+   * to the tier on the four shared names, so one filter bar means one thing across the tab.
+   */
+  private scanScope(extra: SafetyFilters): Prisma.Sql {
+    const parts: Prisma.Sql[] = [];
+
+    if (extra.targetTypes?.length) {
+      parts.push(Prisma.sql`cs."target_type"::text IN (${Prisma.join(extra.targetTypes)})`);
+    }
+
+    if (extra.riskCategories?.length) {
+      parts.push(Prisma.sql`cs."category"::text IN (${Prisma.join(extra.riskCategories)})`);
+    }
+
+    const tiers = (extra.riskLevels ?? []).filter(level =>
+      (Object.values(ContentRiskTier) as string[]).includes(level),
+    );
+
+    if (tiers.length) {
+      parts.push(Prisma.sql`cs."tier"::text IN (${Prisma.join(tiers)})`);
+    }
+
+    return parts.length ? Prisma.sql`AND ${Prisma.join(parts, ' AND ')}` : Prisma.empty;
+  }
+
+  /**
+   * The lexicon-table filters.
+   *
+   * `riskCategories` reads against the **term's** category rather than the scan's, which is the
+   * only one that makes the table answer the question asked of it: "show me the harassment terms"
+   * is about what the phrase is for, not about what the scanner concluded after weighing every
+   * other phrase in the post.
+   *
+   * `riskLevels` and `targetTypes` are not applied here. A hit is a phrase matching a string; the
+   * tier is a verdict on the whole item, and filtering the hit log by it would answer a different
+   * question under the same heading.
+   */
+  private termScope(extra: SafetyFilters): Prisma.Sql {
+    if (!extra.riskCategories?.length) return Prisma.empty;
+
+    return Prisma.sql`AND rt."category"::text IN (${Prisma.join(extra.riskCategories)})`;
+  }
+
+  /**
+   * The queue filters, for `queueBacklog` — which is now the only chart on this tab that reads the
+   * queue, and so the only place `queueTypes` has any effect.
+   *
+   * It used to be eight queries, before each chart moved onto the table §5.25 names. Worth saying
+   * out loud, because a filter that narrows one chart out of ten is a filter somebody will reach
+   * for expecting it to narrow the tab. `FILTER_SEMANTICS` says so in the payload.
+   */
   private queueScope(extra: SafetyFilters): Prisma.Sql {
     // Always, before any caller's filter: the types on this table that are **not** moderation.
     //
-    // Every chart on this tab answers a question about risk — how fast we act on it, how much is
-    // waiting, whether the lexicon was right. A `PROFESSIONAL_REVIEW` item is none of that: nothing
-    // is wrong with the listing and nobody is accused of anything, it is an onboarding approval
-    // that happens to live in the same table because it needs a reviewer and a queue.
+    // A `PROFESSIONAL_REVIEW` item is not moderation work — nothing is wrong with the listing and
+    // nobody is accused of anything, it is an onboarding approval that happens to live in the same
+    // table because it needs a reviewer and a queue. Counted in the backlog it would draw a band
+    // of outstanding "moderation" that is nothing of the sort.
     //
-    // Charted together, three approved listings put a 384-minute median on the NORMAL line and the
-    // "time to action" figure stopped being about action on risk at all. The exclusion is here, in
-    // the one fragment all eight queries pass through, rather than in each of them: added to §5.9's
-    // own default-tab list and forgotten here, it would have been wrong in exactly this invisible
-    // way — a number that is plausible, moves for the wrong reasons, and nobody checks.
+    // This mattered more when eight queries passed through here: three approved listings once put
+    // a 384-minute median on the time-to-action line, back when that chart read the queue. The
+    // exclusion stays in the fragment rather than in the query, for the same reason it was put
+    // here — added to §5.9's own default-tab list and forgotten here, it is wrong in an invisible
+    // way: a number that is plausible, moves for the wrong reasons, and nobody checks.
     const parts: Prisma.Sql[] = [
       Prisma.sql`q."type"::text NOT IN (${Prisma.join([...NOT_MODERATION])})`,
     ];
@@ -302,16 +434,22 @@ export class SafetyAnalytics {
   }
 
   /**
-   * How long a flagged item waited for a decision, by priority.
+   * How long a case waited before anybody acted on it, by priority.
    *
-   * §5.25 defines this as `first_action_at − first_reported_at`, "claim or decision, whichever
-   * first". Nothing records a claim: `ModerationQueueItem` has an assignee but no timestamp for
-   * when they took it, so the only knowable first action is the decision. That makes this number
-   * an **upper bound** on time-to-action rather than the figure the spec describes, which is worth
-   * knowing before anybody sets a target against it.
+   * §5.25's own definition, now that the table exists: `report_cases.first_action_at −
+   * first_reported_at`, where first action is **claim or decision, whichever came first**, grouped
+   * by the case's own `priority` and bucketed by the day it was decided.
    *
-   * A median rather than a mean, and bucketed by the day of the decision — one item that sat for
-   * three weeks over Christmas would otherwise drag a mean past every real experience.
+   * It used to read `moderation_queue_items.decided_at − created_at` and map the item's risk
+   * *level* onto a priority, because `report_cases` did not exist. Two things were wrong with that
+   * and both are now gone. It measured time-to-**decision** rather than time-to-action, so the
+   * figure was an upper bound on the thing the SLA is set against; and `NORMAL` combined two risk
+   * levels, so its value was the larger of two medians — a median of medians is not a median, and
+   * the old code said so in a comment rather than being able to fix it. A case carries a real
+   * priority, so each band is now one median over one population.
+   *
+   * Still a median rather than a mean, and still bucketed by the day of the decision: one case
+   * that sat over Christmas would drag a mean past every real experience.
    */
   private async timeToAction(
     filter: ResolvedMemberFilter,
@@ -320,18 +458,23 @@ export class SafetyAnalytics {
   ): Promise<TimeSeriesChart> {
     const buckets = bucketsFor(range.from, range.to, range.granularity);
     const rows = await this.runner.query(
-      tx => tx.$queryRaw<Array<{ level: string; day: Date; minutes: number }>>`
+      tx => tx.$queryRaw<Array<{ priority: string; day: Date; minutes: number }>>`
         WITH ${this.pop(filter)}
-        SELECT q."risk_level"::text AS level,
-               (q."decided_at" AT TIME ZONE 'Europe/London')::date AS day,
+        SELECT c."priority"::text AS priority,
+               (c."decided_at" AT TIME ZONE 'Europe/London')::date AS day,
                PERCENTILE_CONT(0.5) WITHIN GROUP (
-                 ORDER BY EXTRACT(EPOCH FROM (q."decided_at" - q."created_at")) / 60
+                 ORDER BY EXTRACT(EPOCH FROM (c."first_action_at" - c."first_reported_at")) / 60
                ) AS minutes
-        FROM "moderation_queue_items" q
-        WHERE q."decided_at" IS NOT NULL
-          AND q."decided_at" >= ${range.fromInstant} AND q."decided_at" < ${range.toInstant}
-          AND ${this.subject(Prisma.sql`q."subject_user_id"`, extra)}
-          ${this.queueScope(extra)}
+        FROM "report_cases" c
+        WHERE c."decided_at" IS NOT NULL
+          -- A decided case always has one, because deciding sets it. The guard is for the row that
+          -- predates the column rather than for a case that was somehow decided without being
+          -- touched: without it such a row contributes a NULL that PERCENTILE_CONT ignores, which
+          -- is harmless, and a count that disagrees with decisionMix, which is not.
+          AND c."first_action_at" IS NOT NULL
+          AND c."decided_at" >= ${range.fromInstant} AND c."decided_at" < ${range.toInstant}
+          AND ${this.subject(Prisma.sql`c."target_user_id"`, extra)}
+          ${this.caseScope(extra)}
         GROUP BY 1, 2
       `,
     );
@@ -343,28 +486,20 @@ export class SafetyAnalytics {
       granularity: range.granularity,
       unit: 'minutes',
       series: PRIORITIES.map(priority => {
-        // A median of medians is not a median, so the bucket's value is the median of the levels
-        // that map to this priority weighted by nothing — with `URGENT` and `HIGH` each coming from
-        // a single level, only `NORMAL` combines two, and taking the larger of them keeps the line
-        // an upper bound rather than inventing an average of two medians.
-        const worst = buckets.map(() => null as Num);
+        const minutes = buckets.map(() => null as Num);
 
         for (const row of rows) {
-          if (PRIORITY_OF[row.level as RiskLevel] !== priority) continue;
+          if (row.priority !== priority) continue;
 
           const position = index.get(dayKey(row.day));
 
-          if (position === undefined) continue;
-
-          const minutes = Math.round(Number(row.minutes));
-
-          worst[position] = Math.max(worst[position] ?? 0, minutes);
+          if (position !== undefined) minutes[position] = Math.round(Number(row.minutes));
         }
 
         return {
           key: priority,
           label: titleise(priority),
-          points: buckets.map((bucket, position) => ({ t: bucket.key, v: worst[position] })),
+          points: buckets.map((bucket, position) => ({ t: bucket.key, v: minutes[position] })),
         };
       }),
     };
@@ -467,27 +602,51 @@ export class SafetyAnalytics {
   /**
    * What staff decided, strongest action first.
    *
-   * §5.25 keys this on `NO_ACTION`, `REMOVE_CONTENT`, `WARN_AUTHOR`, `SUSPEND_AUTHOR` and
-   * `ESCALATE_GUARD`, and folds `REMOVE_AND_*` under "their strongest action". `ModerationDecision`
-   * holds neither `ESCALATE_GUARD` nor any compound value, so there is nothing to fold — and it
-   * holds `APPROVE` and `REJECT`, which the spec's list omits. Keyed on the enum as it exists,
-   * because a bar chart whose keys are not the values in the column is a chart that silently drops
-   * decisions.
+   * §5.25's own source and its own five keys, now that both exist: `report_cases.decision`, with
+   * `REMOVE_AND_WARN` and `REMOVE_AND_SUSPEND` folded under their strongest action. The fold is
+   * done in SQL rather than afterwards, so the breakdown's `total` and its shares are over the
+   * folded rows — add them up in JavaScript and the total is right while every share is computed
+   * against a different denominator.
+   *
+   * It used to read `moderation_queue_items`, and its comment said there was nothing to fold
+   * because `ModerationDecision` held no compound value. It holds three now — the two folded here
+   * and `ESCALATE_GUARD` — which is the quiet way a chart goes wrong: nothing broke, a band simply
+   * started existing and nobody was counting it.
+   *
+   * `CASE_DECISIONS` is the authority for the bands. A case can only be decided one of seven ways
+   * and five survive the fold, so the chart's keys are exactly the values the column can hold
+   * rather than a list somebody kept in step by hand.
    */
   private async decisionMix(
     filter: ResolvedMemberFilter,
     range: ResolvedRange,
     extra: SafetyFilters,
   ): Promise<BreakdownChart> {
+    const folds = Object.entries(FOLDED_DECISION) as Array<
+      [ModerationDecision, ModerationDecision]
+    >;
+    // `CASE WHEN … END` with no branches is a syntax error, so the folded column is only built
+    // when there is something to fold. Not reachable today — `FOLDED_DECISION` has two entries —
+    // and the point is that emptying it should give a chart with an extra band rather than a
+    // five-hundred.
+    const key = folds.length
+      ? Prisma.sql`CASE ${Prisma.join(
+          folds.map(
+            ([from, to]) =>
+              Prisma.sql`WHEN c."decision" = ${from}::"ModerationDecision" THEN ${to}`,
+          ),
+          ' ',
+        )} ELSE c."decision"::text END`
+      : Prisma.sql`c."decision"::text`;
     const rows = await this.runner.query(
       tx => tx.$queryRaw<Array<{ key: string; total: bigint }>>`
         WITH ${this.pop(filter)}
-        SELECT q."decision"::text AS key, COUNT(*) AS total
-        FROM "moderation_queue_items" q
-        WHERE q."decision" IS NOT NULL
-          AND q."decided_at" >= ${range.fromInstant} AND q."decided_at" < ${range.toInstant}
-          AND ${this.subject(Prisma.sql`q."subject_user_id"`, extra)}
-          ${this.queueScope(extra)}
+        SELECT ${key} AS key, COUNT(*) AS total
+        FROM "report_cases" c
+        WHERE c."decision" IS NOT NULL
+          AND c."decided_at" >= ${range.fromInstant} AND c."decided_at" < ${range.toInstant}
+          AND ${this.subject(Prisma.sql`c."target_user_id"`, extra)}
+          ${this.caseScope(extra)}
         GROUP BY 1
       `,
     );
@@ -500,12 +659,20 @@ export class SafetyAnalytics {
   }
 
   /**
-   * What the scanner held, by severity and category.
+   * What the scanner made of the content it saw, by severity and category.
    *
-   * §5.25 reads this from `content_safety`, the per-scan table, which does not exist — so this is
-   * the **queue items** the scanner raised, which is a narrower set: a scan that found nothing
-   * never becomes an item. The chart therefore answers "what was held and why" rather than "what
-   * the scanner saw", and `NONE` is excluded because an item with no risk is not a flag.
+   * §5.25's own source, now that it exists: `content_safety`, one row per scanned item, with
+   * `tier` for the rows and `category` for the columns, and `CLEAN` excluded because a scan that
+   * found nothing is not a flag.
+   *
+   * This is a **wider** set than what it replaced. It used to read the queue items the scanner
+   * raised, which is only the content that was held or limited — so the chart answered "what was
+   * held and why" while its title said "what the scanner flagged", and a tier that never produces
+   * an item was a permanently empty row. Reading the scan table means `LOW` finally has a
+   * population, and the matrix says what the lexicon and the classifier are actually seeing.
+   *
+   * Bucketed by the scan, not by the content: an edit re-scans, and a post rewritten three times
+   * is three readings of the lexicon. That is the right unit for a chart about the scanner.
    */
   private async flaggedByTierCategory(
     filter: ResolvedMemberFilter,
@@ -515,40 +682,60 @@ export class SafetyAnalytics {
     const rows = await this.runner.query(
       tx => tx.$queryRaw<Array<{ row: string; col: string | null; total: bigint }>>`
         WITH ${this.pop(filter)}
-        SELECT q."risk_level"::text AS row, q."risk_category"::text AS col, COUNT(*) AS total
-        FROM "moderation_queue_items" q
-        WHERE q."risk_level" <> 'NONE'
-          AND q."created_at" >= ${range.fromInstant} AND q."created_at" < ${range.toInstant}
-          AND ${this.subject(Prisma.sql`q."subject_user_id"`, extra)}
-          ${this.queueScope(extra)}
+        SELECT cs."tier"::text AS row, cs."category"::text AS col, COUNT(*) AS total
+        FROM "content_safety" cs
+        WHERE cs."tier" <> 'CLEAN'
+          AND cs."created_at" >= ${range.fromInstant} AND cs."created_at" < ${range.toInstant}
+          AND ${this.subject(Prisma.sql`cs."author_id"`, extra)}
+          ${this.scanScope(extra)}
         GROUP BY 1, 2
       `,
     );
 
     return toMatrix(rows, {
       unit: 'count',
-      rows: FLAGGED_LEVELS.map(level => ({ key: level, label: titleise(level) })),
-      cols: Object.values(RiskCategory).map(category => ({
-        key: category,
-        label: titleise(category),
-      })),
+      rows: FLAGGED_TIERS.map(tier => ({ key: tier, label: titleise(tier) })),
+      cols: [
+        ...Object.values(RiskCategory).map(category => ({
+          key: category,
+          label: titleise(category),
+        })),
+        // `ContentSafety.category` is nullable and a flagged scan can have none: `categoryOf`
+        // returns the lexicon's category, and that is null when the **classifier** is what raised
+        // the score. There are no such rows today only because the classifier is switched off
+        // (§6.7), so this column is empty now and stops being empty the day it ships.
+        //
+        // Without it `toMatrix` maps the null onto its own `UNKNOWN` key, finds no column of that
+        // name and drops the cell — a flagged scan missing from a chart of flagged scans, with
+        // nothing to say it was ever there. `guardCases` declares the same row for the same
+        // reason.
+        { key: 'UNKNOWN', label: 'Not categorised' },
+      ],
     });
   }
 
   /**
    * Which phrases in the lexicon are earning their place.
    *
-   * §5.25 reads this from `risk_term_hits`, which does not exist — but the hits do: the scanner
-   * writes the matched phrases into `moderation_queue_items.risk_signals` as
-   * `[{ category, pattern, weight }]`, "matched terms, for the reviewer". Unnested, that is the
-   * hit log, and the item's own decision says whether the term was right.
+   * §5.25's own source, now that it exists: `risk_term_hits`, one row per phrase that matched,
+   * with `outcome` saying whether a reviewer agreed. Joined to `risk_terms` **on its id**, so a
+   * row can be acted on and a phrase that was edited keeps its own record.
    *
-   * The false-positive rate is taken over **decided** items only. Over all items a fresh term
-   * looks useless until somebody reviews it, which is precisely when a reviewer might delete the
-   * term that was working.
+   * What this replaces was the most strained substitution on the tab. There was no hit log, so it
+   * unnested `moderation_queue_items.risk_signals` — the matched phrases the scanner writes for
+   * the reviewer — and joined back to `risk_terms` on `(category, pattern)`, inferring the outcome
+   * from the *item's* decision. Three things were wrong with that and all three are now fixed:
    *
-   * Joined back to `risk_terms` on `(category, pattern)` — its unique key — so a row carries the
-   * term's id and can be acted on, and so a phrase deactivated and replaced keeps its own record.
+   *  - a hit on content that never became a queue item was invisible, so the phrases that fire
+   *    most often on clean content — exactly the ones a reviewer wants to delete — were the ones
+   *    least likely to appear;
+   *  - the item's decision is about the item, not the phrase, so a post removed for one phrase
+   *    confirmed every other phrase that happened to match it;
+   *  - the join was on a pattern string, so editing a term's text orphaned its history.
+   *
+   * The false-positive rate is still taken over **resolved** hits only. Over all of them a fresh
+   * term looks useless until somebody reviews it, which is precisely when a reviewer might delete
+   * the term that was working.
    */
   private async topRiskTerms(
     filter: ResolvedMemberFilter,
@@ -558,7 +745,7 @@ export class SafetyAnalytics {
     const rows = await this.runner.query(
       tx => tx.$queryRaw<
         Array<{
-          term_id: string | null;
+          term_id: string;
           pattern: string;
           category: string;
           hits: bigint;
@@ -566,34 +753,20 @@ export class SafetyAnalytics {
           false_positives: bigint;
         }>
       >`
-        WITH ${this.pop(filter)},
-        hits AS (
-          SELECT signal->>'pattern' AS pattern, signal->>'category' AS category, q."decision"
-          FROM "moderation_queue_items" q
-          -- The guard is on the INPUT, not in the WHERE. jsonb_array_elements raises "cannot
-          -- extract elements from an object" on anything that is not an array, and a WHERE clause
-          -- only saves the query while the planner happens to push the qual below the lateral --
-          -- which it does today and need not tomorrow. The scanner writes an array or nothing, so
-          -- this is latent rather than live, and a latent error in a chart is the kind that fires
-          -- months later under a plan nobody changed on purpose.
-          CROSS JOIN LATERAL jsonb_array_elements(
-            CASE WHEN jsonb_typeof(q."risk_signals") = 'array'
-                 THEN q."risk_signals" ELSE '[]'::jsonb END
-          ) AS signal
-          WHERE q."created_at" >= ${range.fromInstant} AND q."created_at" < ${range.toInstant}
-            AND ${this.subject(Prisma.sql`q."subject_user_id"`, extra)}
-            ${this.queueScope(extra)}
-        )
-        SELECT rt."id" AS term_id, hits."pattern" AS pattern, hits."category" AS category,
+        WITH ${this.pop(filter)}
+        SELECT rt."id" AS term_id, rt."pattern" AS pattern, rt."category"::text AS category,
                COUNT(*) AS hits,
-               COUNT(CASE WHEN hits."decision"::text
-                 IN (${Prisma.join(CONFIRMING)}) THEN 1 END) AS confirmed,
-               COUNT(CASE WHEN hits."decision"::text
-                 IN (${Prisma.join(EXONERATING)}) THEN 1 END) AS false_positives
-        FROM hits
-        LEFT JOIN "risk_terms" rt
-          ON rt."pattern" = hits."pattern" AND rt."category"::text = hits."category"
-        WHERE hits."pattern" IS NOT NULL AND hits."category" IS NOT NULL
+               COUNT(CASE WHEN h."outcome" = 'CONFIRMED' THEN 1 END) AS confirmed,
+               COUNT(CASE WHEN h."outcome" = 'FALSE_POSITIVE' THEN 1 END) AS false_positives
+        FROM "risk_term_hits" h
+        JOIN "risk_terms" rt ON rt."id" = h."risk_term_id"
+        -- Left, not inner: a hit whose scan row has been cleaned up is still a hit, and dropping
+        -- it would quietly shrink the counts on the oldest terms. The member filter below is what
+        -- needs the join, and only when one is in force.
+        LEFT JOIN "content_safety" cs ON cs."id" = h."content_safety_id"
+        WHERE h."created_at" >= ${range.fromInstant} AND h."created_at" < ${range.toInstant}
+          AND ${this.subject(Prisma.sql`cs."author_id"`, extra)}
+          ${this.termScope(extra)}
         GROUP BY 1, 2, 3
         ORDER BY 4 DESC, 2 ASC
         LIMIT ${TERM_ROWS}
@@ -602,8 +775,10 @@ export class SafetyAnalytics {
 
     return {
       kind: 'table',
+      // `termId` is **not** a column, and stays on the rows: the portal reads the first column as
+      // the row's label, so declaring the id first drew a table of uuids where the phrases should
+      // be. It is still on each row, because that is what the row links to.
       columns: [
-        { key: 'termId', label: 'Term' },
         { key: 'pattern', label: 'Phrase' },
         { key: 'category', label: 'Category' },
         { key: 'hits', label: 'Hits', unit: 'count' },
@@ -673,17 +848,86 @@ export class SafetyAnalytics {
   }
 
   /**
-   * Appeals: no table, in any shape.
+   * How often a member argued with a decision and won.
    *
-   * Returned as a chart-level error rather than omitted from the payload, so the portal renders
-   * the slot the page was designed with and says what it is waiting for. An omitted chart looks
-   * like a bug in the portal; an empty one looks like a quiet month.
+   * The one chart on this tab that was a `NOT_AVAILABLE_YET` slot, because §5.11's appeals had no
+   * table. They have one, so this is now the measure §5.25 asks for: `OVERTURNED ÷ decided`, as a
+   * headline and a trend.
+   *
+   * **Decided means decided.** `UPHELD` and `OVERTURNED` only — an appeal still open has no
+   * outcome, and a `WITHDRAWN` one is the member changing their mind, which is theirs to do and
+   * says nothing about whether the original decision was right. Counting either in the
+   * denominator would push the rate down, and the direction matters: this number existing to catch
+   * a reviewer being wrong too often is precisely why it must not be flattered.
+   *
+   * Bucketed by the day the appeal was **decided**, not raised, so a month's figure is the
+   * decisions taken in it. Null where nothing was decided in a bucket rather than zero: no
+   * appeals answered is not a 0% overturn rate, and a line that drops to the floor on a quiet week
+   * reads as a run of good decisions.
    */
-  private async appealOverturn(): Promise<Chart> {
+  private async appealOverturn(
+    filter: ResolvedMemberFilter,
+    range: ResolvedRange,
+    extra: SafetyFilters,
+  ): Promise<Chart> {
+    const buckets = bucketsFor(range.from, range.to, range.granularity);
+    const rows = await this.runner.query(
+      tx => tx.$queryRaw<Array<{ day: Date; decided: bigint; overturned: bigint }>>`
+        WITH ${this.pop(filter)}
+        SELECT (a."decided_at" AT TIME ZONE 'Europe/London')::date AS day,
+               COUNT(*) AS decided,
+               COUNT(CASE WHEN a."state" = 'OVERTURNED' THEN 1 END) AS overturned
+        FROM "appeals" a
+        WHERE a."decided_at" IS NOT NULL
+          AND a."state"::text IN (${Prisma.join([...APPEAL_OUTCOMES])})
+          AND a."decided_at" >= ${range.fromInstant} AND a."decided_at" < ${range.toInstant}
+          AND ${this.subject(Prisma.sql`a."user_id"`, extra)}
+        GROUP BY 1
+      `,
+    );
+
+    const index = indexByDay(buckets);
+    const decided = buckets.map(() => 0);
+    const overturned = buckets.map(() => 0);
+
+    for (const row of rows) {
+      const position = index.get(dayKey(row.day));
+
+      if (position === undefined) continue;
+
+      decided[position] += Number(row.decided);
+      overturned[position] += Number(row.overturned);
+    }
+
+    const totalDecided = decided.reduce((sum, value) => sum + value, 0);
+    const totalOverturned = overturned.reduce((sum, value) => sum + value, 0);
+    const trend: Point[] = buckets.map((bucket, position) => ({
+      t: bucket.key,
+      v: rate(overturned[position], decided[position]),
+    }));
+
     return {
-      kind: 'error',
-      code: ApiErrorCode.NOT_AVAILABLE_YET,
-      message: 'Appeals are not recorded yet, so there is nothing to overturn.',
+      kind: 'group',
+      items: {
+        rate: {
+          kind: 'kpi',
+          value: rate(totalOverturned, totalDecided),
+          // No previous period. The rate over a handful of appeals swings between 0 and 100 on one
+          // decision, so a change percentage against last month would be noise presented as a
+          // trend — and this is a number somebody would act on. The trend beside it is the honest
+          // form of the same comparison.
+          previous: null,
+          changePct: null,
+          unit: 'percent',
+          sparkline: trend,
+        },
+        trend: {
+          kind: 'timeseries',
+          granularity: range.granularity,
+          unit: 'percent',
+          series: [{ key: 'overturnRate', label: 'Overturned', points: trend }],
+        },
+      },
     };
   }
 

@@ -16,6 +16,7 @@ import {
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta, excerpt, toJsonOrUndefined } from '@/common';
 import {
+  ACTIVE_AUTHOR,
   AuthorView,
   ContentSafetyService,
   DIRECT_VISIBILITY,
@@ -103,7 +104,8 @@ export class ReviewService {
     const where: Prisma.ReviewWhereInput = {
       subjectUserId,
       deletedAt: null,
-      OR: [{ ...DIRECT_VISIBILITY }, { reviewerId: viewerId }],
+      // The public branch only: the second is the viewer's own review, which they always see.
+      OR: [{ ...DIRECT_VISIBILITY, reviewer: ACTIVE_AUTHOR }, { reviewerId: viewerId }],
       ...(query.context && query.context !== 'ALL' ? { context: query.context } : {}),
     };
 

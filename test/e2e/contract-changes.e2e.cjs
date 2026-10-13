@@ -4,7 +4,7 @@
  * owner-only stats that must not leak, an id that saves a round trip, a field
  * that lives on the user record but is printed on a Connect card, and a tab
  * gated on the right thing. */
-const { api, check, finish, makeUser, prisma, sweep } = require('./harness.cjs');
+const { api, check, connectCreate, finish, makeUser, prisma, sweep } = require('./harness.cjs');
 
 (async () => {
   await sweep();
@@ -177,12 +177,17 @@ const { api, check, finish, makeUser, prisma, sweep } = require('./harness.cjs')
     cityId: 'Manchester',
   });
 
-  r = await api(pro.token, 'PUT', '/connect/me', {
-    typeCode: 'LANGUAGE_EXCHANGE',
-    lookingFor: 'Practising English after work, happy to help with Yoruba in return.',
-    dmPolicy: 'REQUEST_FIRST',
-    isVisible: true,
-  });
+  r = await api(
+    pro.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(pro.token, {
+      typeCode: 'LANGUAGE_EXCHANGE',
+      lookingFor: 'Practising English after work, happy to help with Yoruba in return.',
+      dmPolicy: 'REQUEST_FIRST',
+      isVisible: true,
+    }),
+  );
   check('connect profile saved', r.status === 200 || r.status === 201, { s: r.status, b: r.body });
 
   r = await api(pro.token, 'GET', '/connect/me');

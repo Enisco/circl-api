@@ -2186,25 +2186,177 @@ const shift = days => {
   console.log('\n— Analytics: Trust & Safety —');
 
   /**
-   * Fixtures, because the demo dataset has no decided queue item, no risk-term hit and no live
-   * suspension — so every one of these charts computes zero and the arithmetic goes unverified.
-   * Two decided items at known ages, two still open, one lifted suspension and one live.
+   * Fixtures, because the demo dataset has no decided case, no scan above CLEAN, no risk-term hit,
+   * no decided appeal and no live suspension — so every one of these charts computes zero and the
+   * arithmetic goes unverified.
+   *
+   * Each chart now reads the table §5.25 names, so the fixtures are five tables rather than one:
+   * report cases for time-to-action and the decision mix, `content_safety` for the flagged matrix,
+   * `risk_term_hits` for the lexicon table, appeals for the overturn rate, and the queue only for
+   * the backlog — which is the one chart still derived from it, on purpose.
    */
   const hour = 3_600_000;
   const safetySubject = await makeUser('an-safety-subject', { cityId: 'LONDON' });
+  // Stamped, and swept first. `report_cases` carries a partial unique index — one open case per
+  // target (§4.6) — so a run that dies before its cleanup makes the next one fail on a fixture
+  // rather than on a chart. Both halves, because the stamp alone leaves rows behind for ever and
+  // the sweep alone still collides with a parallel run.
+  const stamp = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+  for (const [model, prefix] of [
+    ['reportCase', 'e2e-case-'],
+    ['contentSafety', 'e2e-scan-'],
+    ['moderationQueueItem', 'e2e-safety-'],
+  ]) {
+    await prisma[model].deleteMany({ where: { targetId: { startsWith: prefix } } });
+  }
+
+  await prisma.riskTerm.deleteMany({ where: { pattern: { startsWith: 'e2e ' } } });
+
   const riskTerm = await prisma.riskTerm.create({
-    data: { category: 'SCAM', pattern: 'e2e wire the deposit', weight: 40 },
+    data: { category: 'SCAM', pattern: `e2e wire the deposit ${stamp}`, weight: 40 },
   });
+  const otherTerm = await prisma.riskTerm.create({
+    data: { category: 'HATE', pattern: `e2e never resolved ${stamp}`, weight: 20 },
+  });
+
+  // ── report_cases: time to action, and the decision mix ────────────────────
+  //
+  // `first_action_at − first_reported_at`, not time-to-decision, and the case's own priority
+  // rather than a risk level mapped onto one. The fourth case is the fold: `REMOVE_AND_SUSPEND`
+  // must land on the SUSPEND_AUTHOR band rather than on one of its own.
+  const caseIds = [];
+
+  for (const item of [
+    { priority: 'URGENT', actedAfter: 0.5, decision: 'SUSPEND_AUTHOR' },
+    { priority: 'NORMAL', actedAfter: 3, decision: 'NO_ACTION' },
+    { priority: 'HIGH', actedAfter: null, decision: null },
+    { priority: 'URGENT', actedAfter: 1, decision: 'REMOVE_AND_SUSPEND' },
+  ]) {
+    const reported = new Date(Date.now() - 6 * hour);
+    const row = await prisma.reportCase.create({
+      data: {
+        targetType: 'UPDATE',
+        targetId: `e2e-case-${stamp}-${item.priority}-${item.decision ?? 'open'}`,
+        targetUserId: safetySubject.id,
+        priority: item.priority,
+        state: item.decision ? 'ACTIONED' : 'OPEN',
+        // The one reason no other case on the platform carries, so `?reasonCodes=ILLEGAL_ITEM`
+        // isolates these four exactly — and does it through `caseScope`'s array overlap, which is
+        // the code path the filter uses in earnest.
+        reasonCodes: ['ILLEGAL_ITEM'],
+        riskLevel: 'MEDIUM',
+        firstReportedAt: reported,
+        lastReportedAt: reported,
+        dueAt: new Date(Date.now() + 24 * hour),
+        ...(item.actedAfter === null
+          ? {}
+          : {
+              firstActionAt: new Date(reported.getTime() + item.actedAfter * hour),
+              decision: item.decision,
+              decidedAt: new Date(reported.getTime() + item.actedAfter * hour),
+            }),
+      },
+    });
+
+    caseIds.push(row.id);
+  }
+
+  // ── content_safety: the flagged matrix ───────────────────────────────────
+  //
+  // Scans, not queue items — which is the whole point of the move. The CLEAN row proves the floor
+  // is excluded, and it is a row the old source could not have produced at all: a scan that found
+  // nothing never became a queue item.
+  const scanIds = [];
+
+  for (const scan of [
+    { tier: 'CRITICAL', category: 'SCAM' },
+    { tier: 'MEDIUM', category: 'SCAM' },
+    { tier: 'LOW', category: 'HATE' },
+    { tier: 'CLEAN', category: null },
+    // Flagged, with **no category**. `ContentSafety.category` is nullable and `categoryOf` returns
+    // the lexicon's category — null when the classifier is what raised the score. There are no
+    // such rows in the wild yet only because the classifier is switched off (§6.7), so this is the
+    // row that proves the matrix has somewhere to put one: without the "Not categorised" column,
+    // `toMatrix` maps the null onto its own UNKNOWN key, finds no column and drops the cell.
+    { tier: 'HIGH', category: null },
+  ]) {
+    const row = await prisma.contentSafety.create({
+      data: {
+        targetType: 'UPDATE',
+        targetId: `e2e-scan-${stamp}-${scan.tier}`,
+        authorId: safetySubject.id,
+        tier: scan.tier,
+        category: scan.category ?? undefined,
+        finalScore: 50,
+        scanStatus: 'COMPLETE',
+      },
+    });
+
+    scanIds.push(row.id);
+  }
+
+  // ── risk_term_hits: the lexicon table ───────────────────────────────────
+  //
+  // Three hits on one phrase with the three outcomes, so the false-positive rate is taken over the
+  // two that were resolved. A hit on a second term that nobody has looked at proves the other half:
+  // a term with no resolved hits reports a null rate rather than a flattering zero.
+  const hitIds = [];
+
+  for (const hit of [
+    { term: riskTerm.id, outcome: 'CONFIRMED' },
+    { term: riskTerm.id, outcome: 'FALSE_POSITIVE' },
+    { term: riskTerm.id, outcome: 'PENDING' },
+    { term: otherTerm.id, outcome: 'PENDING' },
+  ]) {
+    const row = await prisma.riskTermHit.create({
+      data: {
+        riskTermId: hit.term,
+        contentSafetyId: scanIds[0],
+        targetType: 'UPDATE',
+        targetId: `e2e-scan-${stamp}-CRITICAL`,
+        outcome: hit.outcome,
+      },
+    });
+
+    hitIds.push(row.id);
+  }
+
+  // ── appeals: the overturn rate ──────────────────────────────────────────
+  //
+  // One upheld, one overturned, one withdrawn and one still open. The rate is 50% — over the two
+  // that were answered, and the two that were not must not drag it to 25%.
+  const appealIds = [];
+
+  for (const appeal of [
+    { state: 'UPHELD', decided: true },
+    { state: 'OVERTURNED', decided: true },
+    { state: 'WITHDRAWN', decided: true },
+    { state: 'OPEN', decided: false },
+  ]) {
+    const row = await prisma.appeal.create({
+      data: {
+        userId: safetySubject.id,
+        subjectType: 'REPORT_CASE',
+        subjectId: caseIds[0],
+        statement: `e2e appeal in state ${appeal.state}`,
+        loggedById: admin.id,
+        state: appeal.state,
+        dueAt: new Date(Date.now() + 24 * hour),
+        ...(appeal.decided ? { decidedAt: new Date(Date.now() - 2 * hour) } : {}),
+      },
+    });
+
+    appealIds.push(row.id);
+  }
+
+  // ── moderation_queue_items: the backlog, and only the backlog ───────────
   const queueIds = [];
 
   for (const item of [
-    // Decided after 30 minutes, CRITICAL → the URGENT line. The term was right.
     { type: 'GUARD_RISK', level: 'CRITICAL', decidedAfter: 0.5, decision: 'SUSPEND_AUTHOR' },
-    // Decided after 3 hours, MEDIUM → the NORMAL line. The term was wrong.
     { type: 'REPORTED_CONTENT', level: 'MEDIUM', decidedAfter: 3, decision: 'NO_ACTION' },
-    // Open, so it belongs to the backlog and to neither rate.
     { type: 'GUARD_RISK', level: 'HIGH', decidedAfter: null, decision: null },
-    // No risk at all, so the flagged matrix must leave it out.
     { type: 'ANONYMOUS_POST', level: 'NONE', decidedAfter: null, decision: null },
   ]) {
     const created = new Date(Date.now() - 6 * hour);
@@ -2213,22 +2365,15 @@ const shift = days => {
         // §5.9: both required since the queue gained a deadline. Non-nullable on purpose — an
         // item that can never be overdue sorts last in a queue ordered by urgency.
         priority: 'NORMAL',
-        dueAt: new Date(Date.now() + 24 * 3_600_000),
+        dueAt: new Date(Date.now() + 24 * hour),
         type: item.type,
         state: item.decision ? 'RESOLVED' : 'PENDING',
         targetType: 'UPDATE',
-        targetId: `e2e-safety-${item.type}-${item.level}`,
+        targetId: `e2e-safety-${stamp}-${item.type}-${item.level}`,
         subjectUserId: safetySubject.id,
         riskLevel: item.level,
         riskCategory: item.level === 'NONE' ? null : 'SCAM',
         riskScore: 50,
-        riskSignals:
-          item.level === 'NONE'
-            ? undefined
-            : [
-                { category: 'SCAM', pattern: 'e2e wire the deposit', weight: 40 },
-                { category: 'SCAM', pattern: 'e2e no paper trail', weight: 10 },
-              ],
         decision: item.decision ?? undefined,
         decidedAt:
           item.decidedAfter === null
@@ -2283,23 +2428,17 @@ const shift = days => {
   const ts = res.body.data.charts;
 
   /**
-   * Nine compute; the tenth has no table to read, in any shape. Returned as a chart-level error
-   * rather than omitted, because an omitted chart looks like a bug in the portal while an empty
-   * one looks like a quiet month.
+   * All ten now compute. Nine did before, and the tenth — `appealOverturn` — was a
+   * `NOT_AVAILABLE_YET` slot because §5.11's appeals had no table. The whole tab reading its own
+   * sources is what this one check is for: an `{ kind: 'error' }` anywhere means a chart has gone
+   * back to standing in for itself.
    */
   check(
-    'nine of them computed',
-    Object.entries(ts).filter(([, chart]) => chart.kind === 'error').length === 1,
+    'every one of them computed',
+    Object.entries(ts).filter(([, chart]) => chart.kind === 'error').length === 0,
     Object.entries(ts)
       .filter(([, chart]) => chart.kind === 'error')
       .map(([id, c]) => [id, c.code]),
-  );
-  check(
-    'and appeals say what they are waiting for',
-    ts.appealOverturn?.kind === 'error' &&
-      ts.appealOverturn.code === 'NOT_AVAILABLE_YET' &&
-      typeof ts.appealOverturn.message === 'string',
-    ts.appealOverturn,
   );
 
   check(
@@ -2313,29 +2452,84 @@ const shift = days => {
     ts.reportsByReason?.unit,
   );
 
-  // 30 minutes for the CRITICAL item, 180 for the MEDIUM one, nothing on the HIGH line because
-  // the only HIGH item is still open.
-  const line = key => ts.timeToAction?.series?.find(series => series.key === key);
+  check(
+    'timeToAction draws a band for every priority a case can carry',
+    (ts.timeToAction?.series ?? []).map(series => series.key).join() === 'URGENT,HIGH,NORMAL',
+    ts.timeToAction?.series?.map(series => series.key),
+  );
+  check('measured in minutes', ts.timeToAction?.unit === 'minutes', ts.timeToAction?.unit);
+
+  /**
+   * The arithmetic, over the four fixture cases alone.
+   *
+   * Filtered rather than read off the whole tab, because the demo dataset holds sixty-four decided
+   * cases whose first action is the same instant as their first report — a median of zero on every
+   * line, which swamps any fixture and would make this assertion pass or fail for reasons that
+   * have nothing to do with the code. The first version of this check did exactly that.
+   *
+   * 30 and 60 minutes on the two URGENT cases, so the URGENT line is **45** — a figure neither
+   * case has on its own, and one the old implementation could not have produced: it took the
+   * *larger* of two medians, because a risk level is not a priority and `NORMAL` combined two of
+   * them. 180 on NORMAL, and nothing at all on HIGH, whose only case has not been actioned.
+   */
+  await clearAnalyticsCache();
+
+  res = await api(
+    null,
+    'GET',
+    '/admin/analytics/trust-safety?reasonCodes=ILLEGAL_ITEM&charts=timeToAction,decisionMix',
+    null,
+    headers,
+  );
+
+  const only = res.body?.data?.charts ?? {};
+  const line = key => only.timeToAction?.series?.find(series => series.key === key);
+  const minutesOn = key => (line(key)?.points ?? []).filter(point => point.v !== null);
 
   check(
-    'timeToAction puts a CRITICAL decision on the URGENT line, in minutes',
-    ts.timeToAction?.unit === 'minutes' && line('URGENT')?.points.some(point => point.v === 30),
-    line('URGENT')?.points?.filter(point => point.v !== null),
+    'time to **first action**, medianed within one priority',
+    minutesOn('URGENT').length === 1 && minutesOn('URGENT')[0].v === 45,
+    minutesOn('URGENT'),
   );
   check(
-    'a MEDIUM decision on the NORMAL line',
-    line('NORMAL')?.points.some(point => point.v === 180),
-    line('NORMAL')?.points?.filter(point => point.v !== null),
+    'the NORMAL case at three hours',
+    minutesOn('NORMAL').length === 1 && minutesOn('NORMAL')[0].v === 180,
+    minutesOn('NORMAL'),
   );
   check(
-    'and nothing at all where an item is still open',
-    line('HIGH')?.points.every(point => point.v === null),
-    line('HIGH')?.points?.filter(point => point.v !== null),
+    'and nothing at all where a case has not been actioned',
+    minutesOn('HIGH').length === 0,
+    minutesOn('HIGH'),
+  );
+
+  /**
+   * The same four cases, so the decision mix is exact rather than "at least". Two land on
+   * `SUSPEND_AUTHOR` — one decided that way and one `REMOVE_AND_SUSPEND` folded onto it — one on
+   * `NO_ACTION`, and the fourth is open and so has no decision to count.
+   */
+  const band = key => only.decisionMix?.items?.find(item => item.key === key)?.value;
+
+  check(
+    'REMOVE_AND_SUSPEND folds onto SUSPEND_AUTHOR rather than being lost',
+    band('SUSPEND_AUTHOR') === 2,
+    only.decisionMix?.items?.map(item => [item.key, item.value]),
+  );
+  check(
+    'the other decided case is counted once, and the open one not at all',
+    band('NO_ACTION') === 1 && only.decisionMix?.total === 3,
+    { noAction: band('NO_ACTION'), total: only.decisionMix?.total },
+  );
+  check(
+    'with no band for a compound decision, which would double-count the same severity',
+    !(only.decisionMix?.items ?? []).some(item => item.key.startsWith('REMOVE_AND_')),
+    only.decisionMix?.items?.map(item => item.key),
   );
 
   /**
    * The backlog is derived rather than snapshotted, so the invariants are what prove it: it can
-   * never go negative, and its last point must equal the live count of open items.
+   * never go negative, and its last point must equal the live count of open items. This is the one
+   * chart still read from the queue, and deliberately so — derived, the series is exact, where
+   * `moderation_backlog_daily` would be a nightly sample that can drift from the live count.
    */
   const backlog = ts.queueBacklog?.series ?? [];
   // Scoped the way the chart is scoped. `PROFESSIONAL_REVIEW` shares the queue table but is not
@@ -2366,24 +2560,40 @@ const shift = days => {
     },
   );
 
+  /**
+   * The five bands §5.25 names, from `report_cases.decision`, with `REMOVE_AND_*` folded under
+   * their strongest action. The fourth fixture case was decided `REMOVE_AND_SUSPEND` and there is
+   * no band of that name — so if the fold is dropped, the case vanishes from a chart that still
+   * adds up.
+   */
   check(
-    'decisionMix reads the enum the column actually holds, strongest first',
+    'decisionMix draws the five bands a case can be decided, strongest first',
     (ts.decisionMix?.items ?? []).map(item => item.key).join() ===
-      'SUSPEND_AUTHOR,REMOVE_CONTENT,WARN_AUTHOR,REJECT,APPROVE,NO_ACTION',
+      'SUSPEND_AUTHOR,REMOVE_CONTENT,WARN_AUTHOR,NO_ACTION,ESCALATE_GUARD',
     ts.decisionMix?.items?.map(item => item.key),
-  );
-  check(
-    'and counts both of the decided items',
-    ts.decisionMix?.items?.find(item => item.key === 'SUSPEND_AUTHOR')?.value >= 1 &&
-      ts.decisionMix?.items?.find(item => item.key === 'NO_ACTION')?.value >= 1,
-    ts.decisionMix?.items?.filter(item => (item.value ?? 0) > 0),
   );
 
   check(
-    'the flagged matrix leaves NONE out, because a scan that found nothing is not a flag',
-    (ts.flaggedByTierCategory?.rows ?? []).every(row => row.key !== 'NONE') &&
-      ts.flaggedByTierCategory?.rows?.length === 4,
+    'the shares are over the folded total, so they still sum to one',
+    Math.abs((ts.decisionMix?.items ?? []).reduce((sum, i) => sum + (i.share ?? 0), 0) - 1) < 0.01,
+    ts.decisionMix?.items?.map(item => item.share),
+  );
+
+  /**
+   * Tiers, from the scan table. `CLEAN` is excluded because a scan that found nothing is not a
+   * flag — and the `LOW` row is what the old source could not produce: it read the queue items the
+   * scanner raised, and a LOW scan is never held, so that row was permanently empty.
+   */
+  check(
+    'the flagged matrix charts tiers and leaves CLEAN out',
+    (ts.flaggedByTierCategory?.rows ?? []).map(row => row.key).join() ===
+      'LOW,MEDIUM,HIGH,CRITICAL',
     ts.flaggedByTierCategory?.rows?.map(row => row.key),
+  );
+  check(
+    'and keeps a column for a flagged scan nobody categorised',
+    (ts.flaggedByTierCategory?.cols ?? []).some(col => col.key === 'UNKNOWN'),
+    ts.flaggedByTierCategory?.cols?.map(col => col.key),
   );
 
   const cell = (chart, rowKey, colKey) =>
@@ -2392,45 +2602,52 @@ const shift = days => {
     ];
 
   check(
-    'and files the three risk-bearing items under their level and category',
+    'and files each scan under its own tier and category',
     cell(ts.flaggedByTierCategory, 'CRITICAL', 'SCAM') >= 1 &&
       cell(ts.flaggedByTierCategory, 'MEDIUM', 'SCAM') >= 1 &&
-      cell(ts.flaggedByTierCategory, 'HIGH', 'SCAM') >= 1,
+      cell(ts.flaggedByTierCategory, 'LOW', 'HATE') >= 1,
     ts.flaggedByTierCategory?.cells,
+  );
+  check(
+    'including the uncategorised one, which used to be dropped silently',
+    cell(ts.flaggedByTierCategory, 'HIGH', 'UNKNOWN') >= 1,
+    { cell: cell(ts.flaggedByTierCategory, 'HIGH', 'UNKNOWN') },
   );
 
   /**
-   * The hits come out of `risk_signals`, which is where the scanner records the phrases it matched.
-   * The decision on the item is what makes a hit confirmed or a false positive — and an undecided
-   * item is neither, or every fresh term would look useless until somebody reviewed it.
+   * The hit log, with its own outcome column. A hit nobody has looked at is neither confirmed nor
+   * a false positive — counting it either way makes a fresh term look infallible or useless, and
+   * the second is when somebody deletes the term that was working.
    */
-  const term = (ts.topRiskTerms?.rows ?? []).find(row => row.pattern === 'e2e wire the deposit');
+  const term = (ts.topRiskTerms?.rows ?? []).find(row => row.pattern === riskTerm.pattern);
 
   check(
-    'topRiskTerms finds the phrase the scanner recorded',
+    'topRiskTerms reads the hit log',
     term !== undefined,
     ts.topRiskTerms?.rows?.map(row => row.pattern),
   );
   check(
-    'and resolves it to the lexicon entry, so a reviewer can act on it',
+    'resolving each row to its lexicon entry by id, so a reviewer can act on it',
     term?.termId === riskTerm.id,
     { got: term?.termId, want: riskTerm.id },
   );
   check(
-    'three hits: one confirmed, one a false positive, one still undecided',
+    'three hits: one confirmed, one a false positive, one still pending',
     term?.hits === 3 && term?.confirmed === 1 && term?.falsePositives === 1,
     term,
   );
   check(
-    'and a rate over the decided ones only, not over all three',
+    'and a rate over the resolved ones only, not over all three',
     term?.falsePositiveRate === 50,
     term?.falsePositiveRate,
   );
+
+  const unresolved = (ts.topRiskTerms?.rows ?? []).find(row => row.pattern === otherTerm.pattern);
+
   check(
-    'a phrase with no lexicon entry still reports its hits, with no id',
-    (ts.topRiskTerms?.rows ?? []).find(row => row.pattern === 'e2e no paper trail')?.termId ===
-      null,
-    ts.topRiskTerms?.rows?.find(row => row.pattern === 'e2e no paper trail'),
+    'a term whose hits nobody has judged reports a null rate, not a flattering zero',
+    unresolved?.hits === 1 && unresolved?.falsePositiveRate === null,
+    unresolved,
   );
 
   check(
@@ -2442,6 +2659,32 @@ const shift = days => {
     'and counts threads rather than members',
     ts.guardCases?.unit === 'count',
     ts.guardCases?.unit,
+  );
+
+  /**
+   * One upheld, one overturned, one withdrawn, one open. 50%, over the two that were answered —
+   * and a number whose job is to catch a reviewer being wrong too often must not be flattered by
+   * the two that were not.
+   */
+  check(
+    'appealOverturn is a rate and a trend, not an error',
+    ts.appealOverturn?.kind === 'group' &&
+      ts.appealOverturn.items?.rate?.kind === 'kpi' &&
+      ts.appealOverturn.items?.trend?.kind === 'timeseries',
+    ts.appealOverturn?.kind,
+  );
+  check(
+    'over the decided appeals only: 1 of 2, not 1 of 4',
+    ts.appealOverturn?.items?.rate?.value === 50,
+    {
+      value: ts.appealOverturn?.items?.rate?.value,
+      unit: ts.appealOverturn?.items?.rate?.unit,
+    },
+  );
+  check(
+    'and its trend is null where nothing was decided, rather than zero',
+    (ts.appealOverturn?.items?.trend?.series?.[0]?.points ?? []).some(point => point.v === null),
+    ts.appealOverturn?.items?.trend?.series?.[0]?.points?.slice(-3),
   );
 
   /**
@@ -2459,32 +2702,61 @@ const shift = days => {
     ts.activeSuspensions?.unit,
   );
 
+  // ── The filter bar across five tables ────────────────────────────────────
+
   await clearAnalyticsCache();
 
   res = await api(
     null,
     'GET',
-    '/admin/analytics/trust-safety?queueTypes=GUARD_RISK&charts=decisionMix',
+    '/admin/analytics/trust-safety?riskCategories=HATE&charts=flaggedByTierCategory,topRiskTerms',
     null,
     headers,
   );
   check(
-    'a queue filter narrows the decisions',
-    res.body?.data?.charts?.decisionMix?.items?.find(item => item.key === 'NO_ACTION')?.value === 0,
-    res.body?.data?.charts?.decisionMix?.items?.filter(item => (item.value ?? 0) > 0),
+    'a risk-category filter narrows the flagged matrix to that column',
+    (res.body?.data?.charts?.flaggedByTierCategory?.cells ?? [])
+      .flat()
+      .filter(Boolean)
+      .every(Boolean) &&
+      cell(res.body?.data?.charts?.flaggedByTierCategory, 'CRITICAL', 'SCAM') === 0,
+    res.body?.data?.charts?.flaggedByTierCategory?.cells,
   );
+  check(
+    'and the lexicon table to that category — the term’s own, not the scan’s',
+    (res.body?.data?.charts?.topRiskTerms?.rows ?? []).every(
+      row => row.category === 'Hate' && row.pattern !== riskTerm.pattern,
+    ),
+    res.body?.data?.charts?.topRiskTerms?.rows?.map(row => [row.pattern, row.category]),
+  );
+
+  await clearAnalyticsCache();
 
   res = await api(
     null,
     'GET',
-    '/admin/analytics/trust-safety?riskCategories=HATE&charts=flaggedByTierCategory',
+    '/admin/analytics/trust-safety?states=ACTIONED&charts=decisionMix',
     null,
     headers,
   );
   check(
-    'and a risk-category filter narrows the flagged matrix',
-    (res.body?.data?.charts?.flaggedByTierCategory?.cells ?? []).flat().every(value => !value),
-    res.body?.data?.charts?.flaggedByTierCategory?.cells,
+    'a state the two enums share reaches the case charts',
+    res.status === 200 &&
+      (res.body?.data?.charts?.decisionMix?.items ?? []).some(item => (item.value ?? 0) > 0),
+    res.body?.data?.charts?.decisionMix?.items?.filter(item => (item.value ?? 0) > 0),
+  );
+  check(
+    'and the payload says which filters crossed which enum',
+    typeof res.body?.meta?.filterSemantics?.states === 'string' &&
+      res.body.meta.filterSemantics.states.includes('ReportCaseState'),
+    res.body?.meta?.filterSemantics?.states,
+  );
+  // A filter that narrows one chart out of ten is one somebody will reach for expecting the tab to
+  // move. The payload has to say so, because nothing else will.
+  check(
+    'and that `queueTypes` now reaches only the backlog',
+    (res.body?.meta?.filterSemantics?.queueTypes ?? '').includes('queueBacklog'),
+    res.body?.meta?.filterSemantics?.queueTypes,
   );
 
   res = await api(null, 'GET', '/admin/analytics/trust-safety?riskLevels=SEVERE', null, headers);
@@ -2512,18 +2784,246 @@ const shift = days => {
   );
 
   /**
-   * Four of the five read `support_threads`, which does not exist yet. They say so rather than
-   * returning an empty chart, so the portal can draw the page it was designed with and the reader
-   * can tell "not built" apart from "nothing happened".
+   * The four thread charts answered `NOT_AVAILABLE_YET` until §4.8's `support_threads` existed.
+   * They read it now, and the arithmetic below is asserted against stamped fixtures rather than
+   * against whatever the demo seed happens to contain.
+   *
+   * Isolation is `assigneeIds`: every fixture is assigned to one fresh support account, and the
+   * filter reaches all four charts, so the numbers are exactly the ones put there. Checking a
+   * median against an unfiltered tab is how the Trust & Safety section first reported zero for
+   * every line.
    */
   check(
-    'the four thread charts say they are not available yet',
-    ['openedResolved', 'responseTimes', 'threadsByType', 'workloadPerAgent'].every(
-      id =>
-        res.body?.data?.charts?.[id]?.kind === 'error' &&
-        res.body.data.charts[id].code === 'NOT_AVAILABLE_YET',
-    ),
+    'the four thread charts are real charts now, not NOT_AVAILABLE_YET',
+    res.body?.data?.charts?.openedResolved?.kind === 'timeseries' &&
+      res.body?.data?.charts?.responseTimes?.kind === 'group' &&
+      res.body?.data?.charts?.threadsByType?.kind === 'breakdown' &&
+      res.body?.data?.charts?.workloadPerAgent?.kind === 'group',
     Object.entries(res.body?.data?.charts ?? {}).map(([id, c]) => [id, c.kind, c.code]),
+  );
+
+  // ── Support: the four thread charts, on fixtures ──────────────────────────
+  const agent = await makeAdmin('an-sup-agent', 'support');
+  const minutes = n => n * 60_000;
+  const daysAgo = n => new Date(Date.parse(`${today()}T12:00:00Z`) - n * 86_400_000);
+
+  // Four threads, each with its own member, stamped so every number below is known. Written
+  // directly: what is being tested is the arithmetic over the columns, and driving four member
+  // journeys through four sections to produce them would test those sections instead.
+  //
+  // `memberDelayMins` is the load-bearing part: the member writes some time **after** the thread
+  // is opened, because four of the five types are opened by Circl. Without it, measuring from
+  // `created_at` and measuring from the member's first message would give the same answer on every
+  // fixture, and the assertion below would pass against the wrong column.
+  //
+  // Member-based response times are 30, 60 and 10 → median 30. From `created_at` they would be
+  // 30, 360 and 610 → median 360, so the one number catches the wrong column.
+  const threadFixtures = [
+    {
+      tag: 'sup-a',
+      type: 'SUPPORT',
+      openedAt: 10,
+      memberDelayMins: 0,
+      firstResponseMins: 30,
+      resolvedDay: 9,
+    },
+    {
+      tag: 'sup-b',
+      type: 'MANAGED',
+      openedAt: 8,
+      memberDelayMins: 300,
+      firstResponseMins: 60,
+      resolvedDay: 7,
+    },
+    {
+      tag: 'sup-c',
+      type: 'DEAL_PROBLEM',
+      openedAt: 6,
+      memberDelayMins: 600,
+      firstResponseMins: 10,
+      resolvedDay: null,
+    },
+    // Circl opened this one and the member has not written, so it has no response time to report.
+    {
+      tag: 'sup-d',
+      type: 'GUARD',
+      openedAt: 4,
+      memberDelayMins: null,
+      firstResponseMins: null,
+      resolvedDay: null,
+    },
+  ];
+
+  for (const fixture of threadFixtures) {
+    const member = await makeUser(`an-${fixture.tag}`, { cityId: 'BRISTOL' });
+    const openedAt = daysAgo(fixture.openedAt);
+    const conversation = await prisma.conversation.create({
+      data: {
+        kind: 'SUPPORT',
+        contextType: 'SUPPORT',
+        contextId: null,
+        participantKey: `${member.id}|an-${fixture.tag}`,
+        createdAt: openedAt,
+        participants: { create: [{ userId: member.id, role: 'MEMBER' }] },
+      },
+    });
+
+    await prisma.supportThread.create({
+      data: {
+        conversationId: conversation.id,
+        memberId: member.id,
+        type: fixture.type,
+        state: fixture.resolvedDay ? 'RESOLVED' : fixture.firstResponseMins ? 'OPEN' : 'NEW',
+        assignedToId: agent.id,
+        assignedAt: openedAt,
+        createdAt: openedAt,
+        firstMemberMessageAt:
+          fixture.memberDelayMins === null
+            ? null
+            : new Date(openedAt.getTime() + minutes(fixture.memberDelayMins)),
+        firstResponseAt:
+          fixture.firstResponseMins === null
+            ? null
+            : new Date(
+                openedAt.getTime() + minutes(fixture.memberDelayMins + fixture.firstResponseMins),
+              ),
+        resolvedAt: fixture.resolvedDay ? daysAgo(fixture.resolvedDay) : null,
+      },
+    });
+  }
+
+  await clearAnalyticsCache();
+
+  const agentWork = `/admin/analytics/support?assigneeIds=${agent.id}&from=${shift(-14)}&to=${today()}&granularity=day`;
+
+  res = await api(null, 'GET', agentWork, null, headers);
+  check('the tab answers for one agent’s work', res.status === 200, res.body?.error);
+
+  const charts = res.body?.data?.charts ?? {};
+  const sum = series => (series?.points ?? []).reduce((total, p) => total + (p.v ?? 0), 0);
+  const opened = (charts.openedResolved?.series ?? []).find(s => s.key === 'opened');
+  const resolved = (charts.openedResolved?.series ?? []).find(s => s.key === 'resolved');
+
+  check('four threads opened in the range', sum(opened) === 4, sum(opened));
+  check('two of them settled in it', sum(resolved) === 2, sum(resolved));
+  check(
+    'and a thread opened and resolved on different days counts in both buckets, not one',
+    (opened?.points ?? []).filter(p => p.v > 0).length === 4 &&
+      (resolved?.points ?? []).filter(p => p.v > 0).length === 2,
+    {
+      opened: (opened?.points ?? []).filter(p => p.v > 0).map(p => p.t),
+      resolved: (resolved?.points ?? []).filter(p => p.v > 0).map(p => p.t),
+    },
+  );
+  check(
+    'counted as threads rather than members, so nothing is suppressed at four',
+    charts.openedResolved?.unit === 'count',
+    charts.openedResolved?.unit,
+  );
+
+  // 30, 90 and 10 minutes → median 30. The GUARD thread has no member message, so it is not a
+  // response time of zero: it is not a response time at all.
+  check(
+    'the median first response is measured from the member’s message, not the thread’s creation',
+    charts.responseTimes?.items?.firstResponse?.value === 30,
+    charts.responseTimes?.items?.firstResponse,
+  );
+  check(
+    'in minutes',
+    charts.responseTimes?.items?.firstResponse?.unit === 'minutes',
+    charts.responseTimes?.items?.firstResponse?.unit,
+  );
+  check(
+    'and the median resolution is the median of the two that were resolved',
+    charts.responseTimes?.items?.resolution?.value === 1440,
+    charts.responseTimes?.items?.resolution,
+  );
+  check(
+    'a day with nothing to measure is null rather than zero',
+    (charts.responseTimes?.items?.trend?.series ?? []).every(s => s.points.some(p => p.v === null)),
+    (charts.responseTimes?.items?.trend?.series ?? []).map(s => s.points.map(p => p.v)),
+  );
+  check(
+    'and the two medians come back with no previous period, because one slow afternoon moves them',
+    charts.responseTimes?.items?.firstResponse?.previous === null &&
+      charts.responseTimes?.items?.resolution?.changePct === null,
+    charts.responseTimes?.items,
+  );
+
+  const byType = new Map(
+    (charts.threadsByType?.items ?? []).map(group => [group.key, group.value]),
+  );
+
+  check(
+    'every type the agent handled is counted once',
+    byType.get('SUPPORT') === 1 &&
+      byType.get('MANAGED') === 1 &&
+      byType.get('DEAL_PROBLEM') === 1 &&
+      byType.get('GUARD') === 1,
+    [...byType],
+  );
+  check('a type nobody opened is a zero rather than a missing bar', byType.get('DISPUTE') === 0, [
+    ...byType,
+  ]);
+  check(
+    'and GUARD is in the aggregate: a disclosure is work to be staffed for, even though the ' +
+      'thread itself is not readable here',
+    byType.has('GUARD'),
+    [...byType],
+  );
+
+  const workload = charts.workloadPerAgent?.items ?? {};
+  const openFor = (workload.assignedOpen?.items ?? []).find(group => group.key === agent.id);
+  const doneFor = (workload.resolvedInRange?.items ?? []).find(group => group.key === agent.id);
+
+  check('the agent is holding the two that are still open', openFor?.value === 2, openFor);
+  check('and is credited with the two they settled', doneFor?.value === 2, doneFor);
+  check('named rather than left as an id', typeof openFor?.label === 'string', openFor?.label);
+  check(
+    'and their counts are not suppressed at two, because they are threads and not members',
+    openFor?.suppressed !== true && workload.assignedOpen?.unit === 'count',
+    { suppressed: openFor?.suppressed, unit: workload.assignedOpen?.unit },
+  );
+
+  res = await api(
+    null,
+    'GET',
+    `/admin/analytics/support?assigneeIds=${agent.id}&threadTypes=GUARD&from=${shift(-14)}&to=${today()}`,
+    null,
+    headers,
+  );
+
+  check(
+    'narrowing to GUARD leaves the one disclosure',
+    (res.body?.data?.charts?.threadsByType?.items ?? []).find(g => g.key === 'GUARD')?.value === 1,
+    res.body?.data?.charts?.threadsByType?.items,
+  );
+  check(
+    'and nothing else',
+    (res.body?.data?.charts?.threadsByType?.items ?? [])
+      .filter(g => g.key !== 'GUARD')
+      .every(g => g.value === 0),
+    res.body?.data?.charts?.threadsByType?.items,
+  );
+
+  await clearAnalyticsCache();
+
+  res = await api(
+    null,
+    'GET',
+    `/admin/analytics/support?from=${shift(-14)}&to=${today()}`,
+    null,
+    headers,
+  );
+
+  check(
+    'unfiltered, the open queue names whoever holds nothing as Unassigned',
+    (res.body?.data?.charts?.workloadPerAgent?.items?.assignedOpen?.items ?? []).some(
+      group => group.label === 'Unassigned',
+    ),
+    (res.body?.data?.charts?.workloadPerAgent?.items?.assignedOpen?.items ?? []).map(
+      group => group.label,
+    ),
   );
   check(
     'while the dispute matrix is real',
@@ -2542,8 +3042,9 @@ const shift = days => {
     res.body?.data?.charts?.disputesByReasonOutcome?.cols?.map(col => col.key),
   );
   check(
-    'and the tab says which filters reach nothing yet',
-    typeof res.body?.meta?.filterSemantics?.threadTypes === 'string',
+    'and the tab still says what each filter reaches, now that they all reach something',
+    (res.body?.meta?.filterSemantics?.threadTypes ?? '').includes('disputesByReasonOutcome') &&
+      (res.body?.meta?.filterSemantics?.assigneeIds ?? '').includes('workloadPerAgent'),
     res.body?.meta?.filterSemantics,
   );
 
@@ -2554,9 +3055,16 @@ const shift = days => {
   res = await api(null, 'GET', '/admin/analytics/staff', null, headers);
   check('there is no staff tab', res.status === 400, { status: res.status, body: res.body?.error });
 
+  // Hits before terms, scans after hits: the hit rows point at both, and `risk_term_hits` cascades
+  // from the term but only nulls `content_safety_id`, so a scan deleted first leaves orphans the
+  // next run would count.
+  await prisma.riskTermHit.deleteMany({ where: { id: { in: hitIds } } });
+  await prisma.appeal.deleteMany({ where: { id: { in: appealIds } } });
+  await prisma.contentSafety.deleteMany({ where: { id: { in: scanIds } } });
+  await prisma.reportCase.deleteMany({ where: { id: { in: caseIds } } });
   await prisma.suspension.deleteMany({ where: { id: { in: suspensionIds } } });
   await prisma.moderationQueueItem.deleteMany({ where: { id: { in: queueIds } } });
-  await prisma.riskTerm.delete({ where: { id: riskTerm.id } });
+  await prisma.riskTerm.deleteMany({ where: { id: { in: [riskTerm.id, otherTerm.id] } } });
 
   console.log('\n— Analytics: filter options —');
 

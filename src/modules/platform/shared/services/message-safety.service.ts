@@ -336,7 +336,14 @@ export class MessageSafetyService {
           conversationId: message.conversationId,
           messageId: message.id,
           priority: escalation?.priority ?? 'HIGH',
-          snapshot: { body: excerpt(message.body ?? '', 500), sentAt: message.sentAt },
+          // `text`, which is what §5.10 calls the words in a snapshot. It was `body` — the column
+          // name — so the portal's one snapshot component read it as empty on exactly the reports
+          // where the words matter most.
+          snapshot: {
+            capturedAt: new Date().toISOString(),
+            text: excerpt(message.body ?? '', 500),
+            sentAt: message.sentAt,
+          },
         },
       }),
       summary: `Flagged message in a ${message.conversation.kind.toLowerCase()} thread`,

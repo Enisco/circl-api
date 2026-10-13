@@ -3,9 +3,10 @@
  * Booking is gone from the app, so a thread is now the whole relationship. That only works if a
  * thread files under the right section and can carry a review, neither of which it did. */
 const {
-  approveListing,
   api,
+  approveListing,
   check,
+  connectCreate,
   dobFor,
   finish,
   makeUser,
@@ -166,12 +167,17 @@ const {
 
   console.log('\n── 2.2 A thread about a Connect profile ─────────────────────');
 
-  r = await api(pro.token, 'PUT', '/connect/me', {
-    typeCode: 'LANGUAGE_EXCHANGE',
-    lookingFor: 'Practising English after work.',
-    dateOfBirth: dobFor(34),
-    isVisible: true,
-  });
+  r = await api(
+    pro.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(pro.token, {
+      typeCode: 'LANGUAGE_EXCHANGE',
+      lookingFor: 'Practising English after work.',
+      dateOfBirth: dobFor(34),
+      isVisible: true,
+    }),
+  );
   const connectProfileId = r.body?.data?.id;
   check('connect profile created', r.status === 200, r.body?.error);
 
@@ -319,12 +325,17 @@ const {
 
   // Connect is only browsable by somebody who is on Connect themselves, so the client needs a
   // profile of their own before that screen answers at all.
-  await api(client.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP',
-    lookingFor: 'Meeting people nearby at the weekend.',
-    dateOfBirth: dobFor(29),
-    isVisible: true,
-  });
+  await api(
+    client.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(client.token, {
+      typeCode: 'FRIENDSHIP',
+      lookingFor: 'Meeting people nearby at the weekend.',
+      dateOfBirth: dobFor(29),
+      isVisible: true,
+    }),
+  );
   r = await api(client.token, 'GET', `/connect/profiles/${connectProfileId}`);
   check(
     'the Connect profile points back at its thread',

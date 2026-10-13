@@ -2,9 +2,10 @@
    Missing keys are failures; extra keys are reported but not failed, since the
    spec's examples are illustrative and additive fields are safe. */
 const {
-  approveListing,
   api,
+  approveListing,
   check,
+  connectCreate,
   fail,
   finish,
   makeUser,
@@ -562,20 +563,32 @@ function shape(label, obj, required) {
 
   console.log('\n── 3.x Connect ──────────────────────────────────────────────');
 
-  await api(a.token, 'PUT', '/connect/me', {
-    typeCode: 'LANGUAGE_EXCHANGE',
-    lookingFor: 'Practising English after work, happy to help with Yoruba.',
-    dateOfBirth: dobFor(31),
-    isVisible: true,
-    languages: ['ENGLISH', 'YORUBA'],
-    heritageTag: 'WEST_AFRICAN',
-  });
-  await api(b.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP',
-    lookingFor: 'New to the city and looking to meet people.',
-    dateOfBirth: dobFor(29),
-    isVisible: true,
-  });
+  await api(
+    a.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(a.token, {
+      typeCode: 'LANGUAGE_EXCHANGE',
+      lookingFor: 'Practising English after work, happy to help with Yoruba.',
+      dateOfBirth: dobFor(31),
+      isVisible: true,
+      languages: ['ENGLISH', 'YORUBA'],
+      heritageTag: 'WEST_AFRICAN',
+      hobbies: ['COOKING', 'READING', 'MUSIC'],
+      occupation: 'Translator, part-time',
+    }),
+  );
+  await api(
+    b.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(b.token, {
+      typeCode: 'FRIENDSHIP',
+      lookingFor: 'New to the city and looking to meet people.',
+      dateOfBirth: dobFor(29),
+      isVisible: true,
+    }),
+  );
 
   r = await api(a.token, 'GET', '/connect/me');
   shape('3.2.1 connect me', r.body?.data, [
@@ -645,7 +658,10 @@ function shape(label, obj, required) {
     'reportToken',
   ]);
   r = await api(a.token, 'GET', '/connect/profiles');
-  shape('3.4 discovery facets', r.body?.meta, ['facets.languages', 'facets.heritage']);
+  // `facets.types` only, since circl-mobile's Connect v2 reply: the language and heritage rows now
+  // offer the whole vocabulary, because a facet built from who is already on screen made "who here
+  // speaks Twi" unaskable — you could only refine your way towards it.
+  shape('3.4 discovery facets', r.body?.meta, ['facets.types']);
 
   console.log('\n── 4.x Commerce ─────────────────────────────────────────────');
 

@@ -327,3 +327,23 @@ export const tableFor = (kind: ContentKind): string => {
 /** The visibility column, which a couple of kinds name differently. */
 export const visibilityColumnFor = (kind: ContentKind): string =>
   CONTENT_SOURCE[kind.targetType]?.column ?? 'visibility_state';
+
+/**
+ * The kind that owns a target type, for callers holding a `ReportTargetType` rather than a slug.
+ *
+ * The queue and a report case both address content by target type — that is what a report carries
+ * — and the content page is addressed by slug, because that is what the portal routes on. One map
+ * built from the same list, rather than each caller writing its own switch: the queue's old
+ * hand-written one covered six of the seventeen kinds.
+ *
+ * A type with no kind returns null, and several have none on purpose: `USER`, `CONVERSATION` and
+ * `MESSAGE` are not content pages, and `CONNECT_MEDIA` is one photo out of a post — its id is a
+ * media id, so resolving it to the Connect posts kind would query the posts table with the wrong
+ * id and 404 a case that is perfectly fine.
+ */
+const BY_TARGET: Partial<Record<ReportTargetType, ContentKind>> = Object.fromEntries(
+  KINDS.map(kind => [kind.targetType, kind]),
+);
+
+export const kindForTarget = (targetType: ReportTargetType): ContentKind | null =>
+  BY_TARGET[targetType] ?? null;

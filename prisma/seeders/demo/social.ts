@@ -1,4 +1,4 @@
-import { DemoSeedContext, HOME_CITY, putMedia, userId } from './seed-demo';
+import { DemoSeedContext, putMedia, userId } from './seed-demo';
 import { daysAgo, hoursAgo, seedId, reportToken } from './ids';
 
 /** Connect, messaging and notifications (B.4). */
@@ -30,6 +30,25 @@ const CONNECT_PROFILES: Array<{
   posts: SeedConnectPosts;
   /** Up to three, and only two members answer any: the card has to work for those who do not. */
   prompts?: Array<[string, string]>;
+  /**
+   * HOBBY codes — at least `limits.minHobbies` of them, because a profile cannot be created with
+   * fewer (v2 §2) and demo data that could not be produced by the app is demo data a reviewer
+   * cannot trust.
+   */
+  hobbies: string[];
+  /** Free text under the name. Left unset on two, because it is optional and the card must cope. */
+  occupation?: string;
+  /** LANGUAGE codes they are **learning**, which is the half that makes an exchange (v2 §7). */
+  learningLanguages?: string[];
+  /**
+   * Which photographs are the card, as indices into this profile's own gallery in post order.
+   *
+   * Deliberately set on only two of the eleven: everybody else exercises the **fallback**, which
+   * is the first three photos in post order and is what every profile that predates the picker
+   * still does. The two that do set it both pick across **two different posts**, because that is
+   * the thing the field exists for and the thing post order could never express.
+   */
+  card?: number[];
   /** Live, posted about three hours ago — relative to the run, or the demo opens expired. */
   hasStory?: boolean;
 }> = [
@@ -51,6 +70,12 @@ const CONNECT_PROFILES: Array<{
       ['ASK_ME_ABOUT', 'Where to get jollof that tastes like home.'],
     ],
     hasStory: true,
+    hobbies: ['FOOTBALL', 'COOKING', 'MUSIC', 'THRIFTING'],
+    occupation: 'Nurse, nights',
+    learningLanguages: ['ENGLISH'],
+    // Across two posts: the clip's post is second, so index 3 is the first photo of the second
+    // post. Post order alone could never have put it on the card first.
+    card: [3, 0, 1],
   },
   {
     user: 2,
@@ -64,6 +89,8 @@ const CONNECT_PROFILES: Array<{
       ['MOVED_HERE', 'A job I was not sure about, which turned out well.'],
     ],
     hasStory: true,
+    hobbies: ['READING', 'GYM', 'COFFEE'],
+    occupation: 'First-year law student',
   },
   {
     user: 6,
@@ -72,6 +99,10 @@ const CONNECT_PROFILES: Array<{
     dmPolicy: 'OPEN',
     accentColour: 'ROSE',
     posts: { photos: [2, 1] },
+    hobbies: ['HIKING', 'BAKING', 'DOGS'],
+    occupation: 'Pharmacy assistant',
+    // Two photographs, the second post's first: the other half of what the picker is for.
+    card: [2, 0],
   },
   {
     user: 8,
@@ -82,6 +113,8 @@ const CONNECT_PROFILES: Array<{
     cityIdOverride: 'MANCHESTER',
     accentColour: 'INDIGO',
     posts: { photos: [2, 1] },
+    hobbies: ['CARS', 'FOOTBALL', 'INVESTING'],
+    occupation: 'Logistics coordinator',
   },
   {
     user: 9,
@@ -91,6 +124,7 @@ const CONNECT_PROFILES: Array<{
     // A hidden profile, so that state exists in the data (B.4).
     isVisible: false,
     posts: { photos: [2, 1] },
+    hobbies: ['GARDENING', 'FILM_TV', 'CATS'],
   },
   {
     user: 10,
@@ -99,6 +133,8 @@ const CONNECT_PROFILES: Array<{
     dmPolicy: 'REQUEST_FIRST',
     accentColour: 'PLUM',
     posts: { photos: [2, 1] },
+    hobbies: ['DANCING', 'EATING_OUT', 'FESTIVALS'],
+    occupation: 'Between jobs',
   },
   // The four full members who had no Connect profile at all. Every one of the ten is reachable
   // from somewhere in the app, so a tap through to Connect that dead-ends on "not on Connect" is
@@ -114,6 +150,9 @@ const CONNECT_PROFILES: Array<{
       ['ASK_ME_ABOUT', 'Where to find proper bread in this city. It took me a year.'],
       ['WEEKEND', 'The market first, then whoever is cooking.'],
     ],
+    hobbies: ['COOKING', 'THRIFTING', 'LANGUAGES'],
+    occupation: 'Barista, and studying',
+    learningLanguages: ['ENGLISH'],
   },
   {
     user: 4,
@@ -122,6 +161,8 @@ const CONNECT_PROFILES: Array<{
     dmPolicy: 'REQUEST_FIRST',
     accentColour: 'SLATE',
     posts: { photos: [1, 1] },
+    hobbies: ['FISHING', 'DIY_CRAFTS', 'FOOTBALL'],
+    occupation: 'Electrician',
   },
   {
     user: 5,
@@ -130,6 +171,7 @@ const CONNECT_PROFILES: Array<{
     dmPolicy: 'REQUEST_FIRST',
     posts: { photos: [2] },
     hasStory: true,
+    hobbies: ['VOLUNTEERING', 'READING', 'SWIMMING'],
   },
   {
     user: 7,
@@ -141,6 +183,8 @@ const CONNECT_PROFILES: Array<{
     posts: { photos: [2, 1] },
     prompts: [['HELP_WITH', 'Finding anything West African south of the river. Ask me.']],
     hasStory: true,
+    hobbies: ['FAITH', 'COOKING', 'BOARD_GAMES'],
+    occupation: 'Shopkeeper, Peckham',
   },
 ];
 
@@ -383,6 +427,12 @@ export const seedSocial = async (ctx: DemoSeedContext) => {
       datingConfirmedAt: profile.typeCode === 'DATING' ? daysAgo(30) : null,
       reportToken: reportToken(`connect:${profile.user}`),
       accentColour: (profile.accentColour ?? null) as never,
+      // v2 §2 and §7. Written here rather than left null, because a demo profile with no hobbies
+      // is a profile the app could not have created — the floor is a create-time rule — and the
+      // Meet card is built out of these: hobbies are what a stranger taps to open a conversation.
+      hobbies: profile.hobbies,
+      occupation: profile.occupation ?? null,
+      learningLanguages: profile.learningLanguages ?? [],
       // Members 1 and 2 are active today, which is what the bucketed `lastActiveBucket` renders
       // as "Active today" — the rest fall into this week.
       lastActiveAt: profile.hasStory ? hoursAgo(2) : hoursAgo(24 + profile.user * 3),
@@ -393,6 +443,10 @@ export const seedSocial = async (ctx: DemoSeedContext) => {
 
     // ── The gallery: one post per entry, items owned by the post ─────────────
     let photoIndex = 0;
+    // In post order, which is the order the card's indices refer to and the order the fallback
+    // uses. Collected as the photographs are written rather than recomputed afterwards, so the
+    // ids on the card are the ids of rows that exist.
+    const photoIds: string[] = [];
 
     for (const [postIndex, count] of profile.posts.photos.entries()) {
       const postId = seedId(`connect-post:${profile.user}:${postIndex}`);
@@ -412,6 +466,8 @@ export const seedSocial = async (ctx: DemoSeedContext) => {
       });
 
       for (let position = 0; position < count; position += 1) {
+        photoIds.push(seedId(`media:connect:${profile.user}:${photoIndex}`));
+
         await putMedia(ctx, {
           label: `connect:${profile.user}:${photoIndex}`,
           uploadedById: userId(profile.user),
@@ -469,6 +525,24 @@ export const seedSocial = async (ctx: DemoSeedContext) => {
         // API reads one on a real upload, so the seeded video cannot claim a length it has not.
         createdAt: daysAgo(5),
       });
+    }
+
+    // ── The card: the photographs a member picked, if they picked any ───────
+    //
+    // Written after the gallery because it names the media rows the loop above just created. Two
+    // of the eleven profiles set one; the rest are left empty, which is the fallback the API
+    // serves — the first three photographs in post order — and is what every profile that
+    // predates the picker still does. Both demos that do set it cross two posts, which is the one
+    // thing post order cannot express and therefore the one thing worth seeing in the data.
+    //
+    // Indices rather than ids in the fixture, so a photograph added to a post does not silently
+    // leave the card pointing at the wrong picture.
+    if (profile.card) {
+      const cardPhotoIds = profile.card
+        .map(index => photoIds[index])
+        .filter((photoId): photoId is string => !!photoId);
+
+      await prisma.connectProfile.update({ where: { id }, data: { cardPhotoIds } });
     }
 
     // ── Prompts: the question is NOT stored, only the code and the answer ────

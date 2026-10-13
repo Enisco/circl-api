@@ -51,6 +51,15 @@ export const RATE_LIMITS = {
    * work without leaving a text box that bills per keystroke.
    */
   PHRASE_TEST: { limit: 60, ttl: 60_000 },
+  /**
+   * The portal recording its own CSV downloads (§5.23): 120 an hour per staff member.
+   *
+   * An hour rather than a minute, because the thing being limited is not abuse of an expensive
+   * endpoint — the write is one row — but a client bug turning the audit trail into a log of
+   * itself. A hundred and twenty exports an hour is more than anybody does and far less than a
+   * loop would.
+   */
+  ADMIN_CLIENT_EVENT: { limit: 120, ttl: 3_600_000 },
 } as const;
 
 type LimitName = keyof typeof RATE_LIMITS;

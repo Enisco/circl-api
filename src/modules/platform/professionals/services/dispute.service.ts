@@ -123,20 +123,22 @@ export class DisputeService {
     }
 
     const media = await this.media.validate(dto.mediaKeys, userId);
-    const staffIds = await this.conversations.staffUserIds();
 
     const dispute = await this.database.$transaction(async tx => {
-      // Circl staff join the EXISTING thread rather than a new one being created (D29).
+      // The dispute attaches to the EXISTING thread between the two people rather than opening a
+      // new one (D29), so staff read the conversation the dispute is actually about.
+      //
+      // Nobody from Circl is added to it here. That used to be the point of this branch — every
+      // staff account joined the thread — and B17 removed it: the assignee joins when the dispute
+      // is picked up, and a staff participant row in two members' professional thread is read by
+      // the member's own inbox as the person they are talking to.
       let conversationId = context.conversationId;
 
-      if (conversationId) {
-        await this.conversations.addStaff(conversationId, staffIds, tx);
-      } else {
+      if (!conversationId) {
         const { conversation } = await this.conversations.ensure(
           {
             kind: 'PROFESSIONAL',
             participantIds: [userId, context.counterpartId],
-            staffIds,
             contextType: context.contextType,
             contextId: context.contextId,
           },

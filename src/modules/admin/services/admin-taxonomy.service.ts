@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, RiskCategory, RiskTerm, TaxonomyKind } from '@prisma/client';
+import { Prisma, RiskCategory, RiskTerm, TaxonomyKind, TaxonomyTerm } from '@prisma/client';
 import { CacheService, PrismaService } from '@/infrastructure';
 import { AuditService } from '../audit/audit.service';
 import {
@@ -39,6 +39,33 @@ import { staffRefSelect, toStaffRef } from '../serializers/admin-staff.serialize
 const MIN_RESOLVED_FOR_RATE = 5;
 
 /** Taxonomy and lexicon administration. */
+/**
+ * The thirteen the portal edits (§5.19, §12).
+ *
+ * The enum holds more — sort options, feed types, item units, notification categories — and those
+ * stay seed-only: they are vocabularies the **client matches on**, so rewording one from a
+ * configuration screen would change behaviour rather than wording.
+ */
+export const EDITABLE_KINDS: TaxonomyKind[] = [
+  TaxonomyKind.COMMUNITY_CATEGORY,
+  TaxonomyKind.GUIDE_TOPIC,
+  TaxonomyKind.PROFESSION,
+  TaxonomyKind.HERITAGE_TAG,
+  TaxonomyKind.JOURNEY_STAGE,
+  TaxonomyKind.INTEREST,
+  TaxonomyKind.HOBBY,
+  TaxonomyKind.LANGUAGE,
+  TaxonomyKind.COUNTRY_OF_ORIGIN,
+  TaxonomyKind.CONNECTION_TYPE,
+  TaxonomyKind.ITEM_CATEGORY,
+  TaxonomyKind.STORE_TYPE,
+  TaxonomyKind.GUARD_CATEGORY,
+  TaxonomyKind.MANAGED_CATEGORY,
+];
+
+const labelOfKind = (kind: TaxonomyKind): string =>
+  kind.charAt(0) + kind.slice(1).toLowerCase().replace(/_/g, ' ');
+
 @Injectable()
 export class AdminTaxonomyService {
   constructor(
@@ -52,11 +79,50 @@ export class AdminTaxonomyService {
     private readonly media: MediaService,
   ) {}
 
-  async list(kind: TaxonomyKind) {
+  /**
+   * The kinds the portal edits, with how much is in each (§5.19).
+   *
+   * A declared list rather than every value of the enum: the enum carries vocabularies that are
+   * seed-only — sort options, feed types, item units — and offering them for editing invites
+   * somebody to reword a value the client matches on. §5.19 names the thirteen.
+   *
+   * This route exists because it did not: `GET admin/taxonomy/kinds` fell through to
+   * `taxonomy/:kind`, whose parameter was unvalidated, so the portal's first call on the
+   * configuration screen was a 500 — now it is a list, and `:kind` is an enum pipe.
+   */
+  async kinds(): Promise<
+    Array<{ kind: TaxonomyKind; label: string; termCount: number; activeCount: number }>
+  > {
+    const counts = await this.database.taxonomyTerm.groupBy({
+      by: ['kind', 'isActive'],
+      _count: { _all: true },
+    });
+
+    return EDITABLE_KINDS.map(kind => {
+      const rows = counts.filter(row => row.kind === kind);
+
+      return {
+        kind,
+        label: labelOfKind(kind),
+        termCount: rows.reduce((total, row) => total + row._count._all, 0),
+        activeCount: rows
+          .filter(row => row.isActive)
+          .reduce((total, row) => total + row._count._all, 0),
+      };
+    });
+  }
+
+  async list(kind: TaxonomyKind, includeUsage = false) {
     const terms = await this.database.taxonomyTerm.findMany({
       where: { kind },
       orderBy: { sort: 'asc' },
     });
+    const usage = includeUsage
+      ? await this.usageFor(
+          kind,
+          terms.map(term => term.code),
+        )
+      : null;
 
     return terms.map(term => ({
       id: term.id,
@@ -68,7 +134,184 @@ export class AdminTaxonomyService {
       isActive: term.isActive,
       metadata: term.metadata,
       updatedAt: term.updatedAt.toISOString(),
+      ...(usage ? { usageCount: usage.get(term.code) ?? 0 } : {}),
     }));
+  }
+
+  /**
+   * The whole list in the order it should be in (§5.19).
+   *
+   * Every code of the kind, exactly once. A partial list is refused rather than applied to what it
+   * covers: `sort` decides what a member sees first in a picker, and a reorder that silently left
+   * four terms at position zero would put them all first.
+   *
+   * One version bump for the whole move, not one per term — the stamp invalidates every cache and
+   * every client ETag, and doing it fourteen times would be fourteen cold caches.
+   */
+  async reorder(kind: TaxonomyKind, codes: string[]) {
+    const terms = await this.database.taxonomyTerm.findMany({
+      where: { kind },
+      select: { id: true, code: true },
+    });
+    const mine = new Set(terms.map(term => term.code));
+    const sent = new Set(codes);
+
+    if (sent.size !== codes.length || mine.size !== sent.size || codes.some(c => !mine.has(c))) {
+      throw ApiException.badRequest(
+        ApiErrorCode.VALIDATION_FAILED,
+        `Send every ${kind} code, once each, in the order you want them.`,
+        {
+          data: { expected: mine.size, sent: codes.length },
+          details: [{ field: 'codes', message: `Expected ${mine.size} codes, all of this kind.` }],
+        },
+      );
+    }
+
+    const byCode = new Map(terms.map(term => [term.code, term.id]));
+
+    await this.audit.mutate(
+      {
+        action: 'taxonomy.reordered',
+        targetType: 'TAXONOMY_KIND',
+        targetId: kind,
+        targetLabel: labelOfKind(kind),
+        after: { codes },
+      },
+      async tx => {
+        for (const [index, code] of codes.entries()) {
+          await tx.taxonomyTerm.update({ where: { id: byCode.get(code) }, data: { sort: index } });
+        }
+
+        return { kind };
+      },
+    );
+
+    const version = await this.taxonomy.bumpVersion();
+
+    return { terms: await this.list(kind), version: version.toISOString() };
+  }
+
+  /**
+   * How many rows carry each code (§5.19's `includeUsage`).
+   *
+   * Per kind, because a vocabulary is used by whatever uses it: an interest is on a profile, a
+   * community category is on requests **and** offers, a profession is on listings. There is no
+   * generic answer, and a generic guess — "count the rows that mention it" — is the kind of number
+   * a staff member would deactivate a live category on the strength of.
+   *
+   * The kinds without an entry return 0 rather than a wrong count, and say so in the doc: what the
+   * number is for is the warning before a deactivation, and a zero reads as "nothing I can see
+   * uses this" which is exactly what it means here.
+   */
+  private async usageFor(kind: TaxonomyKind, codes: string[]): Promise<Map<string, number> | null> {
+    if (!codes.length) return new Map();
+
+    const counts = new Map<string, number>();
+    const add = (code: string | null, total: number) => {
+      if (!code) return;
+
+      counts.set(code, (counts.get(code) ?? 0) + total);
+    };
+    const tally = async (
+      rows: Promise<Array<{ code: string | null; total: number }>>,
+    ): Promise<void> => {
+      for (const row of await rows) add(row.code, Number(row.total));
+    };
+    // A JSON array column: `interests` and `languages` hold several codes per member, so the count
+    // is "profiles holding this code" rather than a group by one column.
+    const inJsonArray = async (column: 'interests' | 'languages'): Promise<void> => {
+      const rows = await this.database.$queryRaw<Array<{ code: string; total: bigint }>>`
+        SELECT code, COUNT(*) AS total
+        FROM "user_profile", jsonb_array_elements_text(${Prisma.raw(`"${column}"`)}) AS code
+        WHERE ${Prisma.raw(`"${column}"`)} IS NOT NULL
+        GROUP BY 1
+      `;
+
+      for (const row of rows) add(row.code, Number(row.total));
+    };
+
+    switch (kind) {
+      case TaxonomyKind.COMMUNITY_CATEGORY:
+        await tally(
+          this.database.communityRequest
+            .groupBy({ by: ['categoryCode'], _count: { _all: true } })
+            .then(rows => rows.map(r => ({ code: r.categoryCode, total: r._count._all }))),
+        );
+        await tally(
+          this.database.communityOffer
+            .groupBy({ by: ['categoryCode'], _count: { _all: true } })
+            .then(rows => rows.map(r => ({ code: r.categoryCode, total: r._count._all }))),
+        );
+        break;
+      case TaxonomyKind.GUIDE_TOPIC:
+        await tally(
+          this.database.guide
+            .groupBy({ by: ['topicCode'], _count: { _all: true } })
+            .then(rows => rows.map(r => ({ code: r.topicCode, total: r._count._all }))),
+        );
+        break;
+      case TaxonomyKind.HERITAGE_TAG:
+        await tally(
+          this.database.userProfile
+            .groupBy({ by: ['heritageTag'], _count: { _all: true } })
+            .then(rows => rows.map(r => ({ code: r.heritageTag, total: r._count._all }))),
+        );
+        break;
+      case TaxonomyKind.JOURNEY_STAGE:
+        await tally(
+          this.database.userProfile
+            .groupBy({ by: ['journeyStage'], _count: { _all: true } })
+            .then(rows => rows.map(r => ({ code: r.journeyStage, total: r._count._all }))),
+        );
+        break;
+      case TaxonomyKind.COUNTRY_OF_ORIGIN:
+        await tally(
+          this.database.userProfile
+            .groupBy({ by: ['countryOfOrigin'], _count: { _all: true } })
+            .then(rows => rows.map(r => ({ code: r.countryOfOrigin, total: r._count._all }))),
+        );
+        break;
+      case TaxonomyKind.CONNECTION_TYPE:
+        await tally(
+          this.database.connectProfile
+            .groupBy({ by: ['typeCode'], _count: { _all: true } })
+            .then(rows => rows.map(r => ({ code: r.typeCode, total: r._count._all }))),
+        );
+        break;
+      case TaxonomyKind.ITEM_CATEGORY:
+        await tally(
+          this.database.storeItem
+            .groupBy({ by: ['categoryCode'], _count: { _all: true } })
+            .then(rows => rows.map(r => ({ code: r.categoryCode, total: r._count._all }))),
+        );
+        break;
+      case TaxonomyKind.STORE_TYPE:
+        await tally(
+          this.database.store
+            .groupBy({ by: ['typeCode'], _count: { _all: true } })
+            .then(rows => rows.map(r => ({ code: r.typeCode, total: r._count._all }))),
+        );
+        break;
+      case TaxonomyKind.GUARD_CATEGORY:
+        await tally(
+          this.database.guardThread
+            .groupBy({ by: ['categoryCode'], _count: { _all: true } })
+            .then(rows => rows.map(r => ({ code: r.categoryCode, total: r._count._all }))),
+        );
+        break;
+      case TaxonomyKind.INTEREST:
+        await inJsonArray('interests');
+        break;
+      case TaxonomyKind.LANGUAGE:
+        await inJsonArray('languages');
+        break;
+      default:
+        // PROFESSION and MANAGED_CATEGORY are join tables and the rest are seed-only; both return
+        // zero rather than a number nobody could act on.
+        break;
+    }
+
+    return counts;
   }
 
   async upsert(dto: UpsertTaxonomyTermDto) {
@@ -80,25 +323,48 @@ export class AdminTaxonomyService {
       );
     }
 
-    const term = await this.database.taxonomyTerm.upsert({
+    const before = await this.database.taxonomyTerm.findUnique({
       where: { kind_code: { kind: dto.kind, code: dto.code } },
-      update: {
-        label: dto.label,
-        description: dto.description ?? null,
-        ...(dto.sort !== undefined ? { sort: dto.sort } : {}),
-        ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
-        ...(dto.metadata !== undefined ? { metadata: toJsonOrUndefined(dto.metadata) } : {}),
-      },
-      create: {
-        kind: dto.kind,
-        code: dto.code,
-        label: dto.label,
-        description: dto.description ?? null,
-        sort: dto.sort ?? 0,
-        isActive: dto.isActive ?? true,
-        metadata: toJsonOrUndefined(dto.metadata),
-      },
+      select: { label: true, sort: true, isActive: true },
     });
+
+    // Audited (B18). A vocabulary term is the label on a filter, a chip and a category across the
+    // whole platform, and renaming or retiring one changes what every member sees — the risk terms
+    // beside this have been audited since they were built, and these were not.
+    const { result: term } = await this.audit.mutate<TaxonomyTerm>(
+      (saved: TaxonomyTerm) => ({
+        action: 'taxonomy.upserted',
+        targetType: 'TAXONOMY_TERM',
+        targetId: saved.id,
+        targetLabel: `${dto.kind}: ${dto.code}`,
+        before: before ?? null,
+        after: { label: saved.label, sort: saved.sort, isActive: saved.isActive },
+      }),
+      tx =>
+        tx.taxonomyTerm.upsert({
+          where: { kind_code: { kind: dto.kind, code: dto.code } },
+          update: {
+            label: dto.label,
+            // **Changed only when sent.** `?? null` erased the description of any term saved
+            // without one — and the screen that saves a label is not necessarily the screen that
+            // has the description in front of it. An explicit empty string still clears it, which
+            // is how a caller says "remove this".
+            ...(dto.description === undefined ? {} : { description: dto.description || null }),
+            ...(dto.sort !== undefined ? { sort: dto.sort } : {}),
+            ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+            ...(dto.metadata !== undefined ? { metadata: toJsonOrUndefined(dto.metadata) } : {}),
+          },
+          create: {
+            kind: dto.kind,
+            code: dto.code,
+            label: dto.label,
+            description: dto.description ?? null,
+            sort: dto.sort ?? 0,
+            isActive: dto.isActive ?? true,
+            metadata: toJsonOrUndefined(dto.metadata),
+          },
+        }),
+    );
 
     // Bumps the version stamp, which invalidates every process's cache and the client's ETag in one write.
     const version = await this.taxonomy.bumpVersion();
@@ -114,10 +380,17 @@ export class AdminTaxonomyService {
 
     if (!term) throw ApiException.notFound('That term could not be found.');
 
-    await this.database.taxonomyTerm.update({
-      where: { id: term.id },
-      data: { isActive: false },
-    });
+    await this.audit.mutate(
+      {
+        action: 'taxonomy.deactivated',
+        targetType: 'TAXONOMY_TERM',
+        targetId: term.id,
+        targetLabel: `${kind}: ${code}`,
+        before: { isActive: term.isActive },
+        after: { isActive: false },
+      },
+      tx => tx.taxonomyTerm.update({ where: { id: term.id }, data: { isActive: false } }),
+    );
 
     const version = await this.taxonomy.bumpVersion();
 

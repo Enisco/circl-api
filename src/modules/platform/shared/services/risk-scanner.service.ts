@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { RiskCategory, RiskLevel } from '@prisma/client';
 import { CacheService, PrismaService } from '@/infrastructure';
 import { SYSTEM_CONFIG_KEYS } from '@/common';
-import { normaliseForScanning } from './text-normalisation';
+import { normaliseForScanning, normaliseForScanningWithOffsets } from './text-normalisation';
 import { SystemConfigService } from './system-config.service';
 import { TierThresholds } from './safety-scoring';
 
@@ -18,6 +18,17 @@ export interface RiskSignal {
    * phrase is in a paragraph halfway down" are different things to a reviewer.
    */
   field: string | null;
+  /**
+   * Where it matched, as UTF-16 offsets into the field's **original** text — the same string
+   * §5.9's `contentDetail.body[field]` returns, so the portal highlights the phrase by slicing it.
+   *
+   * Matching runs on normalised text, whose indices are not the original's, so these come from
+   * `normaliseForScanningWithOffsets`. Null in the rare case where that alignment cannot be
+   * proven: a highlight in the wrong place is worse than no highlight, because it accuses the
+   * member of writing something they did not.
+   */
+  start: number | null;
+  end: number | null;
 }
 
 export interface RiskAssessment {
@@ -151,9 +162,12 @@ export class RiskScannerService {
       //
       // Word boundaries, so "scam" does not fire on "scamper" and an apostrophe inside a phrase
       // still matches.
+      // Global as well as case-insensitive, because the scan now reports *where* each phrase
+      // matched and `matchAll` requires it. `matchAll` works on its own copy of the regex, so the
+      // shared `lastIndex` that a bare `exec` loop would have left behind is not a hazard here.
       regex: new RegExp(
         `(?<![\\w])${escapeRegExp(normaliseForScanning(term.pattern))}(?![\\w])`,
-        'i',
+        'gi',
       ),
     }));
     this.loadedAt = Date.now();
@@ -229,20 +243,29 @@ export class RiskScannerService {
       // Normalised, not merely lowercased. Until this, "c4sh", "s\u200bcam" and a full-width
       // rendering of the same word all went straight past a lexicon that was looking for the plain
       // spelling — the filter was one keystroke away from being switched off by anybody who knew.
-      const haystack = normaliseForScanning(text);
+      const { text: haystack, map } = normaliseForScanningWithOffsets(text);
 
       if (!haystack.trim()) continue;
 
       for (const term of this.lexicon) {
-        if (!term.regex.test(haystack)) continue;
+        // Every occurrence, not merely the first: a reviewer highlighting "the phrase that
+        // matched" wants all of them, and the scoring below is deliberately per term rather than
+        // per occurrence so this costs nothing but evidence.
+        const hits = [...haystack.matchAll(term.regex)];
 
-        signals.push({
-          termId: term.id,
-          category: term.category,
-          pattern: term.pattern,
-          weight: term.weight,
-          field: Number.isNaN(Number(field)) ? field : null,
-        });
+        if (!hits.length) continue;
+
+        for (const hit of hits) {
+          signals.push({
+            termId: term.id,
+            category: term.category,
+            pattern: term.pattern,
+            weight: term.weight,
+            field: Number.isNaN(Number(field)) ? field : null,
+            start: map ? map[hit.index] : null,
+            end: map ? map[hit.index + hit[0].length] : null,
+          });
+        }
 
         if (scored.has(term.id)) continue;
 

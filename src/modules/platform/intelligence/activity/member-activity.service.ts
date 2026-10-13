@@ -40,6 +40,7 @@ export class MemberActivityService {
     platform?: DevicePlatform | null;
     appVersion?: string | null;
     cityId?: string | null;
+    sessionId?: string | null;
   }): void {
     void this.run(input).catch(error =>
       this.logger.warn({
@@ -55,6 +56,7 @@ export class MemberActivityService {
     platform?: DevicePlatform | null;
     appVersion?: string | null;
     cityId?: string | null;
+    sessionId?: string | null;
   }): Promise<void> {
     // The gate and the claim are the same operation: whoever sets the key does the writing, and
     // everybody else in the window does nothing. Reading then writing would let two concurrent
@@ -93,6 +95,24 @@ export class MemberActivityService {
       // `ON CONFLICT DO NOTHING`, so the first visit of the day wins and keeps its own
       // `firstSeenAt`, platform and city. A later visit the same day must not overwrite them —
       // the row is a record of that day, not of the most recent moment in it.
+      // B21: the session row's own clock. It used to move only on sign-in and refresh, which made
+      // `user_sessions.last_active_at` the age of a *token* rather than of any use — and the
+      // "which app builds are still in the wild" query reads exactly that column, so a member who
+      // opened the app this morning on a thirty-day session counted as last active a month ago.
+      //
+      // Written here rather than per request: the same fifteen-minute gate that guards everything
+      // else in this method, so it is one update per member per quarter hour instead of one per
+      // request. `updateMany` rather than `update`, because a session revoked between the token
+      // being minted and this write is a no-op rather than a thrown error in a fire-and-forget
+      // path.
+      ...(input.sessionId
+        ? [
+            this.database.userSession.updateMany({
+              where: { id: input.sessionId },
+              data: { lastActiveAt: now },
+            }),
+          ]
+        : []),
       this.database.userDailyActivity.createMany({
         data: [
           {

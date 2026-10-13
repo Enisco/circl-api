@@ -15,6 +15,12 @@ export const SYSTEM_CONFIG_KEYS = {
   MAX_LANGUAGES: 'limits.maxLanguages',
   CONNECT_MINIMUM_AGE: 'limits.connectMinimumAge',
   NEAR_ME_RADIUS_KM: 'limits.nearMeRadiusKm',
+  MAX_HOBBIES: 'limits.maxHobbies',
+  MIN_HOBBIES: 'limits.minHobbies',
+  MIN_CONNECT_PHOTOS: 'limits.minConnectPhotos',
+  MAX_CARD_PHOTOS: 'limits.maxCardPhotos',
+  MIN_PROMPT_ANSWER: 'limits.minPromptAnswer',
+  MAX_PROMPT_ANSWER: 'limits.maxPromptAnswer',
 
   TIER_THRESHOLDS: 'safety.tierThresholds',
   CLASSIFIER: 'safety.classifier',
@@ -55,6 +61,27 @@ export const SYSTEM_CONFIG_DEFAULTS = {
   'limits.maxLanguages': 6,
   'limits.connectMinimumAge': 18,
   'limits.nearMeRadiusKm': 25,
+  /**
+   * The four Connect limits the client reads from `taxonomy.limits` and the API enforces.
+   *
+   * `minConnectPhotos` gates **creating** a Connect profile, never editing one: a member who
+   * joined before the rule keeps their place, and an edit that demanded two more pictures first
+   * would lock them out of their own profile.
+   *
+   * `minPromptAnswer` is 20 rather than the 50 first proposed, because the questions served
+   * include "Ask me about", where "Nigerian jollof" is a complete and good answer at fifteen
+   * characters. A fifty-character floor would reject it.
+   */
+  'limits.maxHobbies': 8,
+  // Three, and the card is the reason: hobbies are what a stranger taps to start a conversation,
+  // so a profile with one offers one way in. Enforced on create only, like the photo floor.
+  'limits.minHobbies': 3,
+  'limits.minConnectPhotos': 3,
+  // The photographs a member picks as their card. Three is what the deck's swipe was designed
+  // around; more is a gallery, which the profile already has.
+  'limits.maxCardPhotos': 3,
+  'limits.minPromptAnswer': 20,
+  'limits.maxPromptAnswer': 100,
 
   'safety.tierThresholds': { low: 1, medium: 30, high: 55, critical: 90 },
   /**

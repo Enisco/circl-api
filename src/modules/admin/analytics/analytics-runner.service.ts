@@ -63,6 +63,27 @@ export class AnalyticsRunnerService {
    * next thing the pooled connection does — a `work_mem` of 64MB left behind on a connection
    * serving the member feed is a memory bill nobody can trace.
    */
+  /**
+   * How many members a filter selects, for §2.7's population floor.
+   *
+   * Here rather than in `AdminAnalyticsService` because the **dashboard** needs the same number and
+   * had none: a narrow city filter showed figures for fewer than ten people and
+   * `meta.populationSuppressed` was never set, so the one screen everybody opens was the one
+   * without the floor on it.
+   *
+   * Zero is not "narrow". An empty selection is somebody asking about a city with nobody in it,
+   * and answering "withheld" would imply there is something to withhold.
+   */
+  async populationSize(viewSql: Prisma.Sql): Promise<number> {
+    const [row] = await this.query(
+      tx => tx.$queryRaw<Array<{ total: bigint }>>`
+        SELECT COUNT(*) AS total FROM "mv_member_dimensions" m WHERE ${viewSql}
+      `,
+    );
+
+    return Number(row?.total ?? 0);
+  }
+
   async query<T>(run: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
     try {
       return await this.database.$transaction(async tx => {

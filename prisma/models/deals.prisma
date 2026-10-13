@@ -46,6 +46,20 @@ model Deal {
   problemNote String?   @map("problem_note")
   problemAt   DateTime? @map("problem_at") @db.Timestamptz
 
+  /// Who raised it. The flag recorded that somebody had a problem and not which of the two it
+  /// was, so §5.17's staff side could not answer the right person — and "we have looked into your
+  /// deal" sent to the member who did not complain is worse than saying nothing.
+  problemFlaggedById String? @map("problem_flagged_by_id")
+
+  /// The staff side of that flag (§5.17). `hasProblem` is the member raising a hand and stays true
+  /// forever — what happened to the deal is part of its record. This is whether anybody is still
+  /// working on it, which is what a queue needs and `hasProblem` cannot answer.
+  problemState          DealProblemState? @map("problem_state")
+  problemResolvedAt     DateTime?         @map("problem_resolved_at") @db.Timestamptz
+  problemResolvedById   String?           @map("problem_resolved_by_id")
+  /// Shown to the member who flagged it, in their support thread.
+  problemResolutionNote String?           @map("problem_resolution_note")
+
   steps DealStep[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
@@ -55,6 +69,10 @@ model Deal {
   @@index([conversationId, createdAt])
   @@index([payerId])
   @@index([providerId])
+  /// The §5.17 problem queue: flagged deals nobody has settled yet, newest first. Partial would be
+  /// better still and Prisma cannot express one, so `problemState` is null for every deal that was
+  /// never flagged and the index is only as big as the flags.
+  @@index([problemState, problemAt])
   @@map("deals")
 }
 

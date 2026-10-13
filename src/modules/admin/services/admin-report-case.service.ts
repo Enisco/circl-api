@@ -11,11 +11,14 @@ import {
   ReportCaseState,
   ReportState,
   ReportTargetType,
+  RiskCategory,
 } from '@prisma/client';
 import { ApiErrorCode, ApiException, buildPageMeta } from '@/common';
 import { PrismaService } from '@/infrastructure';
 import { CONTENT_SOURCE, ContentSafetyService, MediaService } from '@/modules/platform/shared';
 import { AuditService } from '../audit/audit.service';
+import { AdminContentService } from '../content/admin-content.service';
+import { AdminAppealService } from './admin-appeal.service';
 import { AdminHistoryService } from './admin-history.service';
 import { AdminGuardService, GUARD_ESCALATION_SUBJECT } from './admin-guard.service';
 import { AdminPrincipal } from '../common/admin-principal';
@@ -101,6 +104,8 @@ export class AdminReportCaseService {
     private readonly enforcement: AdminEnforcementService,
     private readonly history: AdminHistoryService,
     private readonly guard: AdminGuardService,
+    private readonly content: AdminContentService,
+    private readonly appeals: AdminAppealService,
   ) {}
 
   async list(actor: AdminPrincipal, query: ListReportCasesDto) {
@@ -152,11 +157,20 @@ export class AdminReportCaseService {
       this.database.reportCase.count({ where: { state: { in: LIVE }, dueAt: { lt: now } } }),
     ]);
 
-    const targets = await this.resolveTargets(rows);
+    const [targets, categories] = await Promise.all([
+      this.resolveTargets(rows),
+      this.riskCategories(rows),
+    ]);
 
     return {
       data: rows.map(row =>
-        toCaseRow(row, targets.get(this.key(row)) ?? this.blankTarget(row), this.media.sign, now),
+        toCaseRow(
+          row,
+          targets.get(this.key(row)) ?? this.blankTarget(row),
+          this.media.sign,
+          now,
+          categories.get(this.key(row)) ?? null,
+        ),
       ),
       meta: buildPageMeta({ currentPage: query.currentPage, perPage: query.size }, total, {
         urgentUnclaimed,
@@ -170,7 +184,7 @@ export class AdminReportCaseService {
 
     if (!row) throw ApiException.notFound('That case could not be found.');
 
-    const [reports, targets, history] = await Promise.all([
+    const [reports, targets, history, liveContent, appeals, scan] = await Promise.all([
       this.database.report.findMany({
         where: { caseId: id },
         select: {
@@ -187,6 +201,30 @@ export class AdminReportCaseService {
       }),
       this.resolveTargets([row]),
       this.history.forTarget(row.targetType, row.targetId, row.id),
+      /**
+       * The content as it is **now**, which is the whole point of the field: the reports carry a
+       * snapshot taken when each one was filed, and a reviewer has to be able to see whether the
+       * author has since edited it, had it held, or deleted it themselves.
+       *
+       * §5.7's page, not a hand-made subset — the same object the content screen and the queue
+       * item serve, so the portal draws one component on all three. Null for a case about a
+       * member, a conversation or a message: those have no content page, and the thread is
+       * `relatedConversationId` instead.
+       */
+      this.content.page(row.targetType, row.targetId),
+      // Real appeals, keyed on this case (§5.11). This was `[]` whatever had happened, so the
+      // reviewer of a reopened case could not see that the member had already argued with the
+      // first decision — which is exactly the context a reopen needs.
+      this.appeals.forCase(id),
+      // The scanner's category, for `risk.category`. The case's own is not stored on purpose: the
+      // reports disagree about it by nature, and what a reviewer wants to know is what the
+      // scanner called the content.
+      this.database.contentSafety.findUnique({
+        where: {
+          targetType_targetId: { targetType: row.targetType, targetId: row.targetId },
+        },
+        select: { category: true },
+      }),
     ]);
 
     return toCaseDetail(
@@ -199,11 +237,21 @@ export class AdminReportCaseService {
           : null,
         relatedConversationId: await this.conversationFor(row),
         history,
+        liveContent,
+        appeals,
+        riskCategory: scan?.category ?? null,
       },
       this.media.sign,
-      // R9: the reported member must never learn who reported them, and a reviewer without
-      // `reports:read` has no business with the reporter's words either.
-      actor.permissions.has('reports:read'),
+      // R9, and the permission is **`moderation:read`** rather than `reports:read`.
+      //
+      // Support hold `reports:read` — they need to see that a member has been reported five times
+      // in order to answer them — and R9 is explicit that with `reports:read` and no
+      // `moderation:read` the response carries `reporter: null` and `reporterNote: null`. Gating
+      // on `reports:read` therefore handed Support the identity of everybody who had reported
+      // anybody, which is the one fact that turns a report into a reprisal: a support agent
+      // talking to an angry member had, on the same screen, the name of the person who reported
+      // them.
+      actor.permissions.has('moderation:read'),
     );
   }
 
@@ -326,9 +374,14 @@ export class AdminReportCaseService {
     if (!row) throw ApiException.notFound('That case could not be found.');
 
     if (!LIVE.includes(row.state)) {
-      throw ApiException.conflict(ApiErrorCode.CONFLICT, 'That case has already been decided.', {
-        data: { state: row.state, decision: row.decision, decidedAt: row.decidedAt },
-      });
+      // `ALREADY_DECIDED`, not the generic `CONFLICT` (§2.8): the portal branches on the code to
+      // decide whether to reload the case or show a validation message, and "conflict" is the one
+      // answer that tells it neither.
+      throw ApiException.conflict(
+        ApiErrorCode.ALREADY_DECIDED,
+        'That case has already been decided.',
+        { data: { state: row.state, decision: row.decision, decidedAt: row.decidedAt } },
+      );
     }
 
     // Claim before decide, unless the caller is a manager (§7.2: they "can step in on any case").
@@ -596,7 +649,9 @@ export class AdminReportCaseService {
 
     return {
       data: rows.map(row =>
-        toReportRow(row, this.media.sign, actor.permissions.has('reports:read')),
+        // R9 again, and the same correction: the log lists individual reports with their
+        // reporters, so this is the same disclosure one page further along.
+        toReportRow(row, this.media.sign, actor.permissions.has('moderation:read')),
       ),
       meta: buildPageMeta({ currentPage: query.currentPage, perPage: query.size }, total),
     };
@@ -759,6 +814,27 @@ export class AdminReportCaseService {
    * each kind lives in and which of its fields are the ones worth reading, so a new scannable
    * kind shows up here without being added anywhere.
    */
+  /**
+   * The scanner's category per target, for the row's `risk.category`.
+   *
+   * One query for the page rather than a join: a case and a safety row are one-to-one on
+   * `(target_type, target_id)`, but joining it onto the paged query would mean reaching across a
+   * polymorphic key for three columns the list shows and nothing filters on.
+   */
+  private async riskCategories(rows: Array<{ targetType: ReportTargetType; targetId: string }>) {
+    if (!rows.length) return new Map<string, RiskCategory>();
+
+    const scans = await this.database.contentSafety.findMany({
+      where: {
+        OR: rows.map(row => ({ targetType: row.targetType, targetId: row.targetId })),
+        category: { not: null },
+      },
+      select: { targetType: true, targetId: true, category: true },
+    });
+
+    return new Map(scans.map(scan => [`${scan.targetType}:${scan.targetId}`, scan.category]));
+  }
+
   private async resolveTargets(
     rows: Array<{ targetType: ReportTargetType; targetId: string }>,
   ): Promise<Map<string, CaseTargetView>> {

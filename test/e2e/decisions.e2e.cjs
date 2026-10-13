@@ -7,6 +7,7 @@ const {
   api,
   approveAnonymous,
   check,
+  connectCreate,
   dobFor,
   finish,
   makeUser,
@@ -244,21 +245,31 @@ const {
   );
 
   console.log('\n── D17 / D18 Connect ────────────────────────────────────────');
-  await api(a.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP',
-    lookingFor: 'Sunday walks and somebody to moan about the rain with.',
-    dateOfBirth: dobFor(31),
-    dmPolicy: 'REQUEST_FIRST',
-    isVisible: true,
-  });
-  await api(b.token, 'PUT', '/connect/me', {
-    typeCode: 'NETWORKING',
-    lookingFor: 'Meeting people who do the same work here.',
-    dateOfBirth: dobFor(29),
-    dmPolicy: 'REQUEST_FIRST',
-    isVisible: true,
-    cityIdOverride: 'LONDON',
-  });
+  await api(
+    a.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(a.token, {
+      typeCode: 'FRIENDSHIP',
+      lookingFor: 'Sunday walks and somebody to moan about the rain with.',
+      dateOfBirth: dobFor(31),
+      dmPolicy: 'REQUEST_FIRST',
+      isVisible: true,
+    }),
+  );
+  await api(
+    b.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(b.token, {
+      typeCode: 'NETWORKING',
+      lookingFor: 'Meeting people who do the same work here.',
+      dateOfBirth: dobFor(29),
+      dmPolicy: 'REQUEST_FIRST',
+      isVisible: true,
+      cityIdOverride: 'LONDON',
+    }),
+  );
 
   const bProfile = await api(b.token, 'GET', '/connect/me');
   check(

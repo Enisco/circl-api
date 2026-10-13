@@ -53,8 +53,16 @@ const OPERATIONS = [
 /** Any of these in the call, or in the `where` it was handed, settles the question. */
 const APPLIED = ['PUBLIC_VISIBILITY', 'DIRECT_VISIBILITY', 'visibilityState'];
 
-/** The comment that says "read, considered, and deliberately not filtered". */
-const EXEMPTION = 'visibility:';
+/**
+ * The comment that says "read, considered, and deliberately not filtered".
+ *
+ * Matched **in a comment** rather than anywhere in the preceding lines, which it used to be. Two
+ * of the content models have a column called `visibility` — `CommunityUpdate` and `Group` — so a
+ * query selecting it wrote the exemption token into its own `select`, and every query within nine
+ * lines below was then read as explained. Found when the data export builder was written: nine of
+ * its eleven content reads passed because one of them selected `visibility: true`.
+ */
+const EXEMPTION = /(?:\/\/|\*)\s*visibility:/;
 
 /**
  * The single-item form of the rule, which cannot be a `where` clause.
@@ -173,7 +181,7 @@ describe('content visibility coverage (§6.5)', () => {
       const following = lines.slice(lineNumber, lineNumber + GUARD_WINDOW).join('\n');
 
       if (APPLIED.some(token => args.includes(token))) continue;
-      if (preceding.includes(EXEMPTION)) continue;
+      if (EXEMPTION.test(preceding)) continue;
       if (GUARDS.some(guard => following.includes(guard))) continue;
       if (whereIdentifiers(args).some(name => builderApplies(text, name))) continue;
 

@@ -195,7 +195,15 @@ export class TaxonomyService {
 
     if (!homes.length) return '';
 
-    return ` That is a ${homes.join(' and a ')} — the picker is reading the wrong list.`;
+    // "a interest" reads as a typo in a message whose whole job is to be read, and the hobby
+    // vocabulary made this sentence common: every community category a Connect picker sends lands
+    // here. The article is picked per word rather than once for the list, because "an interest and
+    // a help tag" needs both.
+    const article = (noun: string) => (/^[aeiou]/i.test(noun) ? 'an' : 'a');
+
+    return ` That is ${homes
+      .map(home => `${article(home)} ${home}`)
+      .join(' and ')} — the picker is reading the wrong list.`;
   }
 
   async assertAllValid(

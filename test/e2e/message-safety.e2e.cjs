@@ -165,9 +165,13 @@ const escalationOn = item => item?.payload?.messageEscalation ?? {};
     guard?.riskLevel === 'CRITICAL' && escalationOn(guard).priority === 'URGENT',
     { riskLevel: guard?.riskLevel, priority: escalationOn(guard).priority },
   );
+  // `text`, which is what §5.10 calls the words in a snapshot. It was `body` — the column name —
+  // so the portal's one snapshot component read it as empty on exactly the reports where the words
+  // matter most.
   check(
-    'carrying a snapshot of the flagged message only',
-    escalationOn(guard).snapshot?.body?.includes('trafficked') &&
+    'carrying a snapshot of the flagged message only, under §5.10’s field names',
+    escalationOn(guard).snapshot?.text?.includes('trafficked') &&
+      !!escalationOn(guard).snapshot?.capturedAt &&
       !!escalationOn(guard).snapshot?.sentAt &&
       escalationOn(guard).messageId === message,
     escalationOn(guard).snapshot,

@@ -8,6 +8,8 @@ import {
 } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsIn,
@@ -64,6 +66,29 @@ export class DecideQueueItemDto {
   @MaxLength(1000)
   @IsOptional()
   reason?: string;
+}
+
+/** §5.19's `includeUsage`. Its own DTO so `forbidNonWhitelisted` still refuses anything else. */
+export class TaxonomyQueryDto {
+  @ApiPropertyOptional({
+    description:
+      'Adds `usageCount` per term: how many rows carry the code. The warning somebody needs ' +
+      'before retiring a category that is in use.',
+  })
+  @ToBoolean()
+  @IsBoolean()
+  @IsOptional()
+  includeUsage?: boolean;
+}
+
+/** §5.19's reorder: the whole list, once each. */
+export class ReorderTaxonomyDto {
+  @ApiProperty({ type: [String], description: 'Every code of this kind, in the order you want.' })
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsString({ each: true })
+  @MaxLength(60, { each: true })
+  codes: string[];
 }
 
 export class UpsertTaxonomyTermDto {

@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseEnumPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -19,10 +20,13 @@ import { AdminJwtGuard } from '@/common/guards/admin-jwt.guard';
 import { AdminBffGuard } from '../common/admin-bff.guard';
 import { AdminPermissionGuard } from '../common/admin-permission.guard';
 import { AdminAuthenticated, AdminPermissions, AdminPrincipal } from '../common/admin-principal';
+import { AuditService } from '../audit/audit.service';
 import {
   PatchRiskTermDto,
   ListRiskTermsDto,
+  ReorderTaxonomyDto,
   SuspendUserDto,
+  TaxonomyQueryDto,
   TestPhraseDto,
   UpsertRiskTermDto,
   UpsertTaxonomyTermDto,
@@ -53,6 +57,7 @@ export class AdminController {
     private readonly taxonomy: AdminTaxonomyService,
     private readonly jobs: AdminJobRunnerService,
     private readonly palette: AdminSearchService,
+    private readonly audit: AuditService,
   ) {}
 
   // ─── Command palette (§5.27) ───────────────────────────────────────────────
@@ -265,19 +270,68 @@ export class AdminController {
   }
 
   // ─── Taxonomy ──────────────────────────────────────────────────────────────
+  //
+  // `kinds` is declared **above** `:kind` because Nest matches in declaration order: with `:kind`
+  // first, `GET admin/taxonomy/kinds` was read as a request for the kind "kinds", and the
+  // parameter was unvalidated — so the portal's first call on the configuration screen reached the
+  // database with a nonsense enum value. It is an enum pipe now, so a bad kind is a 400 naming
+  // what was allowed.
+
+  @Get('taxonomy/kinds')
+  @AdminPermissions('config:read')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'The vocabularies that can be edited',
+    description:
+      'With how many terms each holds and how many are active. Only the kinds §5.19 names: the ' +
+      'enum carries vocabularies the client **matches on** — sort options, feed types, units — ' +
+      'and rewording one of those from a screen would change behaviour rather than wording.',
+  })
+  async taxonomyKinds() {
+    return {
+      data: await this.taxonomy.kinds(),
+      message: SuccessMessage.RESOURCE_FETCHED('Taxonomy kinds'),
+    };
+  }
 
   @Get('taxonomy/:kind')
-  @AdminPermissions('config:taxonomy')
+  @AdminPermissions('config:read')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Every term of one kind, active or not',
     description:
-      'Unlike the public endpoint, this shows the deactivated ones so they can be turned on.',
+      'Unlike the public endpoint, this shows the deactivated ones so they can be turned on. ' +
+      '`includeUsage=true` adds `usageCount` — how many rows carry each code, which is the ' +
+      'warning somebody needs before retiring a live category. Counted per kind from whatever ' +
+      'actually uses it; kinds with no countable source report 0.',
   })
-  async listTaxonomy(@Param('kind') kind: TaxonomyKind) {
-    const data = await this.taxonomy.list(kind);
+  async listTaxonomy(
+    @Param('kind', new ParseEnumPipe(TaxonomyKind)) kind: TaxonomyKind,
+    @Query() query: TaxonomyQueryDto,
+  ) {
+    const data = await this.taxonomy.list(kind, query.includeUsage === true);
 
     return { data, message: SuccessMessage.RESOURCE_FETCHED('Terms') };
+  }
+
+  @Post('taxonomy/:kind/reorder')
+  @AdminPermissions('config:taxonomy')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit('ADMIN_WRITE')
+  @ApiOperation({
+    summary: 'Put a vocabulary in order',
+    description:
+      'The whole list, once each. `sort` decides what a member sees first in a picker, so a ' +
+      'partial list is refused rather than applied to the part it covers — the terms left out ' +
+      'would all keep position zero and all come first. One version bump for the move.',
+  })
+  async reorderTaxonomy(
+    @Param('kind', new ParseEnumPipe(TaxonomyKind)) kind: TaxonomyKind,
+    @Body() dto: ReorderTaxonomyDto,
+  ) {
+    const data = await this.taxonomy.reorder(kind, dto.codes);
+
+    return { data, message: 'Order saved.' };
   }
 
   @Post('taxonomy')
@@ -305,7 +359,10 @@ export class AdminController {
       'Never deleted: content already carries this code, and removing the term would leave rows ' +
       'pointing at a label that no longer exists.',
   })
-  async deactivateTaxonomy(@Param('kind') kind: TaxonomyKind, @Param('code') code: string) {
+  async deactivateTaxonomy(
+    @Param('kind', new ParseEnumPipe(TaxonomyKind)) kind: TaxonomyKind,
+    @Param('code') code: string,
+  ) {
     const data = await this.taxonomy.deactivate(kind, code);
 
     return { data, message: 'Term deactivated' };
@@ -329,22 +386,5 @@ export class AdminController {
     const data = await this.moderation.setUserStatus(adminId, id, dto);
 
     return { data, message: SuccessMessage.RESOURCE_UPDATED('Member') };
-  }
-  // ─── Scheduled jobs ────────────────────────────────────────────────────────
-
-  @Post('jobs/:name/run')
-  @HttpCode(HttpStatus.OK)
-  @AdminPermissions('jobs:run')
-  @ApiOperation({
-    summary: 'Run a scheduled job now',
-    description:
-      'The cron decorators are the schedule; this is the switch. Without it a stale dashboard ' +
-      "cannot be fixed until the job's hour comes round, and the whole set is untestable end " +
-      'to end. Runs synchronously and returns when the job has finished.',
-  })
-  async runJob(@Param('name') name: string) {
-    const ran = await this.jobs.run(name);
-
-    return { data: { job: ran }, message: `Ran ${ran}` };
   }
 }

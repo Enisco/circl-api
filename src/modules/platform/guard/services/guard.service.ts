@@ -7,6 +7,7 @@ import {
   ReportTargetType,
   RiskLevel,
   SystemMessageType,
+  SupportThreadType,
   TaxonomyKind,
   ThreadContextType,
   ThreadKind,
@@ -73,14 +74,18 @@ export class GuardService {
 
     // The scan decides where this lands in the admin queue and how loudly, which is the whole point of the risk-aware queue: a member in danger should not be sitting behind a queue of spam reports.
     const assessment = await this.risk.scan(dto.subject, dto.message);
-    const staffIds = await this.conversations.staffUserIds();
 
     const result = await this.database.$transaction(async tx => {
       const { conversation } = await this.conversations.ensure(
         {
           kind: ThreadKind.SUPPORT,
+          // Said rather than derived. A Guard disclosure and a deal problem share one
+          // conversation key (D36), so nothing about the context distinguishes them — and a
+          // disclosure typed anything else is listed in the support inbox to the whole team
+          // (§5.15). `settledType` makes this stick even if a deal problem claims the thread
+          // afterwards.
+          supportType: SupportThreadType.GUARD,
           participantIds: [userId],
-          staffIds,
           contextType: ThreadContextType.SUPPORT,
           contextId: null,
           snapshot: { title: 'Circl team', subtitle: dto.subject },
@@ -90,28 +95,64 @@ export class GuardService {
         tx,
       );
 
-      const thread = await tx.guardThread.create({
-        data: {
-          userId,
-          subject: dto.subject,
-          categoryCode: dto.categoryCode ?? null,
-          conversationId: conversation.id,
-          riskLevel: assessment.level,
-          riskCategory: assessment.category,
-          riskScore: assessment.score,
-          riskSignals: toJson(assessment.signals),
-        },
+      // The member's **second** disclosure continues the first (D36): `ensure` returns the
+      // conversation they already have, and `GuardThread.conversationId` is unique — so creating
+      // a row here unconditionally was a 500 on the second use of the "tell Circl privately"
+      // button. On a safeguarding channel that is the worst possible failure: somebody who has
+      // already decided to tell us something concludes nobody wants to hear it.
+      //
+      // The queue item below has always been an `upsert` on the same key, so the reuse was known
+      // about; this row was the half that was missed. `openForStaff` resolves it the same way.
+      const existing = await tx.guardThread.findFirst({
+        where: { conversationId: conversation.id },
+        orderBy: { createdAt: 'asc' },
       });
+      const thread = existing
+        ? await tx.guardThread.update({
+            where: { id: existing.id },
+            data: {
+              // Back in front of a human. Somebody writing again about something marked resolved
+              // is saying it is not resolved.
+              state: GuardThreadState.OPEN,
+              subject: dto.subject,
+              ...(dto.categoryCode ? { categoryCode: dto.categoryCode } : {}),
+              // Raise only, like every other risk score on the platform: a calmer second message
+              // does not make the first one less serious.
+              riskScore: Math.max(existing.riskScore, assessment.score),
+              ...(assessment.score > existing.riskScore
+                ? {
+                    riskLevel: assessment.level,
+                    riskCategory: assessment.category,
+                    riskSignals: toJson(assessment.signals),
+                  }
+                : {}),
+            },
+          })
+        : await tx.guardThread.create({
+            data: {
+              userId,
+              subject: dto.subject,
+              categoryCode: dto.categoryCode ?? null,
+              conversationId: conversation.id,
+              riskLevel: assessment.level,
+              riskCategory: assessment.category,
+              riskScore: assessment.score,
+              riskSignals: toJson(assessment.signals),
+            },
+          });
 
-      // States what the channel is and who can see it, and commits to no timeframe (1.9).
-      await this.conversations.postSystemMessage(
-        conversation.id,
-        SystemMessageType.SUPPORT_OPENED,
-        "This is a private thread with Circl's team. Nobody in the community can see it. " +
-          'Someone will read it and reply here.',
-        { guardThreadId: thread.id },
-        tx,
-      );
+      // States what the channel is and who can see it, and commits to no timeframe (1.9). Only
+      // once: a member who is already in the thread does not need telling what it is again.
+      if (!existing) {
+        await this.conversations.postSystemMessage(
+          conversation.id,
+          SystemMessageType.SUPPORT_OPENED,
+          "This is a private thread with Circl's team. Nobody in the community can see it. " +
+            'Someone will read it and reply here.',
+          { guardThreadId: thread.id },
+          tx,
+        );
+      }
 
       // Urgent on the wall clock: a safeguarding thread is an hour at three in the morning as
       // much as at three in the afternoon.
@@ -177,14 +218,18 @@ export class GuardService {
     const media = await this.media.validate(dto.mediaKeys, userId, GUARD_MEDIA_RULES, 'mediaKeys');
 
     const assessment = await this.risk.scan(category.label, dto.body);
-    const staffIds = await this.conversations.staffUserIds();
 
     const result = await this.database.$transaction(async tx => {
       const { conversation } = await this.conversations.ensure(
         {
           kind: ThreadKind.SUPPORT,
+          // Said rather than derived. A Guard disclosure and a deal problem share one
+          // conversation key (D36), so nothing about the context distinguishes them — and a
+          // disclosure typed anything else is listed in the support inbox to the whole team
+          // (§5.15). `settledType` makes this stick even if a deal problem claims the thread
+          // afterwards.
+          supportType: SupportThreadType.GUARD,
           participantIds: [userId],
-          staffIds,
           contextType: ThreadContextType.SUPPORT,
           contextId: null,
           snapshot: { title: 'Circl team', subtitle: category.label },
@@ -325,14 +370,18 @@ export class GuardService {
     const assessment = await this.risk.scan(input.subject, '');
     const level = input.riskLevel ?? raise(assessment.level);
     const score = Math.max(assessment.score, MIN_ESCALATED_SCORE);
-    const staffIds = await this.conversations.staffUserIds();
 
     return this.database.$transaction(async tx => {
       const { conversation } = await this.conversations.ensure(
         {
           kind: ThreadKind.SUPPORT,
+          // Said rather than derived. A Guard disclosure and a deal problem share one
+          // conversation key (D36), so nothing about the context distinguishes them — and a
+          // disclosure typed anything else is listed in the support inbox to the whole team
+          // (§5.15). `settledType` makes this stick even if a deal problem claims the thread
+          // afterwards.
+          supportType: SupportThreadType.GUARD,
           participantIds: [input.memberId],
-          staffIds,
           contextType: ThreadContextType.SUPPORT,
           contextId: null,
           snapshot: { title: 'Circl team', subtitle: input.subject },

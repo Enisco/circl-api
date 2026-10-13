@@ -1,8 +1,9 @@
 /* Validation tables 2.13, 3.8, 4.12 and 5.9, driven through the live API. */
 const {
-  approveListing,
   api,
+  approveListing,
   check,
+  connectCreate,
   fail,
   finish,
   makeUser,
@@ -203,16 +204,28 @@ const dobFor = y => {
     }),
   );
   check('interests: 9 rejected', r.status === 400, r.status);
-  r = await api(client.token, 'PUT', '/connect/me', cp({ lookingFor: str(10) }));
+  // The create, so it carries what a create needs. The refusals above do not: they are rejected
+  // by the validator before the service ever asks about photos.
+  r = await api(
+    client.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(client.token, cp({ lookingFor: str(10) })),
+  );
   check('lookingFor: 10 accepted', r.status === 200, r.body?.error?.message);
 
   const target = await makeUser('vtgt');
-  await api(target.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP',
-    lookingFor: str(20),
-    dateOfBirth: dobFor(28),
-    isVisible: true,
-  });
+  await api(
+    target.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(target.token, {
+      typeCode: 'FRIENDSHIP',
+      lookingFor: str(20),
+      dateOfBirth: dobFor(28),
+      isVisible: true,
+    }),
+  );
   r = await api(client.token, 'POST', '/connect/requests', {
     toProfileId: target.id,
     note: str(301),

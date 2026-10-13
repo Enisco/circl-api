@@ -145,6 +145,12 @@ model ManagedBrief {
   chosenListingId String? @map("chosen_listing_id")
   bookingId       String? @map("booking_id")
 
+  /// Who placed it, when staff did (§5.16). Null for a brief the member placed themselves, which
+  /// is the difference between "Circl chose this professional" and "the member did" — and that
+  /// difference is the first thing asked if the placement goes badly.
+  placedById String?   @map("placed_by_id")
+  placedAt   DateTime? @map("placed_at") @db.Timestamptz
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -284,9 +290,18 @@ model Dispute {
   conversationId String?       @map("conversation_id")
   conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
-  expectedResolutionAt DateTime? @map("expected_resolution_at") @db.Timestamptz
-  resolvedAt           DateTime? @map("resolved_at") @db.Timestamptz
-  resolutionNote       String?   @map("resolution_note")
+  /// Whose work this is (§5.17).
+  assignedToId String?   @map("assigned_to_id")
+  assignedAt   DateTime? @map("assigned_at") @db.Timestamptz
+
+  expectedResolutionAt DateTime?       @map("expected_resolution_at") @db.Timestamptz
+  resolvedAt           DateTime?       @map("resolved_at") @db.Timestamptz
+  /// The finding. `resolutionNote` is what both parties read, and this is what the platform
+  /// concluded — kept apart because one is prose written for two members in a disagreement and the
+  /// other is the value a chart counts.
+  outcome              DisputeOutcome? @map("outcome")
+  resolutionNote       String?         @map("resolution_note")
+  resolvedById         String?         @map("resolved_by_id")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
@@ -296,6 +311,7 @@ model Dispute {
   @@index([state, createdAt])
   @@index([bookingId])
   @@index([enquiryId])
+  @@index([assignedToId, state])
   @@map("disputes")
 }
 
@@ -330,6 +346,17 @@ model ManagedRequest {
   storeId   String? @map("store_id")
   briefId   String? @map("brief_id")
 
+  /// Whose work this is (§5.16). No foreign key, like every other staff reference in the admin
+  /// surface: the record of who handled a member's request outlives the staff account that did.
+  assignedToId String?   @map("assigned_to_id")
+  assignedAt   DateTime? @map("assigned_at") @db.Timestamptz
+
+  /// Required to close (§7.7). "Closed" with no reason is a pipeline that cannot be reported on:
+  /// a request that ended because we placed the member and one that ended because we could not
+  /// help are the same row otherwise, and they are the two numbers this pipeline exists to produce.
+  closedReason ManagedRequestClosedReason? @map("closed_reason")
+  closedAt     DateTime?                   @map("closed_at") @db.Timestamptz
+
   conversationId String?       @map("conversation_id")
   conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
@@ -338,6 +365,8 @@ model ManagedRequest {
 
   @@index([state, createdAt])
   @@index([userId])
+  /// The pipeline's own filter: "my open requests" and "nobody's yet".
+  @@index([assignedToId, state])
   @@map("managed_requests")
 }
 

@@ -23,12 +23,14 @@ import {
   Paginated,
 } from '@/common';
 import {
+  ACTIVE_AUTHOR,
   ActivityService,
-  BlockingService,
   AuthorReviewView,
+  BlockingService,
   CityService,
   ContentReviewService,
   ContentSafetyService,
+  DIRECT_VISIBILITY,
   MediaService,
   PUBLIC_VISIBILITY,
   RiskScannerService,
@@ -36,7 +38,6 @@ import {
   authorSelect,
   isReachable,
   withoutAllCategories,
-  DIRECT_VISIBILITY,
 } from '../../shared';
 import { NotificationFeedService } from '../../notifications';
 import {
@@ -113,6 +114,9 @@ export class RequestService {
     const where: Prisma.CommunityRequestWhereInput = {
       deletedAt: null,
       ...PUBLIC_VISIBILITY,
+      // §13.2: a suspended member's requests leave every list, and return when the suspension
+      // ends — the filter is on them, so nothing about the request itself was changed.
+      author: ACTIVE_AUTHOR,
       // A private-to-Circl request is not a post. It never appears in any list.
       visibility: { not: PostVisibility.PRIVATE_TO_CIRCL },
     };
@@ -595,6 +599,10 @@ export class RequestService {
       if (ownIds.length) {
         // The owner's count of private replies has to match the replies they can open, so it
         // follows the same rule the reply list does (§6.5).
+        //
+        // author-status: and the same author filter the reply list applies, so the count cannot
+        // promise a reply that the list will not show. A suspended member's reply is not openable,
+        // so counting it would leave the owner tapping through to nothing.
         const privateCounts = await this.database.requestResponse.groupBy({
           by: ['requestId'],
           where: {
@@ -602,6 +610,7 @@ export class RequestService {
             isPrivate: true,
             deletedAt: null,
             ...DIRECT_VISIBILITY,
+            author: ACTIVE_AUTHOR,
           },
           _count: { _all: true },
         });

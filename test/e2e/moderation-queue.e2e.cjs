@@ -203,16 +203,56 @@ async function main() {
     typeof detail.body?.data?.contentDetail?.body?.content === 'string',
     detail.body?.data?.contentDetail,
   );
+  // `contentDetail` was six hand-picked fields, so the reviewer's screen had the scanned text and
+  // nothing else — no title, no media, no author strikes, no date, no link. It is §5.7's page now,
+  // which is what the spec says it is, and `body.text` comes with it because the risk signals'
+  // offsets are relative to that string.
+  check(
+    'and it is §5.7’s whole page, the same object the content screen serves',
+    typeof detail.body?.data?.contentDetail?.body?.text === 'string' &&
+      Array.isArray(detail.body?.data?.contentDetail?.media) &&
+      typeof detail.body?.data?.contentDetail?.adminUrl === 'string' &&
+      'deletedBy' in (detail.body?.data?.contentDetail ?? {}) &&
+      'openQueueItemId' in (detail.body?.data?.contentDetail ?? {}),
+    detail.body?.data?.contentDetail && Object.keys(detail.body.data.contentDetail),
+  );
   check(
     'the author’s record, so a decision can be proportionate',
     detail.body?.data?.authorHistory?.activeStrikes === 0 &&
       typeof detail.body?.data?.authorHistory?.accountAgeDays === 'number',
     detail.body?.data?.authorHistory,
   );
+  // §5.9's `ModerationHistoryItem[]`: scans, reports and decisions, oldest first. It used to be
+  // decisions only, newest first, under its own field names — a second timeline shape for the
+  // portal to special-case.
   check(
     'and the trail of past decisions',
     Array.isArray(detail.body?.data?.history),
     detail.body?.data?.history,
+  );
+  check(
+    'in §5.9’s shape — kind, actor, summary, details — oldest first',
+    (detail.body?.data?.history ?? []).every(
+      entry =>
+        typeof entry.kind === 'string' &&
+        typeof entry.summary === 'string' &&
+        'actor' in entry &&
+        'details' in entry,
+    ) &&
+      (detail.body?.data?.history ?? []).every(
+        (entry, index, all) => index === 0 || all[index - 1].at.localeCompare(entry.at) <= 0,
+      ),
+    detail.body?.data?.history,
+  );
+  check(
+    'and a scan in it carries where each phrase matched, for the highlight',
+    (detail.body?.data?.risk?.signals ?? []).every(
+      signal =>
+        'start' in signal &&
+        'end' in signal &&
+        (signal.start === null || typeof signal.start === 'number'),
+    ),
+    detail.body?.data?.risk?.signals,
   );
 
   // ── 5. Claim, release, assign ────────────────────────────────────────────
@@ -925,6 +965,44 @@ async function main() {
     where: { targetId: { in: [guide.id, sourceless.id] } },
   });
   await prisma.guide.deleteMany({ where: { id: { in: [guide.id, sourceless.id] } } });
+
+  // The tier filter used to be applied to the page after it was fetched, so `totalCount` counted
+  // the unfiltered set and page two skipped rows nobody had seen. It is a join now.
+  heading('the tier filter pages like every other filter');
+
+  let tiered = await api(
+    null,
+    'GET',
+    '/admin/moderation/queue?tier=HIGH,CRITICAL&perPage=5',
+    null,
+    leadHeaders,
+  );
+
+  check('filtering by tier answers → 200', tiered.status === 200, tiered.body?.error);
+  check(
+    'and the count describes the same set the rows came from',
+    (tiered.body?.data ?? []).length === Math.min(tiered.body?.meta?.totalCount ?? 0, 5),
+    { rows: tiered.body?.data?.length, total: tiered.body?.meta?.totalCount },
+  );
+  check(
+    'with no page-local warning, because there is nothing to warn about',
+    tiered.body?.meta?.tierFilterIsPageLocal === undefined,
+    tiered.body?.meta,
+  );
+
+  tiered = await api(
+    null,
+    'GET',
+    '/admin/moderation/queue?tier=CLEAN&perPage=5',
+    null,
+    leadHeaders,
+  );
+
+  check(
+    'and a tier nothing in the queue holds is an empty page rather than an unfiltered one',
+    tiered.status === 200 && (tiered.body?.data ?? []).length === 0,
+    { rows: tiered.body?.data?.length, total: tiered.body?.meta?.totalCount },
+  );
 
   await sweep('moderation-queue');
   await finish();

@@ -39,6 +39,10 @@ export class MemberActivityInterceptor implements NestInterceptor {
       userId: user.id,
       platform: device?.devicePlatform ?? null,
       appVersion: device?.appVersion ?? null,
+      // The session this token was minted for, so the row the filter bar reads for "which builds
+      // are still in the wild" moves with real use rather than only with sign-in and refresh
+      // (B21). Optional, because a token minted before the claim existed does not carry one.
+      sessionId: user.sessionId ?? null,
     });
 
     return next.handle();

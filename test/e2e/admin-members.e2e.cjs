@@ -765,12 +765,17 @@ async function member(tag, overrides = {}) {
     null,
     'POST',
     '/admin/notes',
-    { subjectType: 'REPORT_CASE', subjectId: alice.id, body: 'Too early' },
+    { subjectType: 'REPORT_CASE', subjectId: alice.id, body: 'A member id is not a case id' },
     headers,
   );
+  // This used to be the `NOT_AVAILABLE_YET` check: report cases, escalations and support threads
+  // had no tables, so a note against any of them was refused as early rather than as wrong. All
+  // three shipped, so the refusal is now about the id — a member's id is not a case's — and the
+  // "that section has not shipped" branch is left in place for the next subject type somebody
+  // adds to the enum without adding it to the lookup.
   check(
-    'a subject type whose section has not shipped says so',
-    res.status === 400 && res.body?.error?.code === 'NOT_AVAILABLE_YET',
+    'a note about a case id that is not a case is refused',
+    res.status === 404,
     res.body?.error,
   );
 

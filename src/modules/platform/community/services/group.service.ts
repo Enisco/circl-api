@@ -29,19 +29,20 @@ import {
   stripFormatting,
 } from '@/common';
 import {
+  ACTIVE_AUTHOR,
   ActivityService,
+  AuthorReviewView,
   AuthorView,
   BlockingService,
-  AuthorReviewView,
   CityService,
   CityView,
   ContentReviewService,
   ContentSafetyService,
-  ReviewStatus,
   DIRECT_VISIBILITY,
   MediaService,
   MediaView,
   PUBLIC_VISIBILITY,
+  ReviewStatus,
   TaxonomyService,
   TermView,
   authorSelect,
@@ -1286,10 +1287,15 @@ export class GroupService {
     const where: Prisma.GroupPostWhereInput = {
       groupId: id,
       deletedAt: null,
-      OR: [{ ...DIRECT_VISIBILITY }, { authorId: viewerId }],
+      // The author filter goes on the public branch only — the second branch is the viewer's
+      // own post, which they see whatever their account status (§13.2).
+      OR: [{ ...DIRECT_VISIBILITY, author: ACTIVE_AUTHOR }, { authorId: viewerId }],
       ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
     };
 
+    // author-status: applied in the `where` above, on the public branch of its `OR` — the
+    // viewer's own post stays visible to them. Noted here because the coverage test resolves a
+    // builder two hops and this `OR` is inside a literal it cannot read into.
     const [total, rows] = await this.database.$transaction([
       this.database.groupPost.count({ where }),
       this.database.groupPost.findMany({
@@ -1430,11 +1436,14 @@ export class GroupService {
     const where: Prisma.GroupPostReplyWhereInput = {
       postId,
       deletedAt: null,
-      OR: [{ ...DIRECT_VISIBILITY }, { authorId: viewerId }],
+      // The author filter goes on the public branch only — the second branch is the viewer's
+      // own post, which they see whatever their account status (§13.2).
+      OR: [{ ...DIRECT_VISIBILITY, author: ACTIVE_AUTHOR }, { authorId: viewerId }],
       ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
     };
 
     const [total, rows, media] = await Promise.all([
+      // author-status: as above — on the public branch of the `OR` in this method's `where`.
       this.database.groupPostReply.count({ where }),
       this.database.groupPostReply.findMany({
         where,
@@ -1772,6 +1781,9 @@ export class GroupService {
       where: {
         deletedAt: null,
         ...DIRECT_VISIBILITY,
+        // The same author rule the wall applies, or the badge promises posts that are not there
+        // and the member taps through to a quieter group than the number said.
+        author: ACTIVE_AUTHOR,
         authorId: { not: userId },
         OR: rows.map(row => ({
           groupId: row.groupId,

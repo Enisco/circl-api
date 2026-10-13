@@ -9,7 +9,7 @@ import {
   keywords,
   questionSignature,
 } from '@/common';
-import { PUBLIC_VISIBILITY } from '../../shared';
+import { ACTIVE_AUTHOR, ACTIVE_OR_NO_AUTHOR, PUBLIC_VISIBILITY } from '../../shared';
 
 export interface MatchCandidate {
   type: 'GUIDE' | 'RESOLVED_REQUEST';
@@ -76,6 +76,8 @@ export class GuideMatcherService {
     // The trigram index narrows this to a handful before the exact scoring runs, which is what keeps the whole call inside its latency budget.
     const guides = await this.database.guide.findMany({
       where: {
+        // §13.2, nullable form: a guide Circl wrote has no author to be suspended.
+        author: ACTIVE_OR_NO_AUTHOR,
         deletedAt: null,
         // Deflection is a recommendation: suggesting a held guide would publish it to the one
         // member most likely to read it (§6.5).
@@ -108,6 +110,8 @@ export class GuideMatcherService {
   ): Promise<MatchCandidate[]> {
     const requests = await this.database.communityRequest.findMany({
       where: {
+        // §13.2: a suspended member's question is not shown back to anybody as a match.
+        author: ACTIVE_AUTHOR,
         deletedAt: null,
         ...PUBLIC_VISIBILITY,
         status: RequestStatus.RESOLVED,
@@ -143,6 +147,8 @@ export class GuideMatcherService {
   ): Promise<number> {
     const requests = await this.database.communityRequest.findMany({
       where: {
+        // §13.2: a suspended member's question is not shown back to anybody as a match.
+        author: ACTIVE_AUTHOR,
         deletedAt: null,
         // "How many people asked something similar" is a count shown to a member, so it counts
         // what a member could have seen.

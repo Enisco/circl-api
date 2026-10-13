@@ -11,9 +11,12 @@ import {
   ModerationQueueState,
   ModerationQueueType,
   NotificationKind,
+  Prisma,
+  QueueJobStatus,
   ReportTargetType,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
+import { DataExportBuilderService } from '../account';
 import { ApiException } from '@/common';
 import {
   ContentSafetyQueue,
@@ -64,6 +67,7 @@ export class PlatformJobsService {
     private readonly safetyQueue: ContentSafetyQueue,
     private readonly safety: ContentSafetyService,
     private readonly storage: StorageProvider,
+    private readonly dataExports: DataExportBuilderService,
     private readonly notifications: NotificationFeedService,
   ) {}
 
@@ -267,6 +271,19 @@ export class PlatformJobsService {
   }
 
   /** Idempotency records are worthless after their 24-hour window (0.12). */
+  /**
+   * B16: builds the subject access requests that have been asked for (§13.7).
+   *
+   * Every five minutes rather than hourly, because a member who taps "download my data" and is
+   * told "we will email you" should get the email while they are still holding the phone. The work
+   * is a handful of selects and a kilobyte of JSON, so the cost of a pass that finds nothing is
+   * one indexed query.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'data-exports.build' })
+  async buildDataExports(): Promise<void> {
+    await this.run('data-exports.build', () => this.dataExports.buildPending());
+  }
+
   @Cron(CronExpression.EVERY_6_HOURS, { name: 'idempotency.sweep' })
   async sweepIdempotency() {
     await this.run('idempotency.sweep', async () => {
@@ -410,8 +427,10 @@ export class PlatformJobsService {
 
   /** Runs one job now, by name. */
   private onDemand = false;
+  /** Who asked for the on-demand run, for the history row. Null on the schedule. */
+  private onDemandActor: string | null = null;
 
-  async runNow(name: string): Promise<string> {
+  async runNow(name: string, actorId?: string): Promise<string> {
     const jobs: Record<string, () => Promise<void>> = {
       'bookings.auto-complete': () => this.autoCompleteBookings(),
       'enquiries.expire': () => this.expireEnquiries(),
@@ -424,6 +443,7 @@ export class PlatformJobsService {
       'intelligence.metrics': () => this.rebuildMetrics(),
       'intelligence.search-demand': () => this.rebuildSearchDemand(),
       'safety.rescan-degraded': () => this.rescanDegraded(),
+      'data-exports.build': () => this.buildDataExports(),
     };
 
     const job = jobs[name];
@@ -435,11 +455,13 @@ export class PlatformJobsService {
     }
 
     this.onDemand = true;
+    this.onDemandActor = actorId ?? null;
 
     try {
       await job();
     } finally {
       this.onDemand = false;
+      this.onDemandActor = null;
     }
 
     return name;
@@ -448,9 +470,16 @@ export class PlatformJobsService {
   /** One wrapper so every job logs the same way and none can take the others down with it. */
   private async run(name: string, work: () => Promise<string | null>): Promise<void> {
     // Cron jobs run per instance.
+    //
+    // No history row for a run that did not happen: on an instance with the schedule switched off
+    // this branch is taken by fifteen jobs every few minutes, and a table full of "this instance
+    // does not run jobs" is configuration restated thousands of times a day, not history.
     if (!this.onDemand && this.config.get<string>('DISABLE_SCHEDULED_JOBS') === 'true') return;
 
     const started = Date.now();
+    const startedAt = new Date();
+    const trigger = this.onDemand ? 'MANUAL' : 'CRON';
+    const actorId = this.onDemandActor;
 
     try {
       const summary = await work();
@@ -458,11 +487,73 @@ export class PlatformJobsService {
       if (summary) {
         this.logger.log(`${name}: ${summary} (${Date.now() - started}ms)`);
       }
+
+      await this.note(name, startedAt, started, trigger, actorId, QueueJobStatus.SUCCESS, {
+        summary,
+      });
     } catch (error) {
       this.logger.error(`${name} failed: ${(error as Error).message}`, (error as Error).stack);
 
+      await this.note(
+        name,
+        startedAt,
+        started,
+        trigger,
+        actorId,
+        QueueJobStatus.FAILED,
+        null,
+        (error as Error).message,
+      );
+
       // On the schedule a failure is logged and the next job still runs: one bad job must not take the others down.
       if (this.onDemand) throw error;
+    }
+  }
+
+  /**
+   * One `QueueJobLog` row per run (§4.11, B19).
+   *
+   * The table existed and nothing wrote to it, so "when did the media derivation last run, and did
+   * it work" was a question only a log search could answer — and only as far back as the log
+   * retention. A row is cheap and it is the thing §5.22's run list reads.
+   *
+   * Written **after** the work rather than around it, because this is the synchronous runner: a
+   * row claiming `RUNNING` would never be corrected if the process died mid-job. When §5.22 moves
+   * the manual run onto a queue, the enqueue writes the row and the worker closes it, and that is
+   * the point at which a `RUNNING` status earns its place.
+   *
+   * It never throws. A job that did its work and could not write its own history row has still
+   * done its work, and failing the run — or worse, turning a success into a logged failure —
+   * because the bookkeeping failed would be the wrong way round.
+   */
+  private async note(
+    name: string,
+    startedAt: Date,
+    startedMs: number,
+    trigger: string,
+    actorId: string | null,
+    status: QueueJobStatus,
+    metadata: Record<string, unknown> | null,
+    error?: string,
+  ): Promise<void> {
+    try {
+      await this.database.queueJobLog.create({
+        data: {
+          queueName: 'platform-jobs',
+          operation: name,
+          status,
+          trigger,
+          userId: actorId,
+          startedAt,
+          durationMs: Date.now() - startedMs,
+          // Truncated: a stack trace or a database error listing a thousand ids is not a history
+          // entry, and the full text is in the log line above with its correlation id.
+          error: error ? error.slice(0, 1000) : null,
+          metadata: metadata && metadata.summary ? (metadata as Prisma.InputJsonValue) : undefined,
+        },
+      });
+    } catch (failure) {
+      this.logger.warn(`${name}: run not recorded — ${(failure as Error).message}`);
     }
   }
 }

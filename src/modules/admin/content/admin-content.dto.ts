@@ -147,6 +147,19 @@ export class ListContentDto extends AdminPageOptionsDto {
   @IsOptional()
   active?: boolean;
 
+  @ApiPropertyOptional({
+    isArray: true,
+    type: String,
+    description:
+      'listings, services — PROFESSION codes. A listing carries one to three, so a listing ' +
+      'holding two of the codes asked for appears once. On services it narrows by the parent ' +
+      'listing’s professions, which is the only profession a service has.',
+  })
+  @CsvArray()
+  @IsString({ each: true })
+  @IsOptional()
+  professions?: string[];
+
   @ApiPropertyOptional({ isArray: true, type: String, description: 'listings' })
   @CsvArray()
   @IsString({ each: true })

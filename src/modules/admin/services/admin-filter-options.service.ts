@@ -198,6 +198,12 @@ export class AdminFilterOptionsService {
       ['connectionTypes', TaxonomyKind.CONNECTION_TYPE],
       ['storeTypes', TaxonomyKind.STORE_TYPE],
       ['itemCategories', TaxonomyKind.ITEM_CATEGORY],
+      // Guard categories are deliberately **not** here, though the portal asked for them here.
+      // Every key this endpoint publishes is an `AnalyticsFilter` parameter — that is the stated
+      // contract and its own e2e asserts it, because a key the analytics endpoint refuses reads to
+      // a staff member as a filter that returns nothing. The safeguarding vocabulary is not an
+      // analytics filter; it is the escalation sheet's picker, so it is served beside
+      // `escalationCategories` on `admin/meta/enums`.
     ];
 
     const lists = await Promise.all(

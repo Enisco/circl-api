@@ -13,19 +13,20 @@ import {
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, Paginated, buildPageMeta, excerpt } from '@/common';
 import {
+  ACTIVE_AUTHOR,
   ActivityService,
+  AuthorReviewView,
   AuthorView,
   BlockingService,
-  AuthorReviewView,
   CityService,
   CityView,
   ContentReviewService,
   ContentSafetyService,
-  ReviewStatus,
   DIRECT_VISIBILITY,
   MediaService,
   MediaView,
   PUBLIC_VISIBILITY,
+  ReviewStatus,
   authorSelect,
   displayNameOf,
   isReachable,
@@ -103,6 +104,9 @@ export class UpdateService {
     const where: Prisma.CommunityUpdateWhereInput = {
       deletedAt: null,
       ...(own ? {} : query.authorId ? DIRECT_VISIBILITY : PUBLIC_VISIBILITY),
+      // Not when `own`: the member's own list is theirs whatever their account status, and a
+      // suspended member opening their own profile should still see what they wrote.
+      ...(own ? {} : { author: ACTIVE_AUTHOR }),
       ...(query.cityId ? { cityId: query.cityId } : {}),
       ...(query.authorId ? { authorId: query.authorId } : {}),
       ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
@@ -342,7 +346,8 @@ export class UpdateService {
     const where: Prisma.UpdateReplyWhereInput = {
       updateId: id,
       deletedAt: null,
-      OR: [{ ...DIRECT_VISIBILITY }, { authorId: viewerId }],
+      // Public branch only — the second is the viewer's own reply, which they always see.
+      OR: [{ ...DIRECT_VISIBILITY, author: ACTIVE_AUTHOR }, { authorId: viewerId }],
       ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
     };
 

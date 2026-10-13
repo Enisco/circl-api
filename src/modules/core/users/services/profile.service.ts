@@ -4,6 +4,7 @@ import {
   ApiException,
   ErrorMessage,
   SuccessMessage,
+  SYSTEM_CONFIG_KEYS,
   toDateOnly,
   toJsonOrUndefined,
 } from '@/common';
@@ -17,6 +18,7 @@ import {
   MediaService,
   NO_COUNTRY,
   SINGLE_IMAGE_RULES,
+  SystemConfigService,
   TaxonomyService,
   toCountryCode,
 } from '@/modules/platform/shared';
@@ -40,6 +42,7 @@ export class ProfileService {
     private readonly media: MediaService,
     private readonly safety: ContentSafetyService,
     private readonly review: ContentReviewService,
+    private readonly config: SystemConfigService,
   ) {
     this.logger.setContext(ProfileService.name);
   }
@@ -354,6 +357,25 @@ export class ProfileService {
     const held = await this.heldCodes(userId);
 
     if (dto.interests?.length) {
+      // The cap, as a refusal that carries the limit rather than a validator complaining about an
+      // array length — the same shape the Connect write and the staff edit use, because the app
+      // renders `data.limit` and cannot render a class-validator message.
+      //
+      // Read from configuration: `taxonomy.limits.maxInterests` is what the app was told, so a
+      // number compiled in here would be a second rule that could disagree with it.
+      const maxInterests = await this.config.get(SYSTEM_CONFIG_KEYS.MAX_INTERESTS);
+
+      if (dto.interests.length > maxInterests) {
+        throw ApiException.unprocessable(
+          ApiErrorCode.VALIDATION_FAILED,
+          `Pick up to ${maxInterests} interests.`,
+          {
+            data: { limit: maxInterests, sent: dto.interests.length },
+            details: [{ field: 'interests', message: `Up to ${maxInterests}.` }],
+          },
+        );
+      }
+
       await this.taxonomy.assertAllValid(
         TaxonomyKind.INTEREST,
         dto.interests,

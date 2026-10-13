@@ -97,6 +97,22 @@ export const ApiErrorCode = {
   CONNECT_POSTER_REQUIRED: 'CONNECT_POSTER_REQUIRED',
   /// Ten live stories per person. A story layer with no ceiling becomes a feed nobody asked for.
   CONNECT_STORY_LIMIT: 'CONNECT_STORY_LIMIT',
+  /// Past `limits.maxHobbies`. Its own code, with the limit in `data`, because the cap is
+  /// configuration rather than a decorator and the client is told what it actually is.
+  TOO_MANY_HOBBIES: 'TOO_MANY_HOBBIES',
+  /// A profile being **created** arrived with fewer than `limits.minConnectPhotos` photo keys.
+  /// Never raised by an edit: a profile from before the rule keeps its place.
+  CONNECT_PHOTOS_REQUIRED: 'CONNECT_PHOTOS_REQUIRED',
+  /// v2 §2: a profile needs `limits.minHobbies` of them to be created.
+  CONNECT_HOBBIES_REQUIRED: 'CONNECT_HOBBIES_REQUIRED',
+  /// v2 §1: a card photo id that is not a photo on one of this profile's own posts.
+  UNKNOWN_MEDIA: 'UNKNOWN_MEDIA',
+  /// A profile being **created** arrived with no answered prompt. A card with a name, a photo and
+  /// nothing said is the profile people scroll past, and the one nobody can open a conversation
+  /// about. Also never raised by an edit, for the same reason.
+  CONNECT_PROMPT_REQUIRED: 'CONNECT_PROMPT_REQUIRED',
+  /// Outside `limits.minPromptAnswer`..`maxPromptAnswer`. On a card an answer is a sentence.
+  PROMPT_ANSWER_LENGTH: 'PROMPT_ANSWER_LENGTH',
 
   // ─── Section 4: Commerce ───────────────────────────────────────────────────
   STORE_ALREADY_EXISTS: 'STORE_ALREADY_EXISTS',

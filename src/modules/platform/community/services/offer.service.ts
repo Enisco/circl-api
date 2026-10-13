@@ -14,6 +14,7 @@ import {
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta, escapeLike, Paginated } from '@/common';
 import {
+  ACTIVE_AUTHOR,
   ActivityService,
   AuthorReviewView,
   BlockingService,
@@ -250,7 +251,13 @@ export class OfferService {
     query: ListOffersDto,
     blockedIds: string[],
   ): Promise<Prisma.CommunityOfferWhereInput> {
-    const where: Prisma.CommunityOfferWhereInput = { deletedAt: null, ...PUBLIC_VISIBILITY };
+    // §13.2: `author` rather than the offer itself, so a suspension hides it and ending one
+    // brings it back with nothing to restore.
+    const where: Prisma.CommunityOfferWhereInput = {
+      deletedAt: null,
+      ...PUBLIC_VISIBILITY,
+      author: ACTIVE_AUTHOR,
+    };
 
     const city = await this.cities.resolve(query.cityId, query.city);
 

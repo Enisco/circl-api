@@ -17,6 +17,7 @@ import {
   PageMeta,
 } from '@/common';
 import {
+  ACTIVE_AUTHOR,
   ActivityService,
   BlockingService,
   MediaService,
@@ -132,6 +133,9 @@ export class BrowseService {
       // (§6.5). Set once here: every nearby-city page and count below is built from this object,
       // so a listing cannot reappear through the "elsewhere" door.
       ...PUBLIC_VISIBILITY,
+      // §13.2, set once here for the same reason: every nearby-city page and count below narrows
+      // this object, so a suspended professional cannot reappear through the "elsewhere" door.
+      user: ACTIVE_AUTHOR,
       // A DRAFT listing is visible to its owner only, through /professionals/me.
       verificationStatus: { not: ListingVerificationStatus.DRAFT },
       // Nobody hires themselves. Their own listing is theirs through /professionals/me and on
@@ -424,6 +428,7 @@ export class BrowseService {
     const where: Prisma.CommunityOfferWhereInput = {
       deletedAt: null,
       ...PUBLIC_VISIBILITY,
+      author: ACTIVE_AUTHOR,
       // `listingType=BOTH` mixes these with listings, so the same rule has to hold on both halves
       // or the caller reappears in the merged list through the other door.
       authorId: { not: viewerId, ...(blockedIds.length ? { notIn: blockedIds } : {}) },
@@ -582,6 +587,7 @@ export class BrowseService {
       where: {
         deletedAt: null,
         ...PUBLIC_VISIBILITY,
+        user: ACTIVE_AUTHOR,
         cityId: { not: cityId },
         verificationStatus: { not: ListingVerificationStatus.DRAFT },
         ...(category ? { categories: { some: { code: category } } } : {}),

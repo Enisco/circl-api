@@ -22,6 +22,7 @@ import {
   ActivityService,
   MediaService,
   PUBLIC_VISIBILITY,
+  ACTIVE_AUTHOR,
   TRADING_STORE,
   TaxonomyService,
   toTermView,
@@ -204,6 +205,11 @@ export class CommerceBrowseService {
       deletedAt: null,
       ...PUBLIC_VISIBILITY,
       ...TRADING_STORE,
+      // §13.2 beside §5.7: the shop must be trading **and** its owner not suspended. Two rules
+      // about two different things — a compliance decision about the shop, and an enforcement
+      // decision about the person — which is why they sit side by side rather than one implying
+      // the other.
+      owner: ACTIVE_AUTHOR,
     };
     const and: Prisma.StoreWhereInput[] = [];
 
@@ -340,6 +346,7 @@ export class CommerceBrowseService {
       deletedAt: null,
       ...PUBLIC_VISIBILITY,
       ...TRADING_STORE,
+      owner: ACTIVE_AUTHOR,
       ownerId: { not: viewerId },
     };
 
@@ -471,6 +478,7 @@ export class CommerceBrowseService {
       // once: a held shop is in none of them, and neither is a suspended one (§5.7).
       ...PUBLIC_VISIBILITY,
       ...TRADING_STORE,
+      owner: ACTIVE_AUTHOR,
       // Their own shop comes back as `myStore`, so every rail and every count here is about
       // somebody else's. A category counting one shop and opening on an empty grid is worse than
       // no tile at all.
@@ -523,6 +531,10 @@ export class CommerceBrowseService {
         // On sale only on both rails. A rail called "popular" that opens on something nobody can
         // buy is a worse answer than a shorter rail, and the shop's own list is where an
         // out-of-stock item belongs.
+        //
+        // author-status: both rails read `itemBase`, whose `store` is the `base` object above —
+        // where the owner filter is set once for every rail and count on this screen. Three hops
+        // from here, which is one more than the coverage test follows.
         this.database.storeItem.findMany({
           where: { ...itemBase, availability: ItemAvailability.ON_SALE },
           orderBy: [{ viewCount: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],

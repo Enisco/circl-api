@@ -448,6 +448,42 @@ async function uploadPng(token, purpose, width, height) {
   return slot.key;
 }
 
+/**
+ * What a Connect profile now needs **to be created**: three photos and one answered prompt, both
+ * on the create call itself.
+ *
+ * Sent there rather than posted afterwards so the profile and its photos are one transaction —
+ * there is no moment at which a profile exists with nothing on it. `minConnectPhotos` and
+ * `minPromptAnswer` are served in `taxonomy.limits`; this helper hardcodes what satisfies them,
+ * because a suite that read the limit and then computed an answer of exactly that length would be
+ * testing its own arithmetic.
+ *
+ * Only for a create. An **edit** needs none of this, which is the point of the rule being where it
+ * is — a profile from before it can still be edited — so the second `PUT /connect/me` in a suite
+ * keeps sending a bare body.
+ */
+async function connectCreate(token, body) {
+  const keys = [];
+
+  for (const size of [
+    [600, 800],
+    [640, 800],
+    [680, 800],
+  ]) {
+    keys.push(await uploadPng(token, 'CONNECT', size[0], size[1]));
+  }
+
+  return {
+    photoKeys: keys,
+    prompts: [{ code: 'ASK_ME_ABOUT', answer: 'Jollof rice, and where to find plantain here.' }],
+    // `limits.minHobbies` of them, because the floor is a create-time rule (v2 §2) and every
+    // suite that makes a Connect profile is held to it. Three real HOBBY codes, not placeholders:
+    // the write validates them against the vocabulary.
+    hobbies: ['COOKING', 'FOOTBALL', 'MUSIC'],
+    ...body,
+  };
+}
+
 /** A minimal but structurally real PDF, with a page tree the page-count reader can find. */
 function realPdf(pages = 2) {
   const kids = Array.from({ length: pages }, (_, i) => `${i + 4} 0 R`).join(' ');
@@ -672,6 +708,7 @@ module.exports = {
   clearRateLimits,
   forgetCacheKeys,
   check,
+  connectCreate,
   dobFor,
   fail,
   finish,

@@ -11,7 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiExcludeController, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { CurrentUser } from '@/common';
+import { CurrentUser, Idempotent } from '@/common';
 import { AdminJwtGuard } from '@/common/guards/admin-jwt.guard';
 import { AdminBffGuard } from '../common/admin-bff.guard';
 import { AdminPermissionGuard } from '../common/admin-permission.guard';
@@ -65,8 +65,14 @@ export class AdminReportController {
       'Every report grouped into it with its server-side snapshot, what else is known about the ' +
       'reported member, and the history of this target — the scans, the reports and the ' +
       'decisions.\n\n' +
-      '`liveContent` and `appeals` are present and empty: the content page (§5.7) and appeals ' +
-      '(§5.11) are not built yet, and an absent key would make the portal guess.',
+      '`liveContent` is the content **as it is now** — §5.7\u2019s page, the same object the ' +
+      'content screen and a queue item serve — so a reviewer can see what the author has changed ' +
+      'since each report was filed. Null for a case about a member, a conversation or a message: ' +
+      'those have no content page, and `relatedConversationId` opens the thread instead.\n\n' +
+      '`appeals` holds the appeals against this case\u2019s decision (§5.11), newest first, and ' +
+      '`risk.category` is what the scanner called the content.\n\n' +
+      'Each report\u2019s `snapshot` always carries `text`, whatever the writer called the field ' +
+      'when it was captured.',
   })
   async detail(@CurrentUser() actor: AdminPrincipal, @Param('id', ParseUUIDPipe) id: string) {
     return { data: await this.cases.detail(actor, id), message: 'Case retrieved' };
@@ -75,6 +81,7 @@ export class AdminReportController {
   @Post('cases/:id/claim')
   @AdminPermissions('moderation:decide')
   @HttpCode(HttpStatus.OK)
+  @Idempotent()
   @ApiOperation({
     summary: 'Take the case',
     description:
@@ -89,6 +96,7 @@ export class AdminReportController {
   @Post('cases/:id/release')
   @AdminPermissions('moderation:decide')
   @HttpCode(HttpStatus.OK)
+  @Idempotent()
   @ApiOperation({
     summary: 'Put it back',
     description:
@@ -102,6 +110,7 @@ export class AdminReportController {
   @Post('cases/:id/assign')
   @AdminPermissions('moderation:decide')
   @HttpCode(HttpStatus.OK)
+  @Idempotent()
   @ApiOperation({
     summary: 'Hand it to somebody',
     description:
@@ -120,6 +129,7 @@ export class AdminReportController {
   @Post('cases/:id/decide')
   @AdminPermissions('moderation:decide')
   @HttpCode(HttpStatus.OK)
+  @Idempotent()
   @ApiOperation({
     summary: 'Decide it',
     description:
@@ -143,6 +153,7 @@ export class AdminReportController {
   @Post('cases/:id/reopen')
   @AdminPermissions('moderation:decide')
   @HttpCode(HttpStatus.OK)
+  @Idempotent()
   @ApiOperation({
     summary: 'Reopen a decided case',
     description:

@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   AppealState,
-  ContentRiskTier,
   ContentVisibilityState,
   EnforcementSourceType,
   GuardCaseSource,
@@ -9,6 +8,7 @@ import {
   ModerationQueueState,
   ModerationQueueType,
   Prisma,
+  ReportCaseState,
   ReportCasePriority,
   RiskLevel,
   RiskTermHitOutcome,
@@ -28,9 +28,13 @@ import {
   OPEN_QUEUE_STATES,
 } from '../dtos/admin-queue.dto';
 import { caseMemberSelect } from '../serializers/admin-report-case.serializer';
-import { toMemberRef } from '../serializers/admin-member.serializer';
+import { MemberRefView, toMemberRef } from '../serializers/admin-member.serializer';
+import { toContentRef } from '../serializers/admin-content.serializer';
+import { SafetySource, toRiskView } from '../serializers/admin-risk.serializer';
 import { staffRefSelect, toStaffRef } from '../serializers/admin-staff.serializer';
+import { AdminContentService } from '../content/admin-content.service';
 import { AdminContentTargetService, ContentTargetView } from './admin-content-target.service';
+import { AdminHistoryService } from './admin-history.service';
 import { AdminEnforcementService, REMOVES, SUSPENDS } from './admin-enforcement.service';
 import { AdminMemberActionService } from './admin-member-action.service';
 import { AdminModerationService } from './admin-moderation.service';
@@ -101,6 +105,8 @@ export class AdminQueueService {
     private readonly guides: AutoGuideService,
     private readonly assignees: AdminAssigneeService,
     private readonly guard: AdminGuardService,
+    private readonly content: AdminContentService,
+    private readonly history: AdminHistoryService,
   ) {}
 
   // ─── Read ──────────────────────────────────────────────────────────────────
@@ -121,6 +127,32 @@ export class AdminQueueService {
       ...(query.overdue ? { dueAt: { lt: now } } : {}),
     };
 
+    // The tier filter, **pushed into the query** (B: `meta.tierFilterIsPageLocal`).
+    //
+    // It used to be applied to the page after it was fetched, because the tier lives on
+    // `ContentSafety`, which is polymorphic and has no relation to join through — so a page of
+    // twenty could return three rows, `totalCount` counted the unfiltered set, and page two
+    // skipped twenty items that had never been shown. The portal was told with a flag, which is
+    // honest and still a broken list.
+    //
+    // `content_safety` is unique on `(target_type, target_id)`, which is exactly the pair a queue
+    // item carries — so one raw join resolves the matching ids, scoped to the same types and
+    // states so the list stays the size of the open queue rather than of every scan ever. From
+    // there it is an ordinary `where`, and the count, the rows and the paging are one set again.
+    if (query.tier?.length) {
+      const matching = await this.database.$queryRaw<Array<{ id: string }>>`
+        SELECT q."id"
+        FROM "moderation_queue_items" q
+        JOIN "content_safety" cs
+          ON cs."target_type" = q."target_type" AND cs."target_id" = q."target_id"
+        WHERE q."type"::text IN (${Prisma.join(types)})
+          AND q."state"::text IN (${Prisma.join(states)})
+          AND cs."tier"::text IN (${Prisma.join(query.tier)})
+      `;
+
+      where.id = { in: matching.map(row => row.id) };
+    }
+
     const [total, rows] = await this.database.$transaction([
       this.database.moderationQueueItem.count({ where }),
       this.database.moderationQueueItem.findMany({
@@ -136,41 +168,23 @@ export class AdminQueueService {
       this.targets.resolve(rows),
       this.reportCounts(rows),
     ]);
-
-    // Tier filtering happens here rather than in the `where`: the tier lives on `ContentSafety`,
-    // which is a polymorphic table with no relation to join on. Filtering a page after the fact
-    // would make the paging lie, so the count is taken from the filtered set and the caller is
-    // told. It is the one filter that cannot be pushed down, and saying so is better than a
-    // `meta.total` that disagrees with the rows beneath it.
-    const tiers = await this.tiersFor(rows);
-    const visible = query.tier?.length
-      ? rows.filter(row => {
-          const tier = tiers.get(this.targets.key(row));
-
-          return tier ? query.tier!.includes(tier) : false;
-        })
-      : rows;
+    const extras = await this.extrasFor(rows, targets);
 
     return {
-      data: visible.map(row =>
-        this.toRow(row, targets.get(this.targets.key(row)) ?? null, reportCounts, now),
+      data: rows.map(row =>
+        this.toRow(row, targets.get(this.targets.key(row)) ?? null, reportCounts, now, extras),
       ),
-      meta: buildPageMeta(
-        { currentPage: query.currentPage, perPage: query.size },
-        query.tier?.length ? visible.length : total,
-        {
-          urgentCount: await this.database.moderationQueueItem.count({
-            where: { state: { in: OPEN_QUEUE_STATES }, priority: ReportCasePriority.URGENT },
-          }),
-          overdueCount: await this.database.moderationQueueItem.count({
-            where: { state: { in: OPEN_QUEUE_STATES }, dueAt: { lt: now } },
-          }),
-          // Always the open counts, whatever the caller filtered by — otherwise the tab badges
-          // would change as somebody moves between tabs, which is not what a badge is for.
-          countsByType: await this.countsByType(),
-          ...(query.tier?.length ? { tierFilterIsPageLocal: true } : {}),
-        },
-      ),
+      meta: buildPageMeta({ currentPage: query.currentPage, perPage: query.size }, total, {
+        urgentCount: await this.database.moderationQueueItem.count({
+          where: { state: { in: OPEN_QUEUE_STATES }, priority: ReportCasePriority.URGENT },
+        }),
+        overdueCount: await this.database.moderationQueueItem.count({
+          where: { state: { in: OPEN_QUEUE_STATES }, dueAt: { lt: now } },
+        }),
+        // Always the open counts, whatever the caller filtered by — otherwise the tab badges
+        // would change as somebody moves between tabs, which is not what a badge is for.
+        countsByType: await this.countsByType(),
+      }),
     };
   }
 
@@ -184,30 +198,29 @@ export class AdminQueueService {
     if (!row) throw ApiException.notFound('That queue item could not be found.');
 
     const now = new Date();
-    const [targets, reportCounts, history] = await Promise.all([
+    const [targets, reportCounts, history, contentDetail] = await Promise.all([
       this.targets.resolve([row]),
       this.reportCounts([row]),
-      this.historyFor(row),
+      // §5.9's `ModerationHistoryItem[]`: scans, reports and decisions, oldest first. The queue
+      // was telling a different story here — decisions only, newest first, under its own field
+      // names — which meant the portal's one timeline component could not be used on this screen.
+      // The decision trail on its own is still at `admin/moderation/actions/:type/:id`.
+      this.history.forTarget(row.targetType, row.targetId),
+      /**
+       * The content as §5.7 serves it, which is what the spec says `contentDetail` is.
+       *
+       * It used to be six hand-picked fields, so the reviewer's screen had the scanned text and
+       * nothing else: no title, no media, no author strikes, no `createdAt`, no link. `body.text`
+       * comes with it, which matters because §5.9's `risk.signals[].start/end` are offsets into
+       * that string.
+       */
+      this.content.page(row.targetType, row.targetId),
     ]);
     const target = targets.get(this.targets.key(row)) ?? null;
 
     return {
-      ...this.toRow(row, target, reportCounts, now),
-      /**
-       * The scanned fields, by name. §5.9 is explicit that `risk.signals[].start/end` are UTF-16
-       * offsets into **these** strings — so they have to be the text the scanner read, not a
-       * rendered or truncated version of it, or the portal highlights the wrong words.
-       */
-      contentDetail: target
-        ? {
-            targetType: target.targetType,
-            targetId: target.targetId,
-            body: target.fields,
-            removed: target.removed,
-            visibilityState: target.visibilityState,
-            conversationId: target.conversationId,
-          }
-        : null,
+      ...this.toRow(row, target, reportCounts, now, await this.extrasFor([row], targets)),
+      contentDetail,
       authorHistory: row.subjectUserId ? await this.authorHistory(row.subjectUserId) : null,
       payload: row.payload ?? null,
       history,
@@ -884,16 +897,71 @@ export class AdminQueueService {
     return new Map(grouped.map(row => [`${row.targetType}:${row.targetId}`, row._count.id]));
   }
 
-  /** The scan tier per target, for the one filter that cannot be a `where`. */
-  private async tiersFor(rows: QueueRow[]) {
-    if (!rows.length) return new Map<string, ContentRiskTier>();
+  /**
+   * The three things a row needs that are not on the queue item: who wrote the content, what the
+   * scan said, and whether a report case is open about it.
+   *
+   * Batched per page — three queries for a page of a hundred, not three hundred. All three were
+   * absent from the row before: `author` was undefined, `risk` was four fields of nine, and
+   * `caseId` was always null, so the portal could not link a flagged item to the case it belongs
+   * to.
+   */
+  private async extrasFor(
+    rows: QueueRow[],
+    targets: Map<string, ContentTargetView>,
+  ): Promise<{
+    authors: Map<string, MemberRefView>;
+    safety: Map<string, SafetySource>;
+    openCases: Map<string, string>;
+  }> {
+    if (!rows.length) {
+      return { authors: new Map(), safety: new Map(), openCases: new Map() };
+    }
 
-    const safety = await this.database.contentSafety.findMany({
-      where: { OR: rows.map(row => ({ targetType: row.targetType, targetId: row.targetId })) },
-      select: { targetType: true, targetId: true, tier: true },
-    });
+    const authorIds = [
+      ...new Set(
+        rows
+          .map(row => targets.get(this.targets.key(row))?.authorId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const pairs = rows.map(row => ({ targetType: row.targetType, targetId: row.targetId }));
 
-    return new Map(safety.map(row => [`${row.targetType}:${row.targetId}`, row.tier]));
+    const [authors, safety, cases] = await Promise.all([
+      authorIds.length
+        ? this.database.user.findMany({
+            where: { id: { in: authorIds } },
+            select: caseMemberSelect,
+          })
+        : Promise.resolve([]),
+      this.database.contentSafety.findMany({
+        where: { OR: pairs },
+        select: {
+          targetType: true,
+          targetId: true,
+          tier: true,
+          finalScore: true,
+          lexiconScore: true,
+          lexiconSignals: true,
+          classifierScores: true,
+          classifierFlagged: true,
+          category: true,
+          scanStatus: true,
+        },
+      }),
+      this.database.reportCase.findMany({
+        where: { OR: pairs, state: { in: [ReportCaseState.OPEN, ReportCaseState.IN_REVIEW] } },
+        select: { id: true, targetType: true, targetId: true },
+      }),
+    ]);
+
+    return {
+      authors: new Map(
+        authors.map(person => [person.id, toMemberRef(person, this.media.sign)] as const),
+      ),
+      safety: new Map(safety.map(row => [`${row.targetType}:${row.targetId}`, row] as const)),
+      openCases: new Map(cases.map(row => [`${row.targetType}:${row.targetId}`, row.id] as const)),
+    };
   }
 
   private async countsByType(): Promise<Record<string, number>> {
@@ -962,36 +1030,16 @@ export class AdminQueueService {
   }
 
   /** Every decision taken about this target, newest first. */
-  private async historyFor(row: QueueRow) {
-    const actions = await this.database.moderationAction.findMany({
-      where: { targetType: row.targetType, targetId: row.targetId },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    });
-    const actors = await this.database.user.findMany({
-      where: { id: { in: [...new Set(actions.map(action => action.actorId))] } },
-      select: staffRefSelect,
-    });
-    const byId = new Map(actors.map(actor => [actor.id, actor]));
-
-    return actions.map(action => ({
-      id: action.id,
-      decision: action.decision,
-      reason: action.reason,
-      at: action.createdAt.toISOString(),
-      // Resolved from the live row rather than joined: the table deliberately holds no foreign key
-      // to the user, so a decision survives the deletion of the account that made it.
-      actor: byId.has(action.actorId)
-        ? toStaffRef(byId.get(action.actorId)!, this.media.sign)
-        : null,
-    }));
-  }
-
   private toRow(
     row: QueueRow,
     target: ContentTargetView | null,
     reportCounts: Map<string, number>,
     now: Date,
+    extras: {
+      authors: Map<string, MemberRefView>;
+      safety: Map<string, SafetySource>;
+      openCases: Map<string, string>;
+    } = { authors: new Map(), safety: new Map(), openCases: new Map() },
   ) {
     return {
       id: row.id,
@@ -1000,26 +1048,19 @@ export class AdminQueueService {
       priority: row.priority,
       dueAt: row.dueAt.toISOString(),
       overdue: row.state !== ModerationQueueState.RESOLVED && row.dueAt < now,
-      content: target
-        ? {
-            targetType: target.targetType,
-            targetId: target.targetId,
-            title: target.title,
-            removed: target.removed,
-            visibilityState: target.visibilityState,
-            conversationId: target.conversationId,
-          }
-        : // A target with no content row: a member, a conversation, or content that is gone. The
-          // ids are still returned, because the reviewer still has to be able to open it.
-          { targetType: row.targetType, targetId: row.targetId, title: null, removed: true },
-      risk: {
-        level: row.riskLevel,
-        category: row.riskCategory,
-        score: row.riskScore,
-        // The matched phrases, so "why was this raised" has an answer a reviewer can read rather
-        // than a number they have to trust.
-        signals: row.riskSignals ?? [],
-      },
+      // §5.0's `ContentRef`, in full, from the one builder every screen uses. This used to be six
+      // fields — no excerpt, no author, no dates, no link — so the portal's content card had a
+      // title and a type and nothing a reviewer could act on without opening the item.
+      content: toContentRef(
+        { targetType: row.targetType, targetId: row.targetId },
+        target,
+        target?.authorId ? (extras.authors.get(target.authorId) ?? null) : null,
+      ),
+      // The scan and the item's own copy, merged (§5.9's `RiskView`). Four fields under three
+      // names became nine under the spec's: the portal's risk panel reads `tier`, `finalScore`,
+      // `lexiconScore`, `scanStatus` and `classifier`, none of which were here.
+      risk: toRiskView(row, extras.safety.get(this.targets.key(row)) ?? null),
+      caseId: extras.openCases.get(this.targets.key(row)) ?? null,
       subject: row.subjectUser ? toMemberRef(row.subjectUser, this.media.sign) : null,
       assignedTo: row.assignedTo ? toStaffRef(row.assignedTo, this.media.sign) : null,
       reportCount: reportCounts.get(this.targets.key(row)) ?? 0,

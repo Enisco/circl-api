@@ -11,11 +11,12 @@ import {
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, money } from '@/common';
 import {
-  authorSelect,
+  ACTIVE_AUTHOR,
   CityService,
   MediaService,
   PUBLIC_VISIBILITY,
   TaxonomyService,
+  authorSelect,
   toAuthorView,
   toCityView,
   toPriceBasisLabel,
@@ -90,6 +91,8 @@ export class BriefService {
     // in front of somebody about to hire. A limited or held listing is in neither (§6.5).
     const candidates = await this.database.professionalListing.findMany({
       where: {
+        // §13.2: a suspended professional is not put in front of somebody about to hire.
+        user: ACTIVE_AUTHOR,
         deletedAt: null,
         ...PUBLIC_VISIBILITY,
         isAcceptingWork: true,
@@ -244,14 +247,12 @@ export class BriefService {
   /** The human fallback the managed promise implies. Opens a Circl-team thread. */
   async manualPlacement(userId: string, id: string) {
     const brief = await this.load(userId, id);
-    const staffIds = await this.conversations.staffUserIds();
 
     const result = await this.database.$transaction(async tx => {
       const { conversation, created } = await this.conversations.ensure(
         {
           kind: ThreadKind.SUPPORT,
           participantIds: [userId],
-          staffIds,
           contextType: ThreadContextType.BRIEF,
           contextId: brief.id,
           snapshot: { title: 'Finding you someone', subtitle: brief.description.slice(0, 80) },

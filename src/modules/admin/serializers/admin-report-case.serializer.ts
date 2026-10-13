@@ -1,5 +1,6 @@
 import {
   ModerationDecision,
+  RiskCategory,
   ReportCasePriority,
   ReportCaseState,
   ReportReason,
@@ -8,6 +9,7 @@ import {
   UserAccountStatus,
 } from '@prisma/client';
 import { UrlSigner } from '@/modules/platform/shared';
+import { AdminContentPageView } from './admin-content.serializer';
 import { MemberRefView, toMemberRef } from './admin-member.serializer';
 import { StaffRefView, toStaffRef } from './admin-staff.serializer';
 
@@ -67,7 +69,7 @@ export interface CaseRowView {
   reasonCodes: ReportReason[];
   reportCount: number;
   uniqueReporterCount: number;
-  risk: { level: RiskLevel; finalScore: number; category: null };
+  risk: { level: RiskLevel; finalScore: number; category: RiskCategory | null };
   dueAt: string;
   /** Computed rather than stored: a case is overdue until somebody decides it, and then it is not. */
   overdue: boolean;
@@ -89,6 +91,7 @@ export const toCaseRow = (
   target: CaseTargetView,
   sign: UrlSigner,
   now = new Date(),
+  riskCategory: RiskCategory | null = null,
 ): CaseRowView => ({
   id: source.id,
   target,
@@ -102,8 +105,9 @@ export const toCaseRow = (
     level: source.riskLevel,
     finalScore: source.riskScore,
     // The case's own category is not stored: the reports disagree about it by nature, and the
-    // scanner's category lives on the content's verdict where it belongs.
-    category: null,
+    // scanner's category lives on the content's verdict. A row reads it as null — a list does not
+    // join the safety table — and the detail passes the scan's, which is the one a reviewer wants.
+    category: riskCategory,
   },
   dueAt: source.dueAt.toISOString(),
   overdue: LIVE.includes(source.state) && source.dueAt.getTime() < now.getTime(),
@@ -131,6 +135,11 @@ export interface CaseReportSource {
 
 export interface CaseDetailExtras {
   reports: CaseReportSource[];
+  /** The content as it is now (§5.7's page). Null for a member, conversation or message target. */
+  liveContent: AdminContentPageView | null;
+  appeals: unknown[];
+  /** The scanner's category for the content, which the case itself does not store. */
+  riskCategory: RiskCategory | null;
   targetMemberHistory: {
     activeStrikes: number;
     priorCases: number;
@@ -157,7 +166,7 @@ export const toCaseDetail = (
   canSeeReporters: boolean,
   now = new Date(),
 ) => ({
-  ...toCaseRow(source, target, sign, now),
+  ...toCaseRow(source, target, sign, now, extras.riskCategory),
   reports: extras.reports.map(report => ({
     id: report.id,
     reporter: canSeeReporters && report.reporter ? toMemberRef(report.reporter, sign) : null,
@@ -166,16 +175,31 @@ export const toCaseDetail = (
     state: report.state,
     createdAt: report.createdAt.toISOString(),
     outcomeNotifiedAt: report.outcomeNotifiedAt?.toISOString() ?? null,
-    snapshot: report.snapshot ?? null,
+    snapshot: toSnapshot(report.snapshot),
   })),
-  // §5.7's content page and §5.11's appeals are not built yet. Present and empty rather than
-  // absent, so the portal's two screens can be written against the final shape.
-  liveContent: null,
-  appeals: [] as unknown[],
+  liveContent: extras.liveContent,
+  appeals: extras.appeals,
   targetMemberHistory: extras.targetMemberHistory,
   relatedConversationId: extras.relatedConversationId,
   history: extras.history,
 });
+
+/**
+ * The report's evidence, under the one field name §5.10 gives it.
+ *
+ * The snapshot is written at report time and the writers do not agree on what to call the words:
+ * the member-facing report path stores `text`, the message paths store `body`. Rather than
+ * migrating rows that are evidence — a snapshot is kept precisely so that nobody edits it — the
+ * read normalises, and leaves whatever else each writer put there in place beside it.
+ */
+const toSnapshot = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+
+  const snapshot = value as Record<string, unknown>;
+  const text = snapshot.text ?? snapshot.body ?? snapshot.content ?? null;
+
+  return { ...snapshot, text: typeof text === 'string' ? text : null };
+};
 
 /** The raw report log (§5.10, `ReportRow`). */
 export const toReportRow = (

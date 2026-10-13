@@ -69,6 +69,20 @@ export class AdminListingReviewService {
       // Live while it waits: the grandfathered half of the queue (see the backfill in
       // `20261011152501_listing_review`). Expressed as the visibility the member actually has
       // rather than as a flag, so it stays true if a staff member hides one by hand.
+      //
+      // `q` searches the **profession title and the member's name**, which is how a reviewer looks
+      // for one: "the electrician from Tuesday". It was accepted and never applied, so the search
+      // box returned the whole queue and read as a box that does nothing.
+      ...(query.q
+        ? {
+            OR: [
+              { professionTitle: { contains: query.q, mode: Prisma.QueryMode.insensitive } },
+              { user: { firstName: { contains: query.q, mode: Prisma.QueryMode.insensitive } } },
+              { user: { lastName: { contains: query.q, mode: Prisma.QueryMode.insensitive } } },
+              { user: { username: { contains: query.q, mode: Prisma.QueryMode.insensitive } } },
+            ],
+          }
+        : {}),
     };
 
     if (query.mine) {

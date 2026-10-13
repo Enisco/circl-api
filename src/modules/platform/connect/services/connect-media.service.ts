@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   ConnectPostKind,
   ContentScanTrigger,
+  Media,
   MediaType,
   Prisma,
   ReportTargetType,
@@ -10,20 +11,24 @@ import {
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException } from '@/common';
 import {
+  ACTIVE_AUTHOR,
   AuthorView,
   BlockingService,
   ContentSafetyService,
   DIRECT_VISIBILITY,
   MediaService,
   PUBLIC_VISIBILITY,
+  SystemConfigService,
   TaxonomyService,
   authorSelect,
   toAuthorView,
 } from '../../shared';
+import { configuredLimits } from '../../taxonomy/services/taxonomy-catalogue.service';
 import { MediaDerivationService } from '../../media/derivation/media-derivation.service';
 import {
   CreateConnectPostDto,
   CreateConnectStoryDto,
+  PromptAnswerDto,
   ReorderPostsDto,
   UpdateConnectPostDto,
   UpsertPromptsDto,
@@ -42,6 +47,22 @@ export const MAX_LIVE_STORIES = 10;
 
 /** Sixty seconds, enforced here because the gallery picker cannot promise a length (3.2.2). */
 export const MAX_VIDEO_MS = 60_000;
+
+/**
+ * A post that has passed every check and not yet been written.
+ *
+ * The seam that lets a profile and its first photos commit together: `preparePost` does the
+ * refusing, `writePost` does the writing in the caller's transaction, and `derivePost` measures the
+ * images once it has committed.
+ */
+export interface PreparedPost {
+  dto: CreateConnectPostDto;
+  userId: string;
+  items: Media[];
+  poster: Media | null;
+  /** Where in the gallery this post lands. Zero when the profile is being created. */
+  position: number;
+}
 
 /** A day, stamped by the server: the viewer counts down against it (3.4.1). */
 const STORY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -95,6 +116,7 @@ export class ConnectMediaService {
     private readonly derivation: MediaDerivationService,
     private readonly taxonomy: TaxonomyService,
     private readonly safety: ContentSafetyService,
+    private readonly config: SystemConfigService,
   ) {}
 
   // ─── 3.2 Posts ─────────────────────────────────────────────────────────────
@@ -105,12 +127,39 @@ export class ConnectMediaService {
    * automatically the thing somebody wants shown first.
    */
   async createPost(profileId: string, userId: string, dto: CreateConnectPostDto) {
+    const prepared = await this.preparePost(profileId, userId, dto);
+    const post = await this.database.$transaction(tx => this.writePost(tx, profileId, prepared));
+
+    await this.derivePost(prepared);
+
+    return this.postView(post.id);
+  }
+
+  /**
+   * Everything that can refuse a post, settled before anything is written.
+   *
+   * Split out from `createPost` so a profile being created can validate its first photos **before**
+   * the profile row exists and then write both inside one transaction (`ConnectProfileService`).
+   * Without the split there was a window: the profile was committed, the post call then failed, and
+   * a profile existed with nothing on it — which is exactly the state the three-photo rule is there
+   * to prevent.
+   *
+   * `profileId` is null when the profile is being created in the same breath. There is nothing to
+   * count in that case: the post is the first one.
+   */
+  async preparePost(
+    profileId: string | null,
+    userId: string,
+    dto: CreateConnectPostDto,
+  ): Promise<PreparedPost> {
     const keys = dto.keys;
 
     const [posts, items] = await Promise.all([
       // visibility: the author's own photo count, against the five-photo limit. A held photo
       // still occupies a slot — it is still theirs and it may come back.
-      this.database.connectPost.count({ where: { profileId, deletedAt: null } }),
+      profileId
+        ? this.database.connectPost.count({ where: { profileId, deletedAt: null } })
+        : Promise.resolve(0),
       // Looser here than the five-photo rule on purpose: `assertShape` is the authority, so a
       // sixth photo answers `409 CONNECT_POST_LIMIT` with the limit in `data` rather than a
       // generic "too many images". One rule, one place, one refusal worth showing a member.
@@ -144,50 +193,63 @@ export class ConnectMediaService {
 
     const poster = await this.assertShape(dto, items, userId);
 
-    const post = await this.database.$transaction(async tx => {
-      const created = await tx.connectPost.create({
-        data: {
-          profileId,
-          kind: dto.kind,
-          caption: dto.caption?.trim() || null,
-          // Appended. Renumbered from zero only by the reorder, which owns the whole list.
-          position: posts,
-        },
-      });
+    return { dto, userId, items, poster, position: posts };
+  }
 
-      await this.media.attach(tx, items, CONNECT_POST_OWNER, created.id);
+  /**
+   * Width and height, after the transaction has committed.
+   *
+   * Awaited rather than scheduled. Everywhere else in the app a missing width is a frame that
+   * sizes itself a moment later; here discovery renders these full-bleed, so without the ratio
+   * every card jumps as the image decodes — and a post is created once, so this is the one
+   * moment it is worth waiting for.
+   */
+  async derivePost(prepared: PreparedPost): Promise<void> {
+    await this.derivation.deriveMany(prepared.items.map(item => item.id));
+  }
 
-      if (poster) {
-        await this.media.attach(tx, [poster], CONNECT_POSTER_OWNER, created.id);
+  /** The writes, in the caller's transaction, so a profile and its first photos commit together. */
+  async writePost(
+    tx: Prisma.TransactionClient,
+    profileId: string,
+    prepared: PreparedPost,
+  ): Promise<{ id: string }> {
+    const { dto, userId, items, poster } = prepared;
 
-        // The poster becomes the video's own thumbnail, so `thumbnailUrl` falls out of the same
-        // serialiser every other image uses rather than being a second field to remember.
-        await tx.media.update({
-          where: { id: items[0].id },
-          data: { thumbnailKey: poster.storageKey },
-        });
-      }
-
-      await this.safety.assess(tx, {
-        targetType: ReportTargetType.CONNECT_POST,
-        targetId: created.id,
-        authorId: userId,
-        fields: { caption: created.caption },
-        mediaKeys: items.map(item => item.storageKey),
-        trigger: ContentScanTrigger.CREATE,
-        summary: created.caption,
-      });
-
-      return created;
+    const created = await tx.connectPost.create({
+      data: {
+        profileId,
+        kind: dto.kind,
+        caption: dto.caption?.trim() || null,
+        // Appended. Renumbered from zero only by the reorder, which owns the whole list.
+        position: prepared.position,
+      },
     });
 
-    // Awaited rather than scheduled. Everywhere else in the app a missing width is a frame that
-    // sizes itself a moment later; here discovery renders these full-bleed, so without the ratio
-    // every card jumps as the image decodes — and a post is created once, so this is the one
-    // moment it is worth waiting for.
-    await this.derivation.deriveMany(items.map(item => item.id));
+    await this.media.attach(tx, items, CONNECT_POST_OWNER, created.id);
 
-    return this.postView(post.id);
+    if (poster) {
+      await this.media.attach(tx, [poster], CONNECT_POSTER_OWNER, created.id);
+
+      // The poster becomes the video's own thumbnail, so `thumbnailUrl` falls out of the same
+      // serialiser every other image uses rather than being a second field to remember.
+      await tx.media.update({
+        where: { id: items[0].id },
+        data: { thumbnailKey: poster.storageKey },
+      });
+    }
+
+    await this.safety.assess(tx, {
+      targetType: ReportTargetType.CONNECT_POST,
+      targetId: created.id,
+      authorId: userId,
+      fields: { caption: created.caption },
+      mediaKeys: items.map(item => item.storageKey),
+      trigger: ContentScanTrigger.CREATE,
+      summary: created.caption,
+    });
+
+    return created;
   }
 
   /**
@@ -335,7 +397,48 @@ export class ConnectMediaService {
         tx,
         items.map(item => item.id),
       );
+      await this.pruneCardPhotos(
+        tx,
+        profileId,
+        items.map(item => item.id),
+      );
     });
+  }
+
+  /**
+   * Takes deleted photos out of the card (v2 §1).
+   *
+   * `cardPhotosFrom` already skips an id that no longer resolves, so this is not what makes the
+   * read correct — it is what stops the column accumulating ids of photographs nobody has any
+   * more. The distinction matters: a member who deletes the post their card was built from and
+   * picks three new photographs should not have the old three sitting underneath, waiting to
+   * reappear if a restore ever puts the media back.
+   *
+   * In the caller's transaction, so the card cannot name a photo the same commit removed.
+   */
+  private async pruneCardPhotos(
+    tx: Prisma.TransactionClient,
+    profileId: string,
+    removed: string[],
+  ): Promise<void> {
+    if (!removed.length) return;
+
+    // visibility: not filtered, and it must not be. This is the profile's own card id list in the
+    // transaction that is deleting one of its photos — the owner's own record, read to correct it.
+    // A visibility filter here would skip the prune for a profile whose bio happens to be under
+    // review, leaving its card pointing at a photograph that no longer exists.
+    const profile = await tx.connectProfile.findUnique({
+      where: { id: profileId },
+      select: { cardPhotoIds: true },
+    });
+
+    if (!profile?.cardPhotoIds.length) return;
+
+    const kept = profile.cardPhotoIds.filter(id => !removed.includes(id));
+
+    if (kept.length === profile.cardPhotoIds.length) return;
+
+    await tx.connectProfile.update({ where: { id: profileId }, data: { cardPhotoIds: kept } });
   }
 
   /** One photo out of a post. Taking the last one takes the post: an empty post is not a post. */
@@ -360,6 +463,7 @@ export class ConnectMediaService {
     await this.database.$transaction(async tx => {
       await tx.media.delete({ where: { id: mediaId } });
       await this.detachQuotes(tx, [mediaId]);
+      await this.pruneCardPhotos(tx, profileId, [mediaId]);
     });
 
     return this.postView(postId);
@@ -403,6 +507,76 @@ export class ConnectMediaService {
     return this.postsFor([profileId]).then(map => map.get(profileId) ?? []);
   }
 
+  /**
+   * The card photo ids a member may actually have (v2 §1).
+   *
+   * Three rules, and each refusal names the id rather than dropping it: the app asked to be told,
+   * and it is right to — a silently shortened card is a member picking three photographs, seeing
+   * two, and having nothing to do about it.
+   *
+   *  - It has to be **a photo on one of this profile's own posts.** Any media id the member
+   *    happens to own would let a Connect card be a photograph from their shop or a message
+   *    attachment, which a visitor could then not find anywhere on the profile they opened.
+   *  - It has to be a **photo**. A video is welcome in the gallery and cannot be the face in
+   *    Browse: a grid of twenty autoplaying cards is a different product decision from a
+   *    photograph.
+   *  - **No duplicates**, because the same face twice in a three-card swipe is a bug the member
+   *    cannot see while they are picking.
+   *
+   * The cap is checked by the caller against `maxCardPhotos`, which lives in configuration.
+   *
+   * Returns the ids in the order they were sent — the order *is* the swipe.
+   */
+  async assertCardPhotos(profileId: string, ids: string[]): Promise<string[]> {
+    const unique = [...new Set(ids)];
+
+    if (unique.length !== ids.length) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'Each card photo can only appear once.',
+        { details: [{ field: 'cardPhotoIds', message: 'Remove the duplicates.' }] },
+      );
+    }
+
+    // visibility: the owner's own photos. A held one is still theirs and still pickable — what it
+    // must not do is appear in Browse, and `postsFor` already excludes it from every read.
+    const posts = await this.database.connectPost.findMany({
+      where: { profileId, deletedAt: null },
+      select: { id: true },
+    });
+    const eligible = posts.length
+      ? await this.database.media.findMany({
+          where: {
+            id: { in: ids },
+            ownerType: CONNECT_POST_OWNER,
+            ownerId: { in: posts.map(post => post.id) },
+            type: MediaType.IMAGE,
+          },
+          select: { id: true },
+        })
+      : [];
+    const known = new Set(eligible.map(item => item.id));
+    const unknown = ids.filter(id => !known.has(id));
+
+    if (unknown.length) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.UNKNOWN_MEDIA,
+        'Those have to be photos already on your profile.',
+        {
+          data: { unknown },
+          details: [
+            {
+              field: 'cardPhotoIds',
+              message: `Not photos on your profile: ${unknown.join(', ')}.`,
+            },
+          ],
+        },
+      );
+    }
+
+    return ids;
+  }
+
   /** Posts for a set of profiles, in one pass, for the profile payload and the discovery grid. */
   async postsFor(profileIds: string[]): Promise<Map<string, ConnectPostView[]>> {
     if (!profileIds.length) return new Map();
@@ -411,7 +585,14 @@ export class ConnectMediaService {
     // somebody standing in front of the profile, a held one shows to nobody (§6.5). The owner's
     // own held photo is handled where the owner is known — see `reorderPosts`.
     const posts = await this.database.connectPost.findMany({
-      where: { profileId: { in: profileIds }, deletedAt: null, ...DIRECT_VISIBILITY },
+      where: {
+        profileId: { in: profileIds },
+        deletedAt: null,
+        ...DIRECT_VISIBILITY,
+        // A Connect post belongs to a profile, which belongs to the member — so the rule reaches
+        // them through the parent (§13.2).
+        profile: { user: ACTIVE_AUTHOR },
+      },
       orderBy: [{ position: 'asc' }, { postedAt: 'asc' }],
     });
 
@@ -516,17 +697,21 @@ export class ConnectMediaService {
   }
 
   /**
-   * The whole set, replaced rather than patched, which is what keeps the order the owner chose.
-   * The question is not stored: it is resolved at write time only to refuse an unknown code, and
-   * served from the taxonomy on read so a rewording reaches every profile at once.
+   * Known questions, each answered once, each answer a sentence rather than a paragraph.
+   *
+   * The two lengths come from configuration rather than from a decorator on the DTO, so staff can
+   * move them without a release — which is what the client was promised when it was told to read
+   * them from `taxonomy.limits` instead of compiling them in. It also means the refusal can name
+   * the limit it broke, which `400 VALIDATION_FAILED` from a validator cannot.
+   *
+   * Stored answers outside the range are left alone: this runs on a write, and a member whose
+   * answer predates the rule is only asked to shorten it when they next touch it.
    */
-  async setPrompts(profileId: string, dto: UpsertPromptsDto) {
-    const answers = dto.prompts ?? [];
-
+  async assertPromptAnswers(answers: PromptAnswerDto[], field = 'prompts'): Promise<void> {
     await this.taxonomy.assertAllValid(
       TaxonomyKind.CONNECT_PROMPT,
       answers.map(answer => answer.code),
-      'prompts',
+      field,
     );
 
     const codes = new Set(answers.map(answer => answer.code));
@@ -535,33 +720,83 @@ export class ConnectMediaService {
       throw ApiException.unprocessable(
         ApiErrorCode.VALIDATION_FAILED,
         'Answer each question once.',
-        { details: [{ field: 'prompts', message: 'The same question appears twice.' }] },
+        { details: [{ field, message: 'The same question appears twice.' }] },
       );
     }
 
-    const before = await this.database.connectPromptAnswer.findMany({
+    const { minPromptAnswer, maxPromptAnswer } = await configuredLimits(this.config);
+
+    for (const answer of answers) {
+      const length = answer.answer.trim().length;
+
+      if (length >= minPromptAnswer && length <= maxPromptAnswer) continue;
+
+      throw ApiException.unprocessable(
+        ApiErrorCode.PROMPT_ANSWER_LENGTH,
+        length < minPromptAnswer
+          ? `Answers are at least ${minPromptAnswer} characters.`
+          : `Answers are up to ${maxPromptAnswer} characters.`,
+        {
+          data: { code: answer.code, length, min: minPromptAnswer, max: maxPromptAnswer },
+          details: [
+            {
+              field,
+              message:
+                length < minPromptAnswer
+                  ? `"${answer.code}" needs at least ${minPromptAnswer} characters.`
+                  : `"${answer.code}" is over ${maxPromptAnswer} characters.`,
+            },
+          ],
+        },
+      );
+    }
+  }
+
+  /**
+   * The whole set, replaced, in the caller's transaction — so a profile being created writes its
+   * answers alongside itself and the profile's own safety scan reads them rather than re-scanning
+   * a moment later.
+   */
+  async writePrompts(
+    tx: Prisma.TransactionClient,
+    profileId: string,
+    answers: PromptAnswerDto[],
+  ): Promise<void> {
+    const before = await tx.connectPromptAnswer.findMany({
       where: { profileId },
       select: { code: true },
     });
+    const codes = new Set(answers.map(answer => answer.code));
     const dropped = before.map(row => row.code).filter(code => !codes.has(code));
 
-    await this.database.$transaction(async tx => {
-      await tx.connectPromptAnswer.deleteMany({ where: { profileId } });
+    await tx.connectPromptAnswer.deleteMany({ where: { profileId } });
 
-      // An answer somebody took down stops being quoted, for the same reason a photo does.
-      await this.detachQuotes(tx, dropped);
+    // An answer somebody took down stops being quoted, for the same reason a photo does.
+    await this.detachQuotes(tx, dropped);
 
-      if (!answers.length) return;
+    if (!answers.length) return;
 
-      await tx.connectPromptAnswer.createMany({
-        data: answers.map((answer, position) => ({
-          profileId,
-          code: answer.code,
-          answer: answer.answer.trim(),
-          position,
-        })),
-      });
+    await tx.connectPromptAnswer.createMany({
+      data: answers.map((answer, position) => ({
+        profileId,
+        code: answer.code,
+        answer: answer.answer.trim(),
+        position,
+      })),
     });
+  }
+
+  /**
+   * The whole set, replaced rather than patched, which is what keeps the order the owner chose.
+   * The question is not stored: it is resolved at write time only to refuse an unknown code, and
+   * served from the taxonomy on read so a rewording reaches every profile at once.
+   */
+  async setPrompts(profileId: string, dto: UpsertPromptsDto) {
+    const answers = dto.prompts ?? [];
+
+    await this.assertPromptAnswers(answers);
+
+    await this.database.$transaction(tx => this.writePrompts(tx, profileId, answers));
 
     // An answer has no visibility state of its own (§4.5 gives the column to the profile), so
     // rewriting the answers re-scans the profile they belong to. `assess` hashes the fields, so a
@@ -653,6 +888,8 @@ export class ConnectMediaService {
 
     const stories = await this.database.connectStory.findMany({
       where: {
+        // §13.2: a story is content, and a suspended member's is not shown.
+        user: ACTIVE_AUTHOR,
         deletedAt: null,
         expiresAt: { gt: now },
         // A story is distribution — it arrives in a tray at the top of the screen without being
@@ -841,6 +1078,8 @@ export class ConnectMediaService {
     // filtered, so the honest answer is the same "no longer there" an expired story gets.
     const story = await this.database.connectStory.findFirst({
       where: {
+        // §13.2: a story is content, and a suspended member's is not shown.
+        user: ACTIVE_AUTHOR,
         id: storyId,
         deletedAt: null,
         expiresAt: { gt: new Date() },
@@ -890,6 +1129,9 @@ export class ConnectMediaService {
         profileId: { in: profileIds },
         deletedAt: null,
         ...PUBLIC_VISIBILITY,
+        // The ring has to agree with the tray, and the tray applies this (§13.2) — without it the
+        // ring says "there is a story here" and opens on nothing.
+        user: ACTIVE_AUTHOR,
         expiresAt: { gt: new Date() },
       },
     });

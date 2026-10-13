@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   Deal,
+  DealProblemState,
   DealRole,
   DealStage,
   DealStep,
@@ -10,6 +11,7 @@ import {
   ParticipantRole,
   Prisma,
   SystemMessageType,
+  SupportThreadType,
   ThreadContextType,
   ThreadKind,
 } from '@prisma/client';
@@ -313,7 +315,21 @@ export class DealService {
 
     await this.database.deal.update({
       where: { id: deal.id },
-      data: { hasProblem: true, problemNote: dto.note ?? null, problemAt: new Date() },
+      data: {
+        hasProblem: true,
+        problemNote: dto.note ?? null,
+        problemAt: new Date(),
+        // Who raised it, so §5.17's staff side can answer the right person. The flag used to
+        // record that somebody had a problem and not which of the two.
+        problemFlaggedById: userId,
+        // A deal flagged again after staff settled it is open work again. The note and the time
+        // are already being overwritten by the new flag; leaving the staff state RESOLVED would
+        // have dropped the second complaint out of the queue entirely.
+        problemState: DealProblemState.OPEN,
+        problemResolvedAt: null,
+        problemResolvedById: null,
+        problemResolutionNote: null,
+      },
     });
 
     await this.conversations.postSystemMessage(
@@ -537,19 +553,19 @@ export class DealService {
     flaggerId: string,
     note: string | null,
   ): Promise<void> {
-    const staffIds = await this.conversations.staffUserIds();
     const { conversation } = await this.conversations.ensure({
       kind: ThreadKind.SUPPORT,
+      // Same reason as Guard: this shares its conversation key with a safeguarding disclosure, so
+      // the type has to be said. `settledType` will keep a Guard thread Guard if the member has
+      // one, which is the right way for this to lose.
+      supportType: SupportThreadType.DEAL_PROBLEM,
       participantIds: [flaggerId],
-      staffIds,
       contextType: ThreadContextType.SUPPORT,
       contextId: null,
       snapshot: { title: 'Circl team', subtitle: 'A problem with a deal' },
       // Pinned so it is first for everyone.
       isPinned: true,
     });
-
-    await this.conversations.addStaff(conversation.id, staffIds);
 
     const [payer, provider] = await Promise.all([
       this.fullNameOf(deal.payerId),

@@ -3,7 +3,7 @@ import { StorageProvider } from '../../../src/modules/platform/media/storage/sto
 import { avatarPng, bannerPng } from './imagery';
 import { fetchAsset, mimeFor, photoFor, sizeOf, videoFor } from './assets';
 import { daysAgo, daysAhead, hoursAgo, seedId, reportToken } from './ids';
-import { connectExtras, PEOPLE, SeedPerson } from './people';
+import { connectExtras, hobbiesFor, PEOPLE, SeedPerson } from './people';
 
 /** Everything the app shows before launch (Appendix B). */
 export interface DemoSeedContext {
@@ -247,7 +247,9 @@ const seedConnectExtras = async (ctx: DemoSeedContext) => {
 
     await ctx.prisma.connectProfile.upsert({
       where: { userId: id },
-      update: {},
+      // Hobbies on the update branch too: a reseed has to fill the rows an earlier run wrote
+      // before the column existed, or the demo keeps whatever the first seed left for ever.
+      update: { hobbies: hobbiesFor(extra.n) },
       create: {
         id: seedId(`connect:${extra.n}`),
         userId: id,
@@ -257,6 +259,11 @@ const seedConnectExtras = async (ctx: DemoSeedContext) => {
         lookingFor: extra.lookingFor,
         dmPolicy: 'REQUEST_FIRST',
         isVisible: true,
+        // v2 §2's floor: a profile cannot be created with fewer than three, so a seeded one
+        // without them is a state the app could not produce. From the window rather than
+        // hand-picked — these fill the city grid, and the ten full members are the profiles that
+        // get read.
+        hobbies: hobbiesFor(extra.n),
         // A spread, so `lastActiveBucket` is not one value for everybody.
         lastActiveAt: hoursAgo(extra.n % 5 === 0 ? 2 : 24 + (extra.n % 17) * 9),
         createdAt: joined,

@@ -29,6 +29,24 @@ export interface MetricItem {
 }
 
 /** Circl Intelligence: Public Metrics. */
+/**
+ * ## Why nothing in this file filters on a suspended author (§13.2)
+ *
+ * Every other distribution read on the platform hides a suspended member's content, because those
+ * reads answer "what can somebody find right now". Pulse answers a different question: **what
+ * happened in this city**. A request somebody asked in March was asked in March, and a suspension
+ * in October does not change that — filtering it out would rewrite the past.
+ *
+ * It would also make the numbers useless in a specific way: they would move whenever a suspension
+ * started or ended, so week-on-week comparisons would measure moderation activity rather than
+ * community activity, and nobody reading the chart would know which.
+ *
+ * §13.2 draws the line in the same place: a suspended member is "counted as members, excluded from
+ * *active* metrics". Counted — which is what this file does.
+ *
+ * `DemandService` is the deliberate exception next door, because supply is not a historical count:
+ * it is what a member searching would find today, so a suspended seller's item is not supply.
+ */
 @Injectable()
 export class MetricsService {
   constructor(
@@ -89,6 +107,7 @@ export class MetricsService {
     const labels = await this.taxonomy.labels(TaxonomyKind.COMMUNITY_CATEGORY);
 
     const [topAsks, unanswered, guides, groups] = await Promise.all([
+      // author-status: Pulse counts what happened, not what is findable — see the class note.
       this.database.communityRequest.groupBy({
         by: ['categoryCode'],
         where: { deletedAt: null, ...PUBLIC_VISIBILITY, createdAt: { gte: since }, ...scope },
@@ -97,6 +116,7 @@ export class MetricsService {
         take: 10,
       }),
       // "Questions we still cannot answer" — the metric the resolve outcome feeds.
+      // author-status: Pulse counts what happened, not what is findable — see the class note.
       this.database.communityRequest.groupBy({
         by: ['categoryCode'],
         where: {
@@ -111,6 +131,7 @@ export class MetricsService {
         orderBy: { _count: { categoryCode: 'desc' } },
         take: 10,
       }),
+      // author-status: Pulse counts what happened, not what is findable — see the class note.
       this.database.guide.findMany({
         where: {
           deletedAt: null,
@@ -178,6 +199,7 @@ export class MetricsService {
         orderBy: { _count: { code: 'desc' } },
         take: 10,
       }),
+      // author-status: Pulse counts what happened, not what is findable — see the class note.
       this.database.professionalListing.groupBy({
         by: ['priceBasis'],
         where: { deletedAt: null, ...PUBLIC_VISIBILITY, priceFrom: { not: null }, ...scope },
@@ -187,6 +209,7 @@ export class MetricsService {
       this.database.booking.count({
         where: { state: JobState.COMPLETED, completedAt: { gte: since } },
       }),
+      // author-status: Pulse counts what happened, not what is findable — see the class note.
       this.database.professionalListing.aggregate({
         where: {
           deletedAt: null,
@@ -262,6 +285,7 @@ export class MetricsService {
         orderBy: { _count: { term: 'desc' } },
         take: 10,
       }),
+      // author-status: Pulse counts what happened, not what is findable — see the class note.
       this.database.storeItem.groupBy({
         by: ['categoryCode'],
         where: { deletedAt: null, ...PUBLIC_VISIBILITY, ...storeScope },
@@ -282,6 +306,7 @@ export class MetricsService {
     // The lines carry the name that was copied at send time, not the category. Without it the
     // action row's route came out as `/commerce?category=` — a filter with nothing in it — and the
     // client had no code to narrow the list with either.
+    // author-status: Pulse counts what happened, not what is findable — see the class note.
     const categoryOf = new Map(
       (
         await this.database.storeItem.findMany({
@@ -332,6 +357,7 @@ export class MetricsService {
       : {};
 
     const [types, heritage] = await Promise.all([
+      // author-status: Pulse counts what happened, not what is findable — see the class note.
       this.database.connectProfile.groupBy({
         by: ['typeCode'],
         where: { deletedAt: null, ...PUBLIC_VISIBILITY, isVisible: true, ...scope },
@@ -389,16 +415,19 @@ export class MetricsService {
     switch (section) {
       case 'COMMUNITY': {
         const [requests, offers, updates] = await Promise.all([
+          // author-status: Pulse counts what happened, not what is findable — see the class note.
           this.database.communityRequest.findMany({
             where: { deletedAt: null, ...PUBLIC_VISIBILITY, createdAt: { gte: since }, ...scope },
             select: { authorId: true },
             distinct: ['authorId'],
           }),
+          // author-status: Pulse counts what happened, not what is findable — see the class note.
           this.database.communityOffer.findMany({
             where: { deletedAt: null, ...PUBLIC_VISIBILITY, createdAt: { gte: since }, ...scope },
             select: { authorId: true },
             distinct: ['authorId'],
           }),
+          // author-status: Pulse counts what happened, not what is findable — see the class note.
           this.database.communityUpdate.findMany({
             where: { deletedAt: null, ...PUBLIC_VISIBILITY, createdAt: { gte: since }, ...scope },
             select: { authorId: true },
@@ -410,6 +439,7 @@ export class MetricsService {
       }
 
       case 'PROFESSIONALS': {
+        // author-status: Pulse counts what happened, not what is findable — see the class note.
         const listings = await this.database.professionalListing.findMany({
           where: { deletedAt: null, ...PUBLIC_VISIBILITY, ...scope },
           select: { userId: true },
@@ -420,6 +450,7 @@ export class MetricsService {
       }
 
       case 'COMMERCE': {
+        // author-status: Pulse counts what happened, not what is findable — see the class note.
         const stores = await this.database.store.findMany({
           where: { deletedAt: null, ...PUBLIC_VISIBILITY, ...scope },
           select: { ownerId: true },
@@ -431,6 +462,7 @@ export class MetricsService {
 
       case 'CONNECT': {
         // Connect scopes by `cityIdOverride` falling back to the member's own city, not by a `cityId` of its own: the override is where somebody is looking, which is deliberately not where they are (3.1).
+        // author-status: Pulse counts what happened, not what is findable — see the class note.
         const profiles = await this.database.connectProfile.findMany({
           where: {
             deletedAt: null,

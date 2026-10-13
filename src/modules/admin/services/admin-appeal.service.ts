@@ -209,7 +209,10 @@ export class AdminAppealService {
       throw ApiException.conflict(
         ApiErrorCode.CLAIMED_BY_OTHER,
         'Someone else is already reviewing this appeal.',
-        { data: { reviewerId: appeal.reviewerId } },
+        // `assignedToId`, which is what this code carries everywhere else — the portal reads one
+        // key to draw "claimed by …", and a second spelling here meant it drew nothing.
+        // `reviewerId` is kept beside it for one release, because that is what shipped.
+        { data: { assignedToId: appeal.reviewerId, reviewerId: appeal.reviewerId } },
       );
     }
 
@@ -238,7 +241,6 @@ export class AdminAppealService {
    * rather than attempted generically.
    */
   async decide(actor: AdminPrincipal, id: string, dto: DecideAppealDto) {
-    const reason = dto.assertReasoned();
     const appeal = await this.live(id);
 
     this.assertNotTheDecider(actor, appeal.originalDeciderId);
@@ -249,7 +251,7 @@ export class AdminAppealService {
         appeal.reviewerId
           ? 'Someone else is reviewing this appeal.'
           : 'Claim the appeal before deciding it.',
-        { data: { reviewerId: appeal.reviewerId } },
+        { data: { assignedToId: appeal.reviewerId, reviewerId: appeal.reviewerId } },
       );
     }
 
@@ -285,8 +287,11 @@ export class AdminAppealService {
       targetType: 'MEMBER',
       targetId: appeal.userId,
       after: { appealId: id, outcome: dto.outcome },
-      reasonCode: reason.reasonCode,
-      policySubtype: reason.policySubtype,
+      // The note is the reason (§5.11). A code is accepted and recorded where the outcome turned
+      // on a specific policy, and is not demanded — a reviewer answering somebody's appeal should
+      // not have to classify their own answer.
+      reasonCode: dto.reasonCode ?? null,
+      policySubtype: dto.policySubtype?.trim() || null,
       reason: dto.decisionNote,
       metadata: { subjectType: appeal.subjectType, subjectId: appeal.subjectId },
     });
@@ -436,6 +441,56 @@ export class AdminAppealService {
   }
 
   // ─── reads ─────────────────────────────────────────────────────────────────
+
+  /**
+   * The appeals logged from one support thread (§5.15's `linked`).
+   *
+   * Keyed on `supportConversationId`, which is the thread the member argued in and not the member
+   * — an appeal they rang up about and one they wrote in a different thread are different things
+   * to the agent reading this one.
+   */
+  async forConversation(conversationId: string) {
+    const rows = await this.database.appeal.findMany({
+      where: { supportConversationId: conversationId },
+      include: { user: { select: caseMemberSelect } },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 20,
+    });
+
+    if (!rows.length) return [];
+
+    // The staff map is loaded, not skipped. `toView` reads it unconditionally, and with
+    // `strictNullChecks: false` passing nothing would have compiled and then thrown on the first
+    // thread that had an appeal on it.
+    const staff = await this.staffFor(rows);
+
+    return rows.map(row => this.toView(row, staff, new Date()));
+  }
+
+  /**
+   * The appeals against one report case's decision (§5.10's `appeals`).
+   *
+   * Keyed on `(subjectType, subjectId)`, which is how an appeal names what it is arguing with —
+   * there is no `caseId` column, deliberately, because the same table holds appeals against
+   * strikes, suspensions and content verdicts too.
+   *
+   * Newest first: a case with two appeals has a second one because the first was refused, and the
+   * live argument is the one a reviewer opened the case to read.
+   */
+  async forCase(caseId: string) {
+    const rows = await this.database.appeal.findMany({
+      where: { subjectType: AppealSubjectType.REPORT_CASE, subjectId: caseId },
+      include: { user: { select: caseMemberSelect } },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 20,
+    });
+
+    if (!rows.length) return [];
+
+    const staff = await this.staffFor(rows);
+
+    return rows.map(row => this.toView(row, staff, new Date()));
+  }
 
   private async live(id: string) {
     const appeal = await this.database.appeal.findUnique({ where: { id } });

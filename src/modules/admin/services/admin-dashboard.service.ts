@@ -4,8 +4,9 @@ import { PrismaService } from '@/infrastructure';
 import { AnalyticsRunnerService } from '../analytics/analytics-runner.service';
 import { Chart } from '../analytics/chart.types';
 import { OverviewAnalytics } from '../analytics/overview.analytics';
+import { POPULATION_FLOOR, suppressEverything } from '../analytics/suppression';
 import { AdminPrincipal } from '../common/admin-principal';
-import { MemberFilterBuilder } from '../filters/member-filter.builder';
+import { MemberFilterBuilder, ResolvedMemberFilter } from '../filters/member-filter.builder';
 import { DashboardFilterDto } from '../dtos/admin-analytics.dto';
 import { AuditEntryView, auditScopeFor, toAuditEntry } from '../serializers/audit-entry.serializer';
 import { staffRefSelect, toStaffRef } from '../serializers/admin-staff.serializer';
@@ -109,6 +110,50 @@ const ATTENTION: Array<{
       ),
   },
   {
+    id: 'openEscalations',
+    label: 'Escalations to answer',
+    permission: 'moderation:decide',
+    severity: 'high',
+    href: '/support/escalations',
+    count: database =>
+      oldestAndCount(
+        database,
+        // OPEN **and** ACKNOWLEDGED (§5.10). An acknowledged escalation is somebody saying "I
+        // have this", which is not the same as an answer — dropping it off the count here would
+        // make the dashboard say the work is done at the moment it is picked up.
+        Prisma.sql`
+        SELECT COUNT(*)::int AS count, MIN(e."created_at") AS oldest
+        FROM "escalations" e
+        WHERE e."state" IN ('OPEN', 'ACKNOWLEDGED')
+      `,
+      ),
+  },
+  {
+    id: 'unassignedSupportThreads',
+    label: 'Support threads nobody has',
+    permission: 'support:read',
+    severity: 'high',
+    href: '/support/inbox?view=unassigned',
+    count: database =>
+      oldestAndCount(
+        database,
+        // `WAITING_ON_MEMBER` is out: we have answered those, and an unassigned thread we are not
+        // waiting on is not work sitting still. `NEW` and `OPEN` are somebody's to pick up.
+        //
+        // `GUARD` is out as well, and that is the load-bearing line here. This item opens on
+        // `support:read`, which Support hold and `guard:read` is deliberately not — so a count
+        // including disclosures would tell them exactly how many exist, which is most of what R7
+        // is protecting. Guard work has its own attention item on `guard:read` above.
+        Prisma.sql`
+        SELECT COUNT(*)::int AS count, MIN(t."created_at") AS oldest
+        FROM "support_threads" t
+        WHERE t."assigned_to_id" IS NULL
+          AND t."state" IN ('NEW', 'OPEN')
+          AND t."type" <> 'GUARD'
+      `,
+      ),
+  },
+  {
     id: 'openDisputes',
     label: 'Open disputes',
     permission: 'disputes:manage',
@@ -192,18 +237,14 @@ const ATTENTION: Array<{
 ];
 
 /**
- * The three ids whose tables arrive with their own sections.
+ * The ids whose tables arrive with their own sections.
  *
  * Named here rather than silently absent so that the omission is a decision somebody wrote down:
- * `overdueModeration` needs report cases and their SLA clock (§4.6), `openEscalations` needs the
- * escalations table (§4.7), and `unassignedSupportThreads` needs `SupportThread` (§4.8). Each joins
- * the list with its section and the contract does not change when it does.
+ * `overdueModeration` needs report cases and their SLA clock (§4.6). Each joins the list with its
+ * section and the contract does not change when it does — `openEscalations` did exactly that when
+ * §5.10's escalations landed, and `unassignedSupportThreads` when §5.15's inbox did.
  */
-export const ATTENTION_PENDING_SECTIONS = [
-  'overdueModeration',
-  'openEscalations',
-  'unassignedSupportThreads',
-] as const;
+export const ATTENTION_PENDING_SECTIONS = ['overdueModeration'] as const;
 
 const SEVERITY_ORDER: Record<AttentionItem['severity'], number> = {
   critical: 0,
@@ -242,6 +283,7 @@ export class AdminDashboardService {
     const filter = await this.filters.resolve(dto);
     const range = filter.range!;
     const cards: Record<string, Chart> = {};
+    const narrowed = await this.narrowPopulation(dto, filter);
 
     if (actor.permissions.has('analytics:read')) {
       const { charts } = await this.runner.charts(
@@ -252,7 +294,12 @@ export class AdminDashboardService {
 
       const group = charts.kpis;
 
-      if (group.kind === 'group') Object.assign(cards, group.items);
+      if (group.kind === 'group') {
+        // §2.7's population floor, which this screen did not have: a city filter selecting four
+        // members showed their figures, and nothing in the response said so. Applied to the
+        // **filtered** cards only — see below.
+        Object.assign(cards, narrowed ? suppressEverything(group.items) : group.items);
+      }
 
       cards.openRequests = await this.openRequests();
     }
@@ -262,7 +309,15 @@ export class AdminDashboardService {
     if (actor.permissions.has('reports:read')) cards.openReports = await this.openReports();
     if (actor.permissions.has('guard:read')) cards.openGuardCases = await this.openGuardCases();
 
-    return { cards };
+    // Deliberately **not** suppressed, and this is the distinction the floor turns on: these three
+    // are platform-wide counts of work — open requests, open reports, open Guard cases — and no
+    // filter reaches them. Blanking "41 open reports" because somebody had a city selected would
+    // withhold a number that is not about those members at all, and would read as a bug rather
+    // than as a privacy rule.
+    return {
+      cards,
+      ...(narrowed ? { meta: { populationSuppressed: true as const } } : {}),
+    };
   }
 
   /** What needs somebody now, worst first. */
@@ -296,6 +351,7 @@ export class AdminDashboardService {
     const filter = await this.filters.resolve(dto);
     const range = filter.range!;
     const all = this.overview.charts(filter, range);
+    const narrowed = await this.narrowPopulation(dto, filter);
 
     const { charts, cache } = await this.runner.charts(
       this.runner.keyFor('dashboard:charts', { ...dto }, 'analytics'),
@@ -309,7 +365,9 @@ export class AdminDashboardService {
     );
 
     return {
-      data: charts,
+      // Every chart here is filtered, so all four go when the population is narrow — unlike the
+      // KPI row, which carries three unfiltered operational counts beside the filtered ones.
+      data: narrowed ? suppressEverything(charts) : charts,
       meta: {
         range: {
           from: range.from,
@@ -318,8 +376,27 @@ export class AdminDashboardService {
           timezone: range.timezone,
         },
         cache,
+        ...(narrowed ? { populationSuppressed: true as const } : {}),
       },
     };
+  }
+
+  /**
+   * Whether the filters select fewer than ten members (§2.7).
+   *
+   * The same floor the analytics tabs apply, through the same counter — the dashboard reached none
+   * of it, which made the one screen everybody opens the one screen without the rule. Counted only
+   * when a member-attribute filter is actually in force, so an unfiltered dashboard costs nothing.
+   */
+  private async narrowPopulation(
+    dto: DashboardFilterDto,
+    filter: ResolvedMemberFilter,
+  ): Promise<boolean> {
+    if (!dto.cityIds?.length) return false;
+
+    const population = await this.runner.populationSize(filter.viewSql);
+
+    return population > 0 && population < POPULATION_FLOOR;
   }
 
   /** The last twenty things staff did, within the caller's audit scope (R8). */

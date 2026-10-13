@@ -27,6 +27,19 @@ import {
 export const SUPPRESSION_FLOOR = 10;
 
 /**
+ * The **population** floor (§2.7), as distinct from the magnitude floor above.
+ *
+ * Ten selected members, below which nothing in a response survives whether or not it counts
+ * people: with four selected, "7 requests" is still four identifiable people. Named separately
+ * from `SUPPRESSION_FLOOR` even though both are ten, because they answer different questions and
+ * one could move without the other.
+ *
+ * Here rather than in one service, because the analytics tabs and the dashboard both apply it and
+ * a second copy is a second number to change.
+ */
+export const POPULATION_FLOOR = 10;
+
+/**
  * The one unit the magnitude floor applies to: a count of distinct members.
  *
  * Not `ratio` or `percent`. Reading the rule's headline — "any value that is a count of distinct

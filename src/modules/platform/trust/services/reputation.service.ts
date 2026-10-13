@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, ReviewContext } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { PUBLIC_VISIBILITY } from '../../shared';
+import { ACTIVE_AUTHOR, PUBLIC_VISIBILITY } from '../../shared';
 
 /** The United Kingdom's code in the countriesOfOrigin taxonomy. */
 const UK_CODE = 'GB';
@@ -22,7 +22,14 @@ export class ReputationService {
     // A rating is a published number, so a held review does not move it. If a review is restored
     // after a human looks, `recompute` runs again and it counts from then.
     const reviews = await client.review.findMany({
-      where: { subjectUserId: userId, deletedAt: null, ...PUBLIC_VISIBILITY },
+      // The same rule the review list applies, or the rating averages reviews a reader cannot
+      // find — a 4.8 from five reviews where only three are visible (§13.2).
+      where: {
+        subjectUserId: userId,
+        deletedAt: null,
+        ...PUBLIC_VISIBILITY,
+        reviewer: ACTIVE_AUTHOR,
+      },
       select: {
         rating: true,
         context: true,

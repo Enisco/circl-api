@@ -61,6 +61,49 @@ model ConnectProfile {
   /// Null falls back to the connection type's colour, which is what every profile used to be.
   accentColour ConnectAccent? @map("accent_colour")
 
+  /// Up to `limits.maxHobbies` HOBBY codes — what somebody is into, for the Meet card.
+  ///
+  /// Connect's own column rather than a write-through to `UserProfile.interests` like the fields
+  /// above (D15), because the two lists are not the same list: the first fifteen interests are
+  /// community categories, so the feed ranker can match a post's category against them. "Airport
+  /// Pickup" belongs in that list and says nothing about a person.
+  hobbies Json? @map("hobbies")
+
+  /// The photographs a member picked as their card, in swipe order (v2 §1).
+  ///
+  /// `Media` ids, and they have to be media already on one of this profile's own posts — a card
+  /// photo that exists nowhere else on the profile would be a face in Browse that a visitor cannot
+  /// find once they open it.
+  ///
+  /// **Empty means "use post order"**, which is the rule every profile had before this column and
+  /// still the rule for the ones that predate it: the first photo of the first post is the cover
+  /// and the rest follow. So nothing had to be backfilled and nothing changed for anybody who has
+  /// not opened the new editor.
+  ///
+  /// A plain array rather than a join table: it is an ordered list of at most three ids, written
+  /// whole every time, and the order *is* the data. A join table would need a position column, a
+  /// unique index on it and a transaction to rewrite three rows, to express what one assignment
+  /// does here.
+  cardPhotoIds String[] @map("card_photo_ids")
+
+  /// What they are **learning**, for Language Exchange (v2 §7).
+  ///
+  /// The same vocabulary as `UserProfile.languages`, which is what somebody already speaks. One of
+  /// the six connection types is Language Exchange, and without this the profile could not express
+  /// the half that makes a match: two people who both speak English and are both learning Spanish
+  /// are looking for each other, and nothing in the payload could say so.
+  ///
+  /// Connect's own column, like `hobbies` and for the same reason: what somebody is learning is a
+  /// fact about who they want to meet, not a fact about them that the feed ranker should weigh.
+  learningLanguages Json? @map("learning_languages")
+
+  /// Free text under the name on the Meet card, capped at `OCCUPATION_MAX`.
+  ///
+  /// Deliberately not a PROFESSION code: Connect is not a directory, and "Final-year student",
+  /// "Between jobs" and "Nurse, nights" are all answers somebody would give. A picker would make
+  /// a third of members choose the nearest wrong thing.
+  occupation String? @map("occupation")
+
   reportToken String @unique @default(uuid()) @map("report_token")
 
   lastActiveAt DateTime  @default(now()) @map("last_active_at") @db.Timestamptz

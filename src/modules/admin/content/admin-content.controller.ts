@@ -59,7 +59,11 @@ export class AdminContentController {
       'scan at all**, which is most of the platform: a post nobody has scanned is not a post with ' +
       'something known against it.\n\n' +
       'A filter belonging to another type is refused by name rather than ignored: `?ratings=5` on ' +
-      'requests would otherwise return every request.',
+      'requests would otherwise return every request.\n\n' +
+      'A row **is** a `ContentRef` (§5.0): the id is `targetId`, and `excerpt`, `visibility`, ' +
+      '`adminUrl`, the city’s name and the category’s label come with it, so the one content card ' +
+      'the queue and a report case draw renders these rows too. `openCaseId` names the open ' +
+      'report case about the item where there is one.',
   })
   async list(@Param('type') type: string, @Query() query: ListContentDto) {
     const { data, meta } = await this.content.list(type, query);

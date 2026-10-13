@@ -217,11 +217,23 @@ export class UpdateProfileDto {
   @ApiProperty({
     type: [String],
     example: ['JOB_SEARCH', 'FOOD_COOKING'],
-    description: 'Up to 8 interest codes. Shapes the feed, and prefills Connect setup.',
+    description:
+      'INTEREST codes, up to `taxonomy.limits.maxInterests`. Shapes the feed — the first fifteen ' +
+      'are community categories, so a post’s category can be matched against them.\n\n' +
+      '**This is the route that sets them.** Connect setup no longer asks (v2 §3): the wizard ' +
+      'had two chip pickers with one apparent job and overlapping vocabularies, so the interests ' +
+      'row went and `hobbies` stayed. `PUT /connect/me` still writes them through when it is ' +
+      'sent them, but this is the one that does not need a Connect profile.\n\n' +
+      'A code retired since the member chose it stays writable by them, like every other ' +
+      'vocabulary field here.',
     required: false,
   })
   @IsArray()
-  @ArrayMaxSize(8, { message: 'interests must have 8 entries or fewer' })
+  // A backstop, not the rule. The rule is `limits.maxInterests` in configuration, and the refusal
+  // is a 422 carrying it — this decorator used to hold the number itself, which meant changing the
+  // limit changed nothing and the refusal was a 400 about an array length that no screen could
+  // render.
+  @ArrayMaxSize(40, { message: 'interests must have 40 entries or fewer' })
   @IsString({ each: true })
   @IsOptional()
   interests?: string[];

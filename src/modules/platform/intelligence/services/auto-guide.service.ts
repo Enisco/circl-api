@@ -13,7 +13,7 @@ import { daysAgo, keywordSimilarity, keywords, readTimeMinutes, toJson } from '@
 // of undefined (reading 'stamp')` that prompted the change came from `intelligence-deletion.e2e`
 // constructing this service by hand (`new AutoGuideService(prisma)`) and so never passing the
 // second argument at all. Nest resolves it correctly; nothing outside the container does.
-import { PUBLIC_VISIBILITY, QueueDeadlineService } from '../../shared';
+import { ACTIVE_AUTHOR, PUBLIC_VISIBILITY, QueueDeadlineService } from '../../shared';
 
 /** "When three or more members ask the same question" — the threshold is the spec's. */
 const CLUSTER_THRESHOLD = 3;
@@ -190,8 +190,13 @@ export class AutoGuideService {
     // Only credited or well-received answers.
     // An Auto-Guide quotes members' answers back to the city, which is publication: a held or
     // limited reply is not source material (§6.5).
+    //
+    // Nor is a suspended member's (§13.2). This one is about more than visibility: the guide is
+    // published in **Circl's** name, with the answer quoted as provenance, and sourcing advice
+    // from somebody the platform has suspended is a claim we would not want to stand behind.
     const responses = await this.database.requestResponse.findMany({
       where: {
+        author: ACTIVE_AUTHOR,
         requestId: { in: cluster.requestIds },
         deletedAt: null,
         ...PUBLIC_VISIBILITY,
@@ -202,6 +207,9 @@ export class AutoGuideService {
         author: { select: { firstName: true, lastName: true } },
         request: {
           select: {
+            // The title names the question this answer was given to, which is what the reviewer's
+            // source list shows (§5.9's `AUTO_GUIDE` payload).
+            title: true,
             status: true,
             helpers: { select: { userId: true } },
           },
@@ -286,10 +294,24 @@ export class AutoGuideService {
           targetId: created.id,
           ...stamp,
           summary: created.title,
+          // §5.9's `AUTO_GUIDE` payload. It was `{ askCount, sourceCount, clusterId }` — three
+          // numbers and an id — so the reviewer's card could say "drafted from 5 answers" and
+          // could not say what it was about or show one of them. The reviewer's whole job here is
+          // to judge whether the source material supports the draft.
           payload: toJson({
+            clusterSize: cluster.askers.size,
+            topicCode: await this.topicFor(cluster.categoryCode),
+            sources: useful.map(entry => ({
+              title: entry.response.request.title.slice(0, 140),
+              // A portal path rather than a public URL: the source is a member's reply, which a
+              // reviewer opens in the content surface they already have.
+              url: `/content/responses/${entry.response.id}`,
+            })),
+            // Kept beside the spec's three: the cluster is what the draft came from and the demand
+            // card links to it.
+            clusterId,
             askCount: cluster.askers.size,
             sourceCount: useful.length,
-            clusterId,
           }),
         },
       });

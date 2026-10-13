@@ -117,13 +117,19 @@ export const AUDIT_ACTIONS = {
   'risk_term.upserted': AuditArea.SAFETY,
   'risk_term.deactivated': AuditArea.SAFETY,
   'escalation.created': AuditArea.SAFETY,
-  'escalation.resolved': AuditArea.SAFETY,
+  /// Both transitions, under one action with `before.state` and `after.state` on the entry (§5.10
+  /// names it `escalation.updated`). Acknowledging and resolving are the same act seen twice —
+  /// somebody answering a colleague — and splitting them would mean reading two actions to follow
+  /// one escalation.
+  'escalation.updated': AuditArea.SAFETY,
   'safety.message_escalated': AuditArea.SAFETY,
 
   // ─── Support (SUPPORT) ─────────────────────────────────────────────────────
   'support.thread_assigned': AuditArea.SUPPORT,
   'support.thread_state_changed': AuditArea.SUPPORT,
   'support.replied': AuditArea.SUPPORT,
+  'support.canned_created': AuditArea.SUPPORT,
+  'support.canned_updated': AuditArea.SUPPORT,
   'thread.access_granted': AuditArea.SUPPORT,
   'thread.read': AuditArea.SUPPORT,
   /// §5.12's Guard thread read, kept apart from `thread.read` because the two are not the same
@@ -132,6 +138,8 @@ export const AUDIT_ACTIONS = {
   'guard.thread_read': AuditArea.SAFETY,
   'managed.updated': AuditArea.SUPPORT,
   'managed.brief_placed': AuditArea.SUPPORT,
+  /// A brief moved state without a placement — matched, closed, or opened again (§7.7).
+  'managed.brief_updated': AuditArea.SUPPORT,
   'dispute.updated': AuditArea.SUPPORT,
   'dispute.resolved': AuditArea.SUPPORT,
   'deal.problem_resolved': AuditArea.SUPPORT,
@@ -145,6 +153,9 @@ export const AUDIT_ACTIONS = {
   // ─── Configuration (CONFIG) ────────────────────────────────────────────────
   'taxonomy.upserted': AuditArea.CONFIG,
   'taxonomy.deactivated': AuditArea.CONFIG,
+  // §5.19's reorder. One entry for the whole move rather than one per term: the decision is the
+  // order, and fourteen entries saying "sort changed" is a trail nobody reads.
+  'taxonomy.reordered': AuditArea.CONFIG,
   'city.created': AuditArea.CONFIG,
   'city.updated': AuditArea.CONFIG,
   'config.updated': AuditArea.CONFIG,
@@ -157,6 +168,17 @@ export const AUDIT_ACTIONS = {
   'export.requested': AuditArea.EXPORTS,
   'export.downloaded': AuditArea.EXPORTS,
   'analytics.exported': AuditArea.ANALYTICS,
+
+  // ─── The three the **client** may record (§5.23) ───────────────────────────
+  //
+  // A CSV built in the browser from data it already had leaves no request for the server to
+  // audit, so without `POST admin/audit/client-event` the one act that takes member data off the
+  // platform would be the one act with no trail. The allowlist is in the DTO and the area comes
+  // from here rather than from the caller — a client that could name the area could file its own
+  // act somewhere nobody holding `audit:read_area` would look.
+  'analytics.chart_csv': AuditArea.ANALYTICS,
+  'communications.stats_csv': AuditArea.COMMS,
+  'config.versions_csv': AuditArea.CONFIG,
 
   // ─── Notes take the area of what they are about ────────────────────────────
   //

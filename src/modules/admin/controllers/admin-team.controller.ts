@@ -28,6 +28,7 @@ import {
   ResetCredentialsDto,
   RevokeStaffSessionsDto,
 } from '../dtos/admin-team.dto';
+import { ReasonOnlyDto } from '../dtos/admin-member-actions.dto';
 
 @ApiExcludeController()
 @ApiTags('Admin · Team')
@@ -172,7 +173,10 @@ export class AdminTeamController {
   async deactivate(
     @CurrentUser() actor: AdminPrincipal,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: ChangeRoleDto,
+    // A reason, not a role. Both of these used `ChangeRoleDto`, which **requires** `role` — so
+    // deactivating a leaver was a 400 about a field that has nothing to do with it, and the portal
+    // could not do it at all. The spec's body here is `Reasoned`.
+    @Body() dto: ReasonOnlyDto,
   ) {
     const { staff, auditId, released } = await this.team.deactivate(
       actor,
@@ -201,7 +205,7 @@ export class AdminTeamController {
   async reactivate(
     @CurrentUser() actor: AdminPrincipal,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: ChangeRoleDto,
+    @Body() dto: ReasonOnlyDto,
   ) {
     const { staff, invite, auditId } = await this.team.reactivate(actor, id, dto.assertReasoned());
 

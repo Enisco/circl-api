@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { AppealState, AppealSubjectType } from '@prisma/client';
+import { AdminReasonCode, AppealState, AppealSubjectType } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsEnum, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { AdminPageOptionsDto, CsvArray, ReasonedDto, ToBoolean } from '@/common';
@@ -72,7 +72,21 @@ export class ListAppealsDto extends AdminPageOptionsDto {
   mine?: boolean;
 }
 
-export class DecideAppealDto extends ReasonedDto {
+/**
+ * Deciding an appeal (§5.11).
+ *
+ * **Not `ReasonedDto`**, deliberately. It was, which made `reasonCode` mandatory through
+ * `assertReasoned()` — so the spec's own body (`{ outcome, decisionNote, memberMessage? }`) was
+ * refused with `422 REASON_REQUIRED` and the portal could not decide an appeal at all.
+ *
+ * The reason is already here: `decisionNote` is required, it is what the reviewer wrote, and it is
+ * what the audit entry records as the reason. Demanding a code beside it asks a reviewer to
+ * classify their own answer to somebody else's classification, which is the thing being appealed.
+ *
+ * `reasonCode` and `policySubtype` are still accepted, optionally, for the case where the outcome
+ * does turn on a specific policy — they travel to the audit entry when sent.
+ */
+export class DecideAppealDto {
   @ApiProperty({
     enum: APPEAL_OUTCOMES,
     description:
@@ -90,6 +104,23 @@ export class DecideAppealDto extends ReasonedDto {
   @IsString()
   @MaxLength(2000)
   decisionNote: string;
+
+  @ApiPropertyOptional({
+    enum: AdminReasonCode,
+    description:
+      'Optional here, unlike every other admin action: `decisionNote` is the reason. Sent, it is ' +
+      'recorded beside the note.',
+  })
+  @IsOptional()
+  @IsEnum(AdminReasonCode)
+  reasonCode?: AdminReasonCode;
+
+  @ApiPropertyOptional({ description: 'Required when `reasonCode` is `POLICY_VIOLATION`.' })
+  @Trim()
+  @IsString()
+  @MaxLength(40)
+  @IsOptional()
+  policySubtype?: string;
 
   @ApiPropertyOptional({
     maxLength: 500,

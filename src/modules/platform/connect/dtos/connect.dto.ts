@@ -23,6 +23,32 @@ import { CsvArray, PageOptionsDto, ToBoolean } from '@/common';
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 const Bool = ToBoolean;
 
+/**
+ * One line under a name on a card. Long enough for "Final-year student, part-time barista" and
+ * short enough that the card never has to decide where to break.
+ */
+export const OCCUPATION_MAX = 60;
+
+export class PromptAnswerDto {
+  @ApiProperty({ description: 'A CONNECT_PROMPT code.' })
+  @Trim()
+  @IsString()
+  code: string;
+
+  @ApiProperty({
+    maxLength: 200,
+    description:
+      'Bounded here only against the absurd. The real floor and ceiling are ' +
+      '`taxonomy.limits.minPromptAnswer` and `maxPromptAnswer`, enforced in the service so staff ' +
+      'can move them without a release — and so the refusal names the limit it broke.',
+  })
+  @Trim()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  answer: string;
+}
+
 /** One idempotent upsert for both create and edit, because the setup screen is the same screen either way (3.3.1). */
 export class UpsertConnectProfileDto {
   @ApiProperty({
@@ -94,6 +120,107 @@ export class UpsertConnectProfileDto {
   @IsOptional()
   interests?: string[];
 
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'HOBBY codes — what the member is into, shown on the Meet card. A **different vocabulary ' +
+      'from `interests`**, whose first fifteen codes are community categories so the feed ranker ' +
+      'can match a post against them; both are sent, and neither replaces the other. Capped by ' +
+      '`taxonomy.limits.maxHobbies`, which is read from configuration rather than from this ' +
+      'decorator — so a refusal is `422 TOO_MANY_HOBBIES` with the limit in `data` rather than a ' +
+      'validator complaining about an array length. An empty array clears them.',
+  })
+  @IsArray()
+  // A backstop, not the rule. `maxHobbies` is the rule, and it lives in configuration.
+  @ArrayMaxSize(40)
+  @IsString({ each: true })
+  @IsOptional()
+  hobbies?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'The photographs that **are** the card, in swipe order (v2 §1). `Media` ids, as they come ' +
+      'back on `posts[].items[].id`, and they have to be photos already on one of this ' +
+      'profile’s own posts — a card photo that exists nowhere else would be a face in Browse ' +
+      'that a visitor cannot find once they open the profile. A video id is refused, for the ' +
+      'same reason the field is called photos.\n\n' +
+      '`cardPhotoIds[0]` is the cover everywhere a cover is used. Capped by ' +
+      '`taxonomy.limits.maxCardPhotos`, read from configuration rather than from this decorator. ' +
+      'An unknown or ineligible id is `422 UNKNOWN_MEDIA` naming it in `data.unknown`, rather ' +
+      'than being dropped quietly.\n\n' +
+      '**Omitting it leaves the card alone; an empty array restores post order**, which is what ' +
+      'every profile did before this field existed.',
+  })
+  @IsArray()
+  // A backstop, not the rule. `maxCardPhotos` is the rule, and it lives in configuration.
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @IsOptional()
+  cardPhotoIds?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'What they are **learning**, for Language Exchange (v2 §7). The same `LANGUAGE` ' +
+      'vocabulary as `languages`, which is what they already speak — the difference is the whole ' +
+      'point: two people who both speak English and are both learning Spanish are looking for ' +
+      'each other. Capped by `taxonomy.limits.maxLanguages`. An empty array clears them.',
+  })
+  @IsArray()
+  @ArrayMaxSize(40)
+  @IsString({ each: true })
+  @IsOptional()
+  learningLanguages?: string[];
+
+  @ApiPropertyOptional({
+    maxLength: OCCUPATION_MAX,
+    nullable: true,
+    description:
+      'What they do, under the name on the Meet card. **Free text rather than a profession ' +
+      'code, deliberately:** Connect is not a directory, and "Final-year student", "Between ' +
+      'jobs" and "Nurse, nights" are all answers somebody would give. Omitting it leaves it ' +
+      'alone; an empty string or `null` clears it.',
+  })
+  @Trim()
+  @IsString()
+  @MaxLength(OCCUPATION_MAX)
+  @IsOptional()
+  occupation?: string | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      "Upload keys, purpose `CONNECT`, which become the profile's first post in the order " +
+      'given. **Required when the profile is being created**, where there must be at least ' +
+      '`taxonomy.limits.minConnectPhotos` of them; ignored on an edit, so a profile from before ' +
+      'that rule can still be edited without being made to find two more pictures first. Adding ' +
+      'posts later is still `POST /connect/me/posts`.\n\n' +
+      'Sent here rather than posted afterwards because a profile and its photos are then one ' +
+      'write: there is no window in which a profile exists with nothing on it.',
+  })
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  @IsOptional()
+  photoKeys?: string[];
+
+  @ApiPropertyOptional({
+    type: [PromptAnswerDto],
+    description:
+      'The whole set, max 3, same shape as `PUT /connect/me/prompts`. **At least one is required ' +
+      'when the profile is being created**; omitted on an edit it leaves the existing answers ' +
+      'alone, and an empty array clears them. Written in the same transaction as the profile, so ' +
+      'the safety scan reads the answers along with `lookingFor` rather than a moment later.',
+  })
+  @IsArray()
+  @ArrayMaxSize(3)
+  @ValidateNested({ each: true })
+  @Type(() => PromptAnswerDto)
+  @IsOptional()
+  prompts?: PromptAnswerDto[];
+
   @ApiPropertyOptional({ description: 'One heritage code. Written through to the user.' })
   @Trim()
   @IsString()
@@ -154,13 +281,6 @@ export class DiscoveryDto extends PageOptionsDto {
   @IsString()
   @IsOptional()
   q?: string;
-
-  @ApiPropertyOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @IsOptional()
-  radiusMiles?: number;
 
   @ApiPropertyOptional({
     type: [String],
@@ -319,20 +439,6 @@ export class ReorderPostsDto {
   @ArrayMaxSize(9)
   @IsString({ each: true })
   ids: string[];
-}
-
-export class PromptAnswerDto {
-  @ApiProperty({ description: 'A CONNECT_PROMPT code.' })
-  @Trim()
-  @IsString()
-  code: string;
-
-  @ApiProperty({ maxLength: 200 })
-  @Trim()
-  @IsString()
-  @MinLength(1)
-  @MaxLength(200)
-  answer: string;
 }
 
 export class UpsertPromptsDto {

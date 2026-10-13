@@ -11,12 +11,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, buildPageMeta } from '@/common';
-import {
-  MediaService,
-  TaxonomyService,
-  authorSelect,
-  toAuthorView,
-} from '@/modules/platform/shared';
+import { MediaService, TaxonomyService } from '@/modules/platform/shared';
 import { ConversationFactoryService } from '@/modules/platform/messaging';
 import { GuardService } from '@/modules/platform/guard';
 import { AuditService } from '../audit/audit.service';
@@ -28,6 +23,9 @@ import {
   UpdateGuardCaseDto,
 } from '../dtos/admin-guard.dto';
 import { staffRefSelect, toStaffRef } from '../serializers/admin-staff.serializer';
+import { toMemberRef } from '../serializers/admin-member.serializer';
+import { caseMemberSelect } from '../serializers/admin-report-case.serializer';
+import { contentAdminUrl } from '../serializers/admin-url';
 import { AdminAssigneeService } from './admin-assignee.service';
 import { AdminHistoryService } from './admin-history.service';
 
@@ -81,8 +79,10 @@ export class AdminGuardService {
       this.database.guardThread.findMany({
         where,
         include: {
-          user: { select: authorSelect },
-          assignedTo: { select: authorSelect },
+          // `caseMemberSelect` and `staffRefSelect`: the two shapes §5.0 asks for, rather than
+          // the member app's author view, which has no `status` and no surname.
+          user: { select: caseMemberSelect },
+          assignedTo: { select: staffRefSelect },
         },
         orderBy:
           sort === 'risk'
@@ -118,7 +118,7 @@ export class AdminGuardService {
   async findOne(id: string) {
     const thread = await this.database.guardThread.findUnique({
       where: { id },
-      include: { user: { select: authorSelect }, assignedTo: { select: authorSelect } },
+      include: { user: { select: caseMemberSelect }, assignedTo: { select: staffRefSelect } },
     });
 
     if (!thread) throw ApiException.notFound('That case could not be found.');
@@ -178,7 +178,13 @@ export class AdminGuardService {
       await this.assignees.assertHolds(assignedToId, ['guard:manage'], 'assignedToId');
     }
 
-    const reason = dto.note ? dto.assertReasoned() : null;
+    // A note-only change is **not** refused for want of a reason code (§5.12: the body is
+    // `Partial<Reasoned>`). The note is the record — "spoke to her, she is safe for now" is the
+    // whole point of writing it — and demanding a code beside it meant adding a note to a Guard
+    // case answered `422 REASON_REQUIRED`, so the one thing a reviewer does most often could not
+    // be done at all. A code is still honoured when sent, and still demanded where the change is
+    // a state transition rather than a note.
+    const reason = dto.reasonCode ? dto.assertReasoned() : null;
     const resolving =
       state !== thread.state &&
       (state === GuardThreadState.RESOLVED || state === GuardThreadState.CLOSED);
@@ -193,7 +199,9 @@ export class AdminGuardService {
         after: { state, assignedToId },
         reasonCode: reason?.reasonCode,
         policySubtype: reason?.policySubtype,
-        reason: reason?.note,
+        // The note, whether or not a code came with it — otherwise a note-only change records the
+        // state it moved to and not the sentence explaining why, which is the half worth keeping.
+        reason: reason?.note ?? dto.note?.trim() ?? null,
         metadata: { guardThreadId: thread.id },
       },
       async tx => {
@@ -373,8 +381,8 @@ export class AdminGuardService {
   private toRow(
     row: Prisma.GuardThreadGetPayload<{
       include: {
-        user: { select: typeof authorSelect };
-        assignedTo: { select: typeof authorSelect };
+        user: { select: typeof caseMemberSelect };
+        assignedTo: { select: typeof staffRefSelect };
       };
     }>,
     categoryLabels: Map<string, string>,
@@ -392,8 +400,12 @@ export class AdminGuardService {
           }
         : null,
       state: row.state,
-      member: toAuthorView(row.user, { sign: this.media.sign }),
-      assignedTo: row.assignedTo ? toAuthorView(row.assignedTo, { sign: this.media.sign }) : null,
+      // `MemberRef` and `StaffRef` (§5.0), not the member app's author view. The two differ in
+      // exactly the way that broke the portal's cards: an author view has `displayName` and no
+      // `firstName`/`lastName`, so a safeguarding case showed a blank where the member's name
+      // should be — and the one place a reviewer must be certain who they are reading about.
+      member: toMemberRef(row.user, this.media.sign),
+      assignedTo: row.assignedTo ? toStaffRef(row.assignedTo, this.media.sign) : null,
       risk: {
         level: row.riskLevel,
         category: row.riskCategory,
@@ -402,9 +414,18 @@ export class AdminGuardService {
       },
       conversationId: row.conversationId,
       source: row.sourceType,
-      // Only while somebody still has to do something about it. An age that keeps climbing after
-      // a case is closed is a number that makes every old case look like a failure.
-      slaAgeMinutes: open ? Math.max(0, Math.round((now - row.createdAt.getTime()) / 60_000)) : 0,
+      // **Frozen at the close, not zeroed** (§12). It stops climbing — an age that keeps rising
+      // after a case is answered makes every old case look like a failure — but zero says the case
+      // was handled instantly, which is the opposite of the truth and is the number a lead would
+      // quote. Where a closed case has no `resolvedAt` (it predates the column) the age is what it
+      // was at the last update.
+      slaAgeMinutes: Math.max(
+        0,
+        Math.round(
+          ((open ? now : (row.resolvedAt ?? row.updatedAt).getTime()) - row.createdAt.getTime()) /
+            60_000,
+        ),
+      ),
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };
@@ -452,7 +473,18 @@ export class AdminGuardService {
       });
 
       return kase
-        ? [{ type: kase.targetType, id: kase.targetId, reportCaseId: kase.id }]
+        ? [
+            {
+              // `targetType`/`targetId` and a link, as every other content reference on this
+              // surface spells them (§5.0's `ContentRef`). It was `{ type, id }`, which the
+              // portal's content card cannot read — so a safeguarding case linked to a post and
+              // showed nothing.
+              targetType: kase.targetType,
+              targetId: kase.targetId,
+              adminUrl: contentAdminUrl(kase.targetType, kase.targetId),
+              reportCaseId: kase.id,
+            },
+          ]
         : // The case was deleted after the escalation. An empty list rather than a dangling
           // reference the portal would render as a dead link.
           [];
@@ -463,6 +495,15 @@ export class AdminGuardService {
       select: { targetType: true, targetId: true },
     });
 
-    return item ? [{ type: item.targetType, id: item.targetId, reportCaseId: null }] : [];
+    return item
+      ? [
+          {
+            targetType: item.targetType,
+            targetId: item.targetId,
+            adminUrl: contentAdminUrl(item.targetType, item.targetId),
+            reportCaseId: null,
+          },
+        ]
+      : [];
   }
 }

@@ -79,7 +79,7 @@ export class AdminNoteService {
     subjectId: string,
   ): Promise<InternalNoteView[]> {
     this.assertMayRead(actor, subjectType);
-    await this.assertSubjectVisible(subjectType, subjectId);
+    await this.assertSubjectVisible(actor, subjectType, subjectId);
 
     const notes = await this.database.internalNote.findMany({
       where: { subjectType, subjectId, deletedAt: null },
@@ -92,7 +92,7 @@ export class AdminNoteService {
 
   async create(actor: AdminPrincipal, dto: CreateNoteDto): Promise<InternalNoteView> {
     this.assertMayRead(actor, dto.subjectType);
-    await this.assertSubjectExists(dto.subjectType, dto.subjectId);
+    await this.assertSubjectExists(actor, dto.subjectType, dto.subjectId);
 
     const { result } = await this.audit.mutate<InternalNote>(
       (note: InternalNote) => ({
@@ -215,6 +215,18 @@ export class AdminNoteService {
   }
 
   private assertMayRead(actor: AdminPrincipal, subjectType: NoteSubjectType): void {
+    // A support thread takes either permission here, and `assertSubjectVisible` then decides which
+    // one this particular thread needed. The subject type cannot answer it on its own: a `GUARD`
+    // thread is annotated by whoever holds `guard:read`, and demanding `support:read` as well
+    // would refuse a safeguarding reviewer the notes on a case that is theirs — for a role nobody
+    // has today, which is exactly the kind of refusal that surfaces the week somebody is given it.
+    if (
+      subjectType === NoteSubjectType.SUPPORT_THREAD &&
+      (actor.permissions.has('support:read') || actor.permissions.has('guard:read'))
+    ) {
+      return;
+    }
+
     if (!actor.permissions.has(SUBJECT_PERMISSION[subjectType])) {
       throw ApiException.forbidden(
         ApiErrorCode.FORBIDDEN,
@@ -239,15 +251,18 @@ export class AdminNoteService {
    * being closed or anonymised — which means nothing stops a typo creating a note about nothing,
    * attached to a page nobody will ever open. Checked on write, where it is still fixable.
    *
-   * Three subject types have no table yet (report cases, support threads and escalations arrive
-   * with their sections). They are refused rather than accepted, because a note written against an
-   * id that does not exist in a schema that will later define one is a note on the wrong record.
+   * A subject type with no table behind it is refused rather than accepted, because a note written
+   * against an id that does not exist in a schema that will later define one is a note on the
+   * wrong record. Report cases, support threads and escalations were all in that position and are
+   * now checked for real — the refusal stayed in place for a while after their tables landed,
+   * which made `admin/notes?subjectType=SUPPORT_THREAD` readable and not writable.
    */
   private async assertSubjectExists(
+    actor: AdminPrincipal,
     subjectType: NoteSubjectType,
     subjectId: string,
   ): Promise<void> {
-    await this.assertSubjectVisible(subjectType, subjectId);
+    await this.assertSubjectVisible(actor, subjectType, subjectId);
 
     const exists = await this.subjectCount(subjectType, subjectId);
 
@@ -274,10 +289,25 @@ export class AdminNoteService {
    * with a second query of its own, so there is one definition of who is a member.
    */
   private async assertSubjectVisible(
+    actor: AdminPrincipal,
     subjectType: NoteSubjectType,
     subjectId: string,
   ): Promise<void> {
     if (subjectType === NoteSubjectType.MEMBER) await this.policy.assertIsMember(subjectId);
+
+    // R7, for the same reason the inbox applies it: `SUPPORT_THREAD` opens on `support:read`
+    // because that is the permission for a support thread, and a safeguarding disclosure is
+    // indistinguishable from one until something reads `SupportThread.type`. Without this, the
+    // notes Trust & Safety write on a disclosure — which are notes *about* the disclosure — are
+    // readable by anybody who can list the inbox, and a conversation id is all it takes.
+    if (subjectType === NoteSubjectType.SUPPORT_THREAD) {
+      const thread = await this.database.supportThread.findUnique({
+        where: { conversationId: subjectId },
+        select: { type: true },
+      });
+
+      if (thread) this.policy.assertMaySeeSupportThread(actor, thread.type, 'read');
+    }
   }
 
   /** Null when the subject's table does not exist yet. */
@@ -301,6 +331,18 @@ export class AdminNoteService {
         return this.database.managedBrief.count({ where });
       case NoteSubjectType.DEAL:
         return this.database.deal.count({ where });
+      // The three that used to return `null` here, in the order their sections landed. A note
+      // against a support thread is keyed on the **conversation** id, which is what
+      // `SupportThread` is keyed on and what §5.15 puts in the url.
+      case NoteSubjectType.REPORT_CASE:
+        return this.database.reportCase.count({ where });
+      case NoteSubjectType.ESCALATION:
+        return this.database.escalation.count({ where });
+      case NoteSubjectType.SUPPORT_THREAD:
+        return this.database.supportThread.count({ where: { conversationId: subjectId } });
+      // Nothing reaches this today: every `NoteSubjectType` is listed above. It is the landing
+      // place for the next one somebody adds to the enum without adding it here, which is a 400
+      // saying so rather than a note filed against a table that was never checked.
       default:
         return null;
     }

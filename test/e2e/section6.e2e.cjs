@@ -9,6 +9,7 @@ const {
   adminHeaders,
   api,
   check,
+  connectCreate,
   finish,
   makeAdmin,
   makeUser,
@@ -507,13 +508,18 @@ const {
   // which the dataset leaves empty on purpose, so this counts exactly them. Against Manchester it
   // was really asserting that nobody else was there, which held only while the city was thin.
   for (const [index, user] of fixtureUsers.entries()) {
-    await api(user.token, 'PUT', '/connect/me', {
-      typeCode: 'FRIENDSHIP',
-      lookingFor: `Pulse fixture ${index}: someone to show me around.`,
-      dateOfBirth: '1993-04-02',
-      isVisible: true,
-      cityIdOverride: 'BRISTOL',
-    });
+    await api(
+      user.token,
+      'PUT',
+      '/connect/me',
+      await connectCreate(user.token, {
+        typeCode: 'FRIENDSHIP',
+        lookingFor: `Pulse fixture ${index}: someone to show me around.`,
+        dateOfBirth: '1993-04-02',
+        isVisible: true,
+        cityIdOverride: 'BRISTOL',
+      }),
+    );
   }
 
   await api(null, 'POST', '/admin/jobs/intelligence.metrics/run', null, adminHeaders(admin));

@@ -6,7 +6,10 @@ import { PassportModule } from '@nestjs/passport';
 import { NotificationModule } from '@/modules/infrastructure/notification/notification.module';
 import { AccountCoreModule } from '@/modules/platform/account';
 import { MessagingCoreModule } from '@/modules/platform/messaging';
+import { MediaCoreModule } from '@/modules/platform/media';
 import { GuardCoreModule } from '@/modules/platform/guard';
+import { ModerationCoreModule } from '@/modules/platform/moderation';
+import { ProfessionalsCoreModule } from '@/modules/platform/professionals';
 import { IntelligenceCoreModule } from '@/modules/platform/intelligence';
 import { AdminController } from './controllers/admin.controller';
 import { AdminAuthController } from './controllers/admin-auth.controller';
@@ -24,21 +27,35 @@ import { AdminEnforcementController } from './controllers/admin-enforcement.cont
 import { AdminFlagController } from './controllers/admin-flag.controller';
 import { AdminQueueController } from './controllers/admin-queue.controller';
 import { AdminQueueService } from './services/admin-queue.service';
+import { AdminDisputeService } from './services/admin-dispute.service';
+import { AdminManagedService } from './services/admin-managed.service';
+import { AdminThreadAccessService } from './services/admin-thread-access.service';
 import { AdminEnforcementService } from './services/admin-enforcement.service';
 import { AdminContentTargetService } from './services/admin-content-target.service';
 import { AdminListingReviewController } from './controllers/admin-listing-review.controller';
 import { AdminListingReviewService } from './services/admin-listing-review.service';
 import { AdminAppealController } from './controllers/admin-appeal.controller';
+import { AdminEscalationController } from './controllers/admin-escalation.controller';
 import { AdminReportController } from './controllers/admin-report.controller';
 import { AdminMetaController } from './controllers/admin-meta.controller';
 import { AdminTeamController } from './controllers/admin-team.controller';
 import { AdminThreadController } from './controllers/admin-thread.controller';
+import { AdminDisputeController } from './controllers/admin-dispute.controller';
+import { AdminManagedController } from './controllers/admin-managed.controller';
+import { AdminSupportController } from './controllers/admin-support.controller';
+import { AdminMediaController } from './controllers/admin-media.controller';
+import { AdminAuditController } from './controllers/admin-audit.controller';
+import { AdminJobController } from './controllers/admin-job.controller';
 import { AdminEnforcementLogService } from './services/admin-enforcement-log.service';
 import { AdminFlagService } from './services/admin-flag.service';
 import { AdminGuardService } from './services/admin-guard.service';
 import { AdminHistoryService } from './services/admin-history.service';
 import { AdminMemberService } from './services/admin-member.service';
 import { AdminAppealService } from './services/admin-appeal.service';
+import { AdminEscalationService } from './services/admin-escalation.service';
+import { AdminSupportService } from './services/admin-support.service';
+import { AdminAuditService } from './services/admin-audit.service';
+import { AdminJobReadService } from './services/admin-job-read.service';
 import { AdminReportCaseService } from './services/admin-report-case.service';
 import { AdminAnalyticsService } from './services/admin-analytics.service';
 import { AdminDashboardService } from './services/admin-dashboard.service';
@@ -103,10 +120,17 @@ const CONTROLLERS = [
   AdminContentController,
   AdminGuideController,
   AdminEnforcementController,
+  AdminEscalationController,
   AdminReportController,
   AdminMetaController,
   AdminExportController,
   AdminThreadController,
+  AdminDisputeController,
+  AdminManagedController,
+  AdminSupportController,
+  AdminMediaController,
+  AdminAuditController,
+  AdminJobController,
   AdminController,
 ];
 
@@ -123,12 +147,24 @@ const CONTROLLERS = [
     JwtModule.register({}),
     NotificationModule,
     MessagingCoreModule,
+    // `MediaUploadService`, for `POST admin/media/uploads` — the staff door onto the upload
+    // tickets a reply's attachments need. The core module, so the member upload route is not
+    // mounted on a staff process (it is guarded by the member JWT and would answer a 500 there).
+    MediaCoreModule,
     AccountCoreModule,
     // §5.12's escalation opens the member's existing Guard thread, and that rule lives in
     // `GuardService`. The core module, so no member Guard route is mounted here.
     GuardCoreModule,
     // `AutoGuideService`, for publishing a draft guide a reviewer approved (§5.9).
     IntelligenceCoreModule,
+    // §5.10's escalations file a **staff** report into the target's case, through the same path a
+    // member's report takes. The core module, so no member `POST /moderation/reports` is mounted
+    // on a staff process.
+    ModerationCoreModule,
+    // §5.16 places a brief by creating the booking the member would have created themselves, and
+    // §5.17 reads a dispute's subject. The core module, so `ProfessionalsModule`'s four member
+    // controllers are not mounted on a staff process.
+    ProfessionalsCoreModule,
     // The export queue is registered here, by the admin module, so a member-only process has
     // neither the producer nor a worker for it: an export reads member data under a staff
     // member's permissions, and the member API has no business being able to build one.
@@ -191,8 +227,15 @@ const CONTROLLERS = [
     AdminAppealService,
     AdminListingReviewService,
     AdminQueueService,
+    AdminDisputeService,
+    AdminManagedService,
+    AdminThreadAccessService,
     AdminContentTargetService,
     AdminEnforcementService,
+    AdminEscalationService,
+    AdminSupportService,
+    AdminAuditService,
+    AdminJobReadService,
     AdminReportCaseService,
     AdminAnalyticsService,
     AdminDashboardService,

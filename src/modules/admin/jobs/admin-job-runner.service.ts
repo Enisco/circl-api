@@ -29,10 +29,10 @@ export class AdminJobRunnerService {
     private readonly adminJobs: AdminJobsService,
   ) {}
 
-  async run(name: string): Promise<string> {
+  async run(name: string, actorId?: string): Promise<string> {
     // The admin surface's own jobs first: they are in this process whatever the deployment, and
     // the lookup below cannot find them because they are not registered with the platform runner.
-    if (await this.adminJobs.runNow(name)) return name;
+    if (await this.adminJobs.runNow(name, actorId)) return name;
 
     const jobs = this.resolve();
 
@@ -46,7 +46,7 @@ export class AdminJobRunnerService {
       );
     }
 
-    return jobs.runNow(name);
+    return jobs.runNow(name, actorId);
   }
 
   /** Whether this process can run jobs at all, so the portal can hide the button. */

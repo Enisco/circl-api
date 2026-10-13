@@ -9,7 +9,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { daysAgo } from '@/common';
-import { PUBLIC_VISIBILITY, TaxonomyService } from '../../shared';
+import { ACTIVE_AUTHOR, PUBLIC_VISIBILITY, TaxonomyService } from '../../shared';
 
 export interface Suggestion {
   code: string | null;
@@ -181,8 +181,14 @@ export class DemandService {
 
       // Supply is what a member searching would actually find, so a held item is not supply.
       // Counting one would hide real demand behind a listing nobody can see.
+      //
+      // §13.2 falls out of the same sentence: a suspended seller's item is not findable either,
+      // so counting it would hide real demand behind a shop nobody can reach. This is the one
+      // place in Intelligence that filters on the author — the Pulse metrics deliberately do not,
+      // because those count what happened rather than what somebody can find today.
       const supplyCount = await this.database.storeItem.count({
         where: {
+          store: { owner: ACTIVE_AUTHOR },
           deletedAt: null,
           ...PUBLIC_VISIBILITY,
           name: { contains: row.term!, mode: Prisma.QueryMode.insensitive },
@@ -264,6 +270,7 @@ export class DemandService {
       case SuggestionSurface.COMMUNITY_OFFER:
         return this.database.communityOffer.count({
           where: {
+            author: ACTIVE_AUTHOR,
             deletedAt: null,
             ...PUBLIC_VISIBILITY,
             categoryCode: code,
@@ -273,6 +280,7 @@ export class DemandService {
       case SuggestionSurface.PROFESSIONAL_SERVICE:
         return this.database.professionalListing.count({
           where: {
+            user: ACTIVE_AUTHOR,
             deletedAt: null,
             ...PUBLIC_VISIBILITY,
             categories: { some: { code } },
@@ -282,6 +290,7 @@ export class DemandService {
       case SuggestionSurface.STORE_ITEM:
         return this.database.storeItem.count({
           where: {
+            store: { owner: ACTIVE_AUTHOR },
             deletedAt: null,
             ...PUBLIC_VISIBILITY,
             categoryCode: code,
@@ -291,6 +300,7 @@ export class DemandService {
       default:
         return this.database.communityRequest.count({
           where: {
+            author: ACTIVE_AUTHOR,
             deletedAt: null,
             ...PUBLIC_VISIBILITY,
             categoryCode: code,

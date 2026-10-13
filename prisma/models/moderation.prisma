@@ -102,9 +102,9 @@ model ReportCase {
   /// three in the morning too.
   dueAt           DateTime @map("due_at") @db.Timestamptz
 
-  assignedToId String?   @map("assigned_to_id")
-  assignedTo   User?     @relation("ReportCaseAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
-  claimedAt    DateTime? @map("claimed_at") @db.Timestamptz
+  assignedToId  String?   @map("assigned_to_id")
+  assignedTo    User?     @relation("ReportCaseAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  claimedAt     DateTime? @map("claimed_at") @db.Timestamptz
   /// The first thing anybody did about it, for the time-to-action metric (§5.25).
   firstActionAt DateTime? @map("first_action_at") @db.Timestamptz
 
@@ -116,7 +116,7 @@ model ReportCase {
   decidedAt          DateTime?           @map("decided_at") @db.Timestamptz
 
   /// The reviewer's way in: one queue item per case, and the case is where the decision lives.
-  queueItemId String? @unique @map("queue_item_id")
+  queueItemId   String? @unique @map("queue_item_id")
   /// Set when the case was escalated to Guard, which carries on in its own workflow.
   guardThreadId String? @map("guard_thread_id")
 
@@ -153,7 +153,7 @@ model Appeal {
   subjectId   String            @map("subject_id")
 
   /// R6: who decided the thing being appealed, so the same person cannot review it.
-  originalDeciderId String? @map("original_decider_id")
+  originalDeciderId     String? @map("original_decider_id")
   /// The Support thread it came in through, where the member is answered.
   supportConversationId String? @map("support_conversation_id")
 
@@ -176,6 +176,59 @@ model Appeal {
   @@index([userId])
   @@index([subjectType, subjectId])
   @@map("appeals")
+}
+
+/// §5.10. Support hands a member's problem to Trust & Safety, and can see what happened to it.
+///
+/// Deliberately **not** a report case. A case is about a piece of content and is grouped by
+/// target, so three people reporting one post is one case; an escalation is one colleague asking
+/// another to look at a *member*, and two of them about the same person are two separate asks with
+/// two separate answers. Folding them into cases would lose the second one.
+///
+/// Where a target is given, a staff report **is** filed into the case as well (§5.10), and
+/// `reportCaseId` is how the escalation and that case find each other. So the escalation is the
+/// conversation between colleagues and the case is the work — one does not replace the other.
+model Escalation {
+  id String @id @default(uuid())
+
+  /// The member this is about.
+  memberId String @map("member_id")
+  member   User   @relation("EscalationSubject", fields: [memberId], references: [id], onDelete: Cascade)
+
+  /// The staff member who raised it. A plain id, like `Appeal.loggedById`: staff are resolved in
+  /// one batched read per page rather than joined on every row.
+  raisedById String @map("raised_by_id")
+
+  /// HARASSMENT | SCAM | SAFETY | ENFORCEMENT_REQUEST | OTHER. A string rather than an enum
+  /// because it is a routing hint Support picks from a list, not a state anything branches on —
+  /// the one thing that reads it is the priority of the report it files, and that mapping lives in
+  /// the service where it can be read beside the reasons it maps to.
+  category String @map("category")
+  note     String @map("note")
+
+  /// The support thread it came out of, where the member is being spoken to.
+  conversationId String? @map("conversation_id")
+  /// The case the staff report opened or joined, where a target was given.
+  reportCaseId   String? @map("report_case_id")
+
+  state EscalationState @default(OPEN) @map("state")
+
+  /// Who answered, and how. Recorded on the row rather than only in the audit trail, because the
+  /// raiser reads this list and the audit trail is not theirs to read.
+  acknowledgedById String?   @map("acknowledged_by_id")
+  acknowledgedAt   DateTime? @map("acknowledged_at") @db.Timestamptz
+  resolvedById     String?   @map("resolved_by_id")
+  resolvedAt       DateTime? @map("resolved_at") @db.Timestamptz
+  resolutionNote   String?   @map("resolution_note")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([state, createdAt])
+  @@index([memberId])
+  /// The `mine` filter, which is the raiser's own list.
+  @@index([raisedById, createdAt])
+  @@map("escalations")
 }
 
 // The admin work queue.
@@ -310,8 +363,8 @@ model GuardThread {
 
 // The lexicon the risk scanner runs against.
 model RiskTerm {
-  id        String       @id @default(uuid())
-  category  RiskCategory @map("category")
+  id       String       @id @default(uuid())
+  category RiskCategory @map("category")
   /// The phrase, stored in the SAME normalised form the scanner applies to member text: NFKC,
   /// lowercased, invisible characters stripped, leetspeak folded, whitespace collapsed. Stored
   /// normalised rather than as typed because the comparison is only meaningful if both sides were
@@ -321,11 +374,11 @@ model RiskTerm {
   /// Immutable once written. To change a phrase, deactivate the term and add a new one: the hit
   /// count and false-positive rate are evidence about one exact phrase, and editing it in place
   /// would quietly hand one phrase's record to another.
-  pattern   String       @map("pattern")
-  weight    Int          @default(10) @map("weight")
-  isActive  Boolean      @default(true) @map("is_active")
+  pattern  String       @map("pattern")
+  weight   Int          @default(10) @map("weight")
+  isActive Boolean      @default(true) @map("is_active")
   /// Why this phrase is here, for whoever inherits the lexicon. ≤ 500 characters.
-  notes     String?      @map("notes")
+  notes    String?      @map("notes")
 
   /// Who added it and who last switched it on or off. A lexicon is a set of editorial judgements
   /// about language, and the person who made one is part of the record.
@@ -345,8 +398,8 @@ model RiskTerm {
 
   hits RiskTermHit[]
 
-  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   @@unique([category, pattern])
   @@index([isActive])
@@ -370,7 +423,7 @@ model ContentSafety {
   targetId   String           @map("target_id")
   /// Who wrote it. Nullable because some scannable things have no single author (a group's own
   /// description outlives its creator's membership).
-  authorId String? @map("author_id")
+  authorId   String?          @map("author_id")
 
   tier            ContentRiskTier        @default(CLEAN) @map("tier")
   /// A mirror of the content row's own column, kept so the flagged queue can be built without
@@ -390,14 +443,14 @@ model ContentSafety {
   classifierFlagged Boolean?      @map("classifier_flagged")
   category          RiskCategory? @map("category")
 
-  scanStatus ContentScanStatus @default(PENDING) @map("scan_status")
+  scanStatus  ContentScanStatus @default(PENDING) @map("scan_status")
   /// Increments on every scan, and is what makes the worker idempotent: a job carrying a stale
   /// version is a no-op, so a retry cannot overwrite a newer verdict or a human's decision.
   scanVersion Int               @default(0) @map("scan_version")
   /// sha256 of the scanned text and media keys. An edit that does not change this skips the scan.
   contentHash String?           @map("content_hash")
 
-  heldAt DateTime? @map("held_at") @db.Timestamptz
+  heldAt     DateTime? @map("held_at") @db.Timestamptz
   /// Why it is not VISIBLE: `AUTO_HIGH`, `AUTO_CRITICAL`, `AUTO_MEDIUM`, `STAFF_HIDE`,
   /// `ANONYMOUS`, or `PENDING_SCAN` — the provisional state a lexicon-clean item sits in for the
   /// second or two before the classifier answers, so nothing the classifier would hold is ever in

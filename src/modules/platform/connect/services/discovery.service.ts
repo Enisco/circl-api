@@ -3,11 +3,12 @@ import { Prisma, TaxonomyKind, ThreadContextType, TrustCheckType } from '@prisma
 import { PrismaService } from '@/infrastructure';
 import { ApiException, birthDateRangeForAges, buildPageMeta, escapeLike } from '@/common';
 import {
+  ACTIVE_AUTHOR,
   BlockingService,
   PUBLIC_VISIBILITY,
+  TaxonomyService,
   connectVisibility,
   countryNameOf,
-  TaxonomyService,
 } from '../../shared';
 import { CONNECT_MINIMUM_AGE } from '../../taxonomy/services/taxonomy-catalogue.service';
 import { DiscoveryDto } from '../dtos/connect.dto';
@@ -148,7 +149,7 @@ export class DiscoveryService {
     query: DiscoveryDto,
     blockedIds: string[],
     viewerCityId: string | null,
-    omit?: 'languages' | 'heritage',
+    omit?: 'languages' | 'heritage' | 'type',
   ): Promise<Prisma.ConnectProfileWhereInput> {
     const where: Prisma.ConnectProfileWhereInput = {
       deletedAt: null,
@@ -158,14 +159,31 @@ export class DiscoveryService {
       // Never returned in discovery: anyone hidden, anyone blocked in either direction, and the caller themselves (3.4).
       isVisible: true,
       userId: { not: viewerId, ...(blockedIds.length ? { notIn: blockedIds } : {}) },
-      user: { isAnonymised: false },
+      // Two rules about the member, in **one** `user` key: a second `user` key would silently
+      // replace the first, dropping whichever was written earlier. §13.2's suspension filter
+      // alongside the anonymised check.
+      user: { isAnonymised: false, ...ACTIVE_AUTHOR },
     };
 
-    if (query.type) where.typeCode = query.type;
+    if (query.type && omit !== 'type') where.typeCode = query.type;
 
     const cityId = query.cityId ?? viewerCityId;
 
     if (cityId && cityId !== 'ANYWHERE') {
+      // One city, or `ANYWHERE`. There is deliberately no radius any more.
+      //
+      // It existed for one afternoon: `radiusMiles` had been accepted and ignored, so it was
+      // implemented honestly — as "cities whose centre is within N miles of mine", because a
+      // profile has a city or a city override and never a point. The app read that and withdrew
+      // the ask, which was the right call: a control labelled in miles that actually means "and
+      // the next city along" is a number that lies about what it does, and the honest version is
+      // a scope dial the city filter already is.
+      //
+      // So the parameter is gone rather than left accepted-and-ignored, which is the state it was
+      // in before and the state worth never returning to. If distance is ever worth having it
+      // needs a location on the profile, and that is a privacy decision to take deliberately
+      // rather than inherit from a filter.
+      //
       // The override is where they want to be found, so it wins when set.
       where.OR = [
         { cityIdOverride: cityId },
@@ -298,42 +316,43 @@ export class DiscoveryService {
     query: DiscoveryDto,
     blockedIds: string[],
     viewerCityId: string | null,
-  ): Promise<{ languages: string[]; heritage: string[] }> {
-    const [withoutLanguages, withoutHeritage] = await Promise.all([
-      this.buildWhere(viewerId, query, blockedIds, viewerCityId, 'languages'),
-      this.buildWhere(viewerId, query, blockedIds, viewerCityId, 'heritage'),
-    ]);
+  ): Promise<{ types: string[] }> {
+    // **Only `types`.** `languages` and `heritage` were facets here and the app has stopped
+    // reading them, deliberately: both are things somebody *arrives* wanting — "who here speaks
+    // Twi", "who here is West African" — and a facet cuts the offer to whoever the other filters
+    // have already left on screen, so those searches could not be started at all. The sheet counts
+    // before it commits instead, which tells somebody a language nobody nearby speaks will return
+    // nothing *before* they apply it.
+    //
+    // Dropping them is two fewer five-hundred-row reads on every deck load, which is why they are
+    // gone rather than computed and ignored.
+    //
+    // `types` stays and is computed with the type filter **off**: with it on, picking Language
+    // Exchange would collapse the list to Language Exchange and nobody could see what else was
+    // there or switch to it.
+    const withoutType = await this.buildWhere(viewerId, query, blockedIds, viewerCityId, 'type');
 
-    const [languages, heritage] = await Promise.all([
-      this.facets(withoutLanguages),
-      this.facets(withoutHeritage),
-    ]);
-
-    return { languages: languages.languages, heritage: heritage.heritage };
+    return { types: (await this.facets(withoutType)).types };
   }
 
-  /** The language filter must come from the data, not the catalogue: the client builds it from the languages people in the grid actually speak, so a filter can never guarantee an empty result (3.4). */
+  /**
+   * The connection types that have somebody behind them, from the data rather than the catalogue.
+   *
+   * The chip row is the first thing on the deck and the vocabulary offers six. In a small city most
+   * of them return nothing, and a chip that can only ever produce an empty grid is chrome — so this
+   * is the list of types somebody in scope actually holds.
+   *
+   * Capped at five hundred profiles: a facet is a description of the choice, not a census, and the
+   * sixth type does not appear because the five hundred and first profile holds it.
+   */
   private async facets(where: Prisma.ConnectProfileWhereInput) {
     const rows = await this.database.connectProfile.findMany({
       where,
-      select: {
-        user: { select: { profile: { select: { languages: true, heritageTag: true } } } },
-      },
+      select: { typeCode: true },
       take: 500,
     });
 
-    const languages = new Set<string>();
-    const heritage = new Set<string>();
-
-    for (const row of rows) {
-      for (const code of (row.user.profile?.languages as string[] | null) ?? []) {
-        languages.add(code);
-      }
-
-      if (row.user.profile?.heritageTag) heritage.add(row.user.profile.heritageTag);
-    }
-
-    return { languages: [...languages].sort(), heritage: [...heritage].sort() };
+    return { types: [...new Set(rows.map(row => row.typeCode))].sort() };
   }
 
   // ─── 3.2.3 Another member's profile ────────────────────────────────────────

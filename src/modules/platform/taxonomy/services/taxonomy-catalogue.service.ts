@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { TaxonomyKind } from '@prisma/client';
 import { createHash } from 'crypto';
-import { CityService, TaxonomyService, TermRecord } from '../../shared';
+import { SYSTEM_CONFIG_KEYS } from '@/common';
+import { CityService, SystemConfigService, TaxonomyService, TermRecord } from '../../shared';
 
 export interface CatalogueTerm {
   code: string;
@@ -20,6 +21,11 @@ export interface TaxonomyCatalogue {
   heritageTags: CatalogueTerm[];
   journeyStages: CatalogueTerm[];
   interests: CatalogueTerm[];
+  /**
+   * What somebody is *into*, for the Connect profile. Deliberately not `interests`, whose first
+   * fifteen codes are community categories so the feed ranker can match a post against them.
+   */
+  hobbies: CatalogueTerm[];
   languages: CatalogueTerm[];
   connectionTypes: CatalogueTerm[];
   /** The questions a Connect profile answers. `label` is the question itself (3.3.1). */
@@ -56,6 +62,35 @@ export interface TaxonomyLimits {
   maxLanguages: number;
   minConnectAge: number;
   nearMeRadiusMiles: number;
+  /** HOBBY codes on a Connect profile. */
+  maxHobbies: number;
+  /**
+   * How many a profile needs **to be created** (v2 §2).
+   *
+   * The card is the reason: hobbies are what a stranger taps to start a conversation, so one
+   * hobby offers one way in. On create only, like `minConnectPhotos` — a member who joined before
+   * the rule can still fix a typo without being asked to pick two more.
+   */
+  minHobbies: number;
+  /**
+   * How many photographs a member may pick as their card (v2 §1).
+   *
+   * The card is what Browse and the deck draw, and before this the only lever was post order — so
+   * a member whose three favourite photographs were spread across three posts could not have them
+   * as their card at all.
+   */
+  maxCardPhotos: number;
+  /**
+   * Photos a Connect profile needs **to be created**. One photo reads as low effort and leaves
+   * the card's swipe gesture with nothing to do.
+   *
+   * On create, never on edit: a member who joined Connect before the rule keeps their place, and
+   * an edit that demanded two more pictures first would lock them out of their own profile.
+   */
+  minConnectPhotos: number;
+  /** A prompt answer is a sentence on a card, not a paragraph. */
+  minPromptAnswer: number;
+  maxPromptAnswer: number;
 }
 
 /** The rule text behind the immigrant-friendly filter (D11). */
@@ -74,6 +109,53 @@ export const TAXONOMY_LIMITS: TaxonomyLimits = {
   maxLanguages: 6,
   minConnectAge: CONNECT_MINIMUM_AGE,
   nearMeRadiusMiles: 5,
+  maxHobbies: 8,
+  minHobbies: 3,
+  maxCardPhotos: 3,
+  minConnectPhotos: 3,
+  minPromptAnswer: 20,
+  maxPromptAnswer: 100,
+};
+
+/**
+ * The four served from `system_config` rather than from the constant above, so staff can move them
+ * without a release — which is what the client was promised when it was told to stop compiling
+ * them in. The constant is the default; a stored row is an override.
+ *
+ * They are also the four that are **enforced** from config, in `ConnectProfileService`. A limit
+ * the payload advertises and the service does not read is a number that lies to the client the
+ * moment somebody changes it.
+ */
+export const configuredLimits = async (
+  config: SystemConfigService,
+): Promise<
+  Pick<
+    TaxonomyLimits,
+    | 'maxHobbies'
+    | 'minHobbies'
+    | 'maxCardPhotos'
+    | 'minConnectPhotos'
+    | 'minPromptAnswer'
+    | 'maxPromptAnswer'
+  >
+> => {
+  const stored = await config.getMany(
+    SYSTEM_CONFIG_KEYS.MAX_HOBBIES,
+    SYSTEM_CONFIG_KEYS.MIN_HOBBIES,
+    SYSTEM_CONFIG_KEYS.MAX_CARD_PHOTOS,
+    SYSTEM_CONFIG_KEYS.MIN_CONNECT_PHOTOS,
+    SYSTEM_CONFIG_KEYS.MIN_PROMPT_ANSWER,
+    SYSTEM_CONFIG_KEYS.MAX_PROMPT_ANSWER,
+  );
+
+  return {
+    maxHobbies: stored[SYSTEM_CONFIG_KEYS.MAX_HOBBIES],
+    minHobbies: stored[SYSTEM_CONFIG_KEYS.MIN_HOBBIES],
+    maxCardPhotos: stored[SYSTEM_CONFIG_KEYS.MAX_CARD_PHOTOS],
+    minConnectPhotos: stored[SYSTEM_CONFIG_KEYS.MIN_CONNECT_PHOTOS],
+    minPromptAnswer: stored[SYSTEM_CONFIG_KEYS.MIN_PROMPT_ANSWER],
+    maxPromptAnswer: stored[SYSTEM_CONFIG_KEYS.MAX_PROMPT_ANSWER],
+  };
 };
 
 /** `GET /api/v1/taxonomy` (spec 0.8). */
@@ -82,6 +164,7 @@ export class TaxonomyCatalogueService {
   constructor(
     private readonly taxonomy: TaxonomyService,
     private readonly cities: CityService,
+    private readonly config: SystemConfigService,
   ) {}
 
   async build(): Promise<TaxonomyCatalogue> {
@@ -106,6 +189,7 @@ export class TaxonomyCatalogueService {
       heritageTags,
       journeyStages,
       interests,
+      hobbies,
       languages,
       connectionTypes,
       connectPrompts,
@@ -126,6 +210,7 @@ export class TaxonomyCatalogueService {
       feedTypes,
       requestStatuses,
       commerceSortOptions,
+      configured,
     ] = await Promise.all([
       this.taxonomy.version(),
       this.cities.list(),
@@ -136,6 +221,7 @@ export class TaxonomyCatalogueService {
       this.taxonomy.list(TaxonomyKind.HERITAGE_TAG, false),
       this.taxonomy.list(TaxonomyKind.JOURNEY_STAGE, false),
       this.taxonomy.list(TaxonomyKind.INTEREST, false),
+      this.taxonomy.list(TaxonomyKind.HOBBY, false),
       this.taxonomy.list(TaxonomyKind.LANGUAGE, false),
       this.taxonomy.list(TaxonomyKind.CONNECTION_TYPE, false),
       this.taxonomy.list(TaxonomyKind.CONNECT_PROMPT, false),
@@ -156,6 +242,7 @@ export class TaxonomyCatalogueService {
       this.taxonomy.list(TaxonomyKind.FEED_TYPE, false),
       this.taxonomy.list(TaxonomyKind.REQUEST_STATUS, false),
       this.taxonomy.list(TaxonomyKind.COMMERCE_SORT_OPTION, false),
+      configuredLimits(this.config),
     ]);
 
     return {
@@ -175,6 +262,7 @@ export class TaxonomyCatalogueService {
       heritageTags: heritageTags.map(flatten),
       journeyStages: journeyStages.map(flatten),
       interests: interests.map(flatten),
+      hobbies: hobbies.map(flatten),
       languages: languages.map(flatten),
       connectionTypes: connectionTypes.map(flatten),
       connectPrompts: connectPrompts.map(flatten),
@@ -200,7 +288,7 @@ export class TaxonomyCatalogueService {
       feedTypes: feedTypes.map(flatten),
       requestStatuses: requestStatuses.map(flatten),
       commerceSortOptions: commerceSortOptions.map(flatten),
-      limits: TAXONOMY_LIMITS,
+      limits: { ...TAXONOMY_LIMITS, ...configured },
       filters: {
         // D13: nothing carries a check other than EMAIL this version, so the client hides the filter row.
         verification: { isActive: false },

@@ -47,7 +47,15 @@ export interface IntakeInput {
 
 export interface IntakeResult {
   caseId: string;
-  priority: ReportCasePriority;
+  /**
+   * Null where nothing was prioritised: `ModerationService.report` answers with the case a
+   * duplicate report already belongs to, and that case's priority was not recomputed.
+   *
+   * Declared nullable because nothing else will catch it — this project compiles with
+   * `strictNullChecks: false`, so a null in a non-nullable slot is silent. The type is the only
+   * warning a reader gets.
+   */
+  priority: ReportCasePriority | null;
   /**
    * Set when the report was answered without a reviewer: the same target was decided, the content
    * is gone, and the answer is already known. The reporter is told the outcome (§7.3) and no new

@@ -12,18 +12,43 @@ model SystemConfig {
 // ─── Queue Job Log ────────────────────────────────────────────────────────────
 // Audit log for every BullMQ job outcome.
 
+/// §4.11's job run history. One row per run, written by the wrapper every job goes through.
+///
+/// The model existed and nothing wrote to it (B19), which made "when did this last run, and did it
+/// work" a question nobody could answer. §4.11 asks for `jobName`, `trigger`, `triggeredById`,
+/// `startedAt`, `finishedAt` and `durationMs`; three of those are **deliberately not added**,
+/// because the columns already here hold them:
+///
+///  - `operation` is the job name. A `jobName` beside it would be a second place for the same
+///    string to be written, and the first time they disagreed the history would be unreadable.
+///  - `userId` is who triggered a manual run. Already indexed, for exactly this question.
+///  - `createdAt` is when the row was written, which for a row written at the end of a run is
+///    `finishedAt`. Kept as the one timestamp, with `startedAt` beside it for the duration.
 model QueueJobLog {
   id        String         @id @default(uuid())
   queueName String         @map("queue_name")
   jobId     String?        @map("job_id")
+  /// The job's name, as `admin/jobs` lists it — `media.derive`, `intelligence.metrics`.
   operation String         @map("operation")
   status    QueueJobStatus @map("status")
+  /// Who asked for it, for a manual run. Null for the schedule, which is nobody.
   userId    String?        @map("user_id")
   error     String?        @map("error")
   metadata  Json?          @map("metadata")
-  createdAt DateTime       @default(now()) @map("created_at")
+
+  /// `CRON` or `MANUAL`. A string rather than an enum: it is a label on a history row, and
+  /// a third trigger (a queue, when §5.22 lands) should not be a migration.
+  trigger    String?  @map("trigger")
+  startedAt  DateTime @default(now()) @map("started_at") @db.Timestamptz
+  /// Measured around the work rather than derived from the timestamps, so a row is self-contained
+  /// and a clock change cannot make a run look instant.
+  durationMs Int?     @map("duration_ms")
+
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@index([queueName, status])
   @@index([userId])
+  /// What §5.22's run list reads: this job's runs, newest first.
+  @@index([operation, createdAt])
   @@map("queue_job_logs")
 }

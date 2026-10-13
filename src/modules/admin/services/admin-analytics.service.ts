@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { ApiErrorCode, ApiException } from '@/common';
 import { AnalyticsRunnerService } from '../analytics/analytics-runner.service';
 import { AnalyticsResponse, Chart } from '../analytics/chart.types';
@@ -14,7 +13,7 @@ import { SearchAnalytics } from '../analytics/search.analytics';
 import { SupportAnalytics } from '../analytics/support.analytics';
 import { GrowthAnalytics } from '../analytics/growth.analytics';
 import { OverviewAnalytics } from '../analytics/overview.analytics';
-import { suppressEverything } from '../analytics/suppression';
+import { POPULATION_FLOOR, suppressEverything } from '../analytics/suppression';
 import { AdminPrincipal } from '../common/admin-principal';
 import { AnalyticsFilterDto } from '../dtos/analytics-filter.dto';
 import {
@@ -33,8 +32,6 @@ import {
 import { MemberFilterBuilder } from '../filters/member-filter.builder';
 
 /** Below this the whole response is withheld, not just its member counts (§2.7 population floor). */
-const POPULATION_FLOOR = 10;
-
 /**
  * One endpoint per analytics tab (§5.25).
  *
@@ -139,7 +136,7 @@ export class AdminAnalyticsService {
       // eight members would make it useless on exactly the days somebody is watching it. It also
       // saves a count of the view on every unfiltered request.
       const population = dto.hasMemberAttributeFilters
-        ? await this.populationSize(filter.viewSql)
+        ? await this.runner.populationSize(filter.viewSql)
         : null;
       const narrowed = population !== null && population > 0 && population < POPULATION_FLOOR;
       const { charts, cache } = await this.runner.charts(
@@ -190,23 +187,6 @@ export class AdminAnalyticsService {
         },
       };
     });
-  }
-
-  /**
-   * How many members the filters select.
-   *
-   * Counted once per request rather than per chart, and only used for the floor — the charts count
-   * their own populations. Zero is not suppressed: an empty selection is somebody asking about a
-   * city with nobody in it, and telling them "withheld" would imply there is something to withhold.
-   */
-  private async populationSize(viewSql: Prisma.Sql): Promise<number> {
-    const [row] = await this.runner.query(
-      tx => tx.$queryRaw<Array<{ total: bigint }>>`
-        SELECT COUNT(*) AS total FROM "mv_member_dimensions" m WHERE ${viewSql}
-      `,
-    );
-
-    return Number(row?.total ?? 0);
   }
 
   private narrow(

@@ -21,19 +21,19 @@ model AdminCredential {
 
   /// base64(iv | tag | ciphertext), AES-256-GCM. `keyId` travels with it so the key can rotate
   /// without a migration that would have to decrypt every row at once.
-  totpSecretEnc String?   @map("totp_secret_enc")
-  totpKeyId     String?   @map("totp_key_id")
-  totpEnabledAt DateTime? @map("totp_enabled_at") @db.Timestamptz
+  totpSecretEnc    String?   @map("totp_secret_enc")
+  totpKeyId        String?   @map("totp_key_id")
+  totpEnabledAt    DateTime? @map("totp_enabled_at") @db.Timestamptz
   /// The last time step accepted. A code is refused if its step is not greater, which is what stops
   /// a code read over somebody's shoulder being used again inside its own 30-second window.
-  totpLastUsedStep BigInt? @map("totp_last_used_step")
+  totpLastUsedStep BigInt?   @map("totp_last_used_step")
 
   failedAttempts    Int       @default(0) @map("failed_attempts")
   failedMfaAttempts Int       @default(0) @map("failed_mfa_attempts")
   /// Drives the lock duration: each lock doubles the last one, so a patient attacker gets slower
   /// rather than merely interrupted.
-  lockCount   Int       @default(0) @map("lock_count")
-  lockedUntil DateTime? @map("locked_until") @db.Timestamptz
+  lockCount         Int       @default(0) @map("lock_count")
+  lockedUntil       DateTime? @map("locked_until") @db.Timestamptz
 
   lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz
   lastLoginIp  String?   @map("last_login_ip")
@@ -79,7 +79,7 @@ model AdminSession {
   userId String @map("user_id")
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  refreshTokenHash String? @unique @map("refresh_token_hash")
+  refreshTokenHash         String?   @unique @map("refresh_token_hash")
   /// The hash rotation replaced, kept for the grace window and for reuse detection: a token that
   /// matches this outside the window means somebody is replaying a stolen one, and the session goes.
   previousRefreshTokenHash String?   @map("previous_refresh_token_hash")
@@ -88,8 +88,8 @@ model AdminSession {
   ip        String @map("ip")
   userAgent String @map("user_agent")
 
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
-  lastUsedAt DateTime @default(now()) @map("last_used_at") @db.Timestamptz
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  lastUsedAt        DateTime @default(now()) @map("last_used_at") @db.Timestamptz
   /// Twelve hours from the second factor, never extended by a refresh. A shift, not a tenancy.
   absoluteExpiresAt DateTime @map("absolute_expires_at") @db.Timestamptz
 
@@ -156,8 +156,8 @@ model AuditLog {
   action String    @map("action")
   area   AuditArea @map("area")
 
-  targetType String? @map("target_type")
-  targetId   String? @map("target_id")
+  targetType  String? @map("target_type")
+  targetId    String? @map("target_id")
   /// A display snapshot for non-member targets. Null for members: their name is resolved from the
   /// live row at read time, so anonymising an account does not require rewriting history that
   /// must not be rewritable.
@@ -266,4 +266,52 @@ model AdminExport {
   /// this it reads every export ever made to find the handful that aged out.
   @@index([state, expiresAt])
   @@map("admin_exports")
+}
+
+/// One staff member's permission to read one private thread, for thirty minutes (S9.1–S9.4).
+///
+/// Everywhere else in the portal, a permission is a property of the person. This is a property of
+/// the **occasion**: `messages:read` lets somebody list which conversations a member has, and this
+/// row is what lets them read the words in one of them — tied to a case that exists, that they can
+/// already see, and that involves somebody in the conversation.
+///
+/// The reason it works this way is that there is no honest answer to "who may read members' private
+/// messages". Anybody who needs to read one needs to read it for a reason, and the reason is
+/// checkable: a report case, a dispute, a Guard case, an escalation, a support thread, a queue
+/// item. Free text — "investigating a complaint" — is not, which is why it is never accepted. So
+/// the grant is the audit trail written *before* the act rather than after it, and a staff member
+/// reading a thread with no grant is not a policy breach to discover later but a 403.
+///
+/// `ip` and `userAgent` are copied onto the row rather than left to the audit entry beside it.
+/// A grant is the one record that answers "who read this, from where, and what for" in one line,
+/// and that question is usually asked long afterwards by somebody who does not have the trail open.
+///
+/// No foreign key to the staff account, for the reason `AuditLog` has none: the record of who read
+/// somebody's private messages must outlive the account that did it.
+model ThreadAccessGrant {
+  id             String @id @default(uuid())
+  staffId        String @map("staff_id")
+  conversationId String @map("conversation_id")
+
+  reasonCode AdminReasonCode      @map("reason_code")
+  linkedType ThreadAccessLinkType @map("linked_type")
+  /// The case, dispute, escalation, support thread or queue item being worked on.
+  linkedId   String               @map("linked_id")
+  note       String?              @map("note")
+
+  ip        String? @map("ip")
+  userAgent String? @map("user_agent")
+
+  grantedAt DateTime @default(now()) @map("granted_at") @db.Timestamptz
+  /// `grantedAt` + 30 minutes (S9.2). Not extendable: a second half-hour is a second grant, with
+  /// its own reason, which is the point.
+  expiresAt DateTime @map("expires_at") @db.Timestamptz
+
+  /// What the grant was actually used for, as it is used. A grant taken and never used is a
+  /// different fact from one used to read four pages, and only one of them is a read.
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz
+  useCount   Int       @default(0) @map("use_count")
+
+  @@index([staffId, conversationId, expiresAt])
+  @@map("thread_access_grants")
 }

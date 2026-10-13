@@ -1,8 +1,14 @@
 import { Injectable } from '@nestjs/common';
-import { ConnectionRequestState, Prisma, ReportTargetType, TaxonomyKind } from '@prisma/client';
+import {
+  ConnectionRequestState,
+  Prisma,
+  ReportTargetType,
+  SupportThreadType,
+  TaxonomyKind,
+} from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { AdminPageOptionsDto, ApiErrorCode, ApiException, PageMeta, buildPageMeta } from '@/common';
-import { MediaService, TaxonomyService } from '@/modules/platform/shared';
+import { CityService, MediaService, TaxonomyService } from '@/modules/platform/shared';
 import { AdminPrincipal } from '../common/admin-principal';
 import { AdminPolicyService } from '../common/admin-policy.service';
 import { editableFieldsFor } from '../common/member-editable-fields';
@@ -348,6 +354,8 @@ export class AdminMemberTabsService {
     private readonly media: MediaService,
     private readonly taxonomy: TaxonomyService,
     private readonly policy: AdminPolicyService,
+    // For city **names** on the sections tab, which showed ids.
+    private readonly cities: CityService,
   ) {}
 
   private get sign() {
@@ -499,6 +507,16 @@ export class AdminMemberTabsService {
     // next to a star that does not mean what the star means.
     const ratingAverage = reputation && reputation.countedTotal > 0 ? reputation.average : null;
 
+    // City **names**, not ids. These two read `LONDON` straight out of the column, so the member
+    // page showed a code where every other surface shows "London" — and the portal has no city
+    // list to resolve it against on that screen.
+    const cityNameOf = async (cityId: string | null): Promise<string | null> =>
+      cityId ? ((await this.cities.find(cityId))?.name ?? cityId) : null;
+    const [listingCity, storeCity] = await Promise.all([
+      cityNameOf(listing?.cityId ?? null),
+      cityNameOf(store?.cityId ?? null),
+    ]);
+
     return {
       community: { requests, offers, posts, groups, guidesRead },
       professional: listing
@@ -510,7 +528,7 @@ export class AdminMemberTabsService {
             ratingAverage,
             jobsCompleted: listing.jobsCompleted,
             medianResponseMinutes: listing.medianResponseMinutes,
-            city: listing.cityId,
+            city: listingCity,
           }
         : null,
       connect: connect
@@ -533,7 +551,7 @@ export class AdminMemberTabsService {
             complianceState: store.complianceState,
             items: storeItems,
             enquiries: storeEnquiries,
-            city: store.cityId,
+            city: storeCity,
           }
         : null,
     };
@@ -1139,8 +1157,8 @@ export class AdminMemberTabsService {
    * filtered by the caller's permissions here and not in the portal: an option a staff member can
    * see but not use is an invitation to ask somebody else to use it for them.
    *
-   * Report cases, support threads and escalations have no tables yet; they join this list with
-   * their own sections, and the contract does not change when they do.
+   * Support threads have no table yet (§4.8); they join this list with their own section, and the
+   * contract does not change when they do.
    */
   async linkableCases(actor: AdminPrincipal, id: string): Promise<LinkableCaseView[]> {
     await this.policy.assertIsMember(id);
@@ -1148,20 +1166,92 @@ export class AdminMemberTabsService {
     const cases: LinkableCaseView[] = [];
     const since = new Date(Date.now() - 90 * 86_400_000);
 
-    const disputes = await this.database.dispute.findMany({
-      where: { raisedById: id, createdAt: { gte: since } },
-      select: { id: true, reasonCode: true, state: true, createdAt: true },
-      orderBy: { createdAt: 'desc' },
-      take: 25,
-    });
-
-    for (const dispute of disputes) {
-      cases.push({
-        type: 'DISPUTE',
-        id: dispute.id,
-        label: `Dispute — ${dispute.reasonCode} (${dispute.state})`,
-        createdAt: dispute.createdAt.toISOString(),
+    // Gated like every other kind here, which it was not: a dispute is read behind
+    // `disputes:manage` (§5.17), so offering one to somebody without it is offering a link they
+    // cannot use — and §5.6 refuses it on exactly that permission, so the option was an invitation
+    // to ask a colleague to take the grant instead.
+    if (actor.permissions.has('disputes:manage')) {
+      const disputes = await this.database.dispute.findMany({
+        where: { raisedById: id, createdAt: { gte: since } },
+        select: { id: true, reasonCode: true, state: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+        take: 25,
       });
+
+      for (const dispute of disputes) {
+        cases.push({
+          type: 'DISPUTE',
+          id: dispute.id,
+          label: `Dispute — ${dispute.reasonCode} (${dispute.state})`,
+          createdAt: dispute.createdAt.toISOString(),
+        });
+      }
+    }
+
+    // The support threads, which this list promised and did not have: §5.15 landed after it, and
+    // "I am answering this member's support thread" is the commonest honest reason to read a
+    // conversation they are complaining about. A `GUARD` thread is left out unless the caller
+    // holds `guard:read` — R7, and the same rule §5.6 applies when the grant is asked for.
+    if (actor.permissions.has('support:read')) {
+      const threads = await this.database.supportThread.findMany({
+        where: {
+          memberId: id,
+          createdAt: { gte: since },
+          ...(this.policy.maySeeGuardThreads(actor)
+            ? {}
+            : { type: { not: SupportThreadType.GUARD } }),
+        },
+        select: { conversationId: true, type: true, state: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+        take: 25,
+      });
+
+      for (const thread of threads) {
+        cases.push({
+          // The **conversation** id, which is how §5.15 addresses a support thread and what §5.6
+          // expects as the `linkedId`.
+          type: 'SUPPORT_THREAD',
+          id: thread.conversationId,
+          label: `Support — ${thread.type} (${thread.state})`,
+          createdAt: thread.createdAt.toISOString(),
+        });
+      }
+    }
+
+    if (actor.permissions.has('reports:read')) {
+      // The reported member, not the reporter: a grant is read as "I am looking into what happened
+      // to this person", and a case where they were the one complaining is somebody else's record.
+      const reports = await this.database.reportCase.findMany({
+        where: { targetUserId: id, createdAt: { gte: since } },
+        select: { id: true, targetType: true, state: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+        take: 25,
+      });
+
+      for (const report of reports) {
+        cases.push({
+          type: 'REPORT_CASE',
+          id: report.id,
+          label: `Report — ${report.targetType} (${report.state})`,
+          createdAt: report.createdAt.toISOString(),
+        });
+      }
+
+      const escalations = await this.database.escalation.findMany({
+        where: { memberId: id, createdAt: { gte: since } },
+        select: { id: true, category: true, state: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+        take: 25,
+      });
+
+      for (const escalation of escalations) {
+        cases.push({
+          type: 'ESCALATION',
+          id: escalation.id,
+          label: `Escalation — ${escalation.category} (${escalation.state})`,
+          createdAt: escalation.createdAt.toISOString(),
+        });
+      }
     }
 
     if (actor.permissions.has('guard:read')) {

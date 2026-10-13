@@ -5,7 +5,7 @@
  * rather than be ignored, and a visitor's activity counts must be built from what
  * that visitor can see, because a count that disagrees with the list tells them
  * exactly how many anonymous posts exist and roughly when. */
-const { api, check, finish, makeUser, prisma, sweep } = require('./harness.cjs');
+const { api, check, connectCreate, finish, makeUser, prisma, sweep } = require('./harness.cjs');
 
 (async () => {
   await sweep();
@@ -285,18 +285,28 @@ const { api, check, finish, makeUser, prisma, sweep } = require('./harness.cjs')
     area: 'Moss Side',
     description: 'Home cooking, sold from the kitchen twice a week.',
   });
-  await api(subject.token, 'PUT', '/connect/me', {
-    typeCode: 'LANGUAGE_EXCHANGE',
-    dateOfBirth: dobFor(30),
-    isVisible: true,
-    lookingFor: 'Practising English after work, happy to help with Yoruba in return.',
-  });
-  await api(member.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP',
-    dateOfBirth: dobFor(28),
-    isVisible: true,
-    lookingFor: 'Meeting people who moved here in the last year or so.',
-  });
+  await api(
+    subject.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(subject.token, {
+      typeCode: 'LANGUAGE_EXCHANGE',
+      dateOfBirth: dobFor(30),
+      isVisible: true,
+      lookingFor: 'Practising English after work, happy to help with Yoruba in return.',
+    }),
+  );
+  await api(
+    member.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(member.token, {
+      typeCode: 'FRIENDSHIP',
+      dateOfBirth: dobFor(28),
+      isVisible: true,
+      lookingFor: 'Meeting people who moved here in the last year or so.',
+    }),
+  );
 
   const cornersFor = async token =>
     (await api(token, 'GET', `/users/${subject.id}/profile`)).body?.data?.alsoOn;

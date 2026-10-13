@@ -1,5 +1,14 @@
 /* Circl Intelligence (Guided Creation, Auto-Guides, Pulse) and account deletion. */
-const { api, check, fail, finish, makeUser, prisma, sweep } = require('./harness.cjs');
+const {
+  api,
+  check,
+  connectCreate,
+  fail,
+  finish,
+  makeUser,
+  prisma,
+  sweep,
+} = require('./harness.cjs');
 
 const Redis = require('ioredis');
 
@@ -119,6 +128,21 @@ async function plantCode(userId, code) {
     where: { targetId: drafted.id, type: 'AUTO_GUIDE' },
   });
   check('it went to the moderation queue for approval', queued !== null, queued);
+  // §5.9's `AUTO_GUIDE` payload. It was `{ askCount, sourceCount, clusterId }` — three numbers and
+  // an id — so the reviewer's card could say "drafted from 5 answers" and could not say what the
+  // question was or show one of the answers, which is the whole of the judgement being asked for.
+  check(
+    'and the payload says what it is about and what it came from',
+    queued?.payload?.clusterSize >= 3 &&
+      typeof queued?.payload?.topicCode === 'string' &&
+      Array.isArray(queued?.payload?.sources) &&
+      queued.payload.sources.length >= 2 &&
+      queued.payload.sources.every(
+        source =>
+          typeof source.title === 'string' && /^\/content\/responses\//.test(source.url ?? ''),
+      ),
+    queued?.payload,
+  );
 
   const second = await autoGuides.run();
   check('running again does not redraft the same cluster', second.drafted === 0, second);
@@ -220,14 +244,19 @@ async function plantCode(userId, code) {
   // Bristol, which the dataset leaves empty on purpose, so the bucket under test really is one
   // person. Asserted against Manchester it only ever passed while Manchester was thin, and it
   // stopped meaning anything the moment the city had members.
-  await api(helper.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP',
-    lookingFor: 'Meeting people who have been through the same move.',
-    dateOfBirth: '1994-03-11',
-    isVisible: true,
-    heritageTag: 'WEST_AFRICAN',
-    cityIdOverride: 'BRISTOL',
-  });
+  await api(
+    helper.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(helper.token, {
+      typeCode: 'FRIENDSHIP',
+      lookingFor: 'Meeting people who have been through the same move.',
+      dateOfBirth: '1994-03-11',
+      isVisible: true,
+      heritageTag: 'WEST_AFRICAN',
+      cityIdOverride: 'BRISTOL',
+    }),
+  );
   await metrics.rebuild('MONTH');
   r = await api(helper.token, 'GET', '/pulse/raw/CONNECT?cityId=BRISTOL');
   check(
@@ -264,12 +293,17 @@ async function plantCode(userId, code) {
     body: 'Yes, I can meet you at two on Thursday.',
   });
 
-  await api(leaver.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP',
-    lookingFor: 'New here and would like to meet people from home.',
-    dateOfBirth: '1993-05-02',
-    isVisible: true,
-  });
+  await api(
+    leaver.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(leaver.token, {
+      typeCode: 'FRIENDSHIP',
+      lookingFor: 'New here and would like to meet people from home.',
+      dateOfBirth: '1993-05-02',
+      isVisible: true,
+    }),
+  );
 
   const listing = await prisma.professionalListing.create({
     data: {

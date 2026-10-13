@@ -4,6 +4,7 @@ import {
   MessageKind,
   ParticipantRole,
   Prisma,
+  SupportThreadType,
   SystemMessageType,
   ThreadContextType,
   ThreadKind,
@@ -11,6 +12,7 @@ import {
 import { randomUUID } from 'crypto';
 import { PrismaService } from '@/infrastructure';
 import { toJsonOrUndefined } from '@/common';
+import { settledType, typeFromContext } from './support-thread.rules';
 
 export interface ContextSnapshot {
   title: string;
@@ -45,6 +47,15 @@ export interface EnsureConversationInput {
   snapshot?: ContextSnapshot | null;
   isPinned?: boolean;
   staffIds?: string[];
+  /**
+   * What the support thread is about, for `kind: SUPPORT`.
+   *
+   * Passed rather than derived because `GUARD` and `DEAL_PROBLEM` both arrive as
+   * `contextType: SUPPORT` with a null context id — the same conversation key — so the context
+   * cannot tell them apart. The caller that knows says so, and `settledType` makes sure a Guard
+   * thread is never relabelled as anything else. See `support-thread.rules.ts`.
+   */
+  supportType?: SupportThreadType;
 }
 
 /** Creates and finds conversations for the sections that own a subject. */
@@ -72,7 +83,16 @@ export class ConversationFactoryService {
       where: { participantKey, contextType, contextId },
     });
 
-    if (existing) return { conversation: existing, created: false };
+    if (existing) {
+      // A second thing claiming a conversation that already exists — which for support threads is
+      // the ordinary case, not an edge: a member's Guard disclosure and their deal problem share
+      // one key by design (D36).
+      if (input.kind === ThreadKind.SUPPORT) {
+        await this.ensureSupportThread(client, existing.id, input, contextType);
+      }
+
+      return { conversation: existing, created: false };
+    }
 
     const conversation = await client.conversation.create({
       data: {
@@ -92,7 +112,53 @@ export class ConversationFactoryService {
       },
     });
 
+    if (input.kind === ThreadKind.SUPPORT) {
+      await this.ensureSupportThread(client, conversation.id, input, contextType);
+    }
+
     return { conversation, created: true };
+  }
+
+  /**
+   * The staff row for a support conversation (§4.8).
+   *
+   * Written here rather than by each of the four services that open support threads, because a
+   * conversation without one is invisible to the inbox — and the thread that goes missing is the
+   * one somebody forgot to add the call to.
+   *
+   * On a conversation that already has a row this only ever **settles the type**, and in
+   * particular only ever raises it to `GUARD`. Nothing else is touched: `state`, the assignee and
+   * every timestamp belong to the thread's own life and would be reset by a second `ensure` call
+   * for an unrelated reason.
+   */
+  private async ensureSupportThread(
+    client: Prisma.TransactionClient | PrismaService,
+    conversationId: string,
+    input: EnsureConversationInput,
+    contextType: ThreadContextType | null,
+  ): Promise<void> {
+    const memberId = input.participantIds[0];
+
+    // No member, no thread. A support conversation always has exactly one; a row keyed on an
+    // undefined member would fail the foreign key and take the whole creation down with it.
+    if (!memberId) return;
+
+    const claimed = input.supportType ?? typeFromContext(contextType);
+    const existing = await client.supportThread.findUnique({
+      where: { conversationId },
+      select: { type: true },
+    });
+    const type = settledType(existing?.type ?? null, claimed);
+
+    if (existing) {
+      if (existing.type === type) return;
+
+      await client.supportThread.update({ where: { conversationId }, data: { type } });
+
+      return;
+    }
+
+    await client.supportThread.create({ data: { conversationId, memberId, type, tags: [] } });
   }
 
   /** Posts a system message into a thread. */
@@ -152,14 +218,24 @@ export class ConversationFactoryService {
     });
   }
 
-  /** Every staff account, for the threads Circl's team has to be in. */
-  async staffUserIds(): Promise<string[]> {
-    const staff = await this.database.user.findMany({
-      where: { isStaff: true, isAnonymised: false },
-      select: { id: true },
-      take: 25,
-    });
-
-    return staff.map(user => user.id);
-  }
+  /**
+   * There is deliberately no `staffUserIds()` any more (B17).
+   *
+   * Every support thread used to be created with **every** staff account as a participant — up to
+   * 25 rows per thread, every role, nobody having chosen to be there. Three things were wrong with
+   * it, and the third is why it could not be fixed until now:
+   *
+   *  - The member's own inbox drew one of them as the counterpart. `counterpart()` takes the first
+   *    non-member participant, so the header of a support thread showed a staff account's name,
+   *    avatar, online status and last-seen time — picked by row order.
+   *  - A member's message raised a delivery receipt and an unread count for all 25, and pushed to
+   *    any device those accounts had.
+   *  - It was the only way staff could see the thread at all, so it could not be removed before
+   *    §5.15's inbox existed. The inbox reads through `pageWithoutAuthorisation` and counts unread
+   *    on `SupportThread` itself, so the participant rows are no longer carrying anything.
+   *
+   * Staff now join a thread by **acting** on it: the replier is added on reply and the assignee on
+   * assignment, both through `addStaff` above. A participant row therefore means "this person has
+   * done something here", which is what the member's inbox was already reading it as.
+   */
 }

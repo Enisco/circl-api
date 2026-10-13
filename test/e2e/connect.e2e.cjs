@@ -2,6 +2,7 @@
 const {
   api,
   check,
+  connectCreate,
   fail,
   finish,
   makeUser,
@@ -100,16 +101,49 @@ const dobFor = years => {
     r.body?.error,
   );
 
-  r = await api(ada.token, 'PUT', '/connect/me', {
-    typeCode: 'LANGUAGE_EXCHANGE',
-    lookingFor: 'Practising English after work, happy to help with Yoruba in return.',
-    dateOfBirth: dobFor(31),
-    isVisible: true,
-    languages: ['ENGLISH', 'YORUBA'],
-    interests: ['FOOD_COOKING', 'SPORT_FITNESS'],
-    heritageTag: 'WEST_AFRICAN',
-  });
+  r = await api(
+    ada.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(ada.token, {
+      typeCode: 'LANGUAGE_EXCHANGE',
+      lookingFor: 'Practising English after work, happy to help with Yoruba in return.',
+      dateOfBirth: dobFor(31),
+      isVisible: true,
+      languages: ['ENGLISH', 'YORUBA'],
+      interests: ['FOOD_COOKING', 'SPORT_FITNESS'],
+      // Three, because the floor is a create-time rule (v2 §2).
+      hobbies: ['COOKING', 'FOOTBALL', 'MUSIC'],
+      occupation: 'Nurse, nights',
+      heritageTag: 'WEST_AFRICAN',
+    }),
+  );
   check('create profile → 200', r.status === 200, r.body?.error);
+  check(
+    'interests and hobbies are two lists, and both come back',
+    (r.body?.data?.interests ?? []).map(t => t.code).join() === 'FOOD_COOKING,SPORT_FITNESS' &&
+      (r.body?.data?.hobbies ?? []).map(t => t.code).join() === 'COOKING,FOOTBALL,MUSIC',
+    { interests: r.body?.data?.interests, hobbies: r.body?.data?.hobbies },
+  );
+  check(
+    'a hobby carries its label, so the card renders without the catalogue',
+    r.body?.data?.hobbies?.[0]?.label === 'Cooking',
+    r.body?.data?.hobbies?.[0],
+  );
+  check('occupation is free text, kept as written', r.body?.data?.occupation === 'Nurse, nights', {
+    occupation: r.body?.data?.occupation,
+  });
+  check(
+    'and the photos sent with it are already a post, in one write',
+    (r.body?.data?.posts ?? []).length === 1 && r.body?.data?.posts?.[0]?.items?.length === 3,
+    (r.body?.data?.posts ?? []).map(post => post.items?.length),
+  );
+  check(
+    'as is the answered prompt, with its question beside it',
+    r.body?.data?.prompts?.[0]?.code === 'ASK_ME_ABOUT' &&
+      typeof r.body?.data?.prompts?.[0]?.question === 'string',
+    r.body?.data?.prompts,
+  );
 
   const prefilled = await api(ada.token, 'GET', '/connect/setup/prefill');
   check(
@@ -180,22 +214,32 @@ const dobFor = years => {
     r.body?.error,
   );
 
-  await api(tunde.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP',
-    lookingFor: 'New to Manchester and looking to meet people from home.',
-    dateOfBirth: dobFor(29),
-    isVisible: true,
-    languages: ['ENGLISH', 'YORUBA'],
-    heritageTag: 'WEST_AFRICAN',
-  });
-  await api(mei.token, 'PUT', '/connect/me', {
-    typeCode: 'NETWORKING',
-    lookingFor: 'Meeting other people working in software around the city.',
-    dateOfBirth: dobFor(35),
-    isVisible: true,
-    languages: ['ENGLISH', 'MANDARIN'],
-    heritageTag: 'EAST_ASIAN',
-  });
+  await api(
+    tunde.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(tunde.token, {
+      typeCode: 'FRIENDSHIP',
+      lookingFor: 'New to Manchester and looking to meet people from home.',
+      dateOfBirth: dobFor(29),
+      isVisible: true,
+      languages: ['ENGLISH', 'YORUBA'],
+      heritageTag: 'WEST_AFRICAN',
+    }),
+  );
+  await api(
+    mei.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(mei.token, {
+      typeCode: 'NETWORKING',
+      lookingFor: 'Meeting other people working in software around the city.',
+      dateOfBirth: dobFor(35),
+      isVisible: true,
+      languages: ['ENGLISH', 'MANDARIN'],
+      heritageTag: 'EAST_ASIAN',
+    }),
+  );
 
   r = await api(ada.token, 'GET', '/connect/profiles');
   check('discovery → 200', r.status === 200, r.body?.error);
@@ -210,9 +254,16 @@ const dobFor = years => {
     r.body?.data?.map(p => p.user?.id),
   );
   check(
-    'facets come from the data, not the catalogue',
-    r.body?.meta?.facets?.languages?.includes('MANDARIN') &&
-      r.body?.meta?.facets?.languages?.includes('YORUBA'),
+    'the type facet comes from the data, not the catalogue',
+    (r.body?.meta?.facets?.types ?? []).length > 0 &&
+      (r.body?.meta?.facets?.types ?? []).every(code => typeof code === 'string'),
+    r.body?.meta?.facets,
+  );
+  check(
+    'and the language and heritage facets are gone: both are things somebody arrives wanting, ' +
+      'so cutting the offer to whoever the other filters left on screen made those searches ' +
+      'impossible to start (v2 reply §3)',
+    r.body?.meta?.facets?.languages === undefined && r.body?.meta?.facets?.heritage === undefined,
     r.body?.meta?.facets,
   );
 
@@ -256,7 +307,7 @@ const dobFor = years => {
     return {
       rows: (res.body?.data ?? []).length,
       total: res.body?.meta?.totalCount,
-      languages: res.body?.meta?.facets?.languages ?? [],
+      types: res.body?.meta?.facets?.types ?? [],
       ages: (res.body?.data ?? []).map(p => p.age),
     };
   };
@@ -285,24 +336,25 @@ const dobFor = years => {
     banded.ages,
   );
 
-  // 2.3: a facet is narrowed by every filter except its own, or picking one language hides the rest.
-  const byLanguage = await counted('&languages=YORUBA');
+  // 2.3: a facet is narrowed by every filter except its own, or picking one value hides the rest.
+  // Asserted on `types`, which is the facet that remains — the rule is the facet's whole purpose
+  // and it did not change when the other two went.
+  const byType = await counted('&type=LANGUAGE_EXCHANGE');
 
   check(
-    'picking a language does not collapse the language facet',
-    byLanguage.languages.length > 1 && byLanguage.languages.includes('YORUBA'),
-    byLanguage.languages,
+    'picking a type does not collapse the type facet',
+    byType.types.length > 1 && byType.types.includes('LANGUAGE_EXCHANGE'),
+    byType.types,
   );
   check(
     'and the alternatives are still offered',
-    byLanguage.languages.some(code => code !== 'YORUBA'),
-    byLanguage.languages,
+    byType.types.some(code => code !== 'LANGUAGE_EXCHANGE'),
+    byType.types,
   );
-  check(
-    'while another dimension does narrow it',
-    banded.languages.length <= everyone.languages.length,
-    { everyone: everyone.languages.length, banded: banded.languages.length },
-  );
+  check('while another dimension does narrow it', banded.types.length <= everyone.types.length, {
+    everyone: everyone.types.length,
+    banded: banded.types.length,
+  });
 
   // 2.1: two languages means either, not both.
   const yoruba = await counted('&languages=YORUBA');
@@ -315,11 +367,11 @@ const dobFor = years => {
     { yoruba: yoruba.total, mandarin: mandarin.total, either: either.total },
   );
 
-  // 3: the facets go straight back out as the filter, so they have to be codes.
+  // 3: the facet goes straight back out as the filter, so it has to be codes.
   check(
     'facets are codes, not labels',
-    everyone.languages.every(code => /^[A-Z][A-Z0-9_]*$/.test(code)),
-    everyone.languages,
+    everyone.types.every(code => /^[A-Z][A-Z0-9_]*$/.test(code)),
+    everyone.types,
   );
 
   // 5: an unsupported parameter is refused rather than ignored, which is louder than the warning
@@ -499,12 +551,17 @@ const dobFor = years => {
   // Decline is silent, and starts a cooldown.
   const dave = await makeUser('dave', { countryOfOrigin: 'JM' });
   ids.push(dave.id);
-  await api(dave.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP',
-    lookingFor: 'Just moved here and looking for people to talk to.',
-    dateOfBirth: dobFor(27),
-    isVisible: true,
-  });
+  await api(
+    dave.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(dave.token, {
+      typeCode: 'FRIENDSHIP',
+      lookingFor: 'Just moved here and looking for people to talk to.',
+      dateOfBirth: dobFor(27),
+      isVisible: true,
+    }),
+  );
   r = await api(dave.token, 'POST', '/connect/requests', { toProfileId: ada.id });
   const daveRequestId = r.body?.data?.id;
   check('dave requests ada → 201', r.status === 201, r.body?.error);
@@ -533,11 +590,16 @@ const dobFor = years => {
 
   const quiet = await makeUser('quiet');
 
-  r = await api(quiet.token, 'PUT', '/connect/me', {
-    typeCode: 'NETWORKING',
-    lookingFor: 'Other people working in software, without saying anything about being seen.',
-    dateOfBirth: dobFor(33),
-  });
+  r = await api(
+    quiet.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(quiet.token, {
+      typeCode: 'NETWORKING',
+      lookingFor: 'Other people working in software, without saying anything about being seen.',
+      dateOfBirth: dobFor(33),
+    }),
+  );
   check('a profile created without mentioning visibility → 200', r.status === 200, r.body?.error);
   check(
     'is visible: choosing a type and saying what you want IS the deliberate act',
@@ -632,6 +694,14 @@ const dobFor = years => {
   await api(ada.token, 'DELETE', `/moderation/blocks/${tunde.id}`);
 
   console.log('\n── 3.2 Posts: the unit is the post, not the photo ──────────');
+
+  // From an empty gallery, so the positions below mean what they say. Creating a profile now
+  // writes its first three photos as a post in the same breath, which is the point of that rule —
+  // but it would leave this section counting from one and quietly testing nothing.
+  for (const post of (await api(ada.token, 'GET', '/connect/me')).body?.data?.profile?.posts ??
+    []) {
+    await api(ada.token, 'DELETE', `/connect/me/posts/${post.id}`);
+  }
 
   // Everything picked in one go goes up as one post with one caption, and the grid draws one tile
   // per post. A grid of nine single squares says somebody uploaded nine times.
@@ -1053,13 +1123,18 @@ const dobFor = years => {
   const rhoda = await makeUser('rhoda', { countryOfOrigin: 'NG', journeyStage: 'SETTLING_IN' });
 
   ids.push(rhoda.id);
-  await api(rhoda.token, 'PUT', '/connect/me', {
-    typeCode: 'FLATMATE',
-    lookingFor: 'Looking for a flatmate near the Northern Quarter from September.',
-    dateOfBirth: dobFor(27),
-    dmPolicy: 'REQUEST_FIRST',
-    isVisible: true,
-  });
+  await api(
+    rhoda.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(rhoda.token, {
+      typeCode: 'FLATMATE',
+      lookingFor: 'Looking for a flatmate near the Northern Quarter from September.',
+      dateOfBirth: dobFor(27),
+      dmPolicy: 'REQUEST_FIRST',
+      isVisible: true,
+    }),
+  );
 
   const photoKey = await uploadPng(rhoda.token, 'CONNECT', 900, 1200);
   r = await api(rhoda.token, 'POST', '/connect/me/posts', { keys: [photoKey], kind: 'PHOTO' });
@@ -1072,13 +1147,18 @@ const dobFor = years => {
   const sola = await makeUser('sola', { countryOfOrigin: 'GH', journeyStage: 'SETTLING_IN' });
 
   ids.push(sola.id);
-  await api(sola.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP',
-    lookingFor: 'New here and would like people to walk with at weekends.',
-    dateOfBirth: dobFor(34),
-    dmPolicy: 'OPEN',
-    isVisible: true,
-  });
+  await api(
+    sola.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(sola.token, {
+      typeCode: 'FRIENDSHIP',
+      lookingFor: 'New here and would like people to walk with at weekends.',
+      dateOfBirth: dobFor(34),
+      dmPolicy: 'OPEN',
+      isVisible: true,
+    }),
+  );
 
   const openPhotoKey = await uploadPng(sola.token, 'CONNECT', 900, 1200);
   r = await api(sola.token, 'POST', '/connect/me/posts', { keys: [openPhotoKey], kind: 'PHOTO' });

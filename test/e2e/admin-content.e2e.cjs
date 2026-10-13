@@ -164,13 +164,13 @@ async function main() {
 
   check(
     'tier=HIGH finds the scanned post',
-    (high.body?.data ?? []).some(row => row.id === postId),
-    (high.body?.data ?? []).map(row => row.id),
+    (high.body?.data ?? []).some(row => row.targetId === postId),
+    (high.body?.data ?? []).map(row => row.targetId),
   );
   check(
     'and tier=CLEAN excludes it',
-    !(cleanOnly.body?.data ?? []).some(row => row.id === postId),
-    (cleanOnly.body?.data ?? []).map(row => row.id),
+    !(cleanOnly.body?.data ?? []).some(row => row.targetId === postId),
+    (cleanOnly.body?.data ?? []).map(row => row.targetId),
   );
 
   const second = await api(author.token, 'POST', '/community/updates', {
@@ -194,8 +194,8 @@ async function main() {
   // reads as though it were dirty.
   check(
     'tier=CLEAN includes a post with no safety row at all',
-    (cleanAgain.body?.data ?? []).some(row => row.id === unscannedId),
-    { looking: unscannedId, got: (cleanAgain.body?.data ?? []).map(row => row.id) },
+    (cleanAgain.body?.data ?? []).some(row => row.targetId === unscannedId),
+    { looking: unscannedId, got: (cleanAgain.body?.data ?? []).map(row => row.targetId) },
   );
 
   // ── 4. Deleted content ───────────────────────────────────────────────────
@@ -213,19 +213,19 @@ async function main() {
 
   check(
     'excluded by default, because the list is what is on the platform',
-    !(excluded.body?.data ?? []).some(row => row.id === unscannedId),
-    (excluded.body?.data ?? []).map(row => row.id),
+    !(excluded.body?.data ?? []).some(row => row.targetId === unscannedId),
+    (excluded.body?.data ?? []).map(row => row.targetId),
   );
   check(
     'include brings it back',
-    (included.body?.data ?? []).some(row => row.id === unscannedId),
-    (included.body?.data ?? []).map(row => row.id),
+    (included.body?.data ?? []).some(row => row.targetId === unscannedId),
+    (included.body?.data ?? []).map(row => row.targetId),
   );
   check(
     'only shows nothing else',
     (only.body?.data ?? []).length >= 1 &&
       (only.body?.data ?? []).every(row => row.deletedAt !== null),
-    (only.body?.data ?? []).map(row => [row.id, row.deletedAt]),
+    (only.body?.data ?? []).map(row => [row.targetId, row.deletedAt]),
   );
 
   // ── 5. The detail ────────────────────────────────────────────────────────
@@ -261,7 +261,7 @@ async function main() {
 
     if (!row) continue;
 
-    const one = await api(null, 'GET', `/admin/content/${slug}/${row.id}`, null, headers);
+    const one = await api(null, 'GET', `/admin/content/${slug}/${row.targetId}`, null, headers);
 
     check(
       `${slug}: the status on the row and on the detail agree`,
@@ -279,6 +279,120 @@ async function main() {
   );
 
   check('an id of the wrong kind is a 404', missing.status === 404, missing.status);
+
+  // ── 5b. The shared ContentRef ────────────────────────────────────────────
+  heading('5b. a row is a ContentRef, so one card draws all four screens');
+
+  const refRow = (high.body?.data ?? []).find(row => row.targetId === postId);
+
+  check(
+    'the row names the id `targetId`, as §5.0 does',
+    refRow?.targetId === postId && refRow?.id === undefined,
+    { targetId: refRow?.targetId, id: refRow?.id },
+  );
+  check(
+    'and carries the rest of the ref: excerpt, visibility, dates and a link',
+    typeof refRow?.excerpt === 'string' &&
+      refRow?.adminUrl === `/content/updates/${postId}` &&
+      'visibility' in (refRow ?? {}) &&
+      typeof refRow?.createdAt === 'string' &&
+      refRow?.visibilityState !== undefined,
+    refRow,
+  );
+  check(
+    'the excerpt is capped at §5.0’s 280 characters',
+    (refRow?.excerpt ?? '').length <= 280,
+    (refRow?.excerpt ?? '').length,
+  );
+  check(
+    'the city is a CityRef with a name, not a bare id',
+    refRow?.city?.id === 'BRISTOL' && refRow?.city?.name === 'Bristol',
+    refRow?.city,
+  );
+  check(
+    'the author is a MemberRef',
+    refRow?.author?.id === author.id &&
+      typeof refRow?.author?.firstName === 'string' &&
+      typeof refRow?.author?.status === 'string',
+    refRow?.author,
+  );
+  check(
+    'and the list’s risk is the three fields a list needs',
+    refRow?.risk?.tier === 'HIGH' &&
+      typeof refRow?.risk?.finalScore === 'number' &&
+      'category' in (refRow?.risk ?? {}),
+    refRow?.risk,
+  );
+
+  // The category's label, not its code: a chip reading BENEFITS_SUPPORT is the taxonomy leaking
+  // onto the screen, and the portal cannot turn a code into words.
+  const requestRows = await api(null, 'GET', '/admin/content/requests?perPage=20', null, headers);
+  const categorised = (requestRows.body?.data ?? []).find(row => row.category);
+
+  check(
+    'a category comes with its label',
+    !categorised ||
+      (typeof categorised.category.code === 'string' &&
+        typeof categorised.category.label === 'string' &&
+        categorised.category.label !== categorised.category.code),
+    categorised?.category,
+  );
+
+  // `openCaseId` was hard-coded null, so the portal's "open case" link was dead on every row.
+  const reporter = await makeUser('content-reporter');
+
+  await api(reporter.token, 'POST', '/moderation/reports', {
+    targetType: 'UPDATE',
+    targetId: postId,
+    reasonCode: 'SPAM',
+    note: 'A report filed so the row has an open case to point at.',
+  });
+
+  const withCase = await api(
+    null,
+    'GET',
+    `/admin/content/updates?authorId=${author.id}&deleted=include`,
+    null,
+    headers,
+  );
+  const casedRow = (withCase.body?.data ?? []).find(row => row.targetId === postId);
+  const openCase = await prisma.reportCase.findFirst({
+    where: { targetType: 'UPDATE', targetId: postId, state: { in: ['OPEN', 'IN_REVIEW'] } },
+    select: { id: true },
+  });
+
+  check(
+    'a reported row names the open case about it',
+    !!openCase && casedRow?.openCaseId === openCase.id,
+    { row: casedRow?.openCaseId, open: openCase?.id },
+  );
+
+  const detailAgain = await api(null, 'GET', `/admin/content/updates/${postId}`, null, headers);
+  const pageAgain = detailAgain.body?.data;
+
+  // The tier is whatever the report's own re-scan concluded (§7.1 rescans on every report), so
+  // this asserts the shape rather than the verdict: `classifier` instead of `classifierScores`,
+  // and the four fields the portal's risk panel reads that were never served here.
+  check(
+    'the detail’s risk is the whole RiskView, under §5.0’s names',
+    typeof pageAgain?.risk?.tier === 'string' &&
+      typeof pageAgain?.risk?.lexiconScore === 'number' &&
+      typeof pageAgain?.risk?.scanStatus === 'string' &&
+      'classifier' in (pageAgain?.risk ?? {}) &&
+      pageAgain?.risk?.classifierScores === undefined,
+    pageAgain?.risk,
+  );
+  check(
+    'and the detail is a ContentRef too, with the same open case',
+    pageAgain?.targetId === postId &&
+      pageAgain?.adminUrl === `/content/updates/${postId}` &&
+      pageAgain?.openCaseId === openCase?.id,
+    {
+      targetId: pageAgain?.targetId,
+      adminUrl: pageAgain?.adminUrl,
+      openCaseId: pageAgain?.openCaseId,
+    },
+  );
 
   // ── 6. History ───────────────────────────────────────────────────────────
   heading('6. what has happened to it, oldest first');

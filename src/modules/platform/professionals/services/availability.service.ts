@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { JobState, Weekday } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { PUBLIC_VISIBILITY } from '../../shared';
+import { ACTIVE_AUTHOR, PUBLIC_VISIBILITY } from '../../shared';
 import { ApiException } from '@/common';
 
 /** Why a slot is not offered. Shown as a disabled chip rather than hidden (G5). */
@@ -54,7 +54,7 @@ export class AvailabilityService {
     // A listing nobody may see has no slots to offer (§6.5): the caller gets the same answer as
     // for a listing that does not exist, which is what the profile page already told them.
     const listing = await this.database.professionalListing.findFirst({
-      where: { id: listingId, deletedAt: null, ...PUBLIC_VISIBILITY },
+      where: { id: listingId, deletedAt: null, ...PUBLIC_VISIBILITY, user: ACTIVE_AUTHOR },
       select: {
         id: true,
         isAcceptingWork: true,

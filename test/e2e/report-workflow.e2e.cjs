@@ -60,12 +60,22 @@ const roleWith = async (label, codes) => {
     return code;
   };
 
-  const reviewerRole = await register('reviewer', ['reports:read', 'moderation:decide']);
+  // `moderation:read` travels with `moderation:decide` in every real role (§4.13), and R9 keys the
+  // reporter's identity on it — so a synthetic role with the decide permission and not the read one
+  // is a combination the platform never grants, and testing against it would be testing a role
+  // that cannot exist.
+  const reviewerRole = await register('reviewer', [
+    'reports:read',
+    'moderation:read',
+    'moderation:decide',
+  ]);
   const managerRole = await register('manager', [
     'reports:read',
+    'moderation:read',
     'moderation:decide',
     'moderation:assign',
   ]);
+  // Support's shape: the reports, and nothing about moderation. R9's subject.
   const readerRole = await register('reader', ['reports:read']);
 
   const reviewer = await makeAdmin('rw-reviewer', reviewerRole);
@@ -197,10 +207,43 @@ const roleWith = async (label, codes) => {
       res.body.data.history.some(entry => entry.kind === 'REPORT'),
     res.body?.data?.history?.map(entry => entry.kind),
   );
+  // `liveContent` was permanently null and `appeals` permanently empty, so the reviewer's screen
+  // could not show the post as it stands today — only the snapshots taken when each report was
+  // filed, which is exactly what an author editing their way out of a report relies on.
   check(
-    'and the two things that are not built yet, present and empty',
-    res.body?.data?.liveContent === null && Array.isArray(res.body?.data?.appeals),
-    { liveContent: res.body?.data?.liveContent, appeals: res.body?.data?.appeals },
+    'the content as it is **now**, which is §5.7’s page',
+    res.body?.data?.liveContent?.targetId === scam &&
+      res.body.data.liveContent.targetType === 'REQUEST' &&
+      typeof res.body.data.liveContent.body?.text === 'string' &&
+      res.body.data.liveContent.adminUrl === `/content/requests/${scam}`,
+    res.body?.data?.liveContent && {
+      targetId: res.body.data.liveContent.targetId,
+      adminUrl: res.body.data.liveContent.adminUrl,
+      bodyKeys: Object.keys(res.body.data.liveContent.body ?? {}),
+    },
+  );
+  check(
+    'with the author’s strikes and account age beside it, as the content page has them',
+    typeof res.body?.data?.liveContent?.author?.activeStrikes === 'number' &&
+      typeof res.body.data.liveContent.author.accountAgeDays === 'number',
+    res.body?.data?.liveContent?.author,
+  );
+  check(
+    'the scanner’s category on the case, rather than a permanent null',
+    'category' in (res.body?.data?.risk ?? {}) &&
+      res.body?.data?.risk?.level !== undefined &&
+      typeof res.body?.data?.risk?.finalScore === 'number',
+    res.body?.data?.risk,
+  );
+  check(
+    'and appeals, which are a real lookup now (none against an undecided case)',
+    Array.isArray(res.body?.data?.appeals) && res.body.data.appeals.length === 0,
+    res.body?.data?.appeals,
+  );
+  check(
+    'every snapshot carries `text`, whatever the writer called the field',
+    res.body?.data?.reports?.every(row => 'text' in (row.snapshot ?? {})),
+    res.body?.data?.reports?.map(row => Object.keys(row.snapshot ?? {})),
   );
   check(
     'a report in the history never names who filed it',
@@ -648,6 +691,34 @@ const roleWith = async (label, codes) => {
     asReader,
   );
   check('nor decide one → 403', res.status === 403, [res.status, res.body?.error?.code]);
+
+  // R9, on the two endpoints that carry a reporter: with `reports:read` and no `moderation:read`,
+  // the reporter and their note are withheld. Support hold exactly that pair of permissions, and
+  // this gate read `reports:read` until today — so a support agent answering an angry member had
+  // the name of whoever reported them on the same screen, which is the one fact that turns a
+  // report into a reprisal.
+  res = await api(null, 'GET', `/admin/reports/cases/${scamCase.id}`, null, asReader);
+
+  check('a reader can open the case', res.status === 200, res.body?.error);
+  check(
+    'but is told how many reports there are without being told who filed them (R9)',
+    (res.body?.data?.reports ?? []).length === 2 &&
+      res.body.data.reports.every(row => row.reporter === null && row.note === null),
+    res.body?.data?.reports?.map(row => ({ reporter: row.reporter, note: row.note })),
+  );
+  check(
+    'while the snapshot of what was reported is still there, because that is the work',
+    (res.body?.data?.reports ?? []).every(row => !!row.snapshot?.capturedAt),
+    res.body?.data?.reports?.map(row => Object.keys(row.snapshot ?? {})),
+  );
+
+  res = await api(null, 'GET', '/admin/reports', null, asReader);
+
+  check(
+    'and the raw log withholds them there too, one page further along',
+    res.status === 200 && (res.body?.data ?? []).every(row => row.reporter === null),
+    (res.body?.data ?? []).slice(0, 3).map(row => row.reporter),
+  );
 
   res = await api(null, 'GET', '/admin/reports', null, asReviewer);
 

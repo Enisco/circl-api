@@ -12,17 +12,18 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import {
+  ACTIVE_AUTHOR,
   ActivityService,
   ContentSafetyService,
   DIRECT_VISIBILITY,
   MediaService,
   PUBLIC_VISIBILITY,
   TaxonomyService,
+  isAllCategories,
+  isReachable,
   toAuthorView,
   toMediaViews,
   toTermView,
-  isAllCategories,
-  isReachable,
 } from '../../shared';
 import { ApiErrorCode, ApiException, buildPageMeta, escapeLike, money, Paginated } from '@/common';
 import { ItemDto, ListStoreItemsDto, UpdateItemDto } from '../dtos/store.dto';
@@ -259,6 +260,8 @@ export class ItemService {
     }
 
     const where: Prisma.StoreItemWhereInput = {
+      // §13.2: an item is only for sale if the person selling it is not suspended.
+      store: { owner: ACTIVE_AUTHOR },
       storeId,
       deletedAt: null,
       // A shop page is a direct read, so a limited item is still on the shelf there — but a held
@@ -340,6 +343,7 @@ export class ItemService {
           storeId: item.storeId,
           id: { not: itemId },
           deletedAt: null,
+          store: { owner: ACTIVE_AUTHOR },
           ...PUBLIC_VISIBILITY,
         },
         take: 6,

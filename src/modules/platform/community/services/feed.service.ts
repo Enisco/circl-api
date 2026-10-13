@@ -12,6 +12,8 @@ import {
 import { PrismaService } from '@/infrastructure';
 import { CursorMeta, daysAgo, decodeCursor, encodeCursor } from '@/common';
 import {
+  ACTIVE_AUTHOR,
+  ACTIVE_OR_NO_AUTHOR,
   ActivityService,
   AuthorSource,
   BlockingService,
@@ -213,6 +215,9 @@ export class FeedService {
     const where: Prisma.CommunityRequestWhereInput = {
       deletedAt: null,
       ...PUBLIC_VISIBILITY,
+      // §13.2: a suspended member's content leaves the feed and comes back when the
+      // suspension ends, because the filter is on them rather than on the item.
+      author: ACTIVE_AUTHOR,
       visibility: { not: PostVisibility.PRIVATE_TO_CIRCL },
       // Applies to REQUEST items only, and defaults to OPEN.
       status: query.status ?? RequestStatus.OPEN,
@@ -245,6 +250,7 @@ export class FeedService {
       where: {
         deletedAt: null,
         ...PUBLIC_VISIBILITY,
+        author: ACTIVE_AUTHOR,
         promotedToListingId: null,
         ...(cityId ? { cityId } : {}),
         ...(categories.length ? { categoryCode: { in: categories } } : {}),
@@ -270,6 +276,7 @@ export class FeedService {
       where: {
         deletedAt: null,
         ...PUBLIC_VISIBILITY,
+        author: ACTIVE_AUTHOR,
         ...(cityId ? { cityId } : {}),
         ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
         ...(ranking === 'PERSONALISED' ? { createdAt: { gte: daysAgo(CANDIDATE_DAYS) } } : {}),
@@ -290,6 +297,10 @@ export class FeedService {
       where: {
         deletedAt: null,
         ...PUBLIC_VISIBILITY,
+        // A guide's author is null for the ones Circl writes, and `isNot` is the nullable form:
+        // a null author is not a suspended member, so those pass. One key, so the `cityId` clause
+        // below cannot overwrite it the way a second `OR` would.
+        author: ACTIVE_OR_NO_AUTHOR,
         publishedAt: { not: null },
         ...(cityId ? { OR: [{ cityId }, { cityId: null }] } : {}),
       },

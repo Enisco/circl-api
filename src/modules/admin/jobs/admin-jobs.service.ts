@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { QueueJobStatus } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { AdminExportService } from '../exports/admin-export.service';
 import { EnforcementService } from '../services/enforcement.service';
@@ -94,36 +95,97 @@ export class AdminJobsService {
     'exports.expire': () => this.expireExports(),
   };
 
-  async runNow(name: string): Promise<boolean> {
+  async runNow(name: string, actorId?: string): Promise<boolean> {
     const job = this.onDemandJobs[name];
 
     if (!job) return false;
 
     this.onDemand = true;
+    this.onDemandActor = actorId ?? null;
 
     try {
       await job();
     } finally {
       this.onDemand = false;
+      this.onDemandActor = null;
     }
 
     return true;
   }
+
+  /** Who asked for the on-demand run, for the history row. Null on the schedule. */
+  private onDemandActor: string | null = null;
 
   /** The same wrapper the platform jobs use: one failure must not take the others down. */
   private async run(name: string, work: () => Promise<string | null>): Promise<void> {
     if (!this.onDemand && this.config.get<string>('DISABLE_SCHEDULED_JOBS') === 'true') return;
 
     const started = Date.now();
+    const startedAt = new Date();
+    const trigger = this.onDemand ? 'MANUAL' : 'CRON';
+    const actorId = this.onDemandActor;
 
     try {
       const summary = await work();
 
       if (summary) this.logger.log(`${name}: ${summary} (${Date.now() - started}ms)`);
+
+      await this.note(name, startedAt, started, trigger, actorId, QueueJobStatus.SUCCESS, summary);
     } catch (error) {
       this.logger.error(`${name} failed: ${(error as Error).message}`, (error as Error).stack);
 
+      await this.note(
+        name,
+        startedAt,
+        started,
+        trigger,
+        actorId,
+        QueueJobStatus.FAILED,
+        null,
+        (error as Error).message,
+      );
+
       if (this.onDemand) throw error;
+    }
+  }
+
+  /**
+   * One `QueueJobLog` row per run (§4.11, B19).
+   *
+   * A second copy of `PlatformJobsService.note`, which is the price of the surface split: these
+   * jobs run in the admin process and those in the member one, and a shared writer would be a new
+   * module both sides import for one insert. The two must stay the same shape, because §5.22's run
+   * list reads them as one history — hence the identical `queueName` convention and columns.
+   *
+   * Never throws: a job that did its work and could not write its own history row has still done
+   * its work.
+   */
+  private async note(
+    name: string,
+    startedAt: Date,
+    startedMs: number,
+    trigger: string,
+    actorId: string | null,
+    status: QueueJobStatus,
+    summary: string | null,
+    error?: string,
+  ): Promise<void> {
+    try {
+      await this.database.queueJobLog.create({
+        data: {
+          queueName: 'admin-jobs',
+          operation: name,
+          status,
+          trigger,
+          userId: actorId,
+          startedAt,
+          durationMs: Date.now() - startedMs,
+          error: error ? error.slice(0, 1000) : null,
+          metadata: summary ? { summary } : undefined,
+        },
+      });
+    } catch (failure) {
+      this.logger.warn(`${name}: run not recorded — ${(failure as Error).message}`);
     }
   }
 }

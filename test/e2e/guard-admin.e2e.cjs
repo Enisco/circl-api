@@ -3,6 +3,7 @@ const {
   adminHeaders,
   api,
   check,
+  connectCreate,
   fail,
   finish,
   makeAdmin,
@@ -585,12 +586,17 @@ const jwt = require('jsonwebtoken');
 
   // A report names one item, because a photo is what somebody objects to. Accepting the subject
   // and then doing nothing on a takedown is worse than refusing the report.
-  await api(seller.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP',
-    lookingFor: 'Here so that one of my photos can be taken down.',
-    dateOfBirth: dob.toISOString().slice(0, 10),
-    isVisible: true,
-  });
+  await api(
+    seller.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(seller.token, {
+      typeCode: 'FRIENDSHIP',
+      lookingFor: 'Here so that one of my photos can be taken down.',
+      dateOfBirth: dob.toISOString().slice(0, 10),
+      isVisible: true,
+    }),
+  );
 
   const shot1 = await uploadPng(seller.token, 'CONNECT', 900, 1200);
   const shot2 = await uploadPng(seller.token, 'CONNECT', 900, 1200);
@@ -1101,6 +1107,16 @@ const jwt = require('jsonwebtoken');
     rowNow?.category?.code === 'SAFETY' && rowNow?.category?.label === 'Safety',
     rowNow?.category,
   );
+  // §5.0's refs, not the member app's author view: the portal's cards read `firstName` and
+  // `status`, and an author view has neither — so a safeguarding case showed a blank where the
+  // member's name belongs.
+  check(
+    'the member is a MemberRef, with the fields the portal draws',
+    typeof rowNow?.member?.firstName === 'string' &&
+      'lastName' in (rowNow?.member ?? {}) &&
+      typeof rowNow?.member?.status === 'string',
+    rowNow?.member,
+  );
 
   // Staff raising one themselves.
   const escalatedMember = await makeUser('guard-escalated');
@@ -1262,6 +1278,14 @@ const jwt = require('jsonwebtoken');
     'and what it was raised about, when it was raised about something',
     Array.isArray(r.body?.data?.linkedContent),
     r.body?.data?.linkedContent,
+  );
+  check(
+    'with each link in the shape every other content reference uses — `targetType`, `targetId` ' +
+      'and a path to open — rather than `{ type, id }`, which the portal cannot read',
+    (r.body?.data?.linkedContent ?? []).every(
+      link => 'targetType' in link && 'targetId' in link && 'adminUrl' in link,
+    ),
+    r.body?.data?.linkedContent?.[0],
   );
 
   // ── §5.13 the phrase tester ───────────────────────────────────────────────

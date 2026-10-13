@@ -193,6 +193,81 @@ const interests: Array<[string, string, boolean]> = [
 ];
 
 /**
+ * What somebody is *into*, for the Connect profile and the Meet card.
+ *
+ * A separate vocabulary from `interests` above, and the reason is in that list: its first fifteen
+ * codes are community categories, so the feed ranker can match a post's category against a
+ * member's interests. That is right for the feed. It is wrong for a profile that asks "what you
+ * have in common with people" and then offers Airport Pickup, Bank Account and Benefits & Support
+ * — things people need help with, not things they are into.
+ *
+ * Both lists stay. `interests` still writes through to the user record and still shapes the feed;
+ * `hobbies` lives on the Connect profile and shapes nothing but what a reader sees.
+ *
+ * Codes may be shared with `interests` where they mean the same thing — READING, MUSIC, TRAVEL,
+ * FILM_TV, TECH, TRAVEL, VOLUNTEERING and LANGUAGES all appear in both. What must never happen is
+ * a **community category** code appearing here, because that is the overlap that made the Connect
+ * picker nonsense in the first place. `hobby-vocabulary.spec.ts` fails if one does.
+ *
+ * Ordered loosely by kind rather than alphabetically — moving, eating, watching, making, going out
+ * — because fifty alphabetised chips is a search problem rather than a picker.
+ */
+const hobbies: Array<[string, string]> = [
+  ['FOOTBALL', 'Football'],
+  ['BASKETBALL', 'Basketball'],
+  ['CRICKET', 'Cricket'],
+  ['TENNIS', 'Tennis'],
+  ['RUNNING', 'Running'],
+  ['GYM', 'Gym & fitness'],
+  ['YOGA', 'Yoga'],
+  ['SWIMMING', 'Swimming'],
+  ['CYCLING', 'Cycling'],
+  ['HIKING', 'Hiking'],
+  ['MARTIAL_ARTS', 'Martial arts'],
+  ['DANCING', 'Dancing'],
+  ['COOKING', 'Cooking'],
+  ['BAKING', 'Baking'],
+  ['EATING_OUT', 'Eating out'],
+  ['COFFEE', 'Coffee'],
+  ['READING', 'Reading'],
+  ['WRITING', 'Writing'],
+  ['MUSIC', 'Music'],
+  ['INSTRUMENT', 'Playing an instrument'],
+  ['SINGING', 'Singing'],
+  ['FILM_TV', 'Film & TV'],
+  ['THEATRE', 'Theatre'],
+  ['COMEDY', 'Comedy'],
+  ['MUSEUMS', 'Museums & galleries'],
+  ['PHOTOGRAPHY', 'Photography'],
+  ['ART', 'Art & drawing'],
+  ['PODCASTS', 'Podcasts'],
+  ['ANIME', 'Anime'],
+  ['BOARD_GAMES', 'Board games'],
+  ['VIDEO_GAMES', 'Video games'],
+  ['KARAOKE', 'Karaoke'],
+  ['NIGHTS_OUT', 'Nights out'],
+  ['VOLUNTEERING', 'Volunteering'],
+  ['FAITH', 'Faith & worship'],
+  ['TRAVEL', 'Travel'],
+  ['CAMPING', 'Camping'],
+  ['GARDENING', 'Gardening'],
+  ['FISHING', 'Fishing'],
+  ['ROAD_TRIPS', 'Road trips'],
+  ['DIY_CRAFTS', 'DIY & crafts'],
+  ['LANGUAGES', 'Learning languages'],
+  ['TECH', 'Tech & coding'],
+  ['INVESTING', 'Investing'],
+  ['SIDE_HUSTLE', 'Side hustles'],
+  ['FASHION', 'Fashion'],
+  ['SKINCARE', 'Beauty & skincare'],
+  ['CARS', 'Cars'],
+  ['DOGS', 'Dogs'],
+  ['CATS', 'Cats'],
+  ['THRIFTING', 'Thrifting & markets'],
+  ['FESTIVALS', 'Festivals & gigs'],
+];
+
+/**
  * The third value is ISO 639-1 (639-3 where no two-letter code exists), served as `iso` so
  * the client can key on a standard identifier. `code` stays as it is because it is already
  * stored on member profiles and is stable against a label change on its own.
@@ -517,6 +592,7 @@ export const taxonomySeeds: TaxonomySeed[] = [
     sort: index + 1,
     isActive,
   })),
+  ...pair(TaxonomyKind.HOBBY, hobbies),
   ...languages.map(([code, label, isoCode], index) => ({
     kind: TaxonomyKind.LANGUAGE,
     code,

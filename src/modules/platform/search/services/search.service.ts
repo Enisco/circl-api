@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ApiErrorCode, ApiException, escapeLike } from '@/common';
 import { PrismaService } from '@/infrastructure';
 import { UserDirectoryService } from '@/modules/core/users/services';
-import { PUBLIC_VISIBILITY, TRADING_STORE } from '../../shared';
+import { ACTIVE_AUTHOR, PUBLIC_VISIBILITY, TRADING_STORE } from '../../shared';
 import { GuideService } from '../../community/services/guide.service';
 import { GroupService } from '../../community/services/group.service';
 import { RequestService } from '../../community/services/request.service';
@@ -305,6 +305,7 @@ export class SearchService {
           deletedAt: null,
           ...PUBLIC_VISIBILITY,
           ...TRADING_STORE,
+          owner: ACTIVE_AUTHOR,
           ...(cityId ? { cityId } : {}),
         },
       },

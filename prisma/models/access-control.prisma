@@ -9,9 +9,9 @@ model Role {
   rolePermissions RolePermission[]
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
+  adminInvites    AdminInvite[]
 
   @@map("roles")
-  adminInvites    AdminInvite[]
 }
 
 model Permission {

@@ -14,6 +14,7 @@
 const {
   api,
   check,
+  connectCreate,
   dobFor,
   fail,
   finish,
@@ -223,6 +224,35 @@ const safetyOf = (targetType, targetId) =>
     safety?.lexiconScore,
   );
 
+  console.log('\n── Where it matched, in the words the member wrote ─────────');
+
+  // §5.9 says a signal's `start`/`end` are offsets into the field the reviewer is shown, so the
+  // portal can highlight the phrase. Matching runs on normalised text — lowercased, whitespace
+  // collapsed, leetspeak folded — whose indices are not the original's, so this is the assertion
+  // that the offsets were mapped back rather than handed over raw.
+  const source = await prisma.communityRequest.findUnique({
+    where: { id: limited },
+    select: { title: true, description: true },
+  });
+  const located = signals.find(signal => signal.pattern === 'immigration raid');
+
+  check(
+    'the signal says which field and where in it',
+    typeof located?.field === 'string' &&
+      typeof located?.start === 'number' &&
+      typeof located?.end === 'number',
+    located,
+  );
+  check(
+    'and slicing the member’s own text at those offsets gives the phrase back',
+    (source?.[located?.field] ?? '').slice(located?.start, located?.end).toLowerCase() ===
+      'immigration raid',
+    {
+      field: located?.field,
+      slice: (source?.[located?.field] ?? '').slice(located?.start, located?.end),
+    },
+  );
+
   console.log('\n── An edit is scanned, and a no-op edit is not ─────────────');
 
   res = await api(author.token, 'PATCH', `/community/requests/${clean}`, {
@@ -422,12 +452,17 @@ const safetyOf = (targetType, targetId) =>
   const seller = await makeUser('cs-seller', { cityId: 'BRISTOL' });
   const neighbour = await makeUser('cs-neighbour', { cityId: 'BRISTOL' });
 
-  res = await api(author.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP',
-    lookingFor: 'Somebody to walk with on weekends, seeded by content-safety.e2e.cjs.',
-    dateOfBirth: dobFor(31),
-    isVisible: true,
-  });
+  res = await api(
+    author.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(author.token, {
+      typeCode: 'FRIENDSHIP',
+      lookingFor: 'Somebody to walk with on weekends, seeded by content-safety.e2e.cjs.',
+      dateOfBirth: dobFor(31),
+      isVisible: true,
+    }),
+  );
   check('a Connect profile is accepted', res.status === 200 || res.status === 201, res.body?.error);
 
   const connectProfile = await prisma.connectProfile.findFirst({

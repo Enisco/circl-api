@@ -69,9 +69,10 @@ export class AdminQueueController {
       'target and the content’s current visibility. Render from it rather than inferring — a ' +
       'held item offers `APPROVE`, a limited one offers `RESTORE_REACH`, and the two are not ' +
       'synonyms.\n\n' +
-      '`tier` is the one filter applied after paging, because the tier lives on the polymorphic ' +
-      'safety table with nothing to join on. When it is used, `meta.tierFilterIsPageLocal` says ' +
-      'so and `meta.total` counts the filtered page rather than the whole set.',
+      '`tier` is a filter like any other now: it was applied after paging, because the tier lives ' +
+      'on the polymorphic safety table — which is joined on `(target_type, target_id)` instead, ' +
+      'so the count, the rows and the paging describe one set. `meta.tierFilterIsPageLocal` is ' +
+      'gone; nothing needs to read it.',
   })
   async list(@CurrentUser() actor: AdminPrincipal, @Query() query: ListQueueItemsDto) {
     query.assertDepth();
@@ -101,6 +102,7 @@ export class AdminQueueController {
   @Post('queue/:id/claim')
   @AdminPermissions('moderation:decide')
   @HttpCode(HttpStatus.OK)
+  @Idempotent()
   @ApiOperation({
     summary: 'Take an item',
     description:
@@ -118,6 +120,7 @@ export class AdminQueueController {
   @Post('queue/:id/release')
   @AdminPermissions('moderation:decide')
   @HttpCode(HttpStatus.OK)
+  @Idempotent()
   @ApiOperation({
     summary: 'Put it back on the pile',
     description:

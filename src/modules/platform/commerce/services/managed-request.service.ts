@@ -48,14 +48,11 @@ export class ManagedRequestService {
       );
     }
 
-    const staffIds = await this.conversations.staffUserIds();
-
     const result = await this.database.$transaction(async tx => {
       const { conversation, created } = await this.conversations.ensure(
         {
           kind: ThreadKind.SUPPORT,
           participantIds: [userId],
-          staffIds,
           contextType: ThreadContextType.MANAGED_REQUEST,
           contextId: dto.storeId ?? dto.briefId ?? userId,
           snapshot: {

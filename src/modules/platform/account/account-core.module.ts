@@ -1,10 +1,20 @@
 import { Module } from '@nestjs/common';
+import { NotificationModule } from '@/modules/infrastructure/notification/notification.module';
 import { AccountDeletionService } from './services/account-deletion.service';
+import { DataExportBuilderService } from './services/data-export-builder.service';
 import { DataExportService } from './services/data-export.service';
 import { EmailChangeService } from './services/email-change.service';
 import { PrivacyService } from './services/privacy.service';
 
-const SERVICES = [AccountDeletionService, PrivacyService, DataExportService, EmailChangeService];
+const SERVICES = [
+  AccountDeletionService,
+  PrivacyService,
+  DataExportService,
+  // B16: the builder that assembles the archive. Here rather than in the jobs module because it
+  // is the data export's own logic — the job is a five-minute `@Cron` that calls one method.
+  DataExportBuilderService,
+  EmailChangeService,
+];
 
 /**
  * Account deletion, privacy, data export and email change — the services, with no routes.
@@ -17,5 +27,6 @@ const SERVICES = [AccountDeletionService, PrivacyService, DataExportService, Ema
  * `AccountModule` imports this and adds the controllers, so there is one copy of each service and
  * the member API is unchanged.
  */
-@Module({ providers: SERVICES, exports: SERVICES })
+// `NotificationModule` for the provider that emails the member their link.
+@Module({ imports: [NotificationModule], providers: SERVICES, exports: SERVICES })
 export class AccountCoreModule {}

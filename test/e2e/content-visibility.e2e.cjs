@@ -12,7 +12,17 @@
  *             still there for anybody who follows a link to it.
  *   HELD    — nobody's but its author's. A direct read by anybody else is a 404, not a 403.
  */
-const { api, check, dobFor, fail, finish, makeUser, prisma, sweep } = require('./harness.cjs');
+const {
+  api,
+  check,
+  connectCreate,
+  dobFor,
+  fail,
+  finish,
+  makeUser,
+  prisma,
+  sweep,
+} = require('./harness.cjs');
 
 /** Writes the state a scan would write, directly: nothing in the app sets these yet. */
 const setState = (table, id, state) =>
@@ -435,12 +445,17 @@ const ids = (res, path = 'data') =>
   const seeker = await makeUser('vis-seeker', { cityId: 'BRISTOL' });
 
   for (const member of [other, seeker]) {
-    res = await api(member.token, 'PUT', '/connect/me', {
-      typeCode: 'FRIENDSHIP',
-      lookingFor: 'Seeded by content-visibility.e2e.cjs, meeting people in Bristol.',
-      dateOfBirth: dobFor(28),
-      isVisible: true,
-    });
+    res = await api(
+      member.token,
+      'PUT',
+      '/connect/me',
+      await connectCreate(member.token, {
+        typeCode: 'FRIENDSHIP',
+        lookingFor: 'Seeded by content-visibility.e2e.cjs, meeting people in Bristol.',
+        dateOfBirth: dobFor(28),
+        isVisible: true,
+      }),
+    );
     check('a Connect profile is set up', res.status === 200 || res.status === 201, res.body?.error);
   }
 

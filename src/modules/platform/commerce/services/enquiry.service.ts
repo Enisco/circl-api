@@ -16,11 +16,12 @@ import {
 import { PrismaService } from '@/infrastructure';
 import { addDays, ApiErrorCode, ApiException, buildPageMeta, money } from '@/common';
 import {
+  ACTIVE_AUTHOR,
   ActivityService,
-  authorSelect,
-  isReachable,
   MediaService,
   PUBLIC_VISIBILITY,
+  authorSelect,
+  isReachable,
   toAuthorView,
 } from '../../shared';
 import { ConversationFactoryService } from '../../messaging/services/conversation-factory.service';
@@ -65,7 +66,11 @@ export class EnquiryService {
     // A held item cannot be bought while it is under review, so it validates as unavailable
     // rather than as missing: the buyer is told the shop cannot sell it, which is true.
     const items = await this.database.storeItem.findMany({
-      where: { id: { in: dto.lines.map(line => line.itemId) }, ...PUBLIC_VISIBILITY },
+      where: {
+        id: { in: dto.lines.map(line => line.itemId) },
+        ...PUBLIC_VISIBILITY,
+        store: { owner: ACTIVE_AUTHOR },
+      },
       select: {
         id: true,
         name: true,
@@ -182,6 +187,9 @@ export class EnquiryService {
         id: { in: dto.lines.map(line => line.itemId) },
         storeId: store.id,
         ...PUBLIC_VISIBILITY,
+        // A line from a suspended seller's shop cannot be bought, so it fails the availability
+        // check below rather than being quietly priced and ordered.
+        store: { owner: ACTIVE_AUTHOR },
       },
     });
     const byId = new Map(items.map(item => [item.id, item] as const));

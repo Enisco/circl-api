@@ -12,9 +12,10 @@
  * of those reaches Google, so it needs the network and valid Firebase credentials, the same way
  * the media suite needs S3. */
 const {
-  approveListing,
   api,
+  approveListing,
   check,
+  connectCreate,
   fail,
   finish,
   makeUser,
@@ -347,12 +348,17 @@ const waitFor = async (token, kind, fragment, timeoutMs = 3000) => {
   console.log('\n── Connect: an accepted request ─────────────────────────────');
 
   const setUpConnect = async user =>
-    api(user.token, 'PUT', '/connect/me', {
-      typeCode: 'FRIENDSHIP',
-      lookingFor: 'Somebody to walk around the city with at the weekend.',
-      isVisible: true,
-      dmPolicy: 'REQUEST_FIRST',
-    });
+    api(
+      user.token,
+      'PUT',
+      '/connect/me',
+      await connectCreate(user.token, {
+        typeCode: 'FRIENDSHIP',
+        lookingFor: 'Somebody to walk around the city with at the weekend.',
+        isVisible: true,
+        dmPolicy: 'REQUEST_FIRST',
+      }),
+    );
 
   await setUpConnect(owner);
 

@@ -1,5 +1,6 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ADMIN_BFF_HEADER, AdminBffCheck, adminBffCheck } from './admin-bff.guard';
 import { AsyncLocalStorage } from 'async_hooks';
 import { isIP } from 'net';
 import { NextFunction, Request, Response } from 'express';
@@ -58,9 +59,23 @@ const MAX_USER_AGENT = 512;
  */
 @Injectable()
 export class AdminClientContextMiddleware implements NestMiddleware {
-  constructor(private readonly config: ConfigService) {}
+  private readonly bff: AdminBffCheck;
+
+  constructor(config: ConfigService) {
+    this.bff = adminBffCheck(config);
+  }
 
   use(request: Request, response: Response, next: NextFunction): void {
+    // **Established here, not read from the guard.** Middleware runs before guards, so the flag
+    // `AdminBffGuard` sets does not exist yet at this point — reading it meant the forwarded
+    // client IP was never trusted, so every audit entry recorded the portal's own address and the
+    // IP-bound MFA ticket broke whenever the portal's outbound address changed between two
+    // requests. The guard still enforces the credential; this decides whether to believe the
+    // chain, which is a question only this middleware asks.
+    (request as Request & { adminBffTrusted?: boolean }).adminBffTrusted = this.bff.matches(
+      request.headers[ADMIN_BFF_HEADER],
+    );
+
     // The logger generates one per request when the caller sends no `x-correlation-id`, and puts
     // it on `req.id`. Reading only the header left every audit entry without a request id, which
     // is the field that ties an entry to the log lines around it.
@@ -71,8 +86,17 @@ export class AdminClientContextMiddleware implements NestMiddleware {
       (generated !== undefined ? String(generated) : undefined);
     const agent = request.headers['user-agent'];
 
+    const clientIp = this.clientIp(request);
+
+    // Published on the request as well as in the context, for `CustomThrottlerGuard` — which is in
+    // `src/common` and must not import anything from the admin module. The throttler keyed
+    // unauthenticated routes on `req.ip`, which for every member of staff is the portal's own
+    // outbound address: one bucket for the whole team, so the sixth sign-in attempt in fifteen
+    // minutes **by anybody** was refused. It reads this field when it is set.
+    (request as Request & { adminClientIp?: string | null }).adminClientIp = clientIp;
+
     const context: AdminContext = {
-      clientIp: this.clientIp(request),
+      clientIp,
       userAgent: typeof agent === 'string' ? agent.slice(0, MAX_USER_AGENT) : null,
       requestId: requestId ?? null,
       idempotencyKey:

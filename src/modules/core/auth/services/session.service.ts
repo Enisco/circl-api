@@ -171,12 +171,11 @@ export class SessionService {
     return { success: true, session };
   }
 
-  async touchSession(sessionId: string): Promise<void> {
-    await this.database.userSession.update({
-      where: { id: sessionId },
-      data: { lastActiveAt: new Date() },
-    });
-  }
+  // `touchSession` was here and had no callers (B21). Its job — moving a session's
+  // `lastActiveAt` as the member uses the app — now happens in `MemberActivityService`, inside the
+  // fifteen-minute gate that already throttles the other two writes about "this member was here".
+  // Calling it from here instead would have been either one write per request or a second copy of
+  // that gate.
 
   async rotateRefreshToken(
     sessionId: string,

@@ -33,6 +33,7 @@ model Conversation {
   enquiries          Enquiry[]
   disputes           Dispute[]
   guardThread        GuardThread?
+  supportThread      SupportThread?
   managedRequests    ManagedRequest[]
   connectionRequests ConnectionRequest[]
   reviews            Review[]
@@ -165,4 +166,92 @@ model MessageReceipt {
   @@id([messageId, userId])
   @@index([userId])
   @@map("message_receipts")
+}
+
+/// §4.8. The staff side of a support conversation.
+///
+/// A 1:1 side table rather than columns on `Conversation`, because every one of these fields is
+/// about staff work — who it is assigned to, when it was answered, whether it is still waiting —
+/// and `Conversation` is the member's row. Seven nullable columns on every group chat and every
+/// Connect thread to serve one kind of conversation is the shape that makes a table hard to read.
+model SupportThread {
+  conversationId String       @id @map("conversation_id")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  /// The member the thread is with. A support conversation has exactly one.
+  memberId String @map("member_id")
+  member   User   @relation("SupportThreadMember", fields: [memberId], references: [id], onDelete: Cascade)
+
+  type  SupportThreadType  @map("type")
+  state SupportThreadState @default(NEW) @map("state")
+
+  assignedToId String?   @map("assigned_to_id")
+  assignedAt   DateTime? @map("assigned_at") @db.Timestamptz
+
+  /// The SLA clock, and the four timestamps the inbox sorts and filters on.
+  ///
+  /// `firstResponseAt` is the first **staff** message after the first member message, so a thread
+  /// Circl opened and the member has not replied to has no response time rather than a negative
+  /// one. System messages are not responses (§7.6).
+  firstMemberMessageAt DateTime? @map("first_member_message_at") @db.Timestamptz
+  firstResponseAt      DateTime? @map("first_response_at") @db.Timestamptz
+  lastMemberMessageAt  DateTime? @map("last_member_message_at") @db.Timestamptz
+  lastStaffMessageAt   DateTime? @map("last_staff_message_at") @db.Timestamptz
+
+  resolvedAt  DateTime? @map("resolved_at") @db.Timestamptz
+  /// How many times a member came back after it was resolved. A thread reopened four times is a
+  /// problem that was never actually fixed, which is the one thing a count can say and a state
+  /// cannot.
+  reopenCount Int       @default(0) @map("reopen_count")
+
+  /// §7.6's "how long has this person been waiting", maintained on write.
+  ///
+  /// Derived data in a column, deliberately and narrowly: it is the inbox's sort key and the
+  /// definition is a comparison between two other columns (`lastMemberMessageAt` newer than
+  /// `lastStaffMessageAt`, in an answerable state), which Postgres can express and Prisma's
+  /// `orderBy` cannot. Sorting on `lastMemberMessageAt` instead would let a thread waiting on the
+  /// *member* jump ahead of a member waiting on us.
+  ///
+  /// Every read recomputes it from the timestamps via `waitingSince()` rather than trusting it, so
+  /// a column that drifts changes the order of a page and never the answer on it.
+  waitingSince DateTime? @map("waiting_since") @db.Timestamptz
+
+  /// Member messages nobody on staff has opened yet.
+  ///
+  /// On the thread rather than per staff member, which is the opposite of how the member side
+  /// counts unread. A support inbox is one shared queue: "two of us have read it and four have
+  /// not" is not a fact anybody acts on, and B17 is going to stop adding every staff account as a
+  /// participant of every support thread — at which point a per-person count would have nowhere
+  /// left to live.
+  unreadForStaff Int @default(0) @map("unread_for_staff")
+
+  tags String[] @map("tags")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([state, assignedToId, lastMemberMessageAt])
+  @@index([memberId])
+  /// The inbox's "longest wait first", which is the view somebody works down.
+  @@index([state, waitingSince])
+  @@map("support_threads")
+}
+
+/// §5.15. A reply somebody writes once and the whole team sends.
+model CannedReply {
+  id    String @id @default(uuid())
+  title String @map("title")
+  body  String @map("body")
+
+  /// Deactivated rather than deleted, so a reply that was sent a thousand times keeps its record
+  /// and stops being offered.
+  isActive Boolean @default(true) @map("is_active")
+
+  createdById String @map("created_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([isActive, title])
+  @@map("canned_replies")
 }

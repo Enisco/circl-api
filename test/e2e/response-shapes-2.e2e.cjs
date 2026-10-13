@@ -5,9 +5,10 @@
  * field by field against the JSON the spec prints. */
 const jwt = require('jsonwebtoken');
 const {
-  approveListing,
   api,
+  approveListing,
   check,
+  connectCreate,
   dobFor,
   finish,
   makeUser,
@@ -183,20 +184,30 @@ async function staff(tag, roleCode) {
   );
 
   console.log('\n── 3.5 connection requests ──────────────────────────────────');
-  await api(a.token, 'PUT', '/connect/me', {
-    typeCode: 'FRIENDSHIP',
-    lookingFor: 'Sunday walks and a bit of company.',
-    dateOfBirth: dobFor(30),
-    dmPolicy: 'REQUEST_FIRST',
-    isVisible: true,
-  });
-  await api(b.token, 'PUT', '/connect/me', {
-    typeCode: 'NETWORKING',
-    lookingFor: 'Meeting people working in the same field.',
-    dateOfBirth: dobFor(34),
-    dmPolicy: 'REQUEST_FIRST',
-    isVisible: true,
-  });
+  await api(
+    a.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(a.token, {
+      typeCode: 'FRIENDSHIP',
+      lookingFor: 'Sunday walks and a bit of company.',
+      dateOfBirth: dobFor(30),
+      dmPolicy: 'REQUEST_FIRST',
+      isVisible: true,
+    }),
+  );
+  await api(
+    b.token,
+    'PUT',
+    '/connect/me',
+    await connectCreate(b.token, {
+      typeCode: 'NETWORKING',
+      lookingFor: 'Meeting people working in the same field.',
+      dateOfBirth: dobFor(34),
+      dmPolicy: 'REQUEST_FIRST',
+      isVisible: true,
+    }),
+  );
   const target = await api(b.token, 'GET', '/connect/me');
   const req = await api(
     a.token,

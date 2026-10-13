@@ -14,6 +14,7 @@ import {
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, daysAgo, money } from '@/common';
 import {
+  ACTIVE_AUTHOR,
   CityService,
   ContentSafetyService,
   DIRECT_VISIBILITY,
@@ -449,7 +450,14 @@ export class StoreService {
       // The three-item teaser on a shop card, which is distribution: it rides along in browse,
       // search and the Commerce home.
       this.database.storeItem.findMany({
-        where: { storeId: store.id, deletedAt: null, ...PUBLIC_VISIBILITY },
+        // §13.2: there is no separate public store-detail route — the shop page is assembled
+        // from this read — so the owner's status is checked here or nowhere.
+        where: {
+          storeId: store.id,
+          deletedAt: null,
+          ...PUBLIC_VISIBILITY,
+          store: { owner: ACTIVE_AUTHOR },
+        },
         select: { id: true, name: true },
         take: 3,
       }),
@@ -508,7 +516,9 @@ export class StoreService {
         where: {
           storeId: store.id,
           deletedAt: null,
-          ...(isOwner ? {} : DIRECT_VISIBILITY),
+          // Not when the owner is looking at their own shop, which is theirs whatever their
+          // account status — the same exception the shelves above make.
+          ...(isOwner ? {} : { ...DIRECT_VISIBILITY, store: { owner: ACTIVE_AUTHOR } }),
         },
         _count: { _all: true },
       }),

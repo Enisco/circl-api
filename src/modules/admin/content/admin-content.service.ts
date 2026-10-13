@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable } from '@nestjs/common';
 import {
   ContentRiskTier,
   ContentScanStatus,
@@ -14,18 +14,28 @@ import {
   ReportTargetType,
   RiskLevel,
   StoreComplianceState,
+  TaxonomyKind,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, ReasonedDto, buildPageMeta } from '@/common';
 import {
   CONTENT_SOURCE,
+  CityService,
   ContentSafetyService,
   HELD_REASON,
   MediaService,
   QueueDeadlineService,
+  TaxonomyService,
   isReachable,
 } from '@/modules/platform/shared';
 import { toMemberRef } from '../serializers/admin-member.serializer';
+import {
+  AdminContentPageView,
+  AdminContentRowView,
+  CityRefView,
+  toContentRef,
+} from '../serializers/admin-content.serializer';
+import { RiskView, toRiskView } from '../serializers/admin-risk.serializer';
 import { caseMemberSelect } from '../serializers/admin-report-case.serializer';
 import { AdminContentTargetService } from '../services/admin-content-target.service';
 import { AdminHistoryService } from '../services/admin-history.service';
@@ -38,6 +48,7 @@ import {
   CONTENT_KINDS,
   CONTENT_SLUGS,
   ContentKind,
+  kindForTarget,
   tableFor,
   visibilityColumnFor,
 } from './content-registry';
@@ -58,11 +69,17 @@ const TYPE_FILTERS: Record<string, string[]> = {
   groups: ['categories', 'joinPolicy', 'visibility'],
   'connect-profiles': ['categories', 'dmPolicy', 'isVisible'],
   'connect-stories': ['active'],
-  listings: ['experienceLevels', 'acceptingWork'],
+  listings: ['experienceLevels', 'acceptingWork', 'professions'],
+  // A service belongs to a listing, so it is filtered by **its listing's** professions — which is
+  // what "show me the electricians' services" means, and the only profession a service has.
+  services: ['professions'],
   stores: ['categories', 'storeStatus', 'complianceState'],
   items: ['categories', 'availability'],
   reviews: ['ratings', 'context'],
 };
+
+/** A case nobody has decided yet, which is what `openCaseId` means on a row. */
+const OPEN_CASE_STATES = [ReportCaseState.OPEN, ReportCaseState.IN_REVIEW];
 
 /** Every type-specific filter, so one that belongs to another kind can be named in the refusal. */
 const ALL_TYPE_FILTERS = [...new Set(Object.values(TYPE_FILTERS).flat())];
@@ -80,6 +97,8 @@ export class AdminContentService {
     private readonly enforcement: AdminEnforcementService,
     private readonly actions: AdminMemberActionService,
     private readonly deadlines: QueueDeadlineService,
+    private readonly cities: CityService,
+    private readonly taxonomy: TaxonomyService,
   ) {}
 
   /**
@@ -145,33 +164,49 @@ export class AdminContentService {
     `;
 
     const ids = rows.map(row => String(row.id));
-    const [authors, reports, risk, titles] = await Promise.all([
+    const [authors, reports, risk, targets, openCases, cities, categories] = await Promise.all([
       this.authors(rows.map(row => row.author_id as string | null)),
       this.reportCounts(kind.targetType, ids),
       this.riskFor(kind.targetType, ids),
       this.targets.resolve(ids.map(id => ({ targetType: kind.targetType, targetId: id }))),
+      this.openCases(kind.targetType, ids),
+      this.cityRefs(rows.map(row => row.city_id as string | null)),
+      this.categoryLabels(kind),
     ]);
 
     return {
-      data: rows.map(row => {
+      data: rows.map((row): AdminContentRowView => {
         const id = String(row.id);
         const authorId = row.author_id as string | null;
+        const cityId = row.city_id ? String(row.city_id) : null;
+        const categoryCode = row.category_code ? String(row.category_code) : null;
 
         return {
-          targetType: kind.targetType,
-          id,
-          title: titles.get(`${kind.targetType}:${id}`)?.title ?? null,
-          author: authorId ? (authors.get(authorId) ?? null) : null,
-          city: row.city_id ? { id: String(row.city_id) } : null,
-          category: row.category_code ? { code: String(row.category_code) } : null,
+          // `targetId`, not `id`: §5.7's row **is** a `ContentRef`, and the portal's content card
+          // is written once against that shape. A row that called it `id` could not be passed to
+          // the same card the queue and the report case pass theirs to.
+          ...toContentRef(
+            {
+              targetType: kind.targetType,
+              targetId: id,
+              createdAt: row.created_at ? new Date(row.created_at as string).toISOString() : null,
+              deletedAt: row.deleted_at ? new Date(row.deleted_at as string).toISOString() : null,
+              visibilityState: row.visibility_state as ContentVisibilityState | null,
+            },
+            targets.get(`${kind.targetType}:${id}`) ?? null,
+            authorId ? (authors.get(authorId) ?? null) : null,
+          ),
+          city: cityId ? (cities.get(cityId) ?? { id: cityId, name: cityId, region: null }) : null,
+          // The label, not just the code: a filter chip reading `BENEFITS_SUPPORT` is the taxonomy
+          // leaking into the screen, and the portal has no way to turn a code into words.
+          category: categoryCode
+            ? { code: categoryCode, label: categories.get(categoryCode) ?? categoryCode }
+            : null,
           status: row.status === null ? null : String(row.status),
-          visibilityState: row.visibility_state as string,
           metrics: this.metricsOf(kind, row),
           reportCount: reports.get(id) ?? 0,
-          openCaseId: null,
+          openCaseId: openCases.get(id) ?? null,
           risk: risk.get(id) ?? null,
-          deletedAt: row.deleted_at ? new Date(row.deleted_at as string).toISOString() : null,
-          createdAt: new Date(row.created_at as string).toISOString(),
         };
       }),
       meta: buildPageMeta(
@@ -188,7 +223,7 @@ export class AdminContentService {
    * The same shape the queue item detail and a report case's live content use, so a reviewer
    * arriving from any of the three reads the same page.
    */
-  async detail(slug: string, id: string) {
+  async detail(slug: string, id: string): Promise<AdminContentPageView> {
     const kind = this.kindOrThrow(slug);
     const table = tableFor(kind);
 
@@ -208,65 +243,109 @@ export class AdminContentService {
       ? ((row[kind.author] as string | null) ?? null)
       : await this.authorViaFor(kind, row);
 
-    const [target, risk, reports, openQueueItem, media, author] = await Promise.all([
-      this.targets.resolve([{ targetType: kind.targetType, targetId: id }]),
-      this.database.contentSafety.findUnique({
-        where: { targetType_targetId: { targetType: kind.targetType, targetId: id } },
-      }),
-      this.database.report.count({ where: { targetType: kind.targetType, targetId: id } }),
-      this.database.moderationQueueItem.findFirst({
-        where: { targetType: kind.targetType, targetId: id, decidedAt: null },
-        select: { id: true },
-      }),
-      this.mediaFor(kind, id),
-      this.authorDetail(authorId),
-    ]);
+    const cityId = kind.city && row[kind.city] ? String(row[kind.city]) : null;
+    const categoryCode = kind.category && row[kind.category] ? String(row[kind.category]) : null;
+
+    const [target, risk, reports, openQueueItem, openCase, media, author, city, categories] =
+      await Promise.all([
+        this.targets.resolve([{ targetType: kind.targetType, targetId: id }]),
+        this.database.contentSafety.findUnique({
+          where: { targetType_targetId: { targetType: kind.targetType, targetId: id } },
+        }),
+        this.database.report.count({ where: { targetType: kind.targetType, targetId: id } }),
+        this.database.moderationQueueItem.findFirst({
+          where: { targetType: kind.targetType, targetId: id, decidedAt: null },
+          select: { id: true },
+        }),
+        this.database.reportCase.findFirst({
+          where: {
+            targetType: kind.targetType,
+            targetId: id,
+            state: { in: OPEN_CASE_STATES },
+          },
+          select: { id: true },
+        }),
+        this.mediaFor(kind, id),
+        this.authorDetail(authorId),
+        cityId ? this.cities.find(cityId) : Promise.resolve(null),
+        this.categoryLabels(kind),
+      ]);
 
     const view = target.get(`${kind.targetType}:${id}`) ?? null;
     const deletedAt = kind.deleted ? (row[kind.deleted] as Date | null) : null;
+    const fields = view?.fields ?? {};
 
     return {
-      targetType: kind.targetType,
-      id,
-      title: view?.title ?? null,
-      city: kind.city && row[kind.city] ? { id: String(row[kind.city]) } : null,
-      category: kind.category && row[kind.category] ? { code: String(row[kind.category]) } : null,
+      ...toContentRef(
+        {
+          targetType: kind.targetType,
+          targetId: id,
+          createdAt: new Date(row[kind.created] as string).toISOString(),
+          deletedAt: deletedAt ? new Date(deletedAt).toISOString() : null,
+        },
+        view,
+        null,
+      ),
+      city: cityId
+        ? { id: cityId, name: city?.name ?? cityId, region: city?.region ?? null }
+        : null,
+      category: categoryCode
+        ? { code: categoryCode, label: categories.get(categoryCode) ?? categoryCode }
+        : null,
       status: row.admin_status === null ? null : String(row.admin_status),
-      visibilityState: view?.visibilityState ?? null,
       metrics: Object.fromEntries(
         Object.entries(kind.metrics).map(([name, column]) => [name, Number(row[column] ?? 0)]),
       ),
       reportCount: reports,
-      openCaseId: null,
+      openCaseId: openCase?.id ?? null,
       // Every scanned field by name, which is what the risk signals' offsets refer to. `text` is
       // the first of them, because §5.7 says the offsets are relative to it.
       body: {
-        text: Object.values(view?.fields ?? {}).find(Boolean) ?? '',
-        ...(view?.fields ?? {}),
+        text: Object.values(fields).find(Boolean) ?? '',
+        ...fields,
       },
       media,
-      risk: risk
-        ? {
-            tier: risk.tier,
-            finalScore: risk.finalScore,
-            lexiconScore: risk.lexiconScore,
-            category: risk.category,
-            signals: risk.lexiconSignals ?? [],
-            classifierScores: risk.classifierScores ?? null,
-            scanStatus: risk.scanStatus,
-            visibilityState: risk.visibilityState,
-            heldReason: risk.heldReason,
-          }
-        : null,
+      // The scan as §5.0 spells it. This was serving `classifierScores` and `heldReason` — the
+      // columns, under the column names — so the portal's risk panel read `classifier` as
+      // undefined and could not say whether a model had run at all.
+      risk: toRiskView(null, risk),
+      // The author with the two numbers §5.7 asks for beside them, which `toContentRef` cannot
+      // know: a plain `MemberRef` there, the detail's richer one here.
       author,
       // Who took it down. A removal recorded against this target by staff is a staff removal;
       // anything else that is deleted is the author's own, and §5.7 is explicit that an author's
       // deletion cannot be restored.
       deletedBy: deletedAt ? await this.deletedBy(kind.targetType, id) : null,
       openQueueItemId: openQueueItem?.id ?? null,
-      deletedAt: deletedAt ? new Date(deletedAt).toISOString() : null,
-      createdAt: new Date(row[kind.created] as string).toISOString(),
     };
+  }
+
+  /**
+   * The same page, addressed by target type rather than by slug.
+   *
+   * §5.9's queue item detail and §5.10's report case both embed "the content as it is now", and
+   * the spec says in both places that it is this shape. They each used to build their own partial
+   * version — the queue's was `{ targetType, targetId, body }`, the case's was `null` — so a
+   * reviewer arriving from the queue and a reviewer arriving from a case saw two different pages
+   * about the same post.
+   *
+   * Null rather than a throw for a target with no content page: a report about a member or a
+   * conversation has none, and that is an ordinary case rather than a missing row.
+   */
+  async page(targetType: ReportTargetType, id: string): Promise<AdminContentPageView | null> {
+    const kind = kindForTarget(targetType);
+
+    if (!kind) return null;
+
+    try {
+      return await this.detail(kind.slug, id);
+    } catch (error) {
+      // Content that is gone. The caller is a case or a queue item that still exists, and a 404
+      // for the whole case because the post was hard-deleted would be the wrong answer.
+      if (error instanceof ApiException && error.getStatus() === HttpStatus.NOT_FOUND) return null;
+
+      throw error;
+    }
   }
 
   /** §5.7's `ModerationHistoryItem[]`, oldest first. */
@@ -911,6 +990,21 @@ export class AdminContentService {
       parts.push(Prisma.sql`${col(kind.category)} IN (${Prisma.join(query.categories)})`);
     }
 
+    // Professions are a join table — one to three codes per listing (2.6.1) — so this is an
+    // `EXISTS` rather than a column comparison, and a listing with two of the codes asked for
+    // appears once rather than twice.
+    if (query.professions?.length) {
+      const listingId = kind.slug === 'services' ? Prisma.raw('c."listing_id"') : col('id');
+
+      parts.push(
+        Prisma.sql`EXISTS (
+          SELECT 1 FROM "professional_listing_categories" plc
+          WHERE plc."listing_id" = ${listingId}
+            AND plc."code" IN (${Prisma.join(query.professions)})
+        )`,
+      );
+    }
+
     if (query.statuses?.length) {
       parts.push(Prisma.sql`${col('status')}::text IN (${Prisma.join(query.statuses)})`);
     }
@@ -1135,8 +1229,54 @@ export class AdminContentService {
     return new Map(grouped.map(row => [row.targetId, row._count._all]));
   }
 
+  /**
+   * The open case per target, for the row's `openCaseId`.
+   *
+   * It was hard-coded null, so the content list could not tell staff that the post they are
+   * looking at is already somebody's open case — and the portal's "open case" link was dead on
+   * every row.
+   */
+  private async openCases(targetType: ReportTargetType, ids: string[]) {
+    if (!ids.length) return new Map<string, string>();
+
+    const cases = await this.database.reportCase.findMany({
+      where: { targetType, targetId: { in: ids }, state: { in: OPEN_CASE_STATES } },
+      select: { id: true, targetId: true },
+      orderBy: { firstReportedAt: 'asc' },
+    });
+
+    // The oldest open case wins a target with two, which the `asc` order above arranges: that is
+    // the one with the deadline attached to it.
+    const result = new Map<string, string>();
+
+    for (const row of cases) if (!result.has(row.targetId)) result.set(row.targetId, row.id);
+
+    return result;
+  }
+
+  /** The page's cities, by id, so a row can carry a `CityRef` and not a bare id. */
+  private async cityRefs(ids: Array<string | null>) {
+    const wanted = [...new Set(ids.filter((id): id is string => !!id))];
+    const result = new Map<string, CityRefView>();
+
+    for (const id of wanted) {
+      const city = await this.cities.find(id);
+
+      if (city) result.set(id, { id: city.id, name: city.name, region: city.region });
+    }
+
+    return result;
+  }
+
+  /** `code → label` for this kind's taxonomy, or an empty map for a kind with no category. */
+  private async categoryLabels(kind: ContentKind) {
+    if (!kind.categoryKind) return new Map<string, string>();
+
+    return this.taxonomy.labels(kind.categoryKind as TaxonomyKind);
+  }
+
   private async riskFor(targetType: ReportTargetType, ids: string[]) {
-    if (!ids.length) return new Map<string, unknown>();
+    if (!ids.length) return new Map<string, Pick<RiskView, 'tier' | 'finalScore' | 'category'>>();
 
     const rows = await this.database.contentSafety.findMany({
       where: { targetType, targetId: { in: ids } },

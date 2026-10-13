@@ -16,6 +16,11 @@ const ASSIGNABLE: Record<string, string> = {
   guard: 'guard:manage',
   moderation: 'moderation:decide',
   support: 'support:manage',
+  // The two §5.16/§5.17 pipelines. Without these the portal's assignee dropdown on a managed
+  // request or a dispute had nothing to call, so the only way to give one to a colleague was to
+  // know their staff id.
+  managed: 'managed:manage',
+  disputes: 'disputes:manage',
 };
 
 export const ASSIGNEE_QUEUES = Object.keys(ASSIGNABLE);
