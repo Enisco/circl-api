@@ -8,7 +8,10 @@ import {
 } from '@prisma/client';
 import { toJson } from '@/common';
 import { PrismaService } from '@/infrastructure';
-import { NotificationFeedService } from '@/modules/platform/notifications';
+import {
+  NotificationFeedService,
+  NotificationPreferenceService,
+} from '@/modules/platform/notifications';
 import { ResendProvider } from '@/modules/infrastructure/notification/providers/email/resend.provider';
 import { ANNOUNCEMENT_CATEGORY, AdminAnnouncementService } from './admin-announcement.service';
 
@@ -43,6 +46,7 @@ export class AnnouncementFanoutService {
     private readonly database: PrismaService,
     private readonly announcements: AdminAnnouncementService,
     private readonly notifications: NotificationFeedService,
+    private readonly preferences: NotificationPreferenceService,
     private readonly resend: ResendProvider,
   ) {}
 
@@ -64,12 +68,17 @@ export class AnnouncementFanoutService {
     }
 
     const where = await this.announcements.whereFor(row.audience);
+    // Counted here as well as at send or schedule time, and this is the figure that counts: for a
+    // scheduled announcement the audience was sized days ago, and "who it went to" is who it went
+    // to. `stats.targeted` reads this column, so a null here is a stats panel reporting zero.
+    const audienceCount = await this.database.user.count({ where });
 
     await this.database.announcement.update({
       where: { id: announcementId },
       data: {
         state: AnnouncementState.SENDING,
         startedAt: row.startedAt ?? new Date(),
+        audienceCount,
       },
     });
 
@@ -231,21 +240,37 @@ export class AnnouncementFanoutService {
     await this.refreshStats(announcement.id);
   }
 
-  /** Who allows this channel for announcements, in one query per batch rather than one per member. */
+  /**
+   * Who allows this channel for announcements — one query per batch rather than one per member.
+   *
+   * The default comes from the **category's own metadata**, read through the service that
+   * `NotificationFeedService.allows` reads it from. It was hardcoded here ("push on, email off"),
+   * which is right today and would have quietly stopped matching the moment staff reworded the
+   * category in the portal: the fan-out would have skipped people the push path was about to
+   * reach, or counted people it was not.
+   *
+   * A **locked** category is always allowed, which is the same rule the member's own preference
+   * screen enforces — and the reason it matters here is that announcements are not locked today
+   * and a future locked category must not be silently skippable.
+   */
   private async allowed(ids: string[], channel: 'push' | 'email'): Promise<Set<string>> {
-    const rows = await this.database.notificationPreference.findMany({
-      where: { userId: { in: ids }, categoryCode: ANNOUNCEMENT_CATEGORY },
-      select: { userId: true, push: true, email: true },
-    });
+    const [rows, defaults] = await Promise.all([
+      this.database.notificationPreference.findMany({
+        where: { userId: { in: ids }, categoryCode: ANNOUNCEMENT_CATEGORY },
+        select: { userId: true, push: true, email: true },
+      }),
+      this.preferences.defaultsFor(ANNOUNCEMENT_CATEGORY),
+    ]);
+
+    if (defaults.isLocked) return new Set(ids);
+
     const saved = new Map(rows.map(row => [row.userId, row]));
 
-    // The category's defaults: push **on**, email **off**. So no row means allowed for push and
-    // not for email — which is why this cannot be a simple "has a row saying true".
     return new Set(
       ids.filter(id => {
         const row = saved.get(id);
 
-        if (!row) return channel === 'push';
+        if (!row) return defaults[channel];
 
         return channel === 'push' ? row.push : row.email;
       }),
@@ -288,10 +313,13 @@ export class AnnouncementFanoutService {
   }
 
   /**
-   * The cached counters on the row, recomputed after each batch.
+   * The progress counters on the row, rewritten after each batch.
    *
-   * The delivery rows are the truth; this is so the stats panel is one read rather than a count
-   * over hundreds of thousands of rows while a fan-out is still running.
+   * **Not read by the stats endpoint**, which counts the delivery rows for real — `opened` keeps
+   * moving after the fan-out ends, so a cached copy would be wrong by the time anybody looked.
+   * What this is for is the row itself: a fan-out that is halfway through forty thousand members
+   * is otherwise a `SENDING` state with nothing to say how far it has got, and that is the first
+   * question asked of one that looks stuck.
    */
   private async refreshStats(announcementId: string): Promise<void> {
     const grouped = await this.database.announcementDelivery.groupBy({

@@ -30,7 +30,15 @@ export type AudienceSection = (typeof AUDIENCE_SECTIONS)[number];
 export const PUSH_BODY_MAX = 500;
 export const BODY_MAX = 5000;
 
-/** §5.18: fewer than ten recipients is refused, for the same reason §2.7 suppresses a count. */
+/**
+ * §5.18: fewer than ten recipients is refused, for the same reason §2.7 suppresses a count.
+ *
+ * Its own name rather than an import of `POPULATION_FLOOR`, and that is deliberate: the analytics
+ * floor exists so a **number** cannot identify a small group, and this one exists so an
+ * announcement is not a message. They are the same ten today and they answer different questions,
+ * so tying them together would mean raising the suppression threshold silently changed who can be
+ * announced to.
+ */
 export const AUDIENCE_FLOOR = 10;
 
 /**

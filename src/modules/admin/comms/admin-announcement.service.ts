@@ -9,6 +9,7 @@ import {
 import { ApiErrorCode, ApiException, buildPageMeta, toJson } from '@/common';
 import { PrismaService } from '@/infrastructure';
 import { MediaService } from '@/modules/platform/shared';
+import { NotificationPreferenceService } from '@/modules/platform/notifications';
 import { AuditService } from '../audit/audit.service';
 import { AdminPrincipal } from '../common/admin-principal';
 import { MemberFilterBuilder } from '../filters/member-filter.builder';
@@ -81,6 +82,7 @@ export class AdminAnnouncementService {
     private readonly database: PrismaService,
     private readonly media: MediaService,
     private readonly filters: MemberFilterBuilder,
+    private readonly preferences: NotificationPreferenceService,
     private readonly queue: AnnouncementQueue,
     private readonly audit: AuditService,
   ) {}
@@ -138,22 +140,46 @@ export class AdminAnnouncementService {
   }
 
   /**
-   * §5.18's stats, read from the delivery rows rather than the cached counters where they exist.
+   * §5.18's stats, counted from the delivery rows.
    *
-   * The cache on the row is what the worker maintains as batches land, and it is there so a stats
-   * panel is one read rather than a count over hundreds of thousands of rows. But a finished
-   * announcement is counted for real: `opened` keeps moving for days after the last batch, because
-   * it is the member reading the notification rather than anything the fan-out did.
+   * **Counted while there are rows to count**, and never from the fan-out's progress cache. The
+   * comment here once claimed the column was read and it was not — the worker maintains
+   * `announcements.stats` as batches land, which is the kind of half-wired cache that later gets
+   * trusted. The one thing on that column this *does* read is the figure retention freezes there
+   * when the rows are deleted, which is a different fact and carries a flag saying so.
+   *
+   * Counting is the right answer: the group-by is over `(announcement_id, status)`, which is
+   * indexed, so it is cheap even at forty thousand rows — and `opened` keeps moving for days after
+   * the last batch, because it is the member reading the notification rather than anything the
+   * fan-out did. A cached `opened` would be wrong by the time anybody looked at it.
+   *
+   * The column stays because §5.18 names it, because it is the one place a fan-out's progress is
+   * visible while it runs — to somebody looking at the row rather than calling the endpoint — and
+   * because of the one case where counting is not possible at all, below.
    */
   async stats(row: {
     id: string;
     channels: AnnouncementChannel[];
     audienceCount: number | null;
     state: AnnouncementState;
+    stats?: Prisma.JsonValue | null;
   }): Promise<AnnouncementStatsView | null> {
     if (row.state === AnnouncementState.DRAFT || row.state === AnnouncementState.SCHEDULED) {
       return null;
     }
+
+    /**
+     * Unless the rows it would count are gone.
+     *
+     * §13.6 keeps delivery rows a year and the announcement's stats for ever, which is only
+     * possible if the figures are written down before the rows go: `retention.purge` freezes them
+     * onto this column with `final: true`, and from then on this is the answer. Without it a
+     * year-old announcement would report zeros the day after the purge ran — a send to forty
+     * thousand people, recorded as having reached nobody.
+     */
+    const frozen = finalStats(row.stats);
+
+    if (frozen) return frozen;
 
     const grouped = await this.database.announcementDelivery.groupBy({
       by: ['channel', 'status'],
@@ -197,6 +223,49 @@ export class AdminAnnouncementService {
     };
   }
 
+  /**
+   * Writes the figures down, because the rows behind them are about to be deleted (§13.6).
+   *
+   * Called by `retention.purge` **before** it removes a year-old announcement's deliveries, while
+   * there is still something to count. `final: true` is what tells `stats` to stop counting and
+   * read this instead; the fan-out's progress cache in the same column carries no such flag, so a
+   * send in flight is never mistaken for a finished one.
+   *
+   * `opened` stops moving at this point, which is the whole point of freezing: an open recorded on
+   * a year-old announcement after its rows are gone is a number nobody can reconstruct anyway.
+   */
+  async freezeStats(id: string): Promise<AnnouncementStatsView | null> {
+    const row = await this.database.announcement.findUnique({
+      where: { id },
+      select: { id: true, channels: true, audienceCount: true, state: true, stats: true },
+    });
+
+    if (!row) return null;
+
+    /**
+     * Frozen once, and never refrozen.
+     *
+     * A fan-out that ran across two days has deliveries of two ages, so the purge can reach it on
+     * two separate nights. The first freeze happens while *every* row is still there and is
+     * therefore the complete figure; a second one would count what was left after the first delete
+     * and overwrite forty thousand with forty. Keeping the first is keeping the true one.
+     */
+    const frozen = finalStats(row.stats);
+
+    if (frozen) return frozen;
+
+    const view = await this.stats({ ...row, stats: null });
+
+    if (!view) return null;
+
+    await this.database.announcement.update({
+      where: { id },
+      data: { stats: toJson({ ...view, final: true }) },
+    });
+
+    return view;
+  }
+
   // ─── Audience ──────────────────────────────────────────────────────────────
 
   /**
@@ -225,7 +294,7 @@ export class AdminAnnouncementService {
       }
 
       reachable[channel] = await this.database.user.count({
-        where: { ...where, ...this.channelWhere(channel) },
+        where: { ...where, ...(await this.channelWhere(channel)) },
       });
     }
 
@@ -271,32 +340,54 @@ export class AdminAnnouncementService {
     };
   }
 
-  /** What a channel needs to be able to land on somebody. */
-  private channelWhere(channel: AnnouncementChannel): Prisma.UserWhereInput {
+  /**
+   * What a channel needs to be able to land on somebody.
+   *
+   * The clause depends on the category's **default**, which is why it is read rather than assumed:
+   * a default-on channel is "no row saying no" and a default-off one is "a row saying yes", and
+   * those are different queries. The first version hardcoded push-on and email-off — right today,
+   * and silently wrong the moment staff reword the category in the portal, which would have made
+   * the preview disagree with the fan-out about who is reachable.
+   */
+  private async channelWhere(channel: AnnouncementChannel): Promise<Prisma.UserWhereInput> {
     if (channel === AnnouncementChannel.IN_APP) {
       // A notification row is always written, so everybody in the audience is reachable in-app.
       return {};
     }
 
-    if (channel === AnnouncementChannel.PUSH) {
-      return {
-        // At least one handset, and the category's push row not turned off. The default is on, so
-        // "no row" counts as allowed — which is why this is `none: { push: false }` rather than
-        // `some: { push: true }`.
-        pushDevices: { some: {} },
-        notificationPreferences: {
-          none: { categoryCode: ANNOUNCEMENT_CATEGORY, push: false },
-        },
-      };
-    }
+    const defaults = await this.preferences.defaultsFor(ANNOUNCEMENT_CATEGORY);
 
-    // Email is **opt-in**: the category's default is off, so a member is only reachable with a row
-    // that says yes.
-    return {
-      notificationPreferences: {
-        some: { categoryCode: ANNOUNCEMENT_CATEGORY, email: true },
-      },
-    };
+    // A locked category cannot be turned off by anybody, so everybody allows it.
+    const permission: Prisma.UserWhereInput = defaults.isLocked
+      ? {}
+      : channel === AnnouncementChannel.PUSH
+        ? defaults.push
+          ? {
+              notificationPreferences: {
+                none: { categoryCode: ANNOUNCEMENT_CATEGORY, push: false },
+              },
+            }
+          : {
+              notificationPreferences: {
+                some: { categoryCode: ANNOUNCEMENT_CATEGORY, push: true },
+              },
+            }
+        : defaults.email
+          ? {
+              notificationPreferences: {
+                none: { categoryCode: ANNOUNCEMENT_CATEGORY, email: false },
+              },
+            }
+          : {
+              notificationPreferences: {
+                some: { categoryCode: ANNOUNCEMENT_CATEGORY, email: true },
+              },
+            };
+
+    // A push also needs a handset. An email needs an address, which every account has.
+    return channel === AnnouncementChannel.PUSH
+      ? { ...permission, pushDevices: { some: {} } }
+      : permission;
   }
 
   /** The audience as a `where`, for the worker. Public so the fan-out resolves it the same way. */
@@ -483,7 +574,17 @@ export class AdminAnnouncementService {
       tx =>
         tx.announcement.update({
           where: { id },
-          data: { state: AnnouncementState.SCHEDULED, scheduledAt: when, sentById: actor.id },
+          data: {
+            state: AnnouncementState.SCHEDULED,
+            scheduledAt: when,
+            sentById: actor.id,
+            // Stored, not just checked. It was only written by `send`, so a **scheduled**
+            // announcement reached SENT with a null count and its stats reported `targeted: 0`
+            // forever — the number was computed right here for the floor check and then thrown
+            // away. The fan-out refreshes it when it actually runs, because the audience two days
+            // from now is not this one.
+            audienceCount: count,
+          },
         }),
     );
 
@@ -674,4 +775,26 @@ const sectionWhere = (section: AudienceSection): Prisma.UserWhereInput => {
   if (section === 'CONNECT') return { connectProfile: { isNot: null } };
 
   return { store: { isNot: null } };
+};
+
+/**
+ * The figures `retention.purge` wrote down, if it has.
+ *
+ * `announcements.stats` holds two different things: the fan-out's progress while it runs, and —
+ * once the delivery rows are past their year and gone — the final figures, flagged. Only the
+ * flagged form is served, because the other one is a snapshot of a send in flight and the
+ * endpoint can always count that for real.
+ */
+const finalStats = (stored: Prisma.JsonValue | null | undefined): AnnouncementStatsView | null => {
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return null;
+
+  const held = stored as Record<string, unknown>;
+
+  if (held.final !== true) return null;
+
+  return {
+    targeted: typeof held.targeted === 'number' ? held.targeted : 0,
+    perChannel: (held.perChannel ?? {}) as AnnouncementStatsView['perChannel'],
+    updatedAt: typeof held.updatedAt === 'string' ? held.updatedAt : new Date().toISOString(),
+  };
 };

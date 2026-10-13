@@ -13,6 +13,7 @@ import {
 } from '@/common';
 import { PrismaService } from '@/infrastructure';
 import { MediaService, SystemConfigService } from '@/modules/platform/shared';
+import { POPULATION_FLOOR } from '../analytics/suppression';
 import { AuditService } from '../audit/audit.service';
 import { AdminPrincipal } from '../common/admin-principal';
 import { UpdateAppVersionsDto, UpdateConfigDto } from '../dtos/admin-config.dto';
@@ -21,8 +22,9 @@ import { StaffRefView, staffRefSelect, toStaffRef } from '../serializers/admin-s
 /** How far back "still in the wild" reaches, for the adoption table (§5.21). */
 const ADOPTION_DAYS = 30;
 
-/** §2.7's floor, applied here too: a version used by fewer than ten people is not reported. */
-const ADOPTION_FLOOR = 10;
+// §2.7's floor is `POPULATION_FLOOR`, imported rather than re-declared: it was a local `10` here,
+// which is the second copy of a number the dashboard already learned not to duplicate. A version
+// used by three people in a small city identifies them, and that judgement belongs in one place.
 
 /**
  * The store host per platform.
@@ -343,7 +345,7 @@ export class AdminConfigService {
       .map(row => ({
         platform: row.platform as 'IOS' | 'ANDROID',
         version: row.version,
-        activeMembers30d: Number(row.members) < ADOPTION_FLOOR ? null : Number(row.members),
+        activeMembers30d: Number(row.members) < POPULATION_FLOOR ? null : Number(row.members),
       }))
       .sort(
         (a, b) => a.platform.localeCompare(b.platform) || compareVersions(b.version, a.version),

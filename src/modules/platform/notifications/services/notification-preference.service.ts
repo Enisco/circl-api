@@ -102,6 +102,28 @@ export class NotificationPreferenceService {
     });
   }
 
+  /**
+   * One category's defaults, for a caller deciding a whole batch at once.
+   *
+   * §5.18's fan-out needs "what does this category default to" without asking per member — forty
+   * thousand `allows()` calls is forty thousand round trips. It had the answer hardcoded instead
+   * ("push on, email off"), which is right today and would quietly stop matching the moment staff
+   * reworded the category's metadata in the portal. One read, from the same place `allows` reads.
+   */
+  async defaultsFor(
+    categoryCode: string,
+  ): Promise<{ push: boolean; email: boolean; isLocked: boolean }> {
+    const terms = await this.terms();
+    const meta =
+      ((terms.find(term => term.code === categoryCode)?.metadata ?? {}) as CategoryMeta) ?? {};
+
+    return {
+      push: meta.defaultPush ?? true,
+      email: meta.defaultEmail ?? false,
+      isLocked: meta.isLocked === true,
+    };
+  }
+
   private terms() {
     return this.database.taxonomyTerm.findMany({
       where: { kind: TaxonomyKind.NOTIFICATION_CATEGORY, isActive: true },
