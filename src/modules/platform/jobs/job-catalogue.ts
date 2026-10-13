@@ -63,6 +63,26 @@ export const JOB_CATALOGUE: JobDefinition[] = [
     onDemand: true,
   },
   {
+    name: 'audit.verify-chain',
+    schedule: CronExpression.EVERY_DAY_AT_2AM,
+    description:
+      'Seals the audit trail into hashed segments and recomputes the seals, so a row changed or ' +
+      'removed in the database is visible rather than silent (S11.3).',
+    surface: 'admin',
+    onDemand: true,
+  },
+  {
+    name: 'retention.purge',
+    schedule: CronExpression.EVERY_DAY_AT_3AM,
+    description:
+      '§13.6: deletes what is past its retention — the trail at six years with the chain ' +
+      're-anchored, access grants, ended staff sessions, spent invites, year-old announcement ' +
+      'deliveries, two-year-old scans and term hits, old report snapshot text, and expired ' +
+      'member data-export files.',
+    surface: 'admin',
+    onDemand: true,
+  },
+  {
     name: 'exports.expire',
     schedule: CronExpression.EVERY_HOUR,
     description: 'Deletes CSV exports past their seven days and marks the request expired.',

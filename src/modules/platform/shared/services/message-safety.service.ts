@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import {
   ContentRiskTier,
@@ -11,7 +12,7 @@ import {
   ThreadKind,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { SYSTEM_CONFIG_KEYS, excerpt, toJson } from '@/common';
+import { SYSTEM_CONFIG_KEYS, excerpt, rowDigest, toJson } from '@/common';
 import { ContentSafetyService } from './content-safety.service';
 import { QueueDeadlineService } from './queue-deadline.service';
 import {
@@ -378,6 +379,12 @@ export class MessageSafetyService {
    * Written straight to the table rather than through `AuditService`, which lives in the admin
    * module: the member API does not load admin code, and this runs on whichever process has the
    * worker. There is no request context to read either — the actor is the system.
+   *
+   * The id, the timestamp and the digest are set here for the same reason `AuditService` sets
+   * them: the trail is append-only, so there is no second write to put a hash into, and S11.3's
+   * verification can only name the row that changed if the row carries its own digest. `prevHash`
+   * is left null — the chain's tip is an admin-side read and this path has no business making it;
+   * an unanchored row is still sealed and still digested.
    */
   private async record(
     message: MessageRow,
@@ -386,25 +393,33 @@ export class MessageSafetyService {
     escalation: Escalation,
     subjectId: string | null,
   ): Promise<void> {
+    const entry = {
+      id: randomUUID(),
+      occurredAt: new Date(),
+      action: MESSAGE_ESCALATED_ACTION,
+      area: 'SAFETY' as const,
+      actorId: null,
+      targetType: ReportTargetType.MESSAGE,
+      targetId: message.id,
+      metadata: {
+        category,
+        tier,
+        subjectRole: escalation.subjectRole,
+        // Who it is about, so "every escalation about this member" is one query. Ids only:
+        // §6.8 forbids the message text here, and this is the whole trail of the decision.
+        subjectId,
+        rule: escalation.rule,
+        conversationId: message.conversationId,
+        messageId: message.id,
+      },
+    };
+
     await this.database.auditLog
       .create({
         data: {
-          action: MESSAGE_ESCALATED_ACTION,
-          area: 'SAFETY',
-          actorId: null,
-          targetType: ReportTargetType.MESSAGE,
-          targetId: message.id,
-          metadata: toJson({
-            category,
-            tier,
-            subjectRole: escalation.subjectRole,
-            // Who it is about, so "every escalation about this member" is one query. Ids only:
-            // §6.8 forbids the message text here, and this is the whole trail of the decision.
-            subjectId,
-            rule: escalation.rule,
-            conversationId: message.conversationId,
-            messageId: message.id,
-          }),
+          ...entry,
+          metadata: toJson(entry.metadata),
+          hash: rowDigest(entry),
         },
       })
       .catch(error => {

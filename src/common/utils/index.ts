@@ -6,3 +6,4 @@ export * from './json.util';
 export * from './geo.util';
 export * from './semver.util';
 export * from './config-rule.util';
+export * from './audit-digest.util';

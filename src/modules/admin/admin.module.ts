@@ -76,6 +76,7 @@ import { AdminTaxonomyService } from './services/admin-taxonomy.service';
 import { AdminMeService } from './services/admin-me.service';
 import { AdminTeamService } from './services/admin-team.service';
 import { EnforcementService } from './services/enforcement.service';
+import { AuditChainService } from './audit/audit-chain.service';
 import { AuditService } from './audit/audit.service';
 import { AdminAuthService } from './auth/admin-auth.service';
 import { AdminInviteService } from './auth/admin-invite.service';
@@ -113,6 +114,7 @@ import { AdminExportRunner } from './exports/admin-export-runner.service';
 import { AdminExportService } from './exports/admin-export.service';
 import { AdminJobRunnerService } from './jobs/admin-job-runner.service';
 import { AdminJobsService } from './jobs/admin-jobs.service';
+import { RetentionPurgeService } from './jobs/retention-purge.service';
 
 const CONTROLLERS = [
   AdminAuthController,
@@ -195,6 +197,7 @@ const CONTROLLERS = [
     AdminRouteAuditService,
     AdminJobRunnerService,
     AdminJobsService,
+    RetentionPurgeService,
 
     // Authentication.
     AdminAuthService,
@@ -208,6 +211,7 @@ const CONTROLLERS = [
 
     // Shared.
     AuditService,
+    AuditChainService,
     AdminPolicyService,
     MemberFilterBuilder,
     AnalyticsRunnerService,

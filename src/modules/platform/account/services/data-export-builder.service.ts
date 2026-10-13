@@ -1,7 +1,9 @@
+import { randomUUID } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataExportStatus } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
+import { rowDigest } from '@/common';
 import { StorageProvider } from '@/modules/platform/media/storage';
 import { ResendProvider } from '@/modules/infrastructure/notification/providers';
 import { DataExportService } from './data-export.service';
@@ -657,6 +659,11 @@ export class DataExportBuilderService {
    * `AuditService` lives in the admin module and member-facing code must not import it — that is
    * the boundary the whole surface split rests on. So this writes the row, with `actorId: null`,
    * which is also what the spec asks for: nobody triggered it, a schedule did.
+   *
+   * The digest comes from `@/common` for exactly that reason (S11.3): the trail is append-only, so
+   * a row's hash has to be written with it, and an entry written on this side of the boundary must
+   * not be the one entry verification cannot name. `prevHash` stays null — reading the chain's tip
+   * is admin-side work — and an unanchored row is still sealed and still digested.
    */
   private async note(
     userId: string,
@@ -665,17 +672,21 @@ export class DataExportBuilderService {
     metadata: Record<string, unknown>,
   ): Promise<void> {
     try {
+      const entry = {
+        id: randomUUID(),
+        occurredAt: new Date(),
+        action,
+        // MEMBERS, as `audit-actions.ts` registers both of these. Spelled rather than imported,
+        // for the boundary above.
+        area: 'MEMBERS' as const,
+        actorId: null,
+        targetType: 'MEMBER',
+        targetId: userId,
+        metadata: { requestId, ...metadata },
+      };
+
       await this.database.auditLog.create({
-        data: {
-          action,
-          // MEMBERS, as `audit-actions.ts` registers both of these. Spelled rather than imported,
-          // for the boundary above.
-          area: 'MEMBERS',
-          actorId: null,
-          targetType: 'MEMBER',
-          targetId: userId,
-          metadata: { requestId, ...metadata },
-        },
+        data: { ...entry, hash: rowDigest(entry) },
       });
     } catch (error) {
       this.logger.warn(`Audit entry ${action} not written: ${(error as Error).message}`);

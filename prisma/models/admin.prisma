@@ -177,10 +177,20 @@ model AuditLog {
   requestId      String? @map("request_id")
   idempotencyKey String? @map("idempotency_key")
 
-  /// Optional tamper-evidence chain. Populated from M4; the append-only trigger is the control
-  /// that does the work before then.
+  /// This row's own digest: SHA-256 over the canonical JSON of its recorded fields (S11.3).
+  ///
+  /// Written at insert and never read on the request path. On its own it proves little — anybody
+  /// who could rewrite the row could rewrite the digest — which is why the evidence is the
+  /// `AuditChainSegment` chain built over these digests. Null for rows written before the chain
+  /// existed, which is what makes them visibly older than it rather than silently wrong.
+  hash String? @map("hash")
+
+  /// The chain's tip when this row was written: the hash of the newest segment sealed at the time.
+  ///
+  /// It anchors the row to history that was already sealed, so a row inserted later and backdated
+  /// into a sealed era carries a tip that did not exist yet. Null until the first segment is
+  /// sealed, and null if the tip could not be read — an unanchored row is still digested.
   prevHash String? @map("prev_hash")
-  hash     String? @map("hash")
 
   @@index([occurredAt])
   @@index([actorId, occurredAt])
@@ -188,6 +198,88 @@ model AuditLog {
   @@index([area, occurredAt])
   @@index([action, occurredAt])
   @@map("audit_logs")
+}
+
+/// A sealed stretch of the audit trail, hashed (S11.3).
+///
+/// **Why a chain over segments rather than a `prevHash` on every row.** A per-row chain has to read
+/// the previous row's hash and insert in one serialised step, or two concurrent actions read the
+/// same tip and the chain forks. Serialising it means a lock held across the business transaction
+/// that the audit row belongs to — a global queue through every admin mutation, and a deadlock
+/// surface — for a control the spec marks *recommended, P3*. Sealing after the fact costs nothing
+/// on the write path, covers the rows written before the chain existed, and detects the same thing:
+/// any row changed, removed or inserted inside a sealed stretch breaks that segment's hash.
+///
+/// Each segment covers `(fromOccurredAt, toOccurredAt]` — contiguous with the one before it, so no
+/// row can fall between two segments and go uncovered. `hash` is SHA-256 over the previous
+/// segment's hash followed by the digest of every row in the range, in `(occurredAt, id)` order.
+///
+/// Append-only, by the same trigger as the trail itself: a chain the application can rewrite is a
+/// chain that proves nothing about the application.
+model AuditChainSegment {
+  id  String @id @default(uuid())
+  /// Insertion order, which is the chain's order. A gap means a rolled-back seal, not a missing
+  /// link — the links are followed by hash, and `seq` only says which way is forward.
+  seq BigInt @default(autoincrement()) @map("seq")
+
+  /// Exclusive lower bound: the previous segment's `toOccurredAt`.
+  fromOccurredAt DateTime @map("from_occurred_at") @db.Timestamptz
+  /// Inclusive upper bound: where this seal stopped — a day on from the lower bound, the
+  /// fifteen-minute cutoff, or where a fifty-thousand-row cap fell. **Not** the last row's
+  /// timestamp, so consecutive ranges leave no gap for a late row to hide in.
+  toOccurredAt   DateTime @map("to_occurred_at") @db.Timestamptz
+
+  /// How many rows were in the range when it was sealed. The first thing verification compares.
+  rowCount Int @map("row_count")
+
+  /// The previous segment's `hash`. Null for the first segment, which is the chain's genesis.
+  prevHash String? @map("prev_hash")
+  hash     String  @map("hash")
+
+  sealedAt DateTime @default(now()) @map("sealed_at") @db.Timestamptz
+
+  /// When this segment was last recomputed and found intact. Nightly for the newest segments and
+  /// on a rotation for the rest, so an edit to a two-year-old row is still found.
+  verifiedAt DateTime? @map("verified_at") @db.Timestamptz
+
+  @@unique([seq])
+  /// A predecessor is followed once and a stretch starts once. Both are invariants of the chain,
+  /// declared here because two runs sealing at the same moment would otherwise fork it — and a
+  /// forked chain reports a broken link for ever with no way to tell which branch is the history.
+  @@unique([prevHash])
+  @@unique([fromOccurredAt])
+  @@index([toOccurredAt])
+  @@index([hash])
+  @@map("audit_chain_segments")
+}
+
+/// Why the hash chain does not start at the beginning any more (S11.4 against S11.3).
+///
+/// Audit rows are kept six years and then purged, which removes the stretches that sealed them —
+/// and leaves the oldest remaining segment recording a predecessor that no longer exists.
+/// Verification reports that as a broken link, deliberately: a chain that forgives a missing
+/// genesis forgives a deleted one. This row is the explanation it accepts instead.
+///
+/// So the purge cannot quietly shorten the chain. It has to say, in a row of its own that nothing
+/// can edit, which hash it removed and how much went with it — which is the same bargain the trail
+/// itself makes: you may delete history on a schedule, but not without recording that you did.
+model AuditChainTruncation {
+  id String @id @default(uuid())
+
+  /// The hash of the last segment removed: the value the oldest remaining segment still records as
+  /// its predecessor, and the only thing that makes that record explicable.
+  removedHash String @map("removed_hash")
+
+  /// The end of the purged stretch — every entry up to here is gone.
+  upToOccurredAt  DateTime @map("up_to_occurred_at") @db.Timestamptz
+  segmentsRemoved Int      @map("segments_removed")
+  rowsRemoved     Int      @map("rows_removed")
+
+  purgedAt DateTime @default(now()) @map("purged_at") @db.Timestamptz
+
+  @@index([removedHash])
+  @@index([purgedAt])
+  @@map("audit_chain_truncations")
 }
 
 // ═══════════════════════════════════════════════════════════════════ Admin portal — notes

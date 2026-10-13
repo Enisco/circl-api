@@ -66,7 +66,8 @@ The safety is in the file, not the command: `deploy` will run whatever a migrati
 | `moderation-queue.e2e.cjs` | §5.9: the queue a reviewer works — CSV filters, a band and a deadline on every item, `allowedDecisions` from the server, claim/release/assign, and the three decisions that used to do nothing (a warning that warns, an approval that publishes, a rejection the author can read) |
 | `listing-documents.e2e.cjs` | §2.9 documents: PDFs for this purpose only, 1–5 enforced, the bytes deciding the type over the declared one, EXIF stripped before storage, one listing per document, Support refused, the audit entry throttled, and a resubmission superseding what it replaced without deleting it |
 | `listing-review.e2e.cjs` | §2.9 and §13.2: a listing in a gated profession held until somebody approves it, a decline the member can act on, a fix that resubmits, an approval that publishes — and a suspended member who is finally told they are suspended, with the end date and where to appeal |
-| `admin-exports.e2e.cjs` | §5.26: the column allowlist, contact columns, the filters being the list's filters, twenty an hour, owner-only downloads, and the seven-day sweep |
+| `admin-exports.e2e.cjs` | §5.26: the column allowlist, contact columns, the filters being the list's filters, every kind's file counted against its own list, the content export refusing a type-specific filter, twenty an hour, owner-only downloads, and the seven-day sweep |
+| `admin-audit.e2e.cjs` | §5.23, S11 and §13.6: the trail read under all three R8 scopes, the jobs screen, S11.3's hash chain — a sealed stretch proved to notice a row changed, removed or inserted, and put back — and every retention rule checked against an old row *and* a recent one |
 
 Run them all, and **read the report rather than the last line**:
 

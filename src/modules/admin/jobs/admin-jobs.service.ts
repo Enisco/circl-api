@@ -3,7 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { QueueJobStatus } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
+import { AuditChainService } from '../audit/audit-chain.service';
 import { AdminExportService } from '../exports/admin-export.service';
+import { RetentionPurgeService } from './retention-purge.service';
 import { EnforcementService } from '../services/enforcement.service';
 
 /**
@@ -23,6 +25,8 @@ export class AdminJobsService {
     private readonly database: PrismaService,
     private readonly enforcement: EnforcementService,
     private readonly exports: AdminExportService,
+    private readonly chain: AuditChainService,
+    private readonly retention: RetentionPurgeService,
   ) {}
 
   /**
@@ -83,6 +87,34 @@ export class AdminJobsService {
     });
   }
 
+  /**
+   * Nightly, which is as often as tamper evidence is worth anything (S11.3).
+   *
+   * At 02:00, after the 01:30 analytics rollups: this reads the newest segments in full, and the
+   * two are better off not sharing a window. It shares the slot with `intelligence.auto-guides`,
+   * which is a platform job and therefore not in this process on the staff host.
+   *
+   * A failure here is the alert. `run` throws when verification finds a difference, which marks
+   * the run FAILED in §5.22's history and writes a `securityEvent` the log pipeline watches — the
+   * two places somebody would look, rather than a summary string that reads green.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_2AM, { name: 'audit.verify-chain' })
+  async verifyAuditChain() {
+    await this.run('audit.verify-chain', () => this.chain.run());
+  }
+
+  /**
+   * §13.6's retention table, nightly at 03:00.
+   *
+   * After the chain job at 02:00, and that order matters: the purge removes whole sealed stretches
+   * of the trail, so a run that seals first has the stretch it is allowed to drop. The hour is the
+   * spec's, and it is the quietest one for a job that deletes from a dozen tables.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_3AM, { name: 'retention.purge' })
+  async purgeRetention() {
+    await this.run('retention.purge', () => this.retention.run());
+  }
+
   private onDemand = false;
 
   private readonly onDemandJobs: Record<string, () => Promise<void>> = {
@@ -93,6 +125,13 @@ export class AdminJobsService {
     // On demand as well, so an operator can make the seven-day boundary happen now rather than
     // waiting for the hour — and so the end-to-end checks can prove the sweep rather than trust it.
     'exports.expire': () => this.expireExports(),
+    // On demand as well, so the chain can be sealed and checked the moment somebody suspects
+    // something rather than at two in the morning — and so the end-to-end checks can prove the
+    // detection rather than trust it.
+    'audit.verify-chain': () => this.verifyAuditChain(),
+    // On demand as well, so a retention question can be answered now rather than tomorrow — and
+    // so the end-to-end checks can prove each rule rather than trust the dates in the table.
+    'retention.purge': () => this.purgeRetention(),
   };
 
   async runNow(name: string, actorId?: string): Promise<boolean> {

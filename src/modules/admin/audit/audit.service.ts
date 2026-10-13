@@ -1,7 +1,8 @@
+import { randomUUID } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { AdminReasonCode, AuditArea, Prisma } from '@prisma/client';
 import { CacheService, PrismaService } from '@/infrastructure';
-import { toJson } from '@/common';
+import { rowDigest, toJson } from '@/common';
 import { AuditAction, areaOf } from './audit-actions';
 import { adminContext } from '../common/admin-context';
 
@@ -36,6 +37,9 @@ export interface AuditDraft {
 }
 
 type Tx = Prisma.TransactionClient;
+
+/** How long the sealed tip is reused for. It changes once a night; this is about write cost. */
+const TIP_TTL_MS = 60_000;
 
 @Injectable()
 export class AuditService {
@@ -85,31 +89,109 @@ export class AuditService {
    */
   async record(tx: Tx, draft: AuditDraft): Promise<string> {
     const context = adminContext.current();
+    /**
+     * The id and the timestamp are set here rather than by the database, because the row's digest
+     * has to cover both and cannot be computed after the insert — the trail is append-only, so
+     * there is no second write to put a hash into (S11.3).
+     *
+     * `occurredAt` is therefore the moment the entry was recorded. The column default was
+     * `now()`, which in Postgres is the *transaction's* start time: two entries written minutes
+     * apart inside one long transaction carried the same timestamp, and an entry written at the
+     * end of one appeared to precede things that happened before it.
+     */
+    const id = randomUUID();
+    const occurredAt = new Date();
+    const digested = {
+      id,
+      occurredAt,
+      actorId: draft.actorId !== undefined ? draft.actorId : (context?.actorId ?? null),
+      actorRole: context?.actorRole ?? null,
+      actorSessionId: context?.actorSessionId ?? null,
+      action: draft.action,
+      area: draft.area ?? areaOf(draft.action),
+      targetType: draft.targetType ?? null,
+      targetId: draft.targetId ?? null,
+      targetLabel: draft.targetLabel ?? null,
+      before: draft.before,
+      after: draft.after,
+      reasonCode: draft.reasonCode ?? null,
+      policySubtype: draft.policySubtype ?? null,
+      reason: draft.reason ?? null,
+      metadata: draft.metadata ?? null,
+      ip: context?.clientIp ?? null,
+      userAgent: context?.userAgent ?? null,
+      requestId: context?.requestId ?? null,
+      idempotencyKey: context?.idempotencyKey ?? null,
+    };
+    /**
+     * The insert is built **from** the digested object rather than beside it.
+     *
+     * Two field lists would be a way for a column to be recorded and not covered by its own
+     * digest: somebody adds a field to the insert, the digest keeps hashing the nineteen it knew,
+     * and the trail quietly stops being evidence of that twentieth thing. The JSON columns are the
+     * only ones that differ, because Prisma needs `DbNull` where the draft says nothing.
+     */
     const row = await tx.auditLog.create({
       data: {
-        action: draft.action,
-        area: draft.area ?? areaOf(draft.action),
-        actorId: draft.actorId !== undefined ? draft.actorId : (context?.actorId ?? null),
-        actorRole: context?.actorRole ?? null,
-        actorSessionId: context?.actorSessionId ?? null,
-        targetType: draft.targetType ?? null,
-        targetId: draft.targetId ?? null,
-        targetLabel: draft.targetLabel ?? null,
+        ...digested,
         before: draft.before === undefined ? Prisma.DbNull : toJson(draft.before),
         after: draft.after === undefined ? Prisma.DbNull : toJson(draft.after),
-        reasonCode: draft.reasonCode ?? null,
-        policySubtype: draft.policySubtype ?? null,
-        reason: draft.reason ?? null,
         metadata: draft.metadata ? toJson(draft.metadata) : Prisma.DbNull,
-        ip: context?.clientIp ?? null,
-        userAgent: context?.userAgent ?? null,
-        requestId: context?.requestId ?? null,
-        idempotencyKey: context?.idempotencyKey ?? null,
+        hash: rowDigest(digested),
+        prevHash: await this.sealedTip(),
       },
       select: { id: true },
     });
 
     return row.id;
+  }
+
+  /** The sealed tip, and when it was read. Memoised, because every entry asks for it. */
+  private tip: { hash: string | null; readAt: number } = { hash: null, readAt: 0 };
+
+  /**
+   * The hash of the newest sealed segment, cached for a minute.
+   *
+   * Written onto every entry as `prevHash`, which anchors the entry to history that was already
+   * sealed when it was recorded. What that catches is a row **inserted later and backdated**: it
+   * carries a tip that did not exist at the time it claims to have happened. What it does not
+   * catch is somebody writing rows straight into Postgres with a tip of their choosing — nothing
+   * on this side of the connection can — and that is what the segment chain and the append-only
+   * trigger are for.
+   *
+   * A minute of staleness is deliberate: the alternative is a query per audit entry, on the write
+   * path of every admin mutation, for a value that changes once a night. A read that fails leaves
+   * the entry unanchored rather than failing the action it describes.
+   */
+  /**
+   * Drops the cached tip, called by the chain service the moment it seals a segment.
+   *
+   * Without it the minute of staleness is also a minute of entries anchored to the segment before
+   * the one that had just been written — harmless in production, and impossible to write a check
+   * against, which is how a cache becomes the reason a rule is never tested.
+   */
+  forgetTip(): void {
+    this.tip = { hash: null, readAt: 0 };
+  }
+
+  private async sealedTip(): Promise<string | null> {
+    if (this.tip.readAt && Date.now() - this.tip.readAt < TIP_TTL_MS) return this.tip.hash;
+
+    try {
+      const latest = await this.database.auditChainSegment.findFirst({
+        orderBy: { seq: 'desc' },
+        select: { hash: true },
+      });
+
+      this.tip = { hash: latest?.hash ?? null, readAt: Date.now() };
+    } catch (error) {
+      this.logger.warn(
+        `audit chain tip unreadable, entries unanchored: ${(error as Error).message}`,
+      );
+      this.tip = { hash: null, readAt: Date.now() };
+    }
+
+    return this.tip.hash;
   }
 
   /**
