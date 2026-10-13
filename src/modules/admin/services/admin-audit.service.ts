@@ -207,6 +207,18 @@ export class AdminAuditService {
    * R8 allows. A `audit:read_area` holder asking for `area=TEAM` gets their own TEAM actions —
    * which their scope already permits — rather than everybody's, and rather than a refusal.
    */
+  /**
+   * The same predicate the list uses, for §5.26's export.
+   *
+   * Public rather than copied, and that is the whole point: R8's scope is the first clause of it,
+   * so an export applies the caller's own scope **by construction**. A second implementation
+   * would be a way around the audit scope — the one place in this API where that is worth saying
+   * out loud, because an export is also the one place where data leaves the portal.
+   */
+  exportWhere(actor: AdminPrincipal, query: ListAuditDto): Prisma.AuditLogWhereInput {
+    return this.whereFor(actor, query);
+  }
+
   private whereFor(actor: AdminPrincipal, query: ListAuditDto): Prisma.AuditLogWhereInput {
     const filters: Prisma.AuditLogWhereInput[] = [this.scopeOrRefuse(actor)];
 

@@ -18,10 +18,22 @@ describe('export kinds', () => {
     permissions.forEach(permission => expect(permission).toMatch(/^[a-z_]+:[a-z_]+$/));
   });
 
-  it('is honest about which kinds are built: MEMBERS, and nothing else yet', () => {
+  /**
+   * The table has to stay honest in both directions: a kind marked available with no builder is an
+   * export that fails after a staff member waits for it, and a kind marked unavailable that *is*
+   * built is a screen refusing something that works.
+   *
+   * Written as the explicit list rather than a count, so adding a builder means editing this line
+   * — which is the moment to check the runner's switch has a case for it.
+   */
+  it('is honest about which kinds are built', () => {
     const available = KINDS.filter(kind => EXPORT_KINDS[kind].available);
 
-    expect(available).toEqual([AdminExportKind.MEMBERS]);
+    expect(available).toEqual([
+      AdminExportKind.MEMBERS,
+      AdminExportKind.AUDIT,
+      AdminExportKind.SUPPORT_THREADS,
+    ]);
   });
 
   it.each(KINDS.filter(kind => !EXPORT_KINDS[kind].available))(

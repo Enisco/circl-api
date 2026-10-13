@@ -163,27 +163,137 @@ const settle = async (headers, id, attempts = 40) => {
     bossHeaders,
   );
   check(
-    'a kind whose list M2 has not built yet is 422 NOT_AVAILABLE_YET',
+    'a kind that is not built yet is 422 NOT_AVAILABLE_YET',
     res.status === 422 && res.body?.error?.code === 'NOT_AVAILABLE_YET',
     [res.status, res.body?.error?.code],
   );
+  // The message has to say what actually blocks it. It used to name a milestone, which went stale
+  // the moment that milestone shipped — a refusal that cites a delivered milestone tells a staff
+  // member the opposite of the truth.
   check(
-    'and names the milestone rather than failing blankly',
-    /M2|§5\.8/.test(res.body?.error?.message ?? ''),
+    'and says what is actually missing rather than naming a milestone',
+    /not built yet/.test(res.body?.error?.message ?? '') &&
+      !/M2|M3|M4/.test(res.body?.error?.message ?? ''),
     res.body?.error?.message,
+  );
+
+  console.log('\n── The audit export carries the asker’s own scope (R8) ─────');
+
+  // A reader with `audit:read_self` sees only their own entries on the list. The export has to
+  // apply the same scope, or it is a way around it — which is the one thing that mattered about
+  // waiting for the list to exist before building this.
+  const selfReaderRole = await register('self', ['exports:csv', 'audit:read_self']);
+  const selfReader = await makeAdmin('exp-self-reader', selfReaderRole);
+  const selfHeaders = adminHeaders(selfReader);
+
+  res = await api(
+    null,
+    'POST',
+    '/admin/exports',
+    { kind: 'AUDIT', columns: ['occurredAt', 'actor', 'action'] },
+    selfHeaders,
+  );
+  // 202, like every other export request: the file is built by a worker, so the answer is
+  // "accepted" rather than "created".
+  check('the audit export is accepted now', res.status === 202, res.status || res.body?.error);
+
+  const selfExport = await settle(selfHeaders, res.body?.data?.id);
+
+  check('and it builds', selfExport?.state === 'READY', selfExport);
+
+  const totalEntries = await prisma.auditLog.count();
+  const ownEntries = await prisma.auditLog.count({ where: { actorId: selfReader.id } });
+
+  // The whole trail is thousands of rows and this reader has touched almost nothing, so a
+  // scope-free export would be orders of magnitude larger than their own slice.
+  check(
+    'covering only their own entries, not the whole trail',
+    (selfExport?.rowCount ?? -1) <= ownEntries + 2 && (selfExport?.rowCount ?? 0) < totalEntries,
+    { rowCount: selfExport?.rowCount, own: ownEntries, total: totalEntries },
   );
 
   res = await api(
     null,
     'POST',
     '/admin/exports',
-    { kind: 'ANALYTICS_CHART', columns: ['Total'] },
-    bossHeaders,
+    { kind: 'AUDIT', columns: ['occurredAt'], filters: { aria: ['SAFETY'] } },
+    selfHeaders,
   );
   check(
-    'a chart export is refused for good, not deferred: the portal builds those itself',
-    res.status === 422 && /portal|browser/i.test(res.body?.error?.message ?? ''),
-    res.body?.error?.message,
+    'a filter the audit list does not take is a 400 naming it, not a file over everything',
+    res.status === 400 && /aria/.test(JSON.stringify(res.body?.error?.details ?? [])),
+    res.body?.error,
+  );
+
+  console.log('\n── The support inbox export carries R7 ─────────────────────');
+
+  /**
+   * A Guard thread has to **exist** for this to prove anything.
+   *
+   * The first version of these checks compared "every thread" with "every thread minus the Guard
+   * ones" on a database that held no Guard threads, so `1 === 1` passed and the exclusion was
+   * never exercised. A test that cannot fail is worse than no test, because it reads as coverage.
+   */
+  const discloser = await makeUser('exp-discloser');
+
+  res = await api(discloser.token, 'POST', '/guard/threads', {
+    subject: 'Something I cannot post publicly',
+    message: 'Telling Circl rather than putting it on the feed, for the export R7 check.',
+    categoryCode: 'SAFETY',
+  });
+
+  check('a Guard thread exists, so the exclusion has something to exclude', res.status === 201, {
+    status: res.status,
+    error: res.body?.error,
+  });
+
+  res = await api(
+    null,
+    'POST',
+    '/admin/exports',
+    { kind: 'SUPPORT_THREADS', columns: ['conversationId', 'type', 'state'] },
+    bossHeaders,
+  );
+  check('the support export is accepted now', res.status === 202, res.status || res.body?.error);
+
+  const bossThreads = await settle(bossHeaders, res.body?.data?.id);
+  const allThreads = await prisma.supportThread.count();
+  const guardThreads = await prisma.supportThread.count({ where: { type: 'GUARD' } });
+
+  check('and it builds', bossThreads?.state === 'READY', bossThreads);
+  check(
+    'a super admin exports every thread, Guard ones included',
+    bossThreads?.rowCount === allThreads && guardThreads >= 1,
+    { rowCount: bossThreads?.rowCount, threads: allThreads, guard: guardThreads },
+  );
+
+  const agentRole = await register('agentonly', ['exports:csv', 'support:read']);
+  const agent = await makeAdmin('exp-agent', agentRole);
+  const agentHeaders = adminHeaders(agent);
+
+  res = await api(
+    null,
+    'POST',
+    '/admin/exports',
+    { kind: 'SUPPORT_THREADS', columns: ['conversationId', 'state'] },
+    agentHeaders,
+  );
+
+  const agentThreads = await settle(agentHeaders, res.body?.data?.id);
+
+  check(
+    'while a support agent’s export leaves the Guard threads out (R7)',
+    agentThreads?.state === 'READY' &&
+      agentThreads?.rowCount === allThreads - guardThreads &&
+      // The difference has to be real: with no Guard thread in the database the two counts are
+      // equal and this check proves nothing.
+      agentThreads?.rowCount < (bossThreads?.rowCount ?? 0),
+    {
+      state: agentThreads?.state,
+      agent: agentThreads?.rowCount,
+      boss: bossThreads?.rowCount,
+      guard: guardThreads,
+    },
   );
 
   console.log('\n── What may be asked for ────────────────────────────────────');

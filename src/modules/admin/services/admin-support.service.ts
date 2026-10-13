@@ -609,6 +609,22 @@ export class AdminSupportService {
     return this.policy.maySeeGuardThreads(actor) ? {} : { type: { not: SupportThreadType.GUARD } };
   }
 
+  /**
+   * The same predicate the inbox uses, for §5.26's export.
+   *
+   * Public rather than copied, because R7 is its first clause: a Guard thread is excluded for
+   * anybody without `guard:read`, and an export built from a second implementation would be a way
+   * around that — on the one path where the rows leave the portal as a file.
+   */
+  async exportWhere(
+    actor: AdminPrincipal,
+    query: ListSupportThreadsDto,
+  ): Promise<Prisma.SupportThreadWhereInput> {
+    const slaMinutes = await this.config.get(SYSTEM_CONFIG_KEYS.SUPPORT_FIRST_RESPONSE_SLA_MINUTES);
+
+    return this.whereFor(actor, query, new Date(), slaMinutes);
+  }
+
   private whereFor(
     actor: AdminPrincipal,
     query: ListSupportThreadsDto,

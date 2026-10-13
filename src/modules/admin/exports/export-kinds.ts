@@ -60,12 +60,14 @@ export const EXPORT_KINDS: Record<AdminExportKind, ExportKind> = {
   },
 
   [AdminExportKind.AUDIT]: {
-    // R8's three levels. The scope is applied in the query for the list (§5.23), and an export has
-    // to apply the requester's own scope the same way — which is work for the milestone that
-    // builds the audit list, not something to half-do here.
+    /**
+     * R8's three levels, applied **by construction**: the builder calls the list's own
+     * `exportWhere`, whose first clause is the caller's scope. That is the one thing that mattered
+     * about waiting for the list to exist — an export built from a second implementation of the
+     * scope would be a way around the audit scope, on the one path where rows leave as a file.
+     */
     listPermissions: ['audit:read', 'audit:read_area', 'audit:read_self'],
-    available: false,
-    pending: 'The audit trail has no list endpoint yet (§5.23, M4), so there is nothing to export.',
+    available: true,
     columns: [
       { key: 'occurredAt' },
       { key: 'actor' },
@@ -78,7 +80,12 @@ export const EXPORT_KINDS: Record<AdminExportKind, ExportKind> = {
   [AdminExportKind.REPORTS]: {
     listPermissions: ['reports:read'],
     available: false,
-    pending: 'The reports list arrives with Trust & Safety (§5.8, M2).',
+    // The list exists (§5.10). What this needs is the one thing an export of it cannot copy: the
+    // list's `where` is built inline from eleven filters, so an export has to either share it or
+    // reimplement it — and a reimplementation that drifts would hand somebody a CSV describing a
+    // different set of cases from the screen they exported it from. Extracting it is the work.
+    pending:
+      'The report case export is not built yet: it needs the case list’s filter to be shared rather than copied.',
     columns: [
       { key: 'id' },
       { key: 'priority' },
@@ -93,7 +100,9 @@ export const EXPORT_KINDS: Record<AdminExportKind, ExportKind> = {
   [AdminExportKind.ENFORCEMENT]: {
     listPermissions: ['moderation:read'],
     available: false,
-    pending: 'The enforcement list arrives with Trust & Safety (§5.11, M2).',
+    // Same shape of work as the reports export, and the same reason for not guessing at it.
+    pending:
+      'The enforcement export is not built yet: it needs the enforcement list’s filter to be shared rather than copied.',
     columns: [
       { key: 'member' },
       { key: 'kind' },
@@ -107,7 +116,15 @@ export const EXPORT_KINDS: Record<AdminExportKind, ExportKind> = {
   [AdminExportKind.CONTENT]: {
     listPermissions: ['content:read'],
     available: false,
-    pending: 'The content list arrives with Trust & Safety (§5.14, M2).',
+    /**
+     * The hardest of the five, and the reason is structural rather than scheduling: §5.7's list is
+     * raw SQL **per content kind** — seventeen tables with different author columns, different
+     * date columns and different status expressions — so "export the content list" is seventeen
+     * queries, not one. It wants its own pass rather than a builder that quietly covers four kinds
+     * and returns empty for the rest.
+     */
+    pending:
+      'The content export is not built yet: §5.7’s list is a query per content kind, and an export has to cover all seventeen or none.',
     columns: [
       { key: 'targetType' },
       { key: 'targetId' },
@@ -117,9 +134,13 @@ export const EXPORT_KINDS: Record<AdminExportKind, ExportKind> = {
   },
 
   [AdminExportKind.SUPPORT_THREADS]: {
+    /**
+     * R7 travels with it: the builder calls the inbox's own `exportWhere`, which excludes Guard
+     * threads for anybody without `guard:read`. A support agent exporting the inbox gets the inbox
+     * they are allowed, not the one that exists.
+     */
     listPermissions: ['support:read'],
-    available: false,
-    pending: 'Support threads arrive with the support inbox (§5.15, M3).',
+    available: true,
     columns: [
       { key: 'conversationId' },
       { key: 'type' },

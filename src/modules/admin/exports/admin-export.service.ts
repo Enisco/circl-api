@@ -9,6 +9,8 @@ import { AuditService } from '../audit/audit.service';
 import { AdminPrincipal } from '../common/admin-principal';
 import { CreateExportDto, ListExportsDto } from '../dtos/admin-export.dto';
 import { ListMembersDto } from '../dtos/analytics-filter.dto';
+import { ListAuditDto } from '../dtos/admin-audit.dto';
+import { ListSupportThreadsDto } from '../dtos/admin-support.dto';
 import { AdminMemberService } from '../services/admin-member.service';
 import { StaffRefView, staffRefSelect, toStaffRef } from '../serializers/admin-staff.serializer';
 import { EXPORT_KINDS, columnOf, contactColumns, orderColumns } from './export-kinds';
@@ -364,8 +366,22 @@ export class AdminExportService {
       );
     }
 
-    if (kind === AdminExportKind.MEMBERS) {
-      const errors = validateSync(plainToInstance(ListMembersDto, filters), {
+    /**
+     * Validated against the list's **own** DTO, per kind.
+     *
+     * `forbidNonWhitelisted`, so a filter the list does not take is a 400 naming it rather than a
+     * file quietly built over everything: somebody who exported with `?stat=OPEN` instead of
+     * `state` should be told, not handed the whole table.
+     */
+    const dtoForKind: Partial<Record<AdminExportKind, new () => object>> = {
+      [AdminExportKind.MEMBERS]: ListMembersDto,
+      [AdminExportKind.AUDIT]: ListAuditDto,
+      [AdminExportKind.SUPPORT_THREADS]: ListSupportThreadsDto,
+    };
+    const Dto = dtoForKind[kind];
+
+    if (Dto) {
+      const errors = validateSync(plainToInstance(Dto, filters), {
         whitelist: true,
         forbidNonWhitelisted: true,
       });
@@ -373,7 +389,7 @@ export class AdminExportService {
       if (errors.length) {
         throw ApiException.badRequest(
           ApiErrorCode.VALIDATION_FAILED,
-          'Those are not the member list’s filters.',
+          'Those are not that list’s filters.',
           {
             details: errors.map(error => ({
               field: `filters.${error.property}`,
@@ -382,7 +398,9 @@ export class AdminExportService {
           },
         );
       }
+    }
 
+    if (kind === AdminExportKind.MEMBERS) {
       // The list answers an email search from somebody without `members:pii_reveal` with an empty
       // page (§5.4). An export cannot do that honestly — an empty CSV reads as "nobody matched" —
       // so it is refused here, and the worker can then search by email without asking again.
