@@ -106,6 +106,15 @@ export const JOB_CATALOGUE: JobDefinition[] = [
     onDemand: true,
   },
   {
+    name: 'verifications.expire',
+    schedule: CronExpression.EVERY_DAY_AT_3AM,
+    description:
+      'Lapses category verifications whose renewal date has passed, so the stored status agrees ' +
+      'with the gate, and tells each professional what went out of sight with it (v2 §2.5).',
+    surface: 'platform',
+    onDemand: true,
+  },
+  {
     name: 'requests.expire',
     schedule: CronExpression.EVERY_DAY_AT_3AM,
     description: 'Closes community requests that have been open past their natural life.',

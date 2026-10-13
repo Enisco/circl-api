@@ -74,6 +74,32 @@ export class DecideListingReviewDto extends ReasonedDto {
  * released by the write — so "what the set is now" is the only safe thing to send. It also makes
  * the request idempotent, which matters because it carries an `Idempotency-Key`.
  */
+/**
+ * Which **subcategories** require a category verification before somebody may sell under them.
+ *
+ * Separate from `SetGatedProfessionsDto` because it is a separate gate on a separate vocabulary:
+ * that one decides whether a human reads a whole profile, this one decides whether somebody may
+ * offer regulated work at all. Since v2 this is the gate that matters, and it is held by
+ * `professions:gate` for the same reason the other one is — it is Trust & Safety's judgement about
+ * regulated work, not a vocabulary rewording, and they do not hold `config:taxonomy`.
+ */
+export class SetVerificationGatesDto extends ReasonedDto {
+  @ApiProperty({
+    isArray: true,
+    type: String,
+    description:
+      'Every `PROFESSION_SUBCATEGORY` code that should require verification, as the **complete ' +
+      'list**. Send `[]` to switch verification off entirely, which publishes every service ' +
+      'currently waiting on one.',
+    example: ['IMMIGRATION_SOLICITOR', 'LEGAL_SOLICITOR'],
+  })
+  @IsArray()
+  @ArrayMaxSize(300)
+  @IsString({ each: true })
+  @Matches(/^[A-Z][A-Z0-9_]*$/, { each: true, message: 'Codes are UPPER_SNAKE.' })
+  codes: string[];
+}
+
 export class SetGatedProfessionsDto extends ReasonedDto {
   @ApiProperty({
     isArray: true,

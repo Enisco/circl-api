@@ -58,6 +58,14 @@ model Media {
   /// `retention.purge-documents` deletes them when the window closes.
   supersededAt DateTime? @map("superseded_at") @db.Timestamptz
 
+  /**
+   * What the file is *of*, where the owner cares (v2 §9.1): the work itself, a client speaking, or
+   * an introduction. One vocabulary across professionals' services and marketplace items, because
+   * the two features show the same three things under different labels.
+   * Null everywhere else. An avatar has no role, and a message attachment is whatever was sent.
+   */
+  role MediaRole? @map("role")
+
   // Polymorphic attachment. Null until the media is used by a post.
   ownerType String? @map("owner_type")
   ownerId   String? @map("owner_id")

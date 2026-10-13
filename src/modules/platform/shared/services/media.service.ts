@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   Media,
+  MediaRole,
   MediaScanStatus,
   MediaStatus,
   MediaType,
@@ -18,10 +19,65 @@ export interface MediaRules {
   maxImages: number;
   allowVideo: boolean;
   allowAudio: boolean;
+  /**
+   * How many videos, where more than one is allowed. Defaults to one, which is what every caller
+   * before Professionals v2 wanted.
+   */
+  maxVideos?: number;
+  /**
+   * Whether photos and video may be attached together.
+   *
+   * Off by default, because 0.11's post rule is one or the other — a feed card renders a gallery
+   * or a player, not both. A service's page and a product's page are built to show both (v2 §5,
+   * §9), so they say so rather than inheriting a rule written for a different screen.
+   */
+  allowMixed?: boolean;
+  /**
+   * A ceiling on **everything together**, where the published limit is a total.
+   *
+   * `maxImages` and `maxVideos` are independent caps, so a rule of "ten images, three videos" is
+   * thirteen files — and §3.5 publishes `maxServiceMedia: 10` as images and videos *together*. A
+   * served limit the server does not actually hold is worse than no limit: the form enforces ten
+   * and the API quietly takes thirteen, so the two disagree about what the product's rule is.
+   */
+  maxTotal?: number;
 }
 
 /** The default post rules from 0.11: 5 images or 1 video, never both. */
 export const POST_MEDIA_RULES: MediaRules = { maxImages: 5, allowVideo: true, allowAudio: false };
+
+/**
+ * A service's page, which shows the work and the people who had it done (v2 §5, §3.5).
+ *
+ * Ten files, of which at most three may be video, and photos and video together — because the
+ * page is built to show "there are four photographs and a client talking about it", which is a
+ * different promise from either on its own.
+ */
+export const SERVICE_MEDIA_RULES: MediaRules = {
+  maxImages: 10,
+  allowVideo: true,
+  allowAudio: false,
+  maxVideos: 3,
+  allowMixed: true,
+  // Ten **together**, which is the number served as `maxServiceMedia`.
+  maxTotal: 10,
+};
+
+/**
+ * A product's page: the existing photo limit, plus the three videos v2 §9 asks for.
+ *
+ * Five images, deliberately unchanged. §9 asks for video and says to leave `photos` as it is, and
+ * the new `mediaKeys` shape is a different spelling of the same allowance rather than a quiet
+ * doubling of it — a seller who could post five photographs yesterday can post five today, and
+ * three videos besides.
+ */
+export const ITEM_MEDIA_RULES: MediaRules = {
+  maxImages: 5,
+  allowVideo: true,
+  allowAudio: false,
+  maxVideos: 3,
+  allowMixed: true,
+};
 
 /** One still image. Avatars, store logos, group photos (0.16.2, 4.1.2, 1.7.3). */
 export const SINGLE_IMAGE_RULES: MediaRules = {
@@ -33,7 +89,16 @@ export const SINGLE_IMAGE_RULES: MediaRules = {
 /** `Media.ownerType` for an avatar, so replacing one releases the last. */
 export const AVATAR_MEDIA_OWNER = 'USER_AVATAR';
 
-export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
+export const IMAGE_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  // The same container under its other registered name, which some Android cameras send. A member
+  // whose phone labels the file `image/heif` is holding the same bytes as one whose phone says
+  // `image/heic`, and refusing one of them is refusing a camera rather than a format.
+  'image/heif',
+];
 export const VIDEO_TYPES = ['video/mp4', 'video/quicktime'];
 export const AUDIO_TYPES = ['audio/m4a', 'audio/mp4', 'audio/aac', 'audio/x-m4a'];
 
@@ -138,8 +203,8 @@ export class MediaService {
     const videos = rows.filter(row => row.type === MediaType.VIDEO);
     const audio = rows.filter(row => row.type === MediaType.AUDIO);
 
-    // Images and video together is not allowed. One or the other (0.11).
-    if (images.length && videos.length) {
+    // Images and video together is not allowed, unless the caller's own rules say otherwise.
+    if (!rules.allowMixed && images.length && videos.length) {
       throw ApiException.unprocessable(
         ApiErrorCode.MEDIA_MIXED_TYPES,
         'Attach photos or a video, not both.',
@@ -155,12 +220,25 @@ export class MediaService {
       );
     }
 
-    if (videos.length > (rules.allowVideo ? 1 : 0)) {
-      throw ApiException.unprocessable(
-        ApiErrorCode.MEDIA_LIMIT_EXCEEDED,
-        rules.allowVideo ? 'You can attach one video.' : 'Video is not supported here.',
-        { details: [{ field, message: 'You can attach one video.' }] },
-      );
+    const maxVideos = rules.allowVideo ? (rules.maxVideos ?? 1) : 0;
+
+    if (videos.length > maxVideos) {
+      const limit =
+        maxVideos === 0
+          ? 'Video is not supported here.'
+          : `You can attach ${maxVideos === 1 ? 'one video' : `up to ${maxVideos} videos`}.`;
+
+      throw ApiException.unprocessable(ApiErrorCode.MEDIA_LIMIT_EXCEEDED, limit, {
+        details: [{ field, message: limit }],
+      });
+    }
+
+    if (rules.maxTotal !== undefined && rows.length > rules.maxTotal) {
+      const message = `You can attach up to ${rules.maxTotal} photos and videos in total.`;
+
+      throw ApiException.unprocessable(ApiErrorCode.MEDIA_LIMIT_EXCEEDED, message, {
+        details: [{ field, message }],
+      });
     }
 
     if (audio.length > (rules.allowAudio ? 1 : 0)) {
@@ -182,6 +260,11 @@ export class MediaService {
     media: Media[],
     ownerType: string,
     ownerId: string,
+    /**
+     * What each file is *of*, by storage key (v2 §9.1). Only the owners that ask for a role send
+     * it: an avatar has none, and a message attachment is whatever was sent.
+     */
+    roles?: Map<string, MediaRole>,
   ): Promise<void> {
     if (!media.length) return;
 
@@ -196,6 +279,7 @@ export class MediaService {
             status: MediaStatus.ATTACHED,
             attachedAt: new Date(),
             expiresAt: null,
+            ...(roles ? { role: roles.get(item.storageKey) ?? MediaRole.SHOWCASE } : {}),
           },
         }),
       ),

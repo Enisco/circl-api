@@ -954,7 +954,9 @@ const {
   const briefBookingId = r.body?.data?.id;
 
   r = await api(client.token, 'POST', '/professionals/briefs', {
-    categoryCode: 'PHOTOGRAPHY_VIDEO',
+    // An active category nobody in the fixtures works in. It was PHOTOGRAPHY_VIDEO, which v2
+    // retired — a brief in a retired category is refused, which is not what this is testing.
+    categoryCode: 'BEAUTY_HAIR_SERVICES',
     description: 'Nobody is listed for this yet.',
   });
   const emptyBriefId = r.body?.data?.id;

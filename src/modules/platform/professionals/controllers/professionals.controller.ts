@@ -21,11 +21,19 @@ import {
   CreateListingDto,
   PromoteOfferDto,
   ReplaceServicesDto,
-  ServiceDto,
   UpdateListingDto,
-  UpdateServiceDto,
 } from '../dtos/listing.dto';
+import {
+  CreateServiceDto,
+  ListServicesDto,
+  ServiceVisibilityDto,
+  UpdateServiceDto as UpdateServiceV2Dto,
+} from '../dtos/service.dto';
+import { SubmitVerificationDto } from '../dtos/verification.dto';
 import { BrowseService } from '../services/browse.service';
+import { CategoryVerificationService } from '../services/category-verification.service';
+import { ProfessionalSearchService } from '../services/professional-search.service';
+import { ServiceCatalogueService } from '../services/service-catalogue.service';
 import { ListingService } from '../services/listing.service';
 import { ProfessionalsHomeService } from '../services/professionals-home.service';
 import { AvailabilityService } from '../services/availability.service';
@@ -40,6 +48,9 @@ export class ProfessionalsController {
     private readonly browse: BrowseService,
     private readonly home: ProfessionalsHomeService,
     private readonly availability: AvailabilityService,
+    private readonly services: ServiceCatalogueService,
+    private readonly verifications: CategoryVerificationService,
+    private readonly search: ProfessionalSearchService,
   ) {}
 
   // ─── Fixed paths first, so they are never captured as an :id ───────────────
@@ -197,14 +208,20 @@ export class ProfessionalsController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Add a service',
-    description: 'Services are what a member books. Each carries its own price and basis.',
+    description:
+      'A service is the thing members search and read (v2 §5): its own description, category, ' +
+      'media, updates and milestones, and its own page.\n\n' +
+      'The category gate is applied **here** and not taken from the client: a gated category with ' +
+      'no approved verification is `403 VERIFICATION_REQUIRED`, carrying the category in `data`. ' +
+      'A **pending** verification is not a refusal — the service is created with ' +
+      '`status: PENDING_VERIFICATION` and is invisible to everybody but its owner.',
   })
   async addService(
     @CurrentUserId() userId: string,
     @Param('id') id: string,
-    @Body() dto: ServiceDto,
+    @Body() dto: CreateServiceDto,
   ) {
-    const data = await this.listings.addService(userId, id, dto);
+    const data = await this.services.create(userId, id, dto);
 
     return { data, message: SuccessMessage.RESOURCE_CREATED('Service') };
   }
@@ -212,18 +229,42 @@ export class ProfessionalsController {
   @Patch('listings/:id/services/:serviceId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Edit a service, including its availability toggle',
+    summary: 'Edit a service',
     description:
-      'Owner only. An edit never rewrites what was already agreed: a booking copied the name, ' +
-      'description and price when it was made (2.9.2).',
+      'Owner only, and **absent is not empty** (v2 §5.5): a body carrying only `name` changes ' +
+      'only the name, while `mediaKeys: []` clears the media. An edit that moves the service into ' +
+      'a gated category is checked against *that* category.\n\n' +
+      'An edit never rewrites what was already agreed: a booking copied the name, description and ' +
+      'price when it was made (2.9.2).',
   })
   async updateService(
     @CurrentUserId() userId: string,
     @Param('id') id: string,
     @Param('serviceId') serviceId: string,
-    @Body() dto: UpdateServiceDto,
+    @Body() dto: UpdateServiceV2Dto,
   ) {
-    const data = await this.listings.updateService(userId, id, serviceId, dto);
+    const data = await this.services.update(userId, id, serviceId, dto);
+
+    return { data, message: SuccessMessage.RESOURCE_UPDATED('Service') };
+  }
+
+  @Patch('listings/:id/services/:serviceId/visibility')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Show or hide a service',
+    description:
+      'Its own route because **showing must not override a verification** (v2 §5.5.1). A service ' +
+      'whose category went back into review returns to `PENDING_VERIFICATION`, not to ' +
+      '`PUBLISHED`, and only the server knows which. `isActive` is gone from the write body; ' +
+      '`status` is the only answer.',
+  })
+  async setServiceVisibility(
+    @CurrentUserId() userId: string,
+    @Param('id') id: string,
+    @Param('serviceId') serviceId: string,
+    @Body() dto: ServiceVisibilityDto,
+  ) {
+    const data = await this.services.setVisibility(userId, id, serviceId, dto.isVisible);
 
     return { data, message: SuccessMessage.RESOURCE_UPDATED('Service') };
   }
@@ -279,6 +320,124 @@ export class ProfessionalsController {
     const { data } = await this.availability.slots(listingId, query);
 
     return { data, message: SuccessMessage.RESOURCE_FETCHED('Availability') };
+  }
+
+  // ─── Services and verifications (v2 §2, §5, §6) ────────────────────────────
+  //
+  // All of these sit above `GET :id`, which would otherwise capture `services` and `search` as a
+  // listing id: Nest matches in declaration order.
+
+  @Post('me/verifications')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Idempotent()
+  @ApiOperation({
+    summary: 'Submit documents for a category',
+    description:
+      'One record per `(professional, category)` (v2 §2). **One approval covers the category** — ' +
+      'every gated kind of work under it, for every service they list now or later.\n\n' +
+      'May be called **before** any service exists in the category and before the category is on ' +
+      'their profile: a professional should be able to get approved ahead of needing it. The same ' +
+      'call is how a resubmission works after a decline, a revocation or an expiry; the previous ' +
+      'documents are superseded rather than deleted, so the record of what a decision was made on ' +
+      'survives.\n\n' +
+      'Documents are uploaded first with `purpose: VERIFICATION` (PDF, PNG, JPEG or **HEIC**) and ' +
+      'their ids sent here. No URL is ever returned for one.',
+  })
+  async submitVerification(@CurrentUserId() userId: string, @Body() dto: SubmitVerificationDto) {
+    const data = await this.verifications.submit(userId, dto);
+
+    return { data, message: 'Submitted for review' };
+  }
+
+  @Get('me/verifications')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'My category verifications',
+    description:
+      'Every record, in every state, with its document count. The same records the field on ' +
+      '`GET /professionals/me` carries — two routes for one thing on purpose (v2 §2.5): the field ' +
+      'saves the manage panel a call, and this lets the verification centre refresh after a ' +
+      'submission without refetching the whole listing.',
+  })
+  async myVerifications(@CurrentUserId() userId: string) {
+    const data = await this.verifications.forOwner(userId);
+
+    return { data, message: SuccessMessage.RESOURCE_FETCHED('Verifications') };
+  }
+
+  @Get('search')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Services and professionals, in one answer',
+    description:
+      'Two result sets, each with its **own total match count** (v2 §6.1) — `Services · 124` is ' +
+      'what tells somebody narrowing is worth it, so the count is the total and never the number ' +
+      'returned.\n\n' +
+      '`q` matches a service on its name and description, and a professional on their name, their ' +
+      'profession title **and the names of their services**: searching "visa" surfaces somebody ' +
+      'whose services are about visas even where the word is nowhere on their profile.\n\n' +
+      'Filters apply to both groups, so narrowing never silently drops one. Narrowing goes to each ' +
+      'type\u2019s own paged list.',
+  })
+  async blendedSearch(@CurrentUserId() userId: string, @Query() query: ListServicesDto) {
+    const data = await this.search.blended(query, userId, query.groups);
+
+    return { data, message: SuccessMessage.RESOURCE_FETCHED('Search') };
+  }
+
+  @Get('services')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Services, paged',
+    description:
+      'The narrowed half of §6.1, on its own cursor. Published services only — which is also what ' +
+      'makes the count honest.',
+  })
+  async serviceList(@CurrentUserId() userId: string, @Query() query: ListServicesDto) {
+    const { data, meta } = await this.services.search(query, userId);
+
+    return { data, meta, message: SuccessMessage.RESOURCE_FETCHED('Services') };
+  }
+
+  @Get('services/:serviceId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'A service’s public page',
+    description:
+      'Carries the professional, so the identity tile needs no second call (v2 §5.6). ' +
+      '`viewer.isOwner` is on every read: it is what stops a professional being offered a ' +
+      'conversation with themselves.\n\n' +
+      '**`404` for anything not published, asked for by anybody but its owner** — not `403`. A ' +
+      '`403` confirms the service exists, which is a disclosure about somebody’s pending ' +
+      'verification.',
+  })
+  async serviceDetail(@CurrentUserId() userId: string, @Param('serviceId') serviceId: string) {
+    const data = await this.services.detail(serviceId, userId);
+
+    return { data, message: SuccessMessage.RESOURCE_FETCHED('Service') };
+  }
+
+  @Get(':listingId/services')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'A professional’s services, paged',
+    description:
+      'Published only, unless the owner is asking — then every status, so the manage panel can ' +
+      'show a draft and a service waiting on a verification beside the live ones.',
+  })
+  async listingServices(
+    @CurrentUserId() userId: string,
+    @Param('listingId') listingId: string,
+    @Query() query: ListServicesDto,
+  ) {
+    const { data, meta } = await this.services.forListing(listingId, userId, {
+      skip: query.skip,
+      take: query.take,
+      currentPage: query.currentPage,
+      perPage: query.perPage,
+    });
+
+    return { data, meta, message: SuccessMessage.RESOURCE_FETCHED('Services') };
   }
 
   @Get(':id')

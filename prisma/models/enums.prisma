@@ -156,6 +156,13 @@ enum TaxonomyKind {
   FEED_TYPE
   REQUEST_STATUS
   COMMERCE_SORT_OPTION
+  /// A child of a PROFESSION. Carries the verification gate (v2 §3): *Immigration* is not
+  /// sensitive, *Immigration solicitor* is. `metadata.parentCode` says whose child it is.
+  PROFESSION_SUBCATEGORY
+  /// What a professional actually does, tagged with the categories it belongs to so the picker can
+  /// lead with the relevant ones (v2 §3.4). Coded so it can be filtered and counted; the free-text
+  /// half lives on the listing and is never promoted into here automatically.
+  SKILL
 }
 
 enum DataExportStatus {
@@ -602,6 +609,50 @@ enum BriefState {
 }
 
 // "Circl takes no payment, so these are stages of work, never states of money."
+/**
+ * Where a `(professional, category)` verification has got to (v2 §2.2).
+ * An absent record means never submitted, and `NOT_SUBMITTED` is the word the API sends for it so
+ * the client has one vocabulary rather than a null and five strings. Anything not `APPROVED` is
+ * treated as not approved — including a value a build does not recognise, because a state that
+ * shipped after the reader is one it must not read as permission.
+ */
+enum CategoryVerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  /// Was approved, withdrawn by staff. Every service in the category is suspended with it.
+  REVOKED
+  /// `expiresAt` passed. A licence with a renewal date is the normal case in regulated work.
+  EXPIRED
+}
+
+/**
+ * What the **owner** has decided about a service, which is the only part of its status that is
+ * stored (v2 §5.4).
+ * The rest — pending verification, rejected, suspended — is derived from the category's
+ * verification every time it is read. Storing it would mean three services in one pending category
+ * holding three flags to keep in step, and an approval having to walk and update them all; the one
+ * that got missed would be invisible for ever.
+ */
+enum ServiceOwnerState {
+  DRAFT
+  /// The owner wants it live. Whether it *is* live depends on the verification.
+  LIVE
+  HIDDEN
+}
+
+/**
+ * What a piece of media is *of* (v2 §9.1). One vocabulary for professionals and the marketplace.
+ * `TESTIMONIAL` is a customer or client speaking, which is a different promise from a photograph
+ * of the work — and the thing people tap. Deliberately not called "live video": every member would
+ * read that as a broadcast they could join.
+ */
+enum MediaRole {
+  SHOWCASE
+  TESTIMONIAL
+  PROMO
+}
+
 enum JobState {
   PENDING_ACCEPTANCE
   ACCEPTED

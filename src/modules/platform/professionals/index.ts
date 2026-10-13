@@ -5,3 +5,6 @@ export * from './professionals-core.module';
 // because a dispute's evidence is attached under that owner key and the staff detail serves it.
 export * from './services/booking.service';
 export * from './services/dispute.service';
+export * from './services/category-verification.service';
+export * from './services/service-catalogue.service';
+export * from './serializers/service.serializer';

@@ -85,6 +85,10 @@ export const AUDIT_ACTIONS = {
   // and it is the entry somebody will go looking for when a profession started or stopped holding
   // its listings and nobody remembers agreeing to it.
   'professions.gate_changed': AuditArea.CONFIG,
+  // v2 §3.2: which subcategories require a category verification. The gate that decides whether
+  // somebody may sell regulated work, so it is a decision rather than a vocabulary edit — and it
+  // lands here rather than under `taxonomy.*` for that reason.
+  'professions.verification_gate_changed': AuditArea.CONFIG,
   /// §2.9: a reviewer opened a member's qualification paper. Recorded because these are identity
   /// documents and "who looked at my certificate" is a question a member is entitled to an answer
   /// to. Throttled to one entry per staff member per document per fifteen minutes, so paging
@@ -92,6 +96,23 @@ export const AUDIT_ACTIONS = {
   'listing.document_viewed': AuditArea.CONTENT,
   'listing.review_approved': AuditArea.CONTENT,
   'listing.review_declined': AuditArea.CONTENT,
+  /**
+   * Professionals v2: the `(professional, category)` verification, which is what now decides
+   * whether somebody may sell regulated work (v2 §2).
+   *
+   * Four actions rather than one `decided`, because the questions asked of this trail afterwards
+   * are "who let this person practise", "who stopped them" and "who changed the date it lapses" —
+   * and a single action with the answer buried in `after` cannot be filtered by any of them.
+   *
+   * `verification.document_viewed` is throttled exactly like the listing one: a member's licence
+   * is an identity document and "who looked at it" has to be answerable without being buried
+   * under how somebody's PDF viewer re-requests pages.
+   */
+  'verification.approved': AuditArea.CONTENT,
+  'verification.rejected': AuditArea.CONTENT,
+  'verification.revoked': AuditArea.CONTENT,
+  'verification.expiry_set': AuditArea.CONTENT,
+  'verification.document_viewed': AuditArea.CONTENT,
   'guide.created': AuditArea.CONTENT,
   'guide.updated': AuditArea.CONTENT,
   'guide.published': AuditArea.CONTENT,

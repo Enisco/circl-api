@@ -8,23 +8,27 @@ import {
   Prisma,
   ProfessionalListing,
   ReportTargetType,
+  ServiceOwnerState,
   TaxonomyKind,
   ThreadContextType,
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, money } from '@/common';
 import {
+  authorSelect,
   CityService,
   ContentSafetyService,
+  displayNameOf,
+  isWithinWeeklyHours,
   ListingDocumentService,
   ListingReviewService,
   MediaService,
   TaxonomyService,
-  authorSelect,
-  displayNameOf,
   toAuthorView,
   toCityView,
   toTermView,
+  toWeeklyHours,
+  WeeklyHours,
 } from '../../shared';
 import {
   AvailabilityDto,
@@ -37,20 +41,27 @@ import {
 } from '../dtos/listing.dto';
 import { ReputationService } from '../../trust/services/reputation.service';
 import { VerificationService } from '../../trust/services/verification.service';
-import { toListingPictures, toServiceView } from '../serializers/listing.serializer';
+import {
+  toListingPictures,
+  toServiceView,
+  toVerifiedCategories,
+} from '../serializers/listing.serializer';
+import { CategoryVerificationService, effectiveStatus } from './category-verification.service';
 
 /**
- * The states in which a listing is **live**, and its professions therefore fixed (§2.9).
+ * Everything the owner's view of a listing reads, declared once.
  *
- * `NOT_REQUIRED` is as live as `APPROVED` — it is a listing in a profession that needs no
- * approval, or one that predates its profession being gated — and both are publicly visible. The
- * two that stay editable are the ones nobody can see yet: `PENDING` is waiting, and `REJECTED` was
- * declined, where changing the profession is the point of resubmitting.
+ * It was the same object literal in eight places, and v2 added two relations to it — skills and
+ * contact hours. Seven of the eight would have kept working and returned an empty skill list,
+ * which is the shape of bug that looks like the member never filled the form in.
  */
-const LIVE_REVIEW_STATES: ListingReviewState[] = [
-  ListingReviewState.APPROVED,
-  ListingReviewState.NOT_REQUIRED,
-];
+const OWNER_INCLUDE = {
+  city: true,
+  categories: true,
+  services: true,
+  skills: { orderBy: { sort: 'asc' } },
+  contactHours: true,
+} satisfies Prisma.ProfessionalListingInclude;
 
 /** The consent text version stored with a listing, so what was agreed is recoverable. */
 const CONSENT_VERSION = '2026-08-professional-listing-v1';
@@ -81,6 +92,7 @@ export class ListingService {
     private readonly safety: ContentSafetyService,
     private readonly reviews: ListingReviewService,
     private readonly documents: ListingDocumentService,
+    private readonly verifications: CategoryVerificationService,
   ) {}
 
   // ─── 2.1.2 Registration prefill ────────────────────────────────────────────
@@ -227,7 +239,7 @@ export class ListingService {
     // visibility: the caller's own listing, to refuse a second one.
     const existing = await this.database.professionalListing.findUnique({
       where: { userId },
-      include: { city: true, categories: true, services: true },
+      include: OWNER_INCLUDE,
     });
 
     if (existing) {
@@ -293,8 +305,29 @@ export class ListingService {
           categories: {
             create: dto.categoryCodes.map((code, index) => ({ code, isPrimary: index === 0 })),
           },
+          // v2 §4.1: coded skills are filterable, custom ones are the member's own words and are
+          // displayed identically. Two fields on purpose; neither feeds the other.
+          customSkills: dto.customSkills ?? [],
+          ...(dto.skillCodes?.length
+            ? {
+                skills: {
+                  create: dto.skillCodes.map((code, index) => ({ code, sort: index })),
+                },
+              }
+            : {}),
+          ...(dto.contactHours?.length
+            ? {
+                contactHours: {
+                  create: dto.contactHours.map(entry => ({
+                    day: entry.day,
+                    openMinutes: entry.openMinutes ?? null,
+                    closeMinutes: entry.closeMinutes ?? null,
+                  })),
+                },
+              }
+            : {}),
         },
-        include: { city: true, categories: true, services: true },
+        include: OWNER_INCLUDE,
       });
 
       if (photo) await this.media.attach(tx, [photo], LISTING_PHOTO_OWNER, created.id);
@@ -350,7 +383,7 @@ export class ListingService {
       // visibility: the listing their offer already became — also theirs.
       const listing = await this.database.professionalListing.findUnique({
         where: { id: offer.promotedToListingId },
-        include: { city: true, categories: true, services: true },
+        include: OWNER_INCLUDE,
       });
 
       throw ApiException.conflict(
@@ -363,7 +396,7 @@ export class ListingService {
     // visibility: the caller's own listing, to refuse a second one.
     const existing = await this.database.professionalListing.findUnique({
       where: { userId },
-      include: { city: true, categories: true, services: true },
+      include: OWNER_INCLUDE,
     });
 
     if (existing) {
@@ -422,7 +455,7 @@ export class ListingService {
           verificationStatus: ListingVerificationStatus.UNVERIFIED,
           categories: { create: [{ code: professionCode, isPrimary: true }] },
         },
-        include: { city: true, categories: true, services: true },
+        include: OWNER_INCLUDE,
       });
 
       // The offer stays live until the listing is verified (2.1.3).
@@ -493,28 +526,20 @@ export class ListingService {
     const categoriesChanged =
       codes.length !== currentCodes.length || codes.some(code => !currentCodes.includes(code));
 
-    // §2.9: a live listing's professions are fixed (BACKEND-NOTES-PROFESSION-LOCK, 2026-10-12).
-    //
-    // Enforced here rather than by hiding the picker, because a hidden picker stops nobody with a
-    // modified client — and this is the control that closes the bypass the gating rule was holding
-    // shut: register in an unrestricted profession, go live, then add a restricted one.
-    //
-    // `APPROVED` and `NOT_REQUIRED` are both live. A declined or waiting listing stays editable:
-    // changing the profession is the whole point of a resubmission, and it is then judged as a new
-    // account in the new profession.
-    //
-    // Checked against the **set**, not the array: the app sends `categoryCodes` on every edit
-    // including a price change, so refusing an identical list would refuse every edit a live
-    // professional ever makes. `categoriesChanged` above is already order-independent.
-    if (categoriesChanged && LIVE_REVIEW_STATES.includes(listing.reviewState)) {
-      throw ApiException.conflict(
-        ApiErrorCode.PROFESSION_LOCKED,
-        "Your profession can't be changed once your profile is live.",
-        {
-          data: { current: currentCodes, requested: codes, reviewState: listing.reviewState },
-        },
-      );
-    }
+    /**
+     * Categories are freely editable (v2 §4.6). The lock that was here is gone, deliberately.
+     *
+     * It existed to close one bypass: register in an unrestricted profession, go live, then add a
+     * restricted one. That bypass is closed somewhere better now. **Holding a category grants
+     * nothing** — selling in a gated one requires an approved `(professional, category)`
+     * verification, which `ServiceCatalogueService` checks on every service write and on every
+     * edit that moves a service between categories. The gate moved from the profile to the thing
+     * being sold, so the profile no longer needs protecting.
+     *
+     * Verifications are independent of this field in both directions (§2.6): dropping a category
+     * does not lapse its verification, and re-adding it does not trigger a new review. That falls
+     * out of the record being keyed on the person rather than on their profile.
+     */
 
     // What the listing is gated under *today*. The post-patch set is `gated`, which `verdictFor`
     // returns; this one decides whether there are documents to compare against at all.
@@ -579,6 +604,8 @@ export class ListingService {
     });
 
     const updated = await this.database.$transaction(async tx => {
+      // Freely editable now (v2 §4.6): the lock that refused this on a live listing is gone, and
+      // the gate it was protecting moved to the service. The write itself was always here.
       if (dto.categoryCodes?.length) {
         await tx.professionalListingCategory.deleteMany({ where: { listingId: listing.id } });
         await tx.professionalListingCategory.createMany({
@@ -619,8 +646,31 @@ export class ListingService {
           ...(cover ? { coverKey: cover.storageKey } : {}),
           ...(dto.photoKey === null ? { photoKey: null } : {}),
           ...(dto.coverKey === null ? { coverKey: null } : {}),
+          // Absent leaves them alone, `[]` clears them (v2 §4.1). A member changing their price
+          // must not lose their skills by omission.
+          ...(dto.customSkills === undefined ? {} : { customSkills: dto.customSkills }),
+          ...(dto.skillCodes === undefined
+            ? {}
+            : {
+                skills: {
+                  deleteMany: {},
+                  create: dto.skillCodes.map((code, index) => ({ code, sort: index })),
+                },
+              }),
+          ...(dto.contactHours === undefined
+            ? {}
+            : {
+                contactHours: {
+                  deleteMany: {},
+                  create: dto.contactHours.map(entry => ({
+                    day: entry.day,
+                    openMinutes: entry.openMinutes ?? null,
+                    closeMinutes: entry.closeMinutes ?? null,
+                  })),
+                },
+              }),
         },
-        include: { city: true, categories: true, services: true },
+        include: OWNER_INCLUDE,
       });
 
       // §6.1 scans a listing's published copy: the title somebody browses and the paragraph they
@@ -751,7 +801,7 @@ export class ListingService {
     if (bookings > 0) {
       const deactivated = await this.database.professionalService.update({
         where: { id: serviceId },
-        data: { isActive: false },
+        data: { isActive: false, ownerState: ServiceOwnerState.HIDDEN },
       });
 
       return { removed: false, service: toServiceView(deactivated) };
@@ -762,7 +812,14 @@ export class ListingService {
     return { removed: true, service: null };
   }
 
-  /** The manage panel's bulk save. Same deletion rule as above, per row. */
+  /**
+   * The manage panel's bulk save. Same deletion rule as above, per row.
+   *
+   * **An older client's route** (v2 §5.5 replaced it with per-service writes), kept working rather
+   * than stranded: a build that has not shipped yet still saves its price list this way. It cannot
+   * name a category, so everything it writes is ungated and publishes — which is what it did
+   * before. What it must do is set the owner state, or a service it paused would read as live.
+   */
   async replaceServices(userId: string, listingId: string, dto: ReplaceServicesDto) {
     const listing = await this.assertOwned(userId, listingId);
 
@@ -787,7 +844,7 @@ export class ListingService {
       if (bookedIds.size) {
         await tx.professionalService.updateMany({
           where: { id: { in: [...bookedIds] } },
-          data: { isActive: false },
+          data: { isActive: false, ownerState: ServiceOwnerState.HIDDEN },
         });
       }
 
@@ -799,6 +856,9 @@ export class ListingService {
           price: service.price ?? null,
           priceBasis: service.priceBasis ?? undefined,
           isActive: service.isActive ?? true,
+          // In step with the column it replaces, or a paused service reads as live (v2 §5.5.1).
+          ownerState:
+            service.isActive === false ? ServiceOwnerState.HIDDEN : ServiceOwnerState.LIVE,
           sort: index,
         })),
       });
@@ -836,7 +896,7 @@ export class ListingService {
     const updated = await this.database.professionalListing.update({
       where: { id: listing.id },
       data: { isAcceptingWork: dto.isAcceptingWork },
-      include: { city: true, categories: true, services: true },
+      include: OWNER_INCLUDE,
     });
 
     return this.toOwnerView(updated);
@@ -849,7 +909,7 @@ export class ListingService {
     // visibility: `GET /professionals/me` — their own listing, in whatever state it is in.
     const listing = await this.database.professionalListing.findUnique({
       where: { userId },
-      include: { city: true, categories: true, services: true },
+      include: OWNER_INCLUDE,
     });
 
     if (!listing || listing.deletedAt) {
@@ -868,15 +928,24 @@ export class ListingService {
       city?: { id: string; name: string; region: string | null } | null;
       categories?: Array<{ code: string; isPrimary: boolean }>;
       services?: Array<Parameters<typeof toServiceView>[0]>;
+      skills?: Array<{ code: string }>;
+      contactHours?: WeeklyHours[];
     },
   ) {
-    const [professionLabels, summary, user, regulated, ownerStats] = await Promise.all([
-      this.taxonomy.labels(TaxonomyKind.PROFESSION),
-      this.reputation.summaryFor(listing.userId),
-      this.database.user.findUnique({ where: { id: listing.userId }, select: authorSelect }),
-      this.isRegulated(listing.categories?.map(category => category.code) ?? []),
-      this.ownerStats(listing.id, listing.userId),
-    ]);
+    const [professionLabels, skillLabels, summary, user, regulated, ownerStats, verifications] =
+      await Promise.all([
+        this.taxonomy.labels(TaxonomyKind.PROFESSION),
+        this.taxonomy.labels(TaxonomyKind.SKILL),
+        this.reputation.summaryFor(listing.userId),
+        this.database.user.findUnique({ where: { id: listing.userId }, select: authorSelect }),
+        this.isRegulated(listing.categories?.map(category => category.code) ?? []),
+        this.ownerStats(listing.id, listing.userId),
+        // Every record, in every state, with its documents counted. The owner's own view (§2.5) —
+        // the field on `me` saves the manage panel a second call, and `GET me/verifications`
+        // serves the same records for the verification centre.
+        this.verifications.forOwner(listing.userId),
+      ]);
+    const hours = await this.contactHoursFor(listing);
 
     const categories = (listing.categories ?? []).map(category =>
       toTermView(category.code, professionLabels),
@@ -904,6 +973,30 @@ export class ListingService {
       // nothing to wait for — the client renders the banner only when this is present.
       review: await this.reviews.ownerView(listing),
       rating: this.reputation.toRatingView(summary),
+      // v2 §2.5 and §4.5. The owner sees everything, including a decline and its note; a visitor
+      // sees only `verifiedCategories`, which `BrowseService` builds from the approved records.
+      // `effectiveStatus`, so the owner's own panel says `EXPIRED` the moment their renewal date
+      // passes rather than at the next job run — which is also what the gate is telling them.
+      categoryVerifications: verifications.map(record => ({
+        categoryCode: record.categoryCode,
+        label: professionLabels.get(record.categoryCode) ?? record.categoryCode,
+        status: effectiveStatus(record),
+        submittedAt: record.submittedAt.toISOString(),
+        decidedAt: record.decidedAt?.toISOString() ?? null,
+        note: record.decisionNote,
+        checkedBy: record.checkedBy,
+        expiresAt: record.expiresAt?.toISOString() ?? null,
+        submittedForSubcategories: record.submittedForSubcategories,
+        documentCount: record.documentCount,
+      })),
+      verifiedCategories: toVerifiedCategories(
+        verifications.filter(record => effectiveStatus(record) === 'APPROVED'),
+        professionLabels,
+      ),
+      skills: (listing.skills ?? []).map(skill => toTermView(skill.code, skillLabels)),
+      customSkills: listing.customSkills ?? [],
+      contactHours: hours.hours,
+      isContactableNow: hours.contactableNow,
       serviceCount: listing.services?.length ?? 0,
       services: (listing.services ?? []).map(toServiceView),
       stats: {
@@ -914,6 +1007,38 @@ export class ListingService {
         ...ownerStats,
       },
       createdAt: listing.createdAt.toISOString(),
+    };
+  }
+
+  /**
+   * Contactable hours, and whether they are contactable **now** (v2 §4.2).
+   *
+   * The manual switch first — `isAcceptingWork` is the professional saying so, whatever the clock
+   * reads — and then the hours against the clock **in their own timezone**, resolved from their
+   * city. The same function backs the store's "Open now", which is the point: a badge and a filter
+   * that are two implementations of one question drift, and the drift reads as the list being
+   * wrong.
+   *
+   * No hours at all counts as contactable: somebody who never filled the form in has not said
+   * they are unavailable.
+   */
+  async contactHoursFor(listing: {
+    id: string;
+    cityId: string;
+    isAcceptingWork: boolean;
+    contactHours?: WeeklyHours[];
+  }): Promise<{ hours: WeeklyHours[]; contactableNow: boolean }> {
+    const rows =
+      listing.contactHours ??
+      (await this.database.professionalContactHours.findMany({
+        where: { listingId: listing.id },
+      }));
+    const city = await this.cities.find(listing.cityId);
+    const timezone = city?.timezone ?? 'Europe/London';
+
+    return {
+      hours: toWeeklyHours(rows) ?? [],
+      contactableNow: listing.isAcceptingWork && isWithinWeeklyHours(timezone, rows),
     };
   }
 

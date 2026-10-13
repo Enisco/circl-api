@@ -21,12 +21,12 @@ const communityCategories: Array<[string, string, boolean, string[]]> = [
   ['BANK_ACCOUNT', 'Bank Account', true, ['FINANCE_ACCOUNTING']],
   ['ACCOMMODATION', 'Accommodation', true, ['PROPERTY_LETTINGS']],
   ['VISA_DOCS', 'Visa / COS / Docs', true, ['IMMIGRATION', 'LEGAL']],
-  ['JOBS', 'Jobs', true, ['CAREERS_CV', 'RECRUITMENT']],
+  ['JOBS', 'Jobs', true, ['CAREERS_CV']],
   ['MOVING_HELP', 'Moving Help', true, ['LOGISTICS']],
   ['MAKE_FRIENDS', 'Make Friends', true, []],
   ['LANGUAGE_HELP', 'Language Help', true, ['TRANSLATION', 'EDUCATION_TUTORING']],
   ['SHOPPING_ERRANDS', 'Shopping / Errands', true, ['LOGISTICS']],
-  ['CHILDCARE', 'Childcare', true, ['CHILDCARE_SERVICES']],
+  ['CHILDCARE', 'Childcare', true, ['EDUCATION_TUTORING']],
   ['BEAUTY_HAIR', 'Beauty / Hair', true, ['BEAUTY_HAIR_SERVICES']],
   ['REPAIRS_HANDY', 'Repairs / Handy', true, ['TRADES_REPAIRS']],
   ['OTHER', 'Other', true, []],
@@ -34,71 +34,427 @@ const communityCategories: Array<[string, string, boolean, string[]]> = [
   ['TRANSPORT', 'Transport', false, ['LOGISTICS']],
   ['LEGAL_RIGHTS', 'Legal Rights', false, ['LEGAL']],
   ['BENEFITS_SUPPORT', 'Benefits & Support', false, ['FINANCE_ACCOUNTING']],
-  ['MENTAL_HEALTH', 'Mental Health', false, ['HEALTHCARE', 'THERAPY_COACHING']],
-  ['CHILDREN_FAMILY', 'Children & Family', false, ['CHILDCARE_SERVICES']],
+  ['MENTAL_HEALTH', 'Mental Health', false, ['HEALTHCARE']],
+  ['CHILDREN_FAMILY', 'Children & Family', false, ['EDUCATION_TUTORING']],
   ['BUSINESS_SETUP', 'Business Setup', false, ['BUSINESS_CONSULTING', 'FINANCE_ACCOUNTING']],
-  ['JOB_SEARCH', 'Job Search', false, ['CAREERS_CV', 'RECRUITMENT']],
+  ['JOB_SEARCH', 'Job Search', false, ['CAREERS_CV']],
 ];
 
 // ─── Professions (D8) ─────────────────────────────────────────────────────────
 // `isRegulated` and `credentialBodies` drive the credential step's field labels without a hardcoded map in the client (2.7.4), and — more importantly this release — let a regulated profile print the visible line saying Circl has not verified it (D13).
 //
-// `requiresReview` is a **different** question and the two are deliberately not the same column
-// (§2.9). `isRegulated` asks "is there a regulator"; `requiresReview` asks "may this person offer
-// this service at all, and should somebody read the listing before anybody can find it". They
-// overlap heavily and are still not the same flag: `TRANSLATION` has professional bodies in
-// `credentialBodies` and is not gated, because a bad translation is a bad service rather than a
-// legal or safeguarding event.
+// Three flags, three different questions, and v2 made keeping them apart matter more rather than
+// less:
 //
-// The seven gated here are the **default**, not the rule. Trust & Safety, managers and super admins
-// change the set from the portal (`PUT admin/professional-reviews/categories`, permission
-// `professions:gate`), which rewrites this flag and applies the consequences to listings already
-// in the profession. This file is only what a fresh database starts with — so a seed run must not
-// undo a decision somebody made in the portal, which is why `seedTaxonomy` preserves the live
-// value of this one key. See `prisma/seeders/taxonomy.seeder.ts`.
+//   - `isRegulated` — is there a **regulator**: a body you must be registered with to do the work
+//     lawfully. Not the same as having a professional body to belong to, which is why `TRANSLATION`
+//     carries CIOL, ITI and NRPSI in `credentialBodies` and is `isRegulated: false`: those are
+//     membership and voluntary registers, and nobody commits an offence by translating a letter
+//     without them.
+//   - `requiresVerification` — may this person offer this **service** at all until somebody has
+//     read their papers. False on every category and true on 35 subcategories, because
+//     *Immigration* is not sensitive and *Immigration solicitor* is (§3.2).
+//   - `requiresReview` — should a human read the whole **listing** before anybody can find it. Off
+//     everywhere now. Holding a category grants nothing (§2.6), so there is nothing left for it to
+//     protect; it stays because it is still the lever an operator can pull on a category that
+//     starts going wrong, from `PUT admin/professional-reviews/categories` (permission
+//     `professions:gate`).
 //
-// Three professions were considered and left **off** by default, recorded here because the
-// reasoning is the useful part if anybody turns them on later:
+// Both of the last two are operator-owned: a seed run must not undo a decision somebody made in
+// the portal, which is why `seedTaxonomy` preserves the live value of those keys. See
+// `prisma/seeders/taxonomy.seeder.ts`.
 //
-//   - `TRADES_REPAIRS` — gas work without Gas Safe registration is a criminal offence, but the
-//     category is mostly flat-pack and shelves, and gating all of it to catch the gas is a wide net.
-//   - `EDUCATION_TUTORING` — unsupervised contact with children, but most of it is adult English
-//     conversation practice.
-//   - `RECRUITMENT` — "a job with visa sponsorship" is a common fraud against this community.
-//
-const professions: Array<[string, string, boolean, string[], boolean]> = [
+/**
+ * The fourteen categories of Professionals v2 (§3.3), on the codes that were already live.
+ *
+ * **The codes are the existing ones wherever a category already existed**, which is the whole
+ * reason no live listing has to be migrated. circl-mobile's note assumed eight codes and there
+ * were twenty-one, so three of their "existing" codes were new spellings of ours — `FINANCE` for
+ * `FINANCE_ACCOUNTING`, `CAREER` for `CAREERS_CV`, `TECH` for `TECH_SOFTWARE` — and five of their
+ * "new" categories already existed under longer names. Labels are served, so the product's wording
+ * ships without a release; a code is a foreign key in twenty thousand rows.
+ *
+ * The seven retired below are the ones whose work is now a subcategory of one of the fourteen.
+ * They keep rendering wherever somebody already chose them (§8) and are never offered again.
+ *
+ * `requiresVerification` is **false on every category**: the gate lives on the subcategory,
+ * because *Immigration* is not sensitive and *Immigration solicitor* is. `requiresReview` is the
+ * old per-listing gate and is off everywhere now — holding a category grants nothing (§2.6), so
+ * there is nothing for it to protect. Both keys are sent during the transition (§3.1).
+ */
+const professions: Array<[string, string, boolean, string[], boolean, boolean?]> = [
   // Giving immigration advice in the UK without IAA (ex-OISC) regulation or an exemption is a
-  // criminal offence, and this audience is overwhelmingly people who need that advice. If one
-  // profession justified the whole feature it is this one.
-  ['IMMIGRATION', 'Immigration Advice', true, ['IAA'], true],
-  ['LEGAL', 'Legal', true, ['SRA', 'BSB', 'CILEx'], true],
-  // Unauthorised investment, mortgage and debt advice is a criminal offence; tax agents act on
-  // somebody else's behalf with HMRC.
-  ['FINANCE_ACCOUNTING', 'Finance & Accounting', true, ['ACCA', 'ICAEW', 'CIMA', 'FCA'], true],
-  ['HEALTHCARE', 'Healthcare', true, ['GMC', 'NMC', 'HCPC', 'GPhC'], true],
-  // "Coach" is unregulated, which is precisely why the wording has to be read by somebody: the
-  // risk here is a vulnerable person being treated by an untrained one.
-  ['THERAPY_COACHING', 'Therapy & Coaching', true, ['BACP', 'UKCP', 'HCPC'], true],
-  ['CHILDCARE_SERVICES', 'Childcare', true, ['Ofsted'], true],
-  // Client money and mandatory redress-scheme membership; deposit fraud against new arrivals is
-  // the oldest scam on this platform's beat.
-  ['PROPERTY_LETTINGS', 'Property & Lettings', true, ['ARLA', 'RICS', 'NAEA'], true],
-  // Not gated by default; see the three bullets above. The flag is what the portal changes.
-  ['TRADES_REPAIRS', 'Trades & Repairs', false, ['Gas Safe', 'NICEIC'], false],
-  ['EDUCATION_TUTORING', 'Education & Tutoring', false, [], false],
-  ['RECRUITMENT', 'Recruitment', false, [], false],
-  ['CAREERS_CV', 'Careers & CV', false, [], false],
-  ['TRANSLATION', 'Translation & Interpreting', false, ['CIOL', 'ITI'], false],
-  ['DESIGN_CREATIVE', 'Design & Creative', false, [], false],
-  ['TECH_SOFTWARE', 'Tech & Software', false, [], false],
-  ['MARKETING', 'Marketing & Social Media', false, [], false],
-  ['BUSINESS_CONSULTING', 'Business Consulting', false, [], false],
-  ['BEAUTY_HAIR_SERVICES', 'Beauty & Hair', false, [], false],
-  ['LOGISTICS', 'Driving & Logistics', false, [], false],
-  ['EVENTS_CATERING', 'Events & Catering', false, [], false],
-  ['PHOTOGRAPHY_VIDEO', 'Photography & Video', false, [], false],
-  ['CLEANING', 'Cleaning', false, [], false],
+  // criminal offence, and this audience is overwhelmingly people who need that advice.
+  ['IMMIGRATION', 'Immigration', true, ['IAA', 'SRA'], false],
+  ['LEGAL', 'Legal', true, ['SRA', 'BSB', 'CILEx'], false],
+  ['HEALTHCARE', 'Healthcare', true, ['GMC', 'NMC', 'HCPC', 'GPhC', 'GDC', 'GOC'], false],
+  ['FINANCE_ACCOUNTING', 'Finance', true, ['ACCA', 'ICAEW', 'CIMA', 'CIOT', 'FCA'], false],
+  // Not regulated, and with three bodies: membership of CIOL or ITI, and the NRPSI register courts
+  // ask for, are credentials rather than permission. A bad translation is a bad service.
+  ['TRANSLATION', 'Translation', false, ['CIOL', 'ITI', 'NRPSI'], false],
+  ['CAREERS_CV', 'Career', false, ['EAS'], false],
+  ['TECH_SOFTWARE', 'Tech', false, [], false],
+  ['LOGISTICS', 'Logistics', false, ['DVSA'], false],
+  ['PROPERTY_LETTINGS', 'Property & Housing', true, ['ARLA', 'RICS', 'NAEA', 'PRS', 'TPO'], false],
+  ['EDUCATION_TUTORING', 'Education & Tutoring', false, ['DVSA', 'Ofsted'], false],
+  ['BUSINESS_CONSULTING', 'Business & Admin', false, [], false],
+  ['TRADES_REPAIRS', 'Trades & Home', false, ['Gas Safe', 'NICEIC', 'NAPIT'], false],
+  ['BEAUTY_HAIR_SERVICES', 'Beauty & Wellbeing', false, ['JCCP', 'Save Face'], false],
+  ['EVENTS_CATERING', 'Events & Creative', false, [], false],
+  // ── Retired: their work is a subcategory of one of the fourteen above ──────
+  // Kept so a listing that already holds one still renders its label (§8), and never offered.
+  ['THERAPY_COACHING', 'Therapy & Coaching', true, ['BACP', 'UKCP', 'HCPC'], false, false],
+  ['CHILDCARE_SERVICES', 'Childcare', true, ['Ofsted'], false, false],
+  ['RECRUITMENT', 'Recruitment', false, ['EAS'], false, false],
+  ['DESIGN_CREATIVE', 'Design & Creative', false, [], false, false],
+  ['MARKETING', 'Marketing & Social Media', false, [], false, false],
+  ['PHOTOGRAPHY_VIDEO', 'Photography & Video', false, [], false, false],
+  ['CLEANING', 'Cleaning', false, [], false, false],
+  // The escape hatch stays open: a professional whose work fits none of the fourteen needs
+  // somewhere to be, and the alternative is a member picking a category that is nearly right.
   ['OTHER', 'Other', false, [], false],
+];
+
+/**
+ * Subcategories, and where the gate actually lives (§3.2).
+ *
+ * `[parent, code, label, requiresVerification, credentialBodies]`. A service needs verification iff
+ * its subcategory says so, or — where the service has no subcategory — its category does. The
+ * client computes the same thing to lock a chip without a round trip; **the server computes it
+ * again on write and refuses independently**, because a client flag is a latency optimisation and
+ * never a security boundary.
+ *
+ * The gates are the product's marks, checked against the UK regulator that would actually be
+ * asked for. Three worth stating, because they are the ones a reviewer will query:
+ *
+ *  - **Accountant** is not a protected title in the UK — anyone may use it — but a tax agent acts
+ *    on somebody else's behalf with HMRC and the audience here is people filing for the first
+ *    time. Gated, as asked.
+ *  - **Pest control** needs no licence to practise, though the pesticides do. Gated, as asked.
+ *  - **Lived-experience guidance** under Immigration is deliberately *not* gated: somebody saying
+ *    what happened to them is not giving regulated advice, and gating it would silence the most
+ *    useful voice on the platform. It is also the subcategory most likely to be misused, which is
+ *    why its label says what it is.
+ */
+const subcategories: Array<[string, string, string, boolean, string[]?]> = [
+  // ── Immigration ───────────────────────────────────────────────────────────
+  ['IMMIGRATION', 'IMMIGRATION_SOLICITOR', 'Immigration solicitor', true, ['SRA']],
+  ['IMMIGRATION', 'IMMIGRATION_IAA_ADVISER', 'IAA-regulated adviser', true, ['IAA']],
+  ['IMMIGRATION', 'IMMIGRATION_ASYLUM', 'Asylum & humanitarian', true, ['IAA', 'SRA']],
+  ['IMMIGRATION', 'IMMIGRATION_VISA_SUPPORT', 'Visa application support', false],
+  ['IMMIGRATION', 'IMMIGRATION_SPONSORSHIP', 'Sponsorship & right to work', false],
+  ['IMMIGRATION', 'IMMIGRATION_SETTLEMENT', 'Settlement & citizenship', false],
+  ['IMMIGRATION', 'IMMIGRATION_STUDENT', 'Student visas', false],
+  ['IMMIGRATION', 'IMMIGRATION_LIVED_EXPERIENCE', 'Lived-experience guidance', false],
+  // ── Legal ─────────────────────────────────────────────────────────────────
+  ['LEGAL', 'LEGAL_SOLICITOR', 'Solicitor', true, ['SRA']],
+  ['LEGAL', 'LEGAL_BARRISTER', 'Barrister', true, ['BSB']],
+  ['LEGAL', 'LEGAL_NOTARY', 'Notary', true, ['Faculty Office']],
+  ['LEGAL', 'LEGAL_FAMILY', 'Family law', true, ['SRA']],
+  ['LEGAL', 'LEGAL_WILLS', 'Wills & probate', true, ['SRA', 'STEP']],
+  ['LEGAL', 'LEGAL_PARALEGAL', 'Paralegal support', false],
+  ['LEGAL', 'LEGAL_EMPLOYMENT', 'Employment rights', false],
+  ['LEGAL', 'LEGAL_HOUSING', 'Tenancy & housing', false],
+  ['LEGAL', 'LEGAL_DRAFTING', 'Document drafting', false],
+  // ── Healthcare ────────────────────────────────────────────────────────────
+  ['HEALTHCARE', 'HEALTH_DOCTOR', 'GP / doctor', true, ['GMC']],
+  ['HEALTHCARE', 'HEALTH_DENTIST', 'Dentist', true, ['GDC']],
+  ['HEALTHCARE', 'HEALTH_PHARMACIST', 'Pharmacist', true, ['GPhC']],
+  ['HEALTHCARE', 'HEALTH_NURSE', 'Nurse / midwife', true, ['NMC']],
+  ['HEALTHCARE', 'HEALTH_THERAPIST', 'Therapist / counsellor', true, ['BACP', 'HCPC', 'UKCP']],
+  ['HEALTHCARE', 'HEALTH_PHYSIO', 'Physiotherapist', true, ['HCPC']],
+  ['HEALTHCARE', 'HEALTH_OPTICIAN', 'Optician', true, ['GOC']],
+  ['HEALTHCARE', 'HEALTH_NUTRITION', 'Nutritionist', false],
+  ['HEALTHCARE', 'HEALTH_TRAINER', 'Personal trainer', false],
+  ['HEALTHCARE', 'HEALTH_DOULA', 'Doula & birth support', false],
+  // ── Finance ───────────────────────────────────────────────────────────────
+  ['FINANCE_ACCOUNTING', 'FINANCE_ACCOUNTANT', 'Accountant', true, ['ACCA', 'ICAEW', 'CIMA']],
+  ['FINANCE_ACCOUNTING', 'FINANCE_TAX_ADVISER', 'Chartered tax adviser', true, ['CIOT']],
+  ['FINANCE_ACCOUNTING', 'FINANCE_IFA', 'Independent financial adviser', true, ['FCA']],
+  ['FINANCE_ACCOUNTING', 'FINANCE_MORTGAGE', 'Mortgage broker', true, ['FCA']],
+  ['FINANCE_ACCOUNTING', 'FINANCE_INSURANCE', 'Insurance broker', true, ['FCA']],
+  ['FINANCE_ACCOUNTING', 'FINANCE_BOOKKEEPING', 'Bookkeeping', false],
+  ['FINANCE_ACCOUNTING', 'FINANCE_SELF_ASSESSMENT', 'Self-assessment help', false],
+  ['FINANCE_ACCOUNTING', 'FINANCE_FUNDING', 'Business plans & funding', false],
+  ['FINANCE_ACCOUNTING', 'FINANCE_DEBT', 'Credit & debt guidance', false],
+  // ── Translation ───────────────────────────────────────────────────────────
+  ['TRANSLATION', 'TRANSLATION_CERTIFIED', 'Certified translation', true, ['CIOL', 'ITI']],
+  ['TRANSLATION', 'TRANSLATION_COURT', 'Court interpreting', true, ['NRPSI']],
+  ['TRANSLATION', 'TRANSLATION_MEDICAL', 'Medical interpreting', true, ['NRPSI']],
+  ['TRANSLATION', 'TRANSLATION_DOCUMENT', 'Document translation', false],
+  ['TRANSLATION', 'TRANSLATION_GENERAL', 'Interpreting (general)', false],
+  ['TRANSLATION', 'TRANSLATION_TUTORING', 'Language tutoring', false],
+  // ── Career ────────────────────────────────────────────────────────────────
+  ['CAREERS_CV', 'CAREER_RECRUITMENT', 'Recruitment agency', true, ['EAS']],
+  ['CAREERS_CV', 'CAREER_CV', 'CV & cover letters', false],
+  ['CAREERS_CV', 'CAREER_INTERVIEW', 'Interview coaching', false],
+  ['CAREERS_CV', 'CAREER_JOB_SEARCH', 'Job search support', false],
+  ['CAREERS_CV', 'CAREER_QUALIFICATIONS', 'Qualification recognition', false],
+  ['CAREERS_CV', 'CAREER_RETRAINING', 'Apprenticeships & retraining', false],
+  ['CAREERS_CV', 'CAREER_BRAND', 'LinkedIn & personal brand', false],
+  // ── Tech ──────────────────────────────────────────────────────────────────
+  ['TECH_SOFTWARE', 'TECH_WEB', 'Web development', false],
+  ['TECH_SOFTWARE', 'TECH_APP', 'App development', false],
+  ['TECH_SOFTWARE', 'TECH_IT_SUPPORT', 'IT support', false],
+  ['TECH_SOFTWARE', 'TECH_DATA', 'Data & analytics', false],
+  ['TECH_SOFTWARE', 'TECH_SECURITY', 'Cybersecurity', false],
+  ['TECH_SOFTWARE', 'TECH_DESIGN', 'UI/UX design', false],
+  ['TECH_SOFTWARE', 'TECH_AUTOMATION', 'Automation & AI', false],
+  // ── Logistics ─────────────────────────────────────────────────────────────
+  ['LOGISTICS', 'LOGISTICS_PRIVATE_HIRE', 'Private hire driver', true, ['PHV licence']],
+  ['LOGISTICS', 'LOGISTICS_VEHICLE_HIRE', 'Vehicle hire', true, []],
+  ['LOGISTICS', 'LOGISTICS_MAN_VAN', 'Man & van', false],
+  ['LOGISTICS', 'LOGISTICS_COURIER', 'Courier', false],
+  ['LOGISTICS', 'LOGISTICS_AIRPORT', 'Airport transfers', false],
+  ['LOGISTICS', 'LOGISTICS_FREIGHT', 'Freight & shipping', false],
+  ['LOGISTICS', 'LOGISTICS_INTERNATIONAL', 'International shipping', false],
+  // ── Property & Housing ────────────────────────────────────────────────────
+  ['PROPERTY_LETTINGS', 'PROPERTY_LETTING_AGENT', 'Letting agent', true, ['PRS', 'TPO', 'ARLA']],
+  ['PROPERTY_LETTINGS', 'PROPERTY_ESTATE_AGENT', 'Estate agent', true, ['PRS', 'TPO', 'NAEA']],
+  ['PROPERTY_LETTINGS', 'PROPERTY_SURVEYOR', 'Surveyor', true, ['RICS']],
+  ['PROPERTY_LETTINGS', 'PROPERTY_LANDLORD', 'Landlord services', false],
+  ['PROPERTY_LETTINGS', 'PROPERTY_HOUSE_SHARE', 'House-share finding', false],
+  ['PROPERTY_LETTINGS', 'PROPERTY_TENANCY', 'Tenancy setup support', false],
+  ['PROPERTY_LETTINGS', 'PROPERTY_REMOVALS', 'Removals', false],
+  ['PROPERTY_LETTINGS', 'PROPERTY_STORAGE', 'Storage', false],
+  // ── Education & Tutoring ──────────────────────────────────────────────────
+  ['EDUCATION_TUTORING', 'EDUCATION_DRIVING', 'Driving instructor', true, ['DVSA ADI']],
+  ['EDUCATION_TUTORING', 'EDUCATION_CHILDCARE', 'Childminding & childcare', true, ['Ofsted']],
+  ['EDUCATION_TUTORING', 'EDUCATION_PRIMARY', 'Primary tutoring', false],
+  ['EDUCATION_TUTORING', 'EDUCATION_SECONDARY', 'Secondary tutoring', false],
+  ['EDUCATION_TUTORING', 'EDUCATION_ADMISSIONS', 'University admissions', false],
+  ['EDUCATION_TUTORING', 'EDUCATION_ENGLISH', 'English (ESOL / IELTS)', false],
+  ['EDUCATION_TUTORING', 'EDUCATION_PROFESSIONAL_EXAMS', 'Professional exams', false],
+  ['EDUCATION_TUTORING', 'EDUCATION_SEN', 'SEN support', false],
+  // ── Business & Admin ──────────────────────────────────────────────────────
+  ['BUSINESS_CONSULTING', 'BUSINESS_FORMATION', 'Company formation', false],
+  ['BUSINESS_CONSULTING', 'BUSINESS_LICENSING', 'Licensing & permits', false],
+  ['BUSINESS_CONSULTING', 'BUSINESS_HR', 'HR & payroll', false],
+  ['BUSINESS_CONSULTING', 'BUSINESS_MARKETING', 'Marketing & social', false],
+  ['BUSINESS_CONSULTING', 'BUSINESS_BRANDING', 'Branding & design', false],
+  ['BUSINESS_CONSULTING', 'BUSINESS_BOOKKEEPING', 'Bookkeeping setup', false],
+  ['BUSINESS_CONSULTING', 'BUSINESS_IMPORT_EXPORT', 'Import & export', false],
+  // ── Trades & Home ─────────────────────────────────────────────────────────
+  ['TRADES_REPAIRS', 'TRADES_ELECTRICIAN', 'Electrician', true, ['NICEIC', 'NAPIT', 'Part P']],
+  ['TRADES_REPAIRS', 'TRADES_GAS', 'Gas engineer', true, ['Gas Safe']],
+  ['TRADES_REPAIRS', 'TRADES_PEST_CONTROL', 'Pest control', true, ['BPCA']],
+  ['TRADES_REPAIRS', 'TRADES_PLUMBER', 'Plumber', false],
+  ['TRADES_REPAIRS', 'TRADES_BUILDER', 'Builder', false],
+  ['TRADES_REPAIRS', 'TRADES_CARPENTER', 'Carpenter', false],
+  ['TRADES_REPAIRS', 'TRADES_DECORATOR', 'Decorator', false],
+  ['TRADES_REPAIRS', 'TRADES_ROOFER', 'Roofer', false],
+  ['TRADES_REPAIRS', 'TRADES_LOCKSMITH', 'Locksmith', false],
+  ['TRADES_REPAIRS', 'TRADES_CLEANER', 'Cleaner', false],
+  ['TRADES_REPAIRS', 'TRADES_HANDYPERSON', 'Handyperson', false],
+  ['TRADES_REPAIRS', 'TRADES_GARDENER', 'Gardener', false],
+  // ── Beauty & Wellbeing ────────────────────────────────────────────────────
+  [
+    'BEAUTY_HAIR_SERVICES',
+    'BEAUTY_AESTHETICS',
+    'Aesthetics & injectables',
+    true,
+    ['JCCP', 'Save Face'],
+  ],
+  ['BEAUTY_HAIR_SERVICES', 'BEAUTY_HAIR', 'Hairdresser', false],
+  ['BEAUTY_HAIR_SERVICES', 'BEAUTY_BARBER', 'Barber', false],
+  ['BEAUTY_HAIR_SERVICES', 'BEAUTY_BRAIDING', 'Braiding & locs', false],
+  ['BEAUTY_HAIR_SERVICES', 'BEAUTY_MAKEUP', 'Make-up artist', false],
+  ['BEAUTY_HAIR_SERVICES', 'BEAUTY_NAILS', 'Nails', false],
+  ['BEAUTY_HAIR_SERVICES', 'BEAUTY_MASSAGE', 'Massage therapist', false],
+  ['BEAUTY_HAIR_SERVICES', 'BEAUTY_SKINCARE', 'Skincare', false],
+  // ── Events & Creative ─────────────────────────────────────────────────────
+  ['EVENTS_CATERING', 'EVENTS_PHOTOGRAPHY', 'Photographer', false],
+  ['EVENTS_CATERING', 'EVENTS_VIDEOGRAPHY', 'Videographer', false],
+  // `EVENTS_CATERER`, not `EVENTS_CATERING`: the parent category already owns that code, and a
+  // string that means a category in one table and a subcategory in another is a bug waiting for
+  // the first piece of code that looks one up without its kind.
+  ['EVENTS_CATERING', 'EVENTS_CATERER', 'Caterer', false],
+  ['EVENTS_CATERING', 'EVENTS_CAKE', 'Cake & baking', false],
+  ['EVENTS_CATERING', 'EVENTS_DJ', 'DJ & music', false],
+  ['EVENTS_CATERING', 'EVENTS_PLANNER', 'Event planner', false],
+  ['EVENTS_CATERING', 'EVENTS_DECOR', 'Decoration & hire', false],
+  ['EVENTS_CATERING', 'EVENTS_MC', 'MC & host', false],
+  ['EVENTS_CATERING', 'EVENTS_TAILORING', 'Tailoring & alterations', false],
+];
+
+/**
+ * What a professional actually does (§3.4), tagged with the categories it belongs to so the picker
+ * can lead with the relevant ones.
+ *
+ * Coded, which is what makes "fourteen people here do ILR applications" answerable — a filter, a
+ * count and a translation all need a code. The free-text half lives on the listing and is never
+ * promoted into this list automatically: the admin portal surfaces the words that keep recurring
+ * and a human decides, because a vocabulary that grows by itself grows typos.
+ *
+ * Leaning hard towards what *this* audience needs. A general skills taxonomy would be ten thousand
+ * terms and would bury "ILR application" under "project management".
+ */
+const skills: Array<[string, string, string[]]> = [
+  // ── Immigration ───────────────────────────────────────────────────────────
+  ['ILR_APPLICATION', 'Indefinite leave to remain', ['IMMIGRATION']],
+  ['SPOUSE_VISA', 'Spouse & partner visas', ['IMMIGRATION']],
+  ['SKILLED_WORKER_VISA', 'Skilled Worker visas', ['IMMIGRATION']],
+  ['SELF_SPONSORSHIP', 'Self-sponsorship route', ['IMMIGRATION', 'BUSINESS_CONSULTING']],
+  ['SPONSOR_LICENCE', 'Sponsor licence applications', ['IMMIGRATION', 'BUSINESS_CONSULTING']],
+  ['STUDENT_VISA', 'Student visas & CAS', ['IMMIGRATION', 'EDUCATION_TUTORING']],
+  ['GRADUATE_ROUTE', 'Graduate route', ['IMMIGRATION']],
+  ['ASYLUM_CLAIM', 'Asylum claims', ['IMMIGRATION', 'LEGAL']],
+  ['APPEALS_TRIBUNAL', 'Immigration appeals & tribunals', ['IMMIGRATION', 'LEGAL']],
+  ['CITIZENSHIP_APPLICATION', 'British citizenship', ['IMMIGRATION']],
+  ['EU_SETTLEMENT', 'EU Settlement Scheme', ['IMMIGRATION']],
+  ['FAMILY_REUNION', 'Family reunion', ['IMMIGRATION']],
+  ['RIGHT_TO_WORK_CHECK', 'Right to work checks', ['IMMIGRATION', 'BUSINESS_CONSULTING']],
+  ['BRP_REPLACEMENT', 'BRP & eVisa problems', ['IMMIGRATION']],
+  ['DOCUMENT_CHECKING', 'Document checking before submission', ['IMMIGRATION', 'LEGAL']],
+  // ── Legal ─────────────────────────────────────────────────────────────────
+  ['TENANCY_DISPUTE', 'Tenancy disputes', ['LEGAL', 'PROPERTY_LETTINGS']],
+  ['DEPOSIT_RECOVERY', 'Deposit recovery', ['LEGAL', 'PROPERTY_LETTINGS']],
+  ['EMPLOYMENT_TRIBUNAL', 'Employment tribunals', ['LEGAL', 'CAREERS_CV']],
+  ['UNFAIR_DISMISSAL', 'Unfair dismissal', ['LEGAL', 'CAREERS_CV']],
+  ['WILL_WRITING', 'Will writing', ['LEGAL']],
+  ['PROBATE', 'Probate', ['LEGAL']],
+  ['DIVORCE', 'Divorce & separation', ['LEGAL']],
+  ['CHILD_ARRANGEMENTS', 'Child arrangements', ['LEGAL']],
+  ['CONTRACT_REVIEW', 'Contract review', ['LEGAL', 'BUSINESS_CONSULTING']],
+  ['POWER_OF_ATTORNEY', 'Power of attorney', ['LEGAL']],
+  ['DEBT_LETTERS', 'Debt & bailiff letters', ['LEGAL', 'FINANCE_ACCOUNTING']],
+  // ── Healthcare ────────────────────────────────────────────────────────────
+  ['NHS_REGISTRATION', 'Registering with a GP', ['HEALTHCARE']],
+  ['MENTAL_HEALTH_SUPPORT', 'Mental health support', ['HEALTHCARE']],
+  ['TRAUMA_COUNSELLING', 'Trauma & displacement counselling', ['HEALTHCARE']],
+  ['SEXUAL_HEALTH', 'Sexual health', ['HEALTHCARE']],
+  ['MATERNITY_CARE', 'Maternity & antenatal', ['HEALTHCARE']],
+  ['CHILD_HEALTH', 'Child health', ['HEALTHCARE']],
+  ['CHRONIC_CONDITIONS', 'Long-term conditions', ['HEALTHCARE']],
+  ['PHYSIO_REHAB', 'Physiotherapy & rehab', ['HEALTHCARE']],
+  ['NUTRITION_PLANS', 'Nutrition & diet plans', ['HEALTHCARE']],
+  ['PERSONAL_TRAINING', 'Personal training', ['HEALTHCARE', 'BEAUTY_HAIR_SERVICES']],
+  // ── Finance ───────────────────────────────────────────────────────────────
+  ['SELF_ASSESSMENT', 'Self-assessment tax returns', ['FINANCE_ACCOUNTING']],
+  ['CORPORATION_TAX', 'Corporation tax', ['FINANCE_ACCOUNTING']],
+  ['VAT_REGISTRATION', 'VAT registration & returns', ['FINANCE_ACCOUNTING']],
+  ['PAYROLL', 'Payroll & PAYE', ['FINANCE_ACCOUNTING', 'BUSINESS_CONSULTING']],
+  ['BOOKKEEPING', 'Bookkeeping', ['FINANCE_ACCOUNTING']],
+  ['CIS_RETURNS', 'CIS returns for trades', ['FINANCE_ACCOUNTING', 'TRADES_REPAIRS']],
+  ['MORTGAGE_ADVICE', 'Mortgage advice', ['FINANCE_ACCOUNTING', 'PROPERTY_LETTINGS']],
+  ['FIRST_TIME_BUYER', 'First-time buyers', ['FINANCE_ACCOUNTING', 'PROPERTY_LETTINGS']],
+  ['CREDIT_BUILDING', 'Credit building', ['FINANCE_ACCOUNTING']],
+  ['DEBT_MANAGEMENT', 'Debt management', ['FINANCE_ACCOUNTING']],
+  ['PENSIONS', 'Pensions', ['FINANCE_ACCOUNTING']],
+  ['BUSINESS_PLAN', 'Business plans', ['FINANCE_ACCOUNTING', 'BUSINESS_CONSULTING']],
+  ['GRANT_FUNDING', 'Grants & funding', ['FINANCE_ACCOUNTING', 'BUSINESS_CONSULTING']],
+  ['REMITTANCE_ADVICE', 'Sending money home', ['FINANCE_ACCOUNTING']],
+  // ── Translation ───────────────────────────────────────────────────────────
+  ['CERTIFIED_TRANSLATION', 'Certified document translation', ['TRANSLATION']],
+  ['SWORN_TRANSLATION', 'Sworn & notarised translation', ['TRANSLATION', 'LEGAL']],
+  ['COURT_INTERPRETING', 'Court interpreting', ['TRANSLATION', 'LEGAL']],
+  ['MEDICAL_INTERPRETING', 'Medical interpreting', ['TRANSLATION', 'HEALTHCARE']],
+  ['HOME_OFFICE_TRANSLATION', 'Home Office document translation', ['TRANSLATION', 'IMMIGRATION']],
+  ['SIMULTANEOUS_INTERPRETING', 'Simultaneous interpreting', ['TRANSLATION']],
+  ['TRANSCRIPTION', 'Transcription', ['TRANSLATION']],
+  ['SUBTITLING', 'Subtitling', ['TRANSLATION', 'EVENTS_CATERING']],
+  // ── Career ────────────────────────────────────────────────────────────────
+  ['CV_WRITING', 'CV writing', ['CAREERS_CV']],
+  ['COVER_LETTER', 'Cover letters', ['CAREERS_CV']],
+  ['UK_CV_CONVERSION', 'Converting an overseas CV', ['CAREERS_CV']],
+  ['INTERVIEW_PREP', 'Interview preparation', ['CAREERS_CV']],
+  ['LINKEDIN_PROFILE', 'LinkedIn profiles', ['CAREERS_CV', 'BUSINESS_CONSULTING']],
+  ['SALARY_NEGOTIATION', 'Salary negotiation', ['CAREERS_CV']],
+  ['NARIC_RECOGNITION', 'Qualification recognition (ENIC)', ['CAREERS_CV', 'EDUCATION_TUTORING']],
+  ['CAREER_CHANGE', 'Career change', ['CAREERS_CV']],
+  ['APPRENTICESHIPS', 'Apprenticeships', ['CAREERS_CV', 'EDUCATION_TUTORING']],
+  ['SPONSORED_JOB_SEARCH', 'Finding a sponsoring employer', ['CAREERS_CV', 'IMMIGRATION']],
+  // ── Tech ──────────────────────────────────────────────────────────────────
+  ['WEBSITE_BUILD', 'Website build', ['TECH_SOFTWARE', 'BUSINESS_CONSULTING']],
+  ['ECOMMERCE_SETUP', 'Online shop setup', ['TECH_SOFTWARE', 'BUSINESS_CONSULTING']],
+  ['MOBILE_APP', 'Mobile apps', ['TECH_SOFTWARE']],
+  ['IT_SUPPORT', 'IT support', ['TECH_SOFTWARE']],
+  ['DATA_ANALYSIS', 'Data analysis', ['TECH_SOFTWARE']],
+  ['CYBER_SECURITY', 'Cybersecurity', ['TECH_SOFTWARE']],
+  ['UI_UX', 'UI/UX design', ['TECH_SOFTWARE']],
+  ['AUTOMATION', 'Automation & AI tools', ['TECH_SOFTWARE', 'BUSINESS_CONSULTING']],
+  ['DEVICE_REPAIR', 'Phone & laptop repair', ['TECH_SOFTWARE', 'TRADES_REPAIRS']],
+  // ── Logistics ─────────────────────────────────────────────────────────────
+  ['AIRPORT_TRANSFER', 'Airport transfers', ['LOGISTICS']],
+  ['MAN_AND_VAN', 'Man & van', ['LOGISTICS', 'PROPERTY_LETTINGS']],
+  ['HOUSE_MOVE', 'House moves', ['LOGISTICS', 'PROPERTY_LETTINGS']],
+  ['SAME_DAY_COURIER', 'Same-day courier', ['LOGISTICS']],
+  ['BARREL_SHIPPING', 'Barrel & box shipping', ['LOGISTICS']],
+  ['FREIGHT_FORWARDING', 'Freight forwarding', ['LOGISTICS', 'BUSINESS_CONSULTING']],
+  ['CUSTOMS_CLEARANCE', 'Customs clearance', ['LOGISTICS', 'BUSINESS_CONSULTING']],
+  ['PRIVATE_HIRE', 'Private hire driving', ['LOGISTICS']],
+  // ── Property & Housing ────────────────────────────────────────────────────
+  ['HOUSE_SHARE_FINDING', 'Finding a house share', ['PROPERTY_LETTINGS']],
+  ['GUARANTOR_HELP', 'Guarantor & referencing help', ['PROPERTY_LETTINGS']],
+  ['TENANCY_SETUP', 'Tenancy setup', ['PROPERTY_LETTINGS']],
+  ['LANDLORD_COMPLIANCE', 'Landlord compliance', ['PROPERTY_LETTINGS']],
+  ['PROPERTY_VIEWING', 'Viewings on your behalf', ['PROPERTY_LETTINGS']],
+  ['HOME_SURVEY', 'Home surveys', ['PROPERTY_LETTINGS']],
+  ['COUNCIL_HOUSING', 'Council & social housing', ['PROPERTY_LETTINGS', 'LEGAL']],
+  ['STORAGE', 'Storage', ['PROPERTY_LETTINGS', 'LOGISTICS']],
+  // ── Education ─────────────────────────────────────────────────────────────
+  ['ESOL_TEACHING', 'English for speakers of other languages', ['EDUCATION_TUTORING']],
+  ['IELTS_PREP', 'IELTS preparation', ['EDUCATION_TUTORING']],
+  ['MATHS_TUTORING', 'Maths tutoring', ['EDUCATION_TUTORING']],
+  ['SCIENCE_TUTORING', 'Science tutoring', ['EDUCATION_TUTORING']],
+  ['ELEVEN_PLUS', '11+ and entrance exams', ['EDUCATION_TUTORING']],
+  ['GCSE_SUPPORT', 'GCSE support', ['EDUCATION_TUTORING']],
+  ['A_LEVEL_SUPPORT', 'A-level support', ['EDUCATION_TUTORING']],
+  ['UCAS_APPLICATION', 'UCAS & personal statements', ['EDUCATION_TUTORING']],
+  ['SEN_SUPPORT', 'SEN support', ['EDUCATION_TUTORING']],
+  ['SCHOOL_PLACES', 'School places & appeals', ['EDUCATION_TUTORING', 'LEGAL']],
+  ['DRIVING_LESSONS', 'Driving lessons', ['EDUCATION_TUTORING', 'LOGISTICS']],
+  ['CHILDMINDING', 'Childminding', ['EDUCATION_TUTORING']],
+  // ── Business & Admin ──────────────────────────────────────────────────────
+  ['COMPANY_FORMATION', 'Company formation', ['BUSINESS_CONSULTING']],
+  ['BUSINESS_LICENSING_HELP', 'Licences & permits', ['BUSINESS_CONSULTING']],
+  ['FOOD_HYGIENE', 'Food hygiene & registration', ['BUSINESS_CONSULTING', 'EVENTS_CATERING']],
+  ['HR_POLICIES', 'HR policies & contracts', ['BUSINESS_CONSULTING']],
+  ['SOCIAL_MEDIA_MARKETING', 'Social media marketing', ['BUSINESS_CONSULTING']],
+  ['BRAND_DESIGN', 'Logo & brand design', ['BUSINESS_CONSULTING', 'EVENTS_CATERING']],
+  ['IMPORT_EXPORT', 'Import & export', ['BUSINESS_CONSULTING', 'LOGISTICS']],
+  ['MARKET_STALL_SETUP', 'Market stall & pop-up setup', ['BUSINESS_CONSULTING']],
+  // ── Trades & Home ─────────────────────────────────────────────────────────
+  ['ELECTRICAL_WORK', 'Electrical work', ['TRADES_REPAIRS']],
+  ['EICR_CERTIFICATE', 'EICR certificates', ['TRADES_REPAIRS', 'PROPERTY_LETTINGS']],
+  ['BOILER_SERVICE', 'Boiler service & repair', ['TRADES_REPAIRS']],
+  ['GAS_SAFETY_CERT', 'Gas safety certificates', ['TRADES_REPAIRS', 'PROPERTY_LETTINGS']],
+  ['PLUMBING', 'Plumbing', ['TRADES_REPAIRS']],
+  ['CARPENTRY', 'Carpentry', ['TRADES_REPAIRS']],
+  ['PAINTING_DECORATING', 'Painting & decorating', ['TRADES_REPAIRS']],
+  ['FLOORING', 'Flooring', ['TRADES_REPAIRS']],
+  ['ROOFING', 'Roofing', ['TRADES_REPAIRS']],
+  ['LOCKSMITH', 'Locksmithing', ['TRADES_REPAIRS']],
+  ['END_OF_TENANCY_CLEAN', 'End-of-tenancy cleaning', ['TRADES_REPAIRS', 'PROPERTY_LETTINGS']],
+  ['DEEP_CLEAN', 'Deep cleaning', ['TRADES_REPAIRS']],
+  ['GARDENING', 'Gardening', ['TRADES_REPAIRS']],
+  ['FLAT_PACK_ASSEMBLY', 'Flat-pack assembly', ['TRADES_REPAIRS']],
+  ['PEST_CONTROL', 'Pest control', ['TRADES_REPAIRS']],
+  // ── Beauty & Wellbeing ────────────────────────────────────────────────────
+  ['AFRO_HAIR', 'Afro-textured hair', ['BEAUTY_HAIR_SERVICES']],
+  ['BRAIDING', 'Braiding', ['BEAUTY_HAIR_SERVICES']],
+  ['LOCS', 'Locs & twists', ['BEAUTY_HAIR_SERVICES']],
+  ['WIG_INSTALL', 'Wigs & installs', ['BEAUTY_HAIR_SERVICES']],
+  ['BARBERING', 'Barbering', ['BEAUTY_HAIR_SERVICES']],
+  ['BRIDAL_HAIR', 'Bridal hair', ['BEAUTY_HAIR_SERVICES', 'EVENTS_CATERING']],
+  ['BRIDAL_MAKEUP', 'Bridal make-up', ['BEAUTY_HAIR_SERVICES', 'EVENTS_CATERING']],
+  ['NAILS', 'Nails', ['BEAUTY_HAIR_SERVICES']],
+  ['LASHES_BROWS', 'Lashes & brows', ['BEAUTY_HAIR_SERVICES']],
+  ['MASSAGE', 'Massage', ['BEAUTY_HAIR_SERVICES', 'HEALTHCARE']],
+  ['SKINCARE_FACIALS', 'Skincare & facials', ['BEAUTY_HAIR_SERVICES']],
+  // ── Events & Creative ─────────────────────────────────────────────────────
+  ['EVENT_PHOTOGRAPHY', 'Event photography', ['EVENTS_CATERING']],
+  ['PORTRAIT_PHOTOGRAPHY', 'Portraits & headshots', ['EVENTS_CATERING', 'CAREERS_CV']],
+  ['VIDEOGRAPHY', 'Videography', ['EVENTS_CATERING']],
+  ['WEDDING_PLANNING', 'Wedding planning', ['EVENTS_CATERING']],
+  ['CATERING', 'Catering', ['EVENTS_CATERING']],
+  ['AFRICAN_CUISINE', 'African & Caribbean cuisine', ['EVENTS_CATERING']],
+  ['CAKE_BAKING', 'Cakes & baking', ['EVENTS_CATERING']],
+  ['DJ_MUSIC', 'DJ & live music', ['EVENTS_CATERING']],
+  ['EVENT_DECOR', 'Decoration & hire', ['EVENTS_CATERING']],
+  ['MC_HOSTING', 'MC & hosting', ['EVENTS_CATERING']],
+  ['TAILORING', 'Tailoring & alterations', ['EVENTS_CATERING']],
+  ['TRADITIONAL_ATTIRE', 'Traditional attire', ['EVENTS_CATERING']],
 ];
 
 // ─── Guide topics (spec 0.7) ──────────────────────────────────────────────────
@@ -569,12 +925,44 @@ export const taxonomySeeds: TaxonomySeed[] = [
     // The bridge that lets offer promotion prefill a profession (D8), so the member confirms rather than choosing from scratch.
     metadata: { suggestedProfessionCodes: suggested },
   })),
-  ...professions.map(([code, label, isRegulated, credentialBodies, requiresReview], index) => ({
-    kind: TaxonomyKind.PROFESSION,
+  ...professions.map(
+    ([code, label, isRegulated, credentialBodies, requiresVerification, isActive], index) => ({
+      kind: TaxonomyKind.PROFESSION,
+      code,
+      label,
+      sort: (index + 1) * 10,
+      isActive: isActive ?? true,
+      /**
+       * `requiresVerification` is the new name and the truth; `requiresReview` is the old
+       * per-listing gate, sent as `false` during the transition because the client falls back to
+       * it when the new key is missing and a stale build must not read a gate that has moved
+       * (§3.1). Dropped once the portal has stopped writing it.
+       */
+      metadata: {
+        isRegulated,
+        credentialBodies,
+        requiresVerification,
+        requiresReview: false,
+      },
+    }),
+  ),
+  ...subcategories.map(
+    ([parentCode, code, label, requiresVerification, credentialBodies], index) => ({
+      kind: TaxonomyKind.PROFESSION_SUBCATEGORY,
+      code,
+      label,
+      // Ten apart, and grouped by parent in declaration order: the portal reorders by rewriting
+      // `sort`, and gaps mean a term can be moved between two others without renumbering the shelf.
+      sort: (index + 1) * 10,
+      metadata: { parentCode, requiresVerification, credentialBodies: credentialBodies ?? [] },
+    }),
+  ),
+  ...skills.map(([code, label, categoryCodes], index) => ({
+    kind: TaxonomyKind.SKILL,
     code,
     label,
-    sort: index + 1,
-    metadata: { isRegulated, credentialBodies, requiresReview },
+    sort: (index + 1) * 10,
+    metadata: { categoryCodes },
   })),
   ...pair(TaxonomyKind.GUIDE_TOPIC, guideTopics),
   ...pair(TaxonomyKind.HERITAGE_TAG, heritageTags),

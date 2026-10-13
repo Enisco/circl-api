@@ -909,7 +909,8 @@ const LISTINGS: ListingSeed[] = [
     n: 220,
     cityId: 'LONDON',
     professionTitle: 'Careers Adviser, Care Sector',
-    codes: ['CAREERS_CV', 'RECRUITMENT', 'TRANSLATION'],
+    // RECRUITMENT was retired by v2; the careers adviser keeps the two categories that remain.
+    codes: ['CAREERS_CV', 'TRANSLATION'],
     about: 'Careers advice for care and NHS bank work, including the checks.',
     priceFrom: 2800,
     responseMinutes: 230,

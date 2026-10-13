@@ -5,6 +5,9 @@ import { BriefController } from './controllers/brief.controller';
 import { DisputeController } from './controllers/dispute.controller';
 import { ProfessionalsController } from './controllers/professionals.controller';
 import { BriefService } from './services/brief.service';
+import { CategoryVerificationService } from './services/category-verification.service';
+import { ProfessionalSearchService } from './services/professional-search.service';
+import { ServiceCatalogueService } from './services/service-catalogue.service';
 import { BrowseService } from './services/browse.service';
 import { AvailabilityService } from './services/availability.service';
 import { ListingService } from './services/listing.service';
@@ -34,11 +37,19 @@ const CONTROLLERS = [
     BrowseService,
     ProfessionalsHomeService,
     BriefService,
+    // Professionals v2: the service catalogue, the category verifications it is gated by, and the
+    // blended search that reads both.
+    ServiceCatalogueService,
+    CategoryVerificationService,
+    ProfessionalSearchService,
   ],
   exports: [
     ListingService,
     ProfessionalsHomeService,
     BrowseService,
+    // Exported for the admin surface's review queue, which decides these records (v2 §12).
+    CategoryVerificationService,
+    ServiceCatalogueService,
     // The module rather than the two services: they are provided by it now, and Nest refuses to
     // re-export a provider a module does not own. Importers of `ProfessionalsModule` still get
     // `BookingService` and `DisputeService`, which is what they were getting before.

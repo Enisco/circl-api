@@ -2,18 +2,27 @@ import { JobStage, JobState } from '@prisma/client';
 import { DemoSeedContext, HOME_CITY, userId } from './seed-demo';
 import { daysAgo, daysAhead, hoursAgo, seedId } from './ids';
 
-/** The ten professions whose listings wait for a human (§2.9), as the taxonomy seeds them. */
+/**
+ * The professions this demo world's operator has gated (§2.9).
+ *
+ * A set here rather than a taxonomy read, and deliberately so since v2: `requiresReview` now
+ * starts **off** for every profession — verification moved to `(professional, category)` and the
+ * listing-level gate became a lever an operator pulls. The demo still needs one listing waiting in
+ * the review queue for that screen to be worth looking at, so this is the set the demo portrays as
+ * gated. It does not write the taxonomy: a demo seed must not change what a real registration
+ * meets.
+ *
+ * The three professions v2 retired are gone from it — THERAPY_COACHING, CHILDCARE_SERVICES and
+ * RECRUITMENT — because a demo listing in a retired category is a chip the app cannot render.
+ */
 const GATED = new Set([
   'IMMIGRATION',
   'LEGAL',
   'FINANCE_ACCOUNTING',
   'HEALTHCARE',
-  'THERAPY_COACHING',
-  'CHILDCARE_SERVICES',
   'PROPERTY_LETTINGS',
   'TRADES_REPAIRS',
   'EDUCATION_TUTORING',
-  'RECRUITMENT',
 ]);
 
 /**

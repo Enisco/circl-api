@@ -23,6 +23,7 @@ import {
   DecideListingReviewDto,
   ListListingReviewsDto,
   SetGatedProfessionsDto,
+  SetVerificationGatesDto,
 } from '../dtos/admin-listing-review.dto';
 import { AdminListingReviewService } from '../services/admin-listing-review.service';
 
@@ -90,13 +91,12 @@ export class AdminListingReviewController {
     description:
       'Send the **whole set**, not a toggle: a toggle raced with another toggle leaves the list in ' +
       'a state neither person chose, and this write has consequences attached.\n\n' +
-      'Those consequences are applied in the same transaction. Listings in a **newly gated** ' +
-      'profession are queued and **left visible** — the same grandfathering the migration did, ' +
-      'because those members are trading and pulling a live listing down because somebody changed ' +
-      'a setting does more harm than the review prevents; the queue marks them ' +
-      '`isLiveWhileWaiting`. Listings in a **newly ungated** profession are released, unless they ' +
-      'are also in a profession that is still gated. Listings already approved or declined are ' +
-      'left alone: re-gating is not a reason to re-decide what somebody already read.\n\n' +
+      'Those consequences are applied in the same transaction. Gating a profession does **nothing ' +
+      'to the listings already in it**: approval applies to accounts created afterwards, so nobody ' +
+      'trading today is pulled into a queue they never chose to enter on the strength of a ' +
+      'settings change. Listings in a **newly ungated** profession are released, unless they are ' +
+      'also in a profession that is still gated. Listings already approved or declined are left ' +
+      'alone: re-gating is not a reason to re-decide what somebody already read.\n\n' +
       "The response's `applied` block says what happened — which professions changed, how many " +
       'listings were queued and how many released. A request that changes nothing writes no audit ' +
       'entry and returns an empty `applied`.\n\n' +
@@ -106,6 +106,57 @@ export class AdminListingReviewController {
     const { data } = await this.reviews.setGated(actor, dto);
 
     return { data, message: 'Professions updated' };
+  }
+
+  // Also above `@Get(':id')`, for the same reason: a literal segment below a uuid pipe is a 400.
+
+  @Get('verification-gates')
+  @AdminPermissions('content:read')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Every profession subcategory, and whether selling under it needs verification',
+    description:
+      'The gate that matters since Professionals v2 (§3.2): a service needs an approved ' +
+      '`(professional, category)` verification **iff** its subcategory requires one — or, where a ' +
+      'service has no subcategory, its category does. No category requires one; 35 subcategories ' +
+      'do.\n\n' +
+      '`services` is how many live services are sold under it, and `servicesWithoutApproval` is ' +
+      'how many of those belong to somebody with no approved verification for the category — ' +
+      'which is exactly how many would stop being visible the moment the gate goes on. Render it ' +
+      'in the confirmation, not in a tooltip.\n\n' +
+      '`credentialBodies` is reference data for the reviewer: who registers this work. It says ' +
+      'nothing about whether the gate is on.',
+  })
+  async verificationGates() {
+    return { data: await this.reviews.verificationGates(), message: 'Subcategories retrieved' };
+  }
+
+  @Put('verification-gates')
+  @AdminPermissions('professions:gate')
+  @Idempotent()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Change which subcategories require verification',
+    description:
+      'Send the **whole set**, not a toggle — this write publishes and unpublishes live work, and ' +
+      'a toggle raced with another toggle leaves the list in a state nobody chose.\n\n' +
+      'Nothing walks the services: a service’s status is derived from this flag and the ' +
+      "member's verification, so the write *is* the consequence. `applied.servicesBlocked` is how " +
+      'many live services just went out of sight, `applied.servicesPublished` how many came back. ' +
+      'A request that changes nothing writes no audit entry.\n\n' +
+      'Held by `professions:gate` rather than `config:taxonomy`, deliberately: deciding that ' +
+      '*Immigration solicitor* may not be sold unchecked is Trust & Safety’s judgement about ' +
+      'regulated work, and they do not hold the permission that lets somebody reword every ' +
+      'vocabulary on the platform. `metadata` is written **merged**, so a gate change cannot take ' +
+      '`parentCode` or `credentialBodies` with it.',
+  })
+  async setVerificationGates(
+    @CurrentUser() actor: AdminPrincipal,
+    @Body() dto: SetVerificationGatesDto,
+  ) {
+    const { data } = await this.reviews.setVerificationGates(actor, dto);
+
+    return { data, message: 'Subcategories updated' };
   }
 
   @Get(':id')

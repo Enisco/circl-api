@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { DeliveryMode, ExperienceLevel, PriceBasis } from '@prisma/client';
+import { DeliveryMode, ExperienceLevel, PriceBasis, Weekday } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -11,17 +11,75 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { ToBoolean } from '@/common';
+import { SERVICE_LIMITS } from './service.dto';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
 const Bool = ToBoolean;
 
+/** One day of contactable hours (v2 §4.2). The same shape a store's opening hours use. */
+export class ContactHoursDto {
+  @ApiProperty({ enum: Weekday })
+  @IsEnum(Weekday)
+  day: Weekday;
+
+  @ApiPropertyOptional({ minimum: 0, maximum: 1440, description: 'Minutes after midnight.' })
+  @IsInt()
+  @Min(0)
+  @Max(1440)
+  @IsOptional()
+  openMinutes?: number | null;
+
+  @ApiPropertyOptional({ minimum: 0, maximum: 1440 })
+  @IsInt()
+  @Min(0)
+  @Max(1440)
+  @IsOptional()
+  closeMinutes?: number | null;
+}
+
 /** Step 1 of registration (2.6.1). */
 export class CreateListingDto {
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Coded skills (v2 §4.1), `TaxonomyKind.SKILL`. Filterable and countable. Absent leaves them ' +
+      'alone; `[]` clears them.',
+  })
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  @IsOptional()
+  skillCodes?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'The member’s own words for work the vocabulary has not caught up with. Displayed exactly ' +
+      'like a coded skill and **never** filterable, and never promoted into the taxonomy ' +
+      'automatically — the admin portal surfaces the recurring ones for a human to decide.',
+  })
+  @IsArray()
+  @ArrayMaxSize(3)
+  @IsString({ each: true })
+  @MaxLength(30, { each: true })
+  @IsOptional()
+  customSkills?: string[];
+
+  @ApiPropertyOptional({ type: [ContactHoursDto], description: 'Seven entries, or none at all.' })
+  @IsArray()
+  @ArrayMaxSize(7)
+  @ValidateNested({ each: true })
+  @Type(() => ContactHoursDto)
+  @IsOptional()
+  contactHours?: ContactHoursDto[];
+
   @ApiProperty({ type: [String], description: '1 to 3 profession codes.' })
   @IsArray()
   @ArrayMinSize(1, { message: 'categoryCodes must have at least one entry' })
@@ -140,6 +198,40 @@ export class CreateListingDto {
 }
 
 export class UpdateListingDto {
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Coded skills (v2 §4.1), `TaxonomyKind.SKILL`. Filterable and countable. Absent leaves them ' +
+      'alone; `[]` clears them.',
+  })
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  @IsOptional()
+  skillCodes?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'The member’s own words for work the vocabulary has not caught up with. Displayed exactly ' +
+      'like a coded skill and **never** filterable, and never promoted into the taxonomy ' +
+      'automatically — the admin portal surfaces the recurring ones for a human to decide.',
+  })
+  @IsArray()
+  @ArrayMaxSize(3)
+  @IsString({ each: true })
+  @MaxLength(30, { each: true })
+  @IsOptional()
+  customSkills?: string[];
+
+  @ApiPropertyOptional({ type: [ContactHoursDto], description: 'Seven entries, or none at all.' })
+  @IsArray()
+  @ArrayMaxSize(7)
+  @ValidateNested({ each: true })
+  @Type(() => ContactHoursDto)
+  @IsOptional()
+  contactHours?: ContactHoursDto[];
+
   @ApiPropertyOptional({ type: [String] })
   @IsArray()
   @ArrayMinSize(1)
@@ -315,17 +407,25 @@ export class PromoteOfferDto {
 }
 
 export class ServiceDto {
-  @ApiProperty({ minLength: 2, maxLength: 80 })
+  @ApiProperty({ minLength: SERVICE_LIMITS.nameMin, maxLength: SERVICE_LIMITS.nameMax })
   @Trim()
   @IsString()
-  @MinLength(2)
-  @MaxLength(80)
+  @MinLength(SERVICE_LIMITS.nameMin)
+  @MaxLength(SERVICE_LIMITS.nameMax)
   name: string;
 
-  @ApiPropertyOptional({ maxLength: 500 })
+  /**
+   * The same ceiling as `CreateServiceDto`, which v2 raised to fifteen hundred (§3.5).
+   *
+   * Two shapes write a service — this one, nested in the listing, and the service endpoints — and a
+   * description accepted by one and refused by the other is a member whose text saves from one
+   * screen and not the other. The **minimum** is not here for the same reason it is not there: it
+   * applies to writes that carry a category, and this shape has none.
+   */
+  @ApiPropertyOptional({ maxLength: SERVICE_LIMITS.descriptionMax })
   @Trim()
   @IsString()
-  @MaxLength(500)
+  @MaxLength(SERVICE_LIMITS.descriptionMax)
   @IsOptional()
   description?: string;
 

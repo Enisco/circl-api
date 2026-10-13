@@ -22,8 +22,9 @@ import { AdminPermissionGuard } from '../common/admin-permission.guard';
 import { AdminAuthenticated, AdminPermissions, AdminPrincipal } from '../common/admin-principal';
 import { AuditService } from '../audit/audit.service';
 import {
-  PatchRiskTermDto,
   ListRiskTermsDto,
+  PatchRiskTermDto,
+  RecurringSkillsDto,
   ReorderTaxonomyDto,
   SuspendUserDto,
   TaxonomyQueryDto,
@@ -276,6 +277,29 @@ export class AdminController {
   // parameter was unvalidated — so the portal's first call on the configuration screen reached the
   // database with a nonsense enum value. It is an enum pipe now, so a bad kind is a 400 naming
   // what was allowed.
+
+  @Get('taxonomy/custom-skills')
+  @AdminPermissions('config:read')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Free-text skills members keep typing',
+    description:
+      'What to promote into the `SKILL` vocabulary (v2 §4.1). Without this screen the custom ' +
+      'field is a dead end: members write the same word fourteen times, nobody sees it, and the ' +
+      'picker never learns.\n\n' +
+      'Grouped case-insensitively — "self-sponsorship" and "Self Sponsorship" are one word typed ' +
+      'two ways — and anything already in the vocabulary is left out, because somebody typing a ' +
+      'term that exists is a picker problem rather than a vocabulary one. `suggestedCode` is a ' +
+      'starting point for the promotion, not a decision.\n\n' +
+      'Promoting is `POST admin/taxonomy` with `kind: SKILL`. Nothing here promotes automatically: ' +
+      'a vocabulary that grows by itself grows typos.',
+  })
+  async customSkills(@Query() query: RecurringSkillsDto) {
+    return {
+      data: await this.taxonomy.recurringCustomSkills(query.minimum, query.limit),
+      message: SuccessMessage.RESOURCE_FETCHED('Custom skills'),
+    };
+  }
 
   @Get('taxonomy/kinds')
   @AdminPermissions('config:read')

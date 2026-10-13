@@ -36,11 +36,21 @@ const DOCUMENT_PURPOSES: MediaPurpose[] = [MediaPurpose.VERIFICATION];
 const DOCUMENT_TYPES = ['application/pdf'];
 
 /**
- * Everything a supporting document may be. Narrower than the general image list on purpose: HEIC
- * and WebP are fine for an avatar and are not what a reviewer should be handed, and the content
- * check downstream only knows these three signatures.
+ * Everything a supporting document may be. Still narrower than the general image list — WebP is
+ * fine for an avatar and is not what a reviewer should be handed.
+ *
+ * **HEIC and HEIF are accepted here now** (v2 §2.4). They were refused, and HEIC is what an iPhone
+ * produces by default — so a member photographing their certificate was turned away for using
+ * their phone's own camera, with nothing they could do about it. The reviewer's viewer renders it,
+ * the dimension reader already knew the container, and the signature check knows it too.
  */
-const VERIFICATION_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
+const VERIFICATION_TYPES = [
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/heic',
+  'image/heif',
+];
 
 /** Orphan media is deleted after 24 hours if never attached (0.11.1). */
 const ORPHAN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -137,23 +147,19 @@ export class MediaUploadService {
       return MediaType.DOCUMENT;
     }
 
-    // A supporting document is a PDF, a PNG or a JPEG and nothing else (§2.9) — so the refusal
-    // happens **here**, when the file is picked, rather than at submit.
-    //
-    // Without this the wider image list applied: a HEIC, which is what an iPhone's photo library
-    // hands over by default, uploaded perfectly happily and was then refused by
-    // `ListingDocumentService.prepare` when the member pressed Submit. The member would have filled
-    // in the whole form, watched four files upload, and been told at the last step that one of them
-    // was never going to work — with no clue which picker to avoid next time.
+    // A supporting document is a PDF or a photograph and nothing else (§2.9, v2 §2.4) — so the
+    // refusal happens **here**, when the file is picked, rather than at submit: a member who has
+    // filled in the whole form and watched four files upload should not be told at the last step
+    // that one of them was never going to work.
     if (DOCUMENT_PURPOSES.includes(purpose) && !VERIFICATION_TYPES.includes(file.mimeType)) {
       throw ApiException.unprocessable(
         ApiErrorCode.MEDIA_TYPE_NOT_ALLOWED,
-        'Supporting documents must be a PDF, a PNG or a JPEG.',
+        'Supporting documents must be a PDF, or a photograph: PNG, JPEG or HEIC.',
         {
           details: [
             {
               field: `files[${index}].mimeType`,
-              message: `${file.mimeType} is not accepted here. Use a PDF, a PNG or a JPEG.`,
+              message: `${file.mimeType} is not accepted here. Use a PDF, a PNG, a JPEG or a HEIC.`,
             },
           ],
         },
@@ -241,6 +247,7 @@ const EXTENSIONS: Record<string, string> = {
   'image/png': '.png',
   'image/webp': '.webp',
   'image/heic': '.heic',
+  'image/heif': '.heic',
   'video/mp4': '.mp4',
   'video/quicktime': '.mov',
   'audio/m4a': '.m4a',

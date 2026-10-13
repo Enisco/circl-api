@@ -61,7 +61,20 @@ model ProfessionalListing {
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
 
+  /**
+   * Free-text skills, displayed exactly like the coded ones and **never** filterable (v2 §4.1).
+   * Two fields rather than one for the same reason the product's units already split
+   * (`unitCode` + `unitCustomLabel`): a coded skill can be filtered, counted and translated —
+   * "fourteen people here do ILR applications" is only answerable with codes — and a custom one
+   * is a member describing something the vocabulary has not caught up with yet. They are never
+   * promoted into the taxonomy automatically; the admin portal surfaces the recurring ones so a
+   * human can decide.
+   */
+  customSkills String[] @map("custom_skills")
+
   categories         ProfessionalListingCategory[]
+  skills             ProfessionalListingSkill[]
+  contactHours       ProfessionalContactHours[]
   services           ProfessionalService[]
   bookings           Booking[]
   briefMatches       BriefMatch[]
@@ -95,23 +108,45 @@ model ProfessionalListingCategory {
   @@map("professional_listing_categories")
 }
 
+/// One thing a professional sells (v2 §5). A first-class object: it has its own page, its own id in
+/// a URL, its own category, media, updates and milestones — and it is what members search.
 model ProfessionalService {
   id        String              @id @default(uuid())
   listingId String              @map("listing_id")
   listing   ProfessionalListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
   name        String     @map("name")
+  /// Required on create, nullable on read: services written before v2 have none, and rendering one
+  /// without a description is better than hiding somebody's live work (v2 §10).
   description String?    @map("description")
   price       Int?       @map("price") // pence; null means "on request"
   priceBasis  PriceBasis @default(NEGOTIABLE) @map("price_basis")
   currency    String     @default("GBP") @map("currency")
-  isActive    Boolean    @default(true) @map("is_active")
   sort        Int        @default(0) @map("sort")
+
+  /// The category this service is sold under — **not** necessarily one of the listing's three
+  /// profile categories (v2, decision 1). Backfilled from the listing's primary category for
+  /// services that predate the field.
+  categoryCode    String? @map("category_code")
+  /// Required when the category has active children, and the gate usually lives here rather than
+  /// on the parent.
+  subcategoryCode String? @map("subcategory_code")
+
+  /**
+   * What the owner decided. The rest of the status is derived (v2 §5.4).
+   * `isActive` used to carry this and meant the same thing as "not hidden", which is two fields for
+   * one fact — the failure mode being a service live on one screen and paused on another. The
+   * column is kept for one release so an older client's `isActive: false` still means hidden.
+   */
+  ownerState ServiceOwnerState @default(LIVE) @map("owner_state")
+  isActive   Boolean           @default(true) @map("is_active")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  bookings Booking[]
+  bookings   Booking[]
+  updates    ServiceUpdate[]
+  milestones ServiceMilestone[]
 
   // Never hard-deleted while a booking references it, or the booking loses its own subject (2.6.3).
 
@@ -121,7 +156,138 @@ model ProfessionalService {
   visibilityState ContentVisibilityState @default(VISIBLE) @map("visibility_state")
 
   @@index([listingId, isActive])
+  @@index([listingId, ownerState])
+  /// What the category browse and the service search filter on, before relevance.
+  @@index([categoryCode, subcategoryCode])
+  // Trigram search over what members actually type (v2 §6.1).
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "professional_services_name_trgm_idx")
   @@map("professional_services")
+}
+
+/// A note a professional posts against one service: a fee change, a seasonal closure (v2 §5.3).
+/// Self-reported and unverified, and presented that way — it sits near a Circl-verified chip and
+/// must not borrow its authority.
+model ServiceUpdate {
+  id        String              @id @default(uuid())
+  serviceId String              @map("service_id")
+  service   ProfessionalService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  title String? @map("title")
+  body  String  @map("body")
+
+  publishedAt DateTime @default(now()) @map("published_at") @db.Timestamptz
+  sort        Int      @default(0) @map("sort")
+
+  @@index([serviceId, publishedAt])
+  @@map("service_updates")
+}
+
+/// A claim about the work: "200 applications supported" (v2 §5.3). `year` and `issuer` are
+/// nullable and an absent year must read as absent — "… · 0" is worse than the claim alone.
+model ServiceMilestone {
+  id        String              @id @default(uuid())
+  serviceId String              @map("service_id")
+  service   ProfessionalService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  label  String  @map("label")
+  year   Int?    @map("year")
+  issuer String? @map("issuer")
+  sort   Int     @default(0) @map("sort")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([serviceId, sort])
+  @@map("service_milestones")
+}
+
+/// A coded skill on a listing (v2 §4.1). `TaxonomyKind.SKILL`.
+model ProfessionalListingSkill {
+  listingId String              @map("listing_id")
+  listing   ProfessionalListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  code      String              @map("code")
+  sort      Int                 @default(0) @map("sort")
+
+  @@id([listingId, code])
+  @@index([code])
+  @@map("professional_listing_skills")
+}
+
+/// When a professional can be contacted (v2 §4.2). Exactly seven rows per listing, Monday first —
+/// the same shape as a store's opening hours, read by the same clock, because `isContactableNow`
+/// and any `contactableNow` filter must never be two implementations of one question.
+model ProfessionalContactHours {
+  listingId String              @map("listing_id")
+  listing   ProfessionalListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  day       Weekday             @map("day")
+
+  openMinutes  Int? @map("open_minutes")
+  closeMinutes Int? @map("close_minutes")
+
+  @@id([listingId, day])
+  @@map("professional_contact_hours")
+}
+
+/**
+ * Did a reviewer read this person's documents for this category (v2 §2).
+ * One record per `(professional, category)` — never per listing, never per service. That is the
+ * structural change: one approval covers every service that professional ever lists in that
+ * category, so the record cannot hang off a service, and it survives the listing being edited.
+ * Keyed on the **user** rather than the listing because the professional is the person: a listing
+ * rebuilt from scratch must not lose a licence check somebody already passed, and a verification
+ * may be submitted before the category is even on their profile (§2.4).
+ * Distinct from `TrustCheck` on purpose and for ever. That asks whether somebody is who they say
+ * they are; this asks whether they may practise in one field. A member verified for Immigration
+ * who also sells web design must not appear to have had the web design checked.
+ */
+model CategoryVerification {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// `TaxonomyKind.PROFESSION` — the category, not the subcategory.
+  categoryCode String @map("category_code")
+
+  status CategoryVerificationStatus @default(PENDING) @map("status")
+
+  /**
+   * What the documents were submitted *under* (§2.3).
+   * It does not scope the approval — approval is category-wide, which is the product owner's
+   * stated rule — but it is stored because it is the only thing that would make a narrower scope
+   * possible later without a migration. Together with `licenceSeen` it is the mitigation for an
+   * IAA registration unlocking *Immigration solicitor*.
+   */
+  submittedForSubcategories String[] @map("submitted_for_subcategories")
+
+  /// The member's own words with the submission, ≤ 500 characters.
+  note String? @map("note")
+
+  submittedAt DateTime  @default(now()) @map("submitted_at") @db.Timestamptz
+  decidedAt   DateTime? @map("decided_at") @db.Timestamptz
+  decidedById String?   @map("decided_by_id")
+
+  /// The reviewer's words, shown to the member **verbatim** on a decline. It is the only thing
+  /// that tells somebody what to fix, so it is never summarised or templated on the way out.
+  decisionNote String? @map("decision_note")
+
+  /// Which licence or registration the reviewer actually saw — free text, staff-only, and the
+  /// record that makes category-wide approval auditable (§2.3, §12).
+  licenceSeen String? @map("licence_seen")
+
+  /// Who the member is told checked it. "Circl Trust & Safety" rather than a person's name.
+  checkedBy String? @map("checked_by")
+
+  /// Nullable, and null means it does not lapse. A renewal date is the normal case in regulated
+  /// work, so the field exists from the start rather than arriving as a backfill.
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([userId, categoryCode])
+  /// The review queue's own ordering: oldest submission first, within a state.
+  @@index([status, submittedAt])
+  @@index([categoryCode, status])
+  @@map("category_verifications")
 }
 
 // ─── Managed briefs and Smart Match (Circl Intelligence) ─────────────────────

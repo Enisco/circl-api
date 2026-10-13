@@ -5,6 +5,8 @@ import {
   ContentScanTrigger,
   ItemAvailability,
   Media,
+  MediaRole,
+  MediaType,
   Prisma,
   ReportTargetType,
   TaxonomyKind,
@@ -16,11 +18,12 @@ import {
   ActivityService,
   ContentSafetyService,
   DIRECT_VISIBILITY,
+  isAllCategories,
+  isReachable,
+  ITEM_MEDIA_RULES,
   MediaService,
   PUBLIC_VISIBILITY,
   TaxonomyService,
-  isAllCategories,
-  isReachable,
   toAuthorView,
   toMediaViews,
   toTermView,
@@ -78,11 +81,12 @@ export class ItemService {
       await this.taxonomy.assertValid(TaxonomyKind.ITEM_UNIT, dto.unitCode, 'unitCode');
     }
 
-    const photos = await this.media.validate(dto.photoKeys, userId, {
-      maxImages: 5,
-      allowVideo: false,
-      allowAudio: false,
-    });
+    /**
+     * `mediaKeys` is v2 §9's shape — photos and video with a role each — and `photoKeys` is what
+     * older clients send. Whichever arrives is validated against the same rules; sending both is
+     * answered by `mediaKeys`, because it is the one that can express everything the other can.
+     */
+    const attachments = await this.itemMedia(userId, dto);
 
     const item = await this.database.$transaction(async tx => {
       const created = await tx.storeItem.create({
@@ -100,7 +104,13 @@ export class ItemService {
         },
       });
 
-      await this.media.attach(tx, photos, ITEM_MEDIA_OWNER, created.id);
+      await this.media.attach(
+        tx,
+        attachments.files,
+        ITEM_MEDIA_OWNER,
+        created.id,
+        attachments.roles,
+      );
 
       // Keeps the store's category hint honest without the seller maintaining it.
       await tx.storeCategory.upsert({
@@ -119,7 +129,7 @@ export class ItemService {
           description: created.description,
           options: created.options,
         },
-        mediaKeys: photos.map(photo => photo.storageKey),
+        mediaKeys: attachments.files.map(file => file.storageKey),
         trigger: ContentScanTrigger.CREATE,
         summary: created.name,
       });
@@ -127,7 +137,7 @@ export class ItemService {
       return created;
     });
 
-    return this.toView(item, photos);
+    return this.toView(item, attachments.files);
   }
 
   async update(userId: string, itemId: string, dto: UpdateItemDto) {
@@ -141,24 +151,23 @@ export class ItemService {
       await this.taxonomy.assertValid(TaxonomyKind.ITEM_UNIT, dto.unitCode, 'unitCode');
     }
 
-    const photos = dto.photoKeys
-      ? await this.media.validate(dto.photoKeys, userId, {
-          maxImages: 5,
-          allowVideo: false,
-          allowAudio: false,
-        })
-      : null;
+    // Absent leaves the media alone, `[]` clears it (v2 §9, §5.5's rule): a seller fixing a typo
+    // must not lose their photographs by omission.
+    const attachments =
+      dto.mediaKeys === undefined && dto.photoKeys === undefined
+        ? null
+        : await this.itemMedia(userId, dto);
 
     // The set that will be attached once this edit lands, so an edit that does not touch the
     // photos hashes the same (§6.2 step 2).
-    const keys = (photos ?? (await this.media.forOwner(ITEM_MEDIA_OWNER, itemId))).map(
+    const keys = (attachments?.files ?? (await this.media.forOwner(ITEM_MEDIA_OWNER, itemId))).map(
       photo => photo.storageKey,
     );
 
     const updated = await this.database.$transaction(async tx => {
-      if (photos) {
+      if (attachments) {
         await this.media.releaseOwner(tx, ITEM_MEDIA_OWNER, itemId);
-        await this.media.attach(tx, photos, ITEM_MEDIA_OWNER, itemId);
+        await this.media.attach(tx, attachments.files, ITEM_MEDIA_OWNER, itemId, attachments.roles);
       }
 
       const patched = await tx.storeItem.update({
@@ -194,7 +203,10 @@ export class ItemService {
       return patched;
     });
 
-    return this.toView(updated, photos ?? (await this.media.forOwner(ITEM_MEDIA_OWNER, itemId)));
+    return this.toView(
+      updated,
+      attachments?.files ?? (await this.media.forOwner(ITEM_MEDIA_OWNER, itemId)),
+    );
   }
 
   /**
@@ -398,6 +410,36 @@ export class ItemService {
     return this.media.forOwners(ITEM_MEDIA_OWNER, itemIds);
   }
 
+  /**
+   * A product's attachments, from either shape the client may send (v2 §9).
+   *
+   * One validator for both so the limits cannot diverge: ten files, of which three may be video,
+   * photos and video together. The general post rules forbid mixing — a feed card draws a gallery
+   * or a player, not both — and a product page is built to draw both.
+   */
+  private async itemMedia(
+    userId: string,
+    dto: { mediaKeys?: Array<{ key: string; role?: MediaRole }>; photoKeys?: string[] },
+  ): Promise<{ files: Media[]; roles: Map<string, MediaRole> }> {
+    const keys = dto.mediaKeys?.length
+      ? dto.mediaKeys
+      : (dto.photoKeys ?? []).map(key => ({ key, role: MediaRole.SHOWCASE }));
+
+    if (!keys.length) return { files: [], roles: new Map() };
+
+    const files = await this.media.validate(
+      keys.map(entry => entry.key),
+      userId,
+      ITEM_MEDIA_RULES,
+      dto.mediaKeys?.length ? 'mediaKeys' : 'photoKeys',
+    );
+
+    return {
+      files,
+      roles: new Map(keys.map(entry => [entry.key, entry.role ?? MediaRole.SHOWCASE])),
+    };
+  }
+
   async toView(
     item: {
       id: string;
@@ -426,7 +468,13 @@ export class ItemService {
       }),
     ]);
 
-    const photos = toMediaViews(media, this.media.sign);
+    const all = toMediaViews(media, this.media.sign);
+    /**
+     * `photos` stays images-only and unchanged during the transition (v2 §9.2), and `media` is the
+     * new array carrying video with its role. Dropping `photos` the moment `media` existed would
+     * blank every product on every build that has not shipped yet.
+     */
+    const photos = all.filter(file => file.type === MediaType.IMAGE);
 
     return {
       id: item.id,
@@ -443,6 +491,11 @@ export class ItemService {
       category: toTermView(item.categoryCode, categoryLabels),
       options: item.options,
       photos,
+      media: all,
+      mediaCounts: {
+        images: photos.length,
+        videos: all.filter(file => file.type === MediaType.VIDEO).length,
+      },
       // photos[0] promoted to the top level, because every list surface wants exactly one image and should not index into an array to find it (4.4.3).
       coverPhotoUrl: photos[0]?.url ?? null,
       // The same photo as an object, so a square grid can letterbox a tall one instead of cropping

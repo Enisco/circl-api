@@ -443,11 +443,19 @@ const jwt = require('jsonwebtoken');
    * the grouping and the outcome notifications, none of which a queue item knows about. So these
    * blocks go through the front door: find the open case for the target, claim it, decide it.
    */
+  /**
+   * Narrowed by **reporter**, not just target type.
+   *
+   * Every report in this suite is filed by `quiet`, a user created seconds ago, so one filter
+   * leaves one page of this run's own cases. Listing by type alone was fine on an empty database
+   * and started failing on a developer machine that had been running sweeps for a week: the case
+   * was there, on page three, and the suite reported "no case for that target".
+   */
   const decideViaCase = async (targetType, targetId, body) => {
     const cases = await api(
       null,
       'GET',
-      `/admin/reports/cases?perPage=100&targetType=${targetType}`,
+      `/admin/reports/cases?perPage=100&targetType=${targetType}&reporterId=${quiet.id}`,
       null,
       adminHeaders(moderator),
     );

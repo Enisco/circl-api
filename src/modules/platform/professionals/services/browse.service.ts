@@ -31,7 +31,8 @@ import {
   toPriceBasisLabel,
   toTermView,
 } from '../../shared';
-import { toListingPictures } from '../serializers/listing.serializer';
+import { toListingPictures, toVerifiedCategories } from '../serializers/listing.serializer';
+import { CategoryVerificationService } from './category-verification.service';
 import { ReputationService } from '../../trust/services/reputation.service';
 import { BrowseProfessionalsDto } from '../dtos/browse.dto';
 import { ListingService } from './listing.service';
@@ -62,12 +63,26 @@ export class BrowseService {
     private readonly listings: ListingService,
     private readonly media: MediaService,
     private readonly activity: ActivityService,
+    private readonly verifications: CategoryVerificationService,
   ) {}
 
   // ─── 2.3 Browse ────────────────────────────────────────────────────────────
 
   /** D14: `listingType=BOTH` stays a single server-side query. */
-  async browse(viewerId: string, query: BrowseProfessionalsDto) {
+  /**
+   * `extra` is server-side only, and is an argument rather than a field on the DTO.
+   *
+   * A declared-but-undecorated property on a query DTO is not invisible: the class defines it on
+   * every instance, `forbidNonWhitelisted` finds a property with no validation decorator, and
+   * **every** request through that DTO is refused by name. It took out the whole directory the
+   * first time, which is exactly the shape of mistake the whitelist exists to catch — so the
+   * parameter travels beside the query instead of inside it.
+   */
+  async browse(
+    viewerId: string,
+    query: BrowseProfessionalsDto,
+    extra: { alsoListingIds?: string[] } = {},
+  ) {
     const listingType = query.listingType ?? 'PROFESSIONAL';
     const blockedIds = await this.blocking.blockedUserIds(viewerId);
     const viewerCityId = await this.viewerCityId(viewerId);
@@ -79,7 +94,7 @@ export class BrowseService {
     const [listings, offers] = await Promise.all([
       listingType === 'COMMUNITY_OFFER'
         ? { rows: [], total: 0, inCityTotal: 0 }
-        : this.queryListings(query, viewerCityId, blockedIds, origin, viewerId),
+        : this.queryListings(query, viewerCityId, blockedIds, origin, viewerId, extra),
       listingType === 'PROFESSIONAL'
         ? { rows: [], total: 0 }
         : this.queryOffers(query, viewerCityId, blockedIds, viewerId),
@@ -126,6 +141,7 @@ export class BrowseService {
     blockedIds: string[],
     origin: { latitude: number; longitude: number } | null,
     viewerId: string,
+    extra: { alsoListingIds?: string[] } = {},
   ) {
     const where: Prisma.ProfessionalListingWhereInput = {
       deletedAt: null,
@@ -178,6 +194,10 @@ export class BrowseService {
         { city: { name: { contains: q, mode: Prisma.QueryMode.insensitive } } },
         { user: { firstName: { contains: q, mode: Prisma.QueryMode.insensitive } } },
         { user: { lastName: { contains: q, mode: Prisma.QueryMode.insensitive } } },
+        // And the names of their services (v2 §6.1), resolved to ids by the blended search. This
+        // is the half that makes the feature worth having: searching "visa" has to find the
+        // person who sells visa help, not only the one who put the word in their headline.
+        ...(extra.alsoListingIds?.length ? [{ id: { in: extra.alsoListingIds } }] : []),
       ];
 
       where.AND = [...(Array.isArray(where.AND) ? where.AND : []), { OR: search }];
@@ -721,6 +741,16 @@ export class BrowseService {
       })),
       trust,
       isRegulated: await this.listings.isRegulated(listing.categories.map(c => c.code)),
+      // v2 §2.5: approved records only, with the provenance the chip's sheet reads. A pending or
+      // declined verification is private to its owner — a visitor learning somebody was declined
+      // is a disclosure we have no right to make.
+      verifiedCategories: toVerifiedCategories(
+        (await this.verifications.approvedFor([listing.userId])).get(listing.userId) ?? [],
+        await this.taxonomy.labels(TaxonomyKind.PROFESSION),
+      ),
+      // v2 §4.2, computed here rather than on the client: it reads the professional's own clock,
+      // and it is the same function the `contactableNow` filter uses.
+      isContactableNow: (await this.listings.contactHoursFor(listing)).contactableNow,
       communityProfileUrl: `/profile/community/${listing.userId}`,
       verificationStatus: listing.verificationStatus,
       viewer: {

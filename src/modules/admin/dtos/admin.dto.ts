@@ -91,6 +91,28 @@ export class ReorderTaxonomyDto {
   codes: string[];
 }
 
+/** §4.1's promotion screen: how often a free-text skill has to recur to be worth offering. */
+export class RecurringSkillsDto {
+  @ApiPropertyOptional({
+    default: 2,
+    description: 'How many members must have typed it. One member is a note, not a vocabulary.',
+  })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  @IsOptional()
+  minimum?: number;
+
+  @ApiPropertyOptional({ default: 100 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  @IsOptional()
+  limit?: number;
+}
+
 export class UpsertTaxonomyTermDto {
   @ApiProperty({ enum: TaxonomyKind })
   @IsEnum(TaxonomyKind)

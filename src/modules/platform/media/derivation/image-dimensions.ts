@@ -108,6 +108,8 @@ const PARSERS: Record<string, (buffer: Buffer) => Dimensions | null> = {
   'image/jpeg': jpeg,
   'image/webp': webp,
   'image/heic': heic,
+  // Same container, same `ispe` box, different registered name.
+  'image/heif': heic,
 };
 
 /** Sane bounds, so a misparse becomes "unknown" rather than a layout of 65535 pixels. */

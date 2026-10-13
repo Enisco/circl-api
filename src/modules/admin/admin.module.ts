@@ -27,6 +27,7 @@ import { AdminEnforcementController } from './controllers/admin-enforcement.cont
 import { AdminFlagController } from './controllers/admin-flag.controller';
 import { AdminQueueController } from './controllers/admin-queue.controller';
 import { AdminQueueService } from './services/admin-queue.service';
+import { AdminVerificationService } from './services/admin-verification.service';
 import { AdminAnnouncementService } from './comms/admin-announcement.service';
 import { AnnouncementFanoutService } from './comms/announcement-fanout.service';
 import { AnnouncementProcessor } from './comms/announcement.processor';
@@ -39,6 +40,7 @@ import { AdminThreadAccessService } from './services/admin-thread-access.service
 import { AdminEnforcementService } from './services/admin-enforcement.service';
 import { AdminContentTargetService } from './services/admin-content-target.service';
 import { AdminListingReviewController } from './controllers/admin-listing-review.controller';
+import { AdminVerificationController } from './controllers/admin-verification.controller';
 import { AdminListingReviewService } from './services/admin-listing-review.service';
 import { AdminAppealController } from './controllers/admin-appeal.controller';
 import { AdminEscalationController } from './controllers/admin-escalation.controller';
@@ -126,6 +128,7 @@ const CONTROLLERS = [
   AdminNoteController,
   AdminAppealController,
   AdminListingReviewController,
+  AdminVerificationController,
   AdminQueueController,
   AdminFlagController,
   AdminContentController,
@@ -245,6 +248,7 @@ const CONTROLLERS = [
     AdminNoteService,
     AdminAppealService,
     AdminListingReviewService,
+    AdminVerificationService,
     AdminQueueService,
     AdminAnnouncementService,
     AnnouncementFanoutService,

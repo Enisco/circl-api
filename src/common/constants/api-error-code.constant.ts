@@ -72,6 +72,24 @@ export const ApiErrorCode = {
   CANNOT_BOOK_YOURSELF: 'CANNOT_BOOK_YOURSELF',
   INVALID_TRANSITION: 'INVALID_TRANSITION',
   VERIFICATION_INCOMPLETE: 'VERIFICATION_INCOMPLETE',
+
+  // ─── Professionals v2: category verification and services ──────────────────
+  /**
+   * Selling into a gated category without an approved verification (v2 §5.5). **403**, and the
+   * category it is objecting to travels in `data` rather than in `details` — an edit that moves a
+   * service between categories is refused over a category that may not be the one on screen, and
+   * `details` is read as `{field, message}` pairs meant for a form.
+   */
+  VERIFICATION_REQUIRED: 'VERIFICATION_REQUIRED',
+  VERIFICATION_ALREADY_PENDING: 'VERIFICATION_ALREADY_PENDING',
+  VERIFICATION_ALREADY_APPROVED: 'VERIFICATION_ALREADY_APPROVED',
+  /** The category has active children and none was chosen. */
+  SUBCATEGORY_REQUIRED: 'SUBCATEGORY_REQUIRED',
+  SUBCATEGORY_MISMATCH: 'SUBCATEGORY_MISMATCH',
+  /** Writing to a term staff have retired. It still renders where somebody already chose it. */
+  CATEGORY_RETIRED: 'CATEGORY_RETIRED',
+  SERVICE_LIMIT_REACHED: 'SERVICE_LIMIT_REACHED',
+  MEDIA_LIMIT_REACHED: 'MEDIA_LIMIT_REACHED',
   DISPUTE_ALREADY_OPEN: 'DISPUTE_ALREADY_OPEN',
   NOT_A_PROFESSIONAL: 'NOT_A_PROFESSIONAL',
   REVIEW_ALREADY_LEFT: 'REVIEW_ALREADY_LEFT',

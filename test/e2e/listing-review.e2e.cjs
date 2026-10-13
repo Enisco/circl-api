@@ -25,6 +25,14 @@ const OPEN = 'TECH_SOFTWARE';
 
 const heading = title => console.log(`\n── ${title} ${'─'.repeat(Math.max(0, 58 - title.length))}`);
 
+/**
+ * Put the gated set back, however this run ends.
+ *
+ * Assigned by `main` once it knows what the set was. Out here so the `catch` below can reach it: a
+ * run that throws halfway must not leave a profession gated for the next suite in the sweep.
+ */
+let restoreGate = async () => {};
+
 const listingBody = (overrides = {}) => ({
   professionTitle: 'Immigration paperwork help',
   experienceLevel: 'MID_LEVEL',
@@ -55,6 +63,47 @@ async function main() {
   const browser = await makeUser('listing-browser');
   const staff = await makeAdmin('listing-reviewer');
   const headers = adminHeaders(staff);
+
+  /**
+   * Turn the gate on first, because v2 leaves every profession ungated.
+   *
+   * `requiresReview` was always data — a key on a `PROFESSION` term — and v2 moved the gating that
+   * matters to `(professional, category)` verifications, which left this one resting off. The
+   * listing-level review underneath it is unchanged and is still what a member meets the moment an
+   * operator pulls the lever, so the suite pulls it and puts it back where it found it.
+   */
+  const setGated = async (codes, label) => {
+    const res = await api(
+      null,
+      'PUT',
+      '/admin/professional-reviews/categories',
+      { codes, reasonCode: 'CORRECTION', note: 'e2e: exercising the listing approval flow.' },
+      { ...headers, 'Idempotency-Key': `e2e-review-gate-${label}-${Date.now()}` },
+    );
+
+    if (res.status !== 200) {
+      await fail(new Error(`could not ${label} the gate: ${res.status} ${JSON.stringify(res.body)}`));
+    }
+  };
+
+  const gatedBefore = (
+    (
+      await api(null, 'GET', '/admin/professional-reviews/categories', undefined, headers)
+    ).body?.data ?? []
+  )
+    .filter(row => row.requiresReview)
+    .map(row => row.code);
+
+  check(
+    'nothing is gated until somebody says so, which is where v2 left it',
+    gatedBefore.length === 0,
+    gatedBefore,
+  );
+
+  restoreGate = () => setGated(gatedBefore, 'restore');
+  // IMMIGRATION for the main cast, LEGAL because section 6 moves a declined listing into it and
+  // the point of that check is that the new profession needs approving too.
+  await setGated([...new Set([...gatedBefore, GATED, 'LEGAL'])], 'set');
 
   // ── 1. The taxonomy tells the client which professions are gated ──────────
   heading('1. the flag is data the client can read');
@@ -422,36 +471,90 @@ async function main() {
     sameSet.body?.data?.review,
   );
 
-  const switched = await api(adviser.token, 'PATCH', `/professionals/listings/${listingId}`, {
-    categoryCodes: [OPEN],
+  /**
+   * And changing them is now **allowed** (v2 §4.6) — on its own listing, not on this one.
+   *
+   * The 409 `PROFESSION_LOCKED` that used to be here existed to close one bypass: register in an
+   * unrestricted profession, go live, then add a restricted one. That bypass is closed somewhere
+   * better now — holding a category grants nothing, and selling in a gated one needs an approved
+   * `(professional, category)` verification that the service writer checks every time. So the
+   * profile stopped needing to be frozen, and the two things that must still hold are asserted
+   * below: an ordinary swap goes through, and adding a profession that needs approving still pulls
+   * the listing into the queue.
+   *
+   * A separate member because section 8 needs this adviser's listing still approved and still
+   * under a gated profession.
+   */
+  const swapper = await makeUser('gate-swapper');
+  const swapped = await api(
+    swapper.token,
+    'POST',
+    '/professionals/listings',
+    listingBody({
+      categoryCodes: [OPEN],
+      professionTitle: 'React developer',
+      about: 'I build web apps for small businesses in Manchester, mostly React and Node.',
+    }),
+  );
+  const swappedId = swapped.body?.data?.listing?.id;
+
+  check(
+    'an ungated listing is live from the start',
+    swapped.status === 201 && swapped.body?.data?.listing?.review === null,
+    swapped.body?.data?.listing?.review ?? swapped.body?.error,
+  );
+
+  const switched = await api(swapper.token, 'PATCH', `/professionals/listings/${swappedId}`, {
+    categoryCodes: ['BUSINESS_CONSULTING'],
   });
 
   check(
-    'but changing them on a live listing is refused',
-    switched.status === 409 && switched.body?.error?.code === 'PROFESSION_LOCKED',
-    { status: switched.status, error: switched.body?.error?.code },
+    'changing the professions on a live listing is accepted',
+    switched.status === 200,
+    switched.status || switched.body?.error,
   );
-  // Asserted at its real location — **top-level** `data`, the same envelope as the suspension
-  // payload — rather than `?? switched.body?.error?.data`. Accepting either is how the client doc
-  // came to say `error.data`: a check that passes wherever the field happens to be cannot tell a
-  // client where to look for it.
   check(
-    'with the current set named at the top level, so the app can render what it is locked to',
-    Array.isArray(switched.body?.data?.current) &&
-      switched.body.data.current[0] === GATED &&
-      switched.body?.data?.reviewState === 'APPROVED',
-    switched.body?.data,
+    'and nothing is re-opened, because holding a category grants nothing',
+    switched.body?.data?.review === null,
+    switched.body?.data?.review,
   );
 
-  const unchangedAfter = await prisma.professionalListingCategory.findMany({
-    where: { listingId },
-    select: { code: true },
+  const switchedRows = await prisma.professionalListingCategory.findMany({
+    where: { listingId: swappedId },
+    select: { code: true, isPrimary: true },
   });
 
   check(
-    'and nothing changed — a refusal that half-applied would be worse than none',
-    unchangedAfter.length === 1 && unchangedAfter[0].code === GATED,
-    unchangedAfter.map(row => row.code),
+    'the new set is what is stored, with the first one primary',
+    switchedRows.length === 1 &&
+      switchedRows[0].code === 'BUSINESS_CONSULTING' &&
+      switchedRows[0].isPrimary === true,
+    switchedRows,
+  );
+
+  // The property the lock was really protecting, still holding: adding a gated profession to a
+  // live listing sends it to the queue and takes it out of sight, documents and all.
+  const addedDoc = await uploadDocument(swapper.token, { fileName: 'qualification.pdf' });
+  const addedGated = await api(swapper.token, 'PATCH', `/professionals/listings/${swappedId}`, {
+    categoryCodes: [GATED],
+    documentIds: [addedDoc.id],
+  });
+
+  check(
+    'but adding a gated profession to it still needs approving',
+    addedGated.status === 200 &&
+      addedGated.body?.data?.review?.state === 'PENDING' &&
+      addedGated.body?.data?.review?.isPublic === false,
+    addedGated.body?.data?.review ?? addedGated.body?.error,
+  );
+  check(
+    'and without documents it is refused, as it would be at registration',
+    (
+      await api(swapper.token, 'PATCH', `/professionals/listings/${swappedId}`, {
+        categoryCodes: [GATED],
+        documentIds: [],
+      })
+    ).body?.error?.code === 'DOCUMENTS_REQUIRED',
   );
 
   // ── 8. The decision outlives the next edit ────────────────────────────────
@@ -738,18 +841,11 @@ async function main() {
   const byCode = Object.fromEntries((cats.body?.data ?? []).map(row => [row.code, row]));
   const gatedNow = (cats.body?.data ?? []).filter(row => row.requiresReview).map(row => row.code);
 
+  // Whatever this suite gated at the top, and nothing else. It used to assert seven seeded
+  // defaults; v2 ships none, so the only honest expectation is the set somebody chose.
   check(
-    'the seven defaults are gated and nothing else is',
-    gatedNow.slice().sort().join(',') ===
-      [
-        'CHILDCARE_SERVICES',
-        'FINANCE_ACCOUNTING',
-        'HEALTHCARE',
-        'IMMIGRATION',
-        'LEGAL',
-        'PROPERTY_LETTINGS',
-        'THERAPY_COACHING',
-      ].join(','),
+    'the screen reports exactly the set an operator chose',
+    gatedNow.slice().sort().join(',') === ['IMMIGRATION', 'LEGAL'].join(','),
     gatedNow,
   );
   check(
@@ -758,10 +854,14 @@ async function main() {
       typeof byCode[GATED]?.pendingReviews === 'number',
     byCode[GATED],
   );
+  // A profession with no statutory regulator, so the two flags are visibly different questions.
+  // It was TRANSLATION, which v2's vocabulary marks regulated — certified translation for the Home
+  // Office runs through CIOL and ITI — and which therefore no longer makes the point.
   check(
     'and isRegulated is reported separately, read-only',
-    byCode.TRANSLATION?.requiresReview === false && byCode.TRANSLATION?.isRegulated === false,
-    byCode.TRANSLATION,
+    byCode.TECH_SOFTWARE?.requiresReview === false &&
+      byCode.TECH_SOFTWARE?.isRegulated === false,
+    byCode.TECH_SOFTWARE,
   );
   // Dropped from the admin responses at the portal's request (§2.9): a reviewer no longer checks a
   // registration number against a register by hand — the documents are the evidence. It stays on
@@ -877,17 +977,33 @@ async function main() {
     priceFrom: 4200,
   });
 
-  // `NOT_REQUIRED` is as live as `APPROVED` — publicly visible, nothing to wait for — so the lock
-  // applies to it too. This is the half that actually closes the bypass: register in an
-  // unrestricted profession, go live, then add a restricted one.
+  /**
+   * `NOT_REQUIRED` is as live as `APPROVED`, and adding a gated profession to it is allowed now —
+   * but not on the quiet.
+   *
+   * The lock that refused this outright is gone (v2 §4.6). What closes the old bypass — go live in
+   * an unrestricted profession, then add a restricted one — is that the write still has to bring
+   * the papers a registration would have brought, and the listing still goes to the queue and out
+   * of sight while somebody reads them (7b asserts that half, on a listing it is free to move).
+   * Here the refusal is what keeps this fixture live for the checks below.
+   */
   const fitterSwitch = await api(fitter.token, 'PATCH', `/professionals/listings/${fittedId}`, {
     categoryCodes: [GATED],
   });
 
   check(
-    'a live NOT_REQUIRED listing cannot add a gated profession either',
-    fitterSwitch.status === 409 && fitterSwitch.body?.error?.code === 'PROFESSION_LOCKED',
+    'a live listing cannot slip into a gated profession without documents',
+    fitterSwitch.status === 400 && fitterSwitch.body?.error?.code === 'DOCUMENTS_REQUIRED',
     { status: fitterSwitch.status, error: fitterSwitch.body?.error?.code },
+  );
+  check(
+    'and the refusal leaves its professions alone',
+    (
+      await prisma.professionalListingCategory.findMany({
+        where: { listingId: fittedId },
+        select: { code: true },
+      })
+    ).every(row => row.code === 'TRADES_REPAIRS'),
   );
 
   check(
@@ -1040,8 +1156,13 @@ async function main() {
     ).body?.data?.filter(row => row.requiresReview).length === gatedNow.length,
   );
 
+  await restoreGate();
+
   await sweep('listing-review');
   await finish();
 }
 
-main().catch(fail);
+main().catch(async error => {
+  await restoreGate().catch(() => {});
+  await fail(error);
+});

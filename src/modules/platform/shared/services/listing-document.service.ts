@@ -96,13 +96,23 @@ export class ListingDocumentService {
     const ids = [...new Set(options.documentIds ?? [])];
 
     if (!options.needsApproval) {
+      /**
+       * Not attached, and **no longer refused** (v2 §7).
+       *
+       * It used to be a 400: accepting files the platform has no reason to hold, and then holding
+       * them, is how a data-minimisation promise quietly stops being true — and that reasoning
+       * still stands, which is why nothing here attaches them. What changed is who the refusal
+       * hit. A listing is no longer gated by anything (the gate moved to the service, against a
+       * category verification), so *every* build that collects a certificate at registration —
+       * which is every build shipped before v2 — would have had its registration refused outright.
+       *
+       * So the files are left where they are: unattached, and swept as orphans within the day.
+       * The member's listing is created, and the documents they meant to send go to
+       * `POST professionals/me/verifications`, which is where a licence belongs now.
+       */
       if (ids.length) {
-        // Refused rather than ignored. Accepting files the platform has no reason to hold, and
-        // then holding them, is how a data-minimisation promise quietly stops being true.
-        throw ApiException.badRequest(
-          ApiErrorCode.DOCUMENTS_NOT_REQUIRED,
-          'This profession does not need supporting documents.',
-          { details: [{ field, message: 'Not needed for this profession.' }] },
+        this.logger.log(
+          `Ignoring ${ids.length} document(s) on an ungated listing write: the gate is the category verification now.`,
         );
       }
 
@@ -389,20 +399,21 @@ export class ListingDocumentService {
    * API keeps the file behind the staff guard stack for every byte of it.
    */
   async read(
-    listingId: string,
+    ownerId: string,
     documentId: string,
+    /**
+     * Whose submission this is. Defaults to a listing's, and v2's category verifications pass
+     * their own — the rules below are identical and the owner type is the only difference, so one
+     * reader serves both rather than two that drift on the scan check.
+     */
+    ownerType: string = LISTING_DOCUMENT_OWNER,
   ): Promise<{ bytes: Buffer; mimeType: DocumentMimeType; fileName: string }> {
     const row = await this.database.media.findUnique({ where: { id: documentId } });
 
-    // Not part of *this* listing's current submission. A superseded document is a 404 here too:
-    // the reviewer is looking at a submission, and a file that is no longer in it is not part of
-    // what they are deciding.
-    if (
-      !row ||
-      row.ownerType !== LISTING_DOCUMENT_OWNER ||
-      row.ownerId !== listingId ||
-      row.supersededAt
-    ) {
+    // Not part of *this* submission. A superseded document is a 404 here too: the reviewer is
+    // looking at a submission, and a file that is no longer in it is not part of what they are
+    // deciding.
+    if (!row || row.ownerType !== ownerType || row.ownerId !== ownerId || row.supersededAt) {
       throw ApiException.notFound('That document is not part of this submission.');
     }
 

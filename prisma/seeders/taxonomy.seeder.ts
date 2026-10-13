@@ -15,8 +15,13 @@ import { taxonomySeeds } from './data/taxonomy';
  *
  * - `requiresReview` — which professions hold their listings for approval (§2.9), changed from the
  *   portal by Trust & Safety, managers and super admins.
+ * - `requiresVerification` — the v2 gate: whether selling in this category or subcategory needs an
+ *   approved verification. The portal is where a gate is turned on or off (v2 §12), and a deploy
+ *   that reverted it would silently un-gate regulated work.
+ * - `credentialBodies` — which regulator a reviewer should expect to see. Same reason: the portal
+ *   edits it, and a register that gets renamed should not wait for a release.
  */
-const OPERATOR_OWNED = ['requiresReview'] as const;
+const OPERATOR_OWNED = ['requiresReview', 'requiresVerification', 'credentialBodies'] as const;
 
 /** Upserts every taxonomy term and bumps the version stamp. */
 export const seedTaxonomy = async (prisma: PrismaClient) => {

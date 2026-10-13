@@ -28,3 +28,4 @@ export * from './text-normalisation';
 export * from './session-revocation.service';
 export * from './system-config.service';
 export * from './taxonomy.service';
+export * from './weekly-hours';

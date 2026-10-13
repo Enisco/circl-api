@@ -278,3 +278,167 @@ describe('pdfPageCount', () => {
     expect(() => pdfPageCount(Buffer.alloc(4096, 0xff))).not.toThrow();
   });
 });
+
+/**
+ * HEIC, which v2 §2.4 asks us to accept — and which is the format that makes the strip matter.
+ *
+ * An iPhone writes HEIC by default and puts the GPS coordinates of wherever the photo was taken in
+ * its EXIF. For a photograph of a certificate that is usually somebody's home, and the one place
+ * these files are read is a reviewer's viewer. Accepting the format without blanking the EXIF
+ * would have added the leak the rest of this file exists to prevent.
+ *
+ * The fixtures are built by hand because there is no HEIC encoder here, which is the same reason
+ * the dimension tests build theirs. Each one is a real box tree: `ftyp`, then `meta` holding
+ * `iinf` (what the items are) and `iloc` (where their bytes live), then `mdat`.
+ */
+describe('a HEIC document', () => {
+  const box = (type: string, payload: Buffer): Buffer =>
+    Buffer.concat([u32(payload.length + 8), Buffer.from(type, 'ascii'), payload]);
+
+  function u32(value: number): Buffer {
+    const out = Buffer.alloc(4);
+
+    out.writeUInt32BE(value);
+
+    return out;
+  }
+
+  function u16(value: number): Buffer {
+    const out = Buffer.alloc(2);
+
+    out.writeUInt16BE(value);
+
+    return out;
+  }
+
+  /** `infe` v2: version/flags, item id, protection index, then the four-character type. */
+  const infe = (id: number, type: string): Buffer =>
+    box(
+      'infe',
+      Buffer.concat([
+        Buffer.from([2, 0, 0, 0]),
+        u16(id),
+        u16(0),
+        Buffer.from(type, 'ascii'),
+        Buffer.from([0]),
+      ]),
+    );
+
+  /** `iloc` v1 with 4-byte offsets and lengths, no base and no construction index. */
+  const iloc = (items: Array<{ id: number; offset: number; length: number }>): Buffer =>
+    box(
+      'iloc',
+      Buffer.concat([
+        Buffer.from([1, 0, 0, 0]),
+        // offset_size 4, length_size 4 | base_offset_size 0, index_size 0
+        Buffer.from([0x44, 0x00]),
+        u16(items.length),
+        ...items.flatMap(item => [
+          u16(item.id),
+          u16(0), // construction method
+          u16(0), // data reference index
+          u16(1), // extent count
+          u32(item.offset),
+          u32(item.length),
+        ]),
+      ]),
+    );
+
+  const EXIF = Buffer.from('GPS 51.5074,-0.1278 and the rest of somebody’s EXIF', 'utf8');
+
+  /** A file whose EXIF item sits at a known offset inside `mdat`. */
+  const file = (): { bytes: Buffer; at: number } => {
+    const ftyp = box('ftyp', Buffer.concat([Buffer.from('heic', 'ascii'), u32(0)]));
+    const picture = Buffer.from('not really HEVC, but bytes in the right place', 'utf8');
+    // Built once with placeholder offsets to learn the header length, then again with real ones.
+    const build = (exifAt: number, pictureAt: number): Buffer => {
+      const meta = box(
+        'meta',
+        Buffer.concat([
+          Buffer.from([0, 0, 0, 0]),
+          box(
+            'iinf',
+            Buffer.concat([Buffer.from([0, 0, 0, 0]), u16(2), infe(1, 'hvc1'), infe(2, 'Exif')]),
+          ),
+          iloc([
+            { id: 1, offset: pictureAt, length: picture.length },
+            { id: 2, offset: exifAt, length: EXIF.length },
+          ]),
+        ]),
+      );
+
+      return Buffer.concat([ftyp, meta, box('mdat', Buffer.concat([picture, EXIF]))]);
+    };
+    const probe = build(0, 0);
+    const mdatPayload = probe.length - picture.length - EXIF.length;
+
+    return {
+      bytes: build(mdatPayload + picture.length, mdatPayload),
+      at: mdatPayload + picture.length,
+    };
+  };
+
+  it('is recognised by its brand, not by what the uploader called it', () => {
+    const { bytes } = file();
+
+    expect(sniffDocument(bytes)).toBe('image/heic');
+    // The two registered names are one container, and which one a phone writes is its own affair.
+    expect(matchesDeclaredType(bytes, 'image/heic')).toBe(true);
+    expect(matchesDeclaredType(bytes, 'image/heif')).toBe(true);
+    expect(matchesDeclaredType(bytes, 'image/png')).toBe(false);
+  });
+
+  it('has its EXIF blanked, in place, with the picture untouched', () => {
+    const { bytes, at } = file();
+
+    expect(bytes.subarray(at, at + EXIF.length).toString()).toContain('GPS');
+
+    const stripped = stripImageMetadata(bytes);
+
+    // Same length, which is what keeps every `iloc` offset valid: the bytes are overwritten, not
+    // removed. A delete would move the picture and break the file.
+    expect(stripped.length).toBe(bytes.length);
+    expect(stripped.subarray(at, at + EXIF.length).equals(Buffer.alloc(EXIF.length))).toBe(true);
+    expect(stripped.subarray(0, at).equals(bytes.subarray(0, at))).toBe(true);
+    // And the input is left alone, so a caller that compares the two can tell work was done.
+    expect(bytes.subarray(at, at + EXIF.length).toString()).toContain('GPS');
+  });
+
+  it('is returned untouched when it carries no EXIF at all', () => {
+    const noExif = Buffer.concat([
+      box('ftyp', Buffer.from('mif1', 'ascii')),
+      box(
+        'meta',
+        Buffer.concat([
+          Buffer.from([0, 0, 0, 0]),
+          box('iinf', Buffer.concat([Buffer.from([0, 0, 0, 0]), u16(1), infe(1, 'hvc1')])),
+          iloc([{ id: 1, offset: 0, length: 4 }]),
+        ]),
+      ),
+      box('mdat', Buffer.from('abcd', 'utf8')),
+    ]);
+
+    expect(stripImageMetadata(noExif)).toBe(noExif);
+  });
+
+  /**
+   * The parsers read attacker-supplied bytes, so the only acceptable failure is "nothing to do".
+   * A truncated box, a length that runs past the end, a count that promises more entries than
+   * exist: each one must come back as the input rather than as a crash in a write path.
+   */
+  it('gives up rather than walking off the end of a malformed file', () => {
+    const { bytes } = file();
+
+    for (const cut of [8, 16, 24, 40, 60, bytes.length - 8, bytes.length - 1]) {
+      const truncated = bytes.subarray(0, cut);
+
+      expect(() => stripImageMetadata(truncated)).not.toThrow();
+    }
+
+    const lying = Buffer.from(bytes);
+
+    // A `meta` box claiming to be enormous.
+    lying.writeUInt32BE(0xffffff, bytes.indexOf('meta') - 4);
+    expect(() => stripImageMetadata(lying)).not.toThrow();
+  });
+});

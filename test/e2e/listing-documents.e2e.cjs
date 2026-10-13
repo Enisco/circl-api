@@ -32,6 +32,15 @@ const OPEN = 'TECH_SOFTWARE';
 
 const heading = title => console.log(`\n── ${title} ${'─'.repeat(Math.max(0, 58 - title.length))}`);
 
+/**
+ * Put the gated set back, however this run ends.
+ *
+ * Assigned by `main` once it knows what the set was. Declared out here so the `catch` below can
+ * reach it: a run that throws halfway through must not leave a profession gated for the next
+ * suite in the sweep.
+ */
+let restoreGate = async () => {};
+
 const key = () => ({
   'Idempotency-Key': `e2e-doc-${Date.now()}-${Math.random().toString(36).slice(2)}`,
 });
@@ -55,6 +64,44 @@ async function main() {
   const staff = await makeAdmin('doc-reviewer', 'super_admin');
   const support = await makeAdmin('doc-support', 'support');
   const headers = adminHeaders(staff);
+
+  /**
+   * Turn the gate on, because since Professionals v2 nothing is gated by default.
+   *
+   * Verification moved to `(professional, category)` on the member, and the listing-level review
+   * this file is about became what it always was in the data — an operator's lever, `requiresReview`
+   * on a `PROFESSION` term, now resting off. The flow underneath it is unchanged and still the one a
+   * member meets the moment somebody pulls that lever, so the suite pulls it, and puts it back where
+   * it found it.
+   */
+  const setGated = async (codes, label) => {
+    const res = await api(
+      null,
+      'PUT',
+      '/admin/professional-reviews/categories',
+      {
+        codes,
+        reasonCode: 'CORRECTION',
+        note: 'e2e: exercising the supporting-document flow behind a gated profession.',
+      },
+      { ...headers, 'Idempotency-Key': `e2e-doc-gate-${label}-${Date.now()}` },
+    );
+
+    if (res.status !== 200) {
+      await fail(new Error(`could not ${label} the gate: ${res.status} ${JSON.stringify(res.body)}`));
+    }
+  };
+
+  const gatedBefore = (
+    (
+      await api(null, 'GET', '/admin/professional-reviews/categories', undefined, headers)
+    ).body?.data ?? []
+  )
+    .filter(row => row.requiresReview)
+    .map(row => row.code);
+
+  restoreGate = () => setGated(gatedBefore, 'restore');
+  await setGated([...new Set([...gatedBefore, GATED])], 'set');
 
   // ── 1. PDFs, for this purpose and no other ───────────────────────────────
   heading('1. a PDF is accepted here and nowhere else');
@@ -585,31 +632,42 @@ async function main() {
     }),
   );
 
-  // Refused rather than ignored: accepting files the platform has no reason to hold, and then
-  // holding them, is how a data-minimisation promise quietly stops being true.
-  check('sending documents anyway is refused', unwanted.status === 400, unwanted.status);
+  /**
+   * Ignored, not refused — and this changed with v2.
+   *
+   * It used to be a 400 `DOCUMENTS_NOT_REQUIRED`, on the reasoning that holding files the platform
+   * has no reason to hold is how a data-minimisation promise stops being true. That reasoning is
+   * still why nothing is attached here. What changed is who the refusal hit: no listing is gated by
+   * default any more, so every build that collects a certificate at registration — every build
+   * shipped before v2 — would have had its registration refused outright.
+   */
   check(
-    'with its own code',
-    unwanted.body?.error?.code === 'DOCUMENTS_NOT_REQUIRED',
-    unwanted.body?.error,
+    'sending documents anyway is accepted rather than refused',
+    unwanted.status === 201,
+    unwanted.status || unwanted.body,
   );
 
-  const plain = await api(
-    coder.token,
-    'POST',
-    '/professionals/listings',
-    listingBody({
-      categoryCodes: [OPEN],
-      professionTitle: 'React developer',
-      about: 'I build web apps for small businesses in Manchester, mostly React and Node.',
-    }),
-  );
+  const unwantedId = unwanted.body?.data?.listing?.id;
 
-  check('without them it is created', plain.status === 201, plain.status || plain.body);
   check(
-    'and live immediately',
-    plain.body?.data?.listing?.review === null,
-    plain.body?.data?.listing?.review,
+    'and live immediately, with nothing to review',
+    unwanted.body?.data?.listing?.review === null,
+    unwanted.body?.data?.listing?.review,
+  );
+  check(
+    'while the file it sent is not attached to anything',
+    (await prisma.media.count({
+      where: { ownerType: 'LISTING_DOCUMENT', ownerId: unwantedId },
+    })) === 0,
+  );
+  check(
+    'and is left as an orphan upload, for the sweep to collect',
+    (
+      await prisma.media.findFirst({
+        where: { id: spare.id },
+        select: { ownerType: true, ownerId: true },
+      })
+    )?.ownerId === null,
   );
 
   // ── 12. Leaving the gated profession lets the documents go ───────────────
@@ -639,8 +697,13 @@ async function main() {
       0,
   );
 
+  await restoreGate();
+
   await sweep('listing-documents');
   await finish();
 }
 
-main().catch(fail);
+main().catch(async error => {
+  await restoreGate().catch(() => {});
+  await fail(error);
+});

@@ -33,6 +33,7 @@ import { MediaDerivationService } from '../media/derivation/media-derivation.ser
 import { SearchDemandService } from '../intelligence/services/search-demand.service';
 import { MediaUploadService } from '../media/services/media-upload.service';
 import { BookingService } from '../professionals/services/booking.service';
+import { CategoryVerificationService } from '../professionals/services/category-verification.service';
 import { ProfessionalsHomeService } from '../professionals/services/professionals-home.service';
 import { EnquiryService } from '../commerce/services/enquiry.service';
 import { AutoGuideService } from '../intelligence/services/auto-guide.service';
@@ -69,6 +70,7 @@ export class PlatformJobsService {
     private readonly storage: StorageProvider,
     private readonly dataExports: DataExportBuilderService,
     private readonly notifications: NotificationFeedService,
+    private readonly verifications: CategoryVerificationService,
   ) {}
 
   /** A booking auto-completes 7 days after delivery (2.9.5). */
@@ -94,6 +96,26 @@ export class PlatformJobsService {
         const expired = await this.enquiries.runExpiry();
 
         return expired ? `expired ${expired} stale enquiries` : null;
+      },
+      context,
+    );
+  }
+
+  /**
+   * A category verification with a renewal date that has passed stops being an approval (v2 §2.5).
+   *
+   * The gate already treats a lapsed one as lapsed, so this is not what enforces it — it is what
+   * makes the stored status agree with the gate, for the reviewer's queue, the member's own panel
+   * and every service whose status is derived from the column.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_3AM, { name: 'verifications.expire' })
+  async expireVerifications(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'verifications.expire',
+      async () => {
+        const lapsed = await this.verifications.runExpiry();
+
+        return lapsed ? `lapsed ${lapsed} verification(s)` : null;
       },
       context,
     );
@@ -487,6 +509,7 @@ export class PlatformJobsService {
       'bookings.auto-complete': context => this.autoCompleteBookings(context),
       'enquiries.expire': context => this.expireEnquiries(context),
       'requests.expire': context => this.expireRequests(context),
+      'verifications.expire': context => this.expireVerifications(context),
       'media.sweep-orphans': context => this.sweepOrphanMedia(context),
       'idempotency.sweep': context => this.sweepIdempotency(context),
       'professionals.response-times': context => this.recomputeResponseTimes(context),

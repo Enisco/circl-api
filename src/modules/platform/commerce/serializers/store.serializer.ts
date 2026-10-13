@@ -1,5 +1,6 @@
 import { Store, StoreStatus, Weekday } from '@prisma/client';
-import { distanceMiles, minutesOfDayIn } from '@/common';
+import { distanceMiles } from '@/common';
+import { isWithinWeeklyHours } from '../../shared';
 
 const WEEK: Weekday[] = [
   Weekday.MONDAY,
@@ -54,31 +55,11 @@ export const isOpenNow = (
   at: Date = new Date(),
 ): boolean => {
   if (status !== StoreStatus.OPEN) return false;
-  if (!hours?.length) return true;
 
-  const { weekday, minutes } = minutesOfDayIn(timezone, at);
-  const todayIndex = WEEK.findIndex(day => day === weekday);
-
-  if (todayIndex === -1) return false;
-
-  const today = hours[todayIndex];
-  // Yesterday matters because a store open 6pm to 2am is still open at 1am.
-  const yesterday = hours[(todayIndex + 6) % 7];
-
-  const withinToday =
-    today.openMinutes !== null &&
-    today.closeMinutes !== null &&
-    (today.closeMinutes > today.openMinutes
-      ? minutes >= today.openMinutes && minutes < today.closeMinutes
-      : minutes >= today.openMinutes);
-
-  const spilledFromYesterday =
-    yesterday.openMinutes !== null &&
-    yesterday.closeMinutes !== null &&
-    yesterday.closeMinutes <= yesterday.openMinutes &&
-    minutes < yesterday.closeMinutes;
-
-  return withinToday || spilledFromYesterday;
+  // The manual switch above is the shop's own; the clock below is shared with the professional's
+  // "contactable now", because they are the same question about the same shape (v2 §4.2) and two
+  // implementations drift into a badge disagreeing with the filter beside it.
+  return isWithinWeeklyHours(timezone, hours, at);
 };
 
 /**

@@ -61,6 +61,18 @@ export const EDITABLE_KINDS: TaxonomyKind[] = [
   TaxonomyKind.STORE_TYPE,
   TaxonomyKind.GUARD_CATEGORY,
   TaxonomyKind.MANAGED_CATEGORY,
+  /**
+   * Professionals v2's two new vocabularies (§3, §12), and the taxonomy editor is load-bearing for
+   * them in a way it was not before: a subcategory carries the **verification gate**, so turning
+   * one on from this screen is what decides whether somebody may sell regulated work.
+   *
+   * `PROFESSION_SUBCATEGORY` keeps its parent in `metadata.parentCode`, and the gate and the
+   * expected regulator in `requiresVerification` and `credentialBodies`. `SKILL` keeps the
+   * categories it belongs to in `metadata.categoryCodes`. All three are operator-owned: the
+   * seeder never overwrites them, so a change made here survives a deploy.
+   */
+  TaxonomyKind.PROFESSION_SUBCATEGORY,
+  TaxonomyKind.SKILL,
 ];
 
 const labelOfKind = (kind: TaxonomyKind): string =>
@@ -203,6 +215,74 @@ export class AdminTaxonomyService {
    * number is for is the warning before a deactivation, and a zero reads as "nothing I can see
    * uses this" which is exactly what it means here.
    */
+  /**
+   * The free-text skills members keep typing, so a word that recurs can be promoted (v2 §4.1).
+   *
+   * Without this the custom-skill field is a dead end rather than a feeder: members write "Self
+   * sponsorship" fourteen times, nobody sees it, and the vocabulary never learns. Promoting is
+   * deliberately a human decision — a list that grew by itself would grow typos and spellings of
+   * the same thing.
+   *
+   * Grouped case-insensitively on a trimmed label, because "self-sponsorship", "Self Sponsorship"
+   * and "self sponsorship " are one word somebody has typed three ways. The spelling returned is
+   * the commonest one, which is the one worth putting in the picker.
+   */
+  async recurringCustomSkills(minimum = 2, limit = 100) {
+    const rows = await this.database.$queryRaw<Array<{ label: string; total: bigint }>>`
+      SELECT trim(skill) AS label, COUNT(*)::bigint AS total
+      FROM "professional_listings" AS l,
+           LATERAL unnest(l."custom_skills") AS skill
+      WHERE l."deleted_at" IS NULL
+        AND trim(skill) <> ''
+      GROUP BY lower(trim(skill)), trim(skill)
+      ORDER BY COUNT(*) DESC, trim(skill) ASC
+      LIMIT ${limit}
+    `;
+
+    // Folded again in memory on the lower-cased label: the SQL groups by both so it can return a
+    // real spelling, which means two spellings of one word arrive as two rows.
+    const byWord = new Map<string, { label: string; count: number }>();
+
+    for (const row of rows) {
+      const key = row.label.toLowerCase();
+      const existing = byWord.get(key);
+      const count = Number(row.total);
+
+      if (!existing) {
+        byWord.set(key, { label: row.label, count });
+        continue;
+      }
+
+      // The commonest spelling wins the label; the counts add up either way.
+      byWord.set(key, {
+        label: count > existing.count ? row.label : existing.label,
+        count: existing.count + count,
+      });
+    }
+
+    const skills = await this.taxonomy.list(TaxonomyKind.SKILL, false);
+    const known = new Set(skills.map(term => term.label.toLowerCase()));
+
+    return (
+      [...byWord.values()]
+        .filter(entry => entry.count >= minimum)
+        // A word already in the vocabulary is not a candidate: somebody typed it by hand rather than
+        // picking it, which is a picker problem rather than a vocabulary one.
+        .filter(entry => !known.has(entry.label.toLowerCase()))
+        .sort((left, right) => right.count - left.count)
+        .map(entry => ({
+          label: entry.label,
+          count: entry.count,
+          /** A code the portal can offer as the default when promoting it. */
+          suggestedCode: entry.label
+            .toUpperCase()
+            .replace(/[^A-Z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '')
+            .slice(0, 48),
+        }))
+    );
+  }
+
   private async usageFor(kind: TaxonomyKind, codes: string[]): Promise<Map<string, number> | null> {
     if (!codes.length) return new Map();
 
@@ -332,6 +412,23 @@ export class AdminTaxonomyService {
           this.database.professionalListingCategory
             .groupBy({ by: ['code'], _count: { _all: true } })
             .then(rows => rows.map(r => ({ code: r.code, total: r._count._all }))),
+        );
+        break;
+      case TaxonomyKind.PROFESSION_SUBCATEGORY:
+        // Services sold under it (v2 §3). The number a reviewer needs before changing a gate: it
+        // is how many live services turning verification **on** would take down.
+        await tally(
+          this.database.professionalService
+            .groupBy({ by: ['subcategoryCode'], _count: { _all: true } })
+            .then(rows => rows.map(row => ({ code: row.subcategoryCode, total: row._count._all }))),
+        );
+        break;
+      case TaxonomyKind.SKILL:
+        // Listings claiming it, which is what makes a skill worth keeping in the vocabulary.
+        await tally(
+          this.database.professionalListingSkill
+            .groupBy({ by: ['code'], _count: { _all: true } })
+            .then(rows => rows.map(row => ({ code: row.code, total: row._count._all }))),
         );
         break;
       default:

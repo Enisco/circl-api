@@ -43,6 +43,43 @@ export interface ProfessionalSummaryView {
   /** D13: with nothing verified, a regulated profile must say so. */
   isRegulated: boolean;
   verificationStatus: ListingVerificationStatus;
+  /**
+   * The categories a reviewer has approved this professional for, with the provenance (v2 §2.5).
+   *
+   * **Approved records only, and never the documents.** A pending or declined verification is
+   * private to its owner: a visitor learning that somebody was declined is a disclosure we have no
+   * right to make, and one that would be read as a warning about the person.
+   *
+   * `verifiedAt` and `checkedBy` are not decoration — the chip opens a sheet saying what was
+   * checked, by whom and when, and a chip without that provenance is not shippable.
+   */
+  verifiedCategories: VerifiedCategoryView[];
+  /**
+   * Whether somebody can reach them **now** (v2 §4.2), computed server-side.
+   *
+   * The manual switch first, then the hours against the clock **in the professional's own
+   * timezone** — and the same function backs any `contactableNow` filter, so the badge and the
+   * filter can never disagree. Computing it on the client would read the viewer's clock, which is
+   * the wrong one for anybody in a different timezone from the professional.
+   */
+  isContactableNow: boolean;
+}
+
+/** One approved category, as a visitor sees it (v2 §2.5). */
+export interface VerifiedCategoryView {
+  categoryCode: string;
+  label: string;
+  verifiedAt: string | null;
+  checkedBy: string | null;
+  /** Nullable, and not surfaced yet — but a licence with a renewal date is the normal case. */
+  expiresAt: string | null;
+}
+
+/** Contactable hours, the same shape a store's opening hours use (v2 §4.2). */
+export interface ContactHoursView {
+  day: string;
+  openMinutes: number | null;
+  closeMinutes: number | null;
 }
 
 export interface ProfessionalServiceView {
@@ -68,6 +105,11 @@ export interface ProfessionalProfileView extends Omit<
   stats: { jobsCompleted: number; medianResponseMinutes: number | null; profileViews: number };
   services: ProfessionalServiceView[];
   trust: { checks: Array<Record<string, unknown>> };
+  /** Coded skills, filterable and countable (v2 §4.1). */
+  skills: TermView[];
+  /** The member's own words for work the vocabulary has not caught up with. Never filterable. */
+  customSkills: string[];
+  contactHours: ContactHoursView[];
   communityProfileUrl: string;
   viewer: {
     isOwner: boolean;
@@ -94,6 +136,8 @@ export const listingInclude = {
   user: { select: { id: true } },
   city: { select: { id: true, name: true, region: true } },
   categories: true,
+  skills: { orderBy: { sort: 'asc' } },
+  contactHours: true,
   services: { where: { isActive: true }, orderBy: { sort: 'asc' } },
 } satisfies Prisma.ProfessionalListingInclude;
 
@@ -115,3 +159,27 @@ export const toServiceView = (service: {
   priceBasisLabel: toPriceBasisLabel(service.priceBasis),
   isActive: service.isActive,
 });
+
+/**
+ * The approved categories, as a visitor sees them (v2 §2.5).
+ *
+ * Approved only — a pending or declined verification is private to its owner — and never the
+ * documents. The provenance travels with it because the chip opens a sheet saying what was
+ * checked, by whom and when, and a chip without that is decoration.
+ */
+export const toVerifiedCategories = (
+  records: Array<{
+    categoryCode: string;
+    decidedAt: Date | null;
+    checkedBy: string | null;
+    expiresAt: Date | null;
+  }>,
+  labels: Map<string, string>,
+): VerifiedCategoryView[] =>
+  records.map(record => ({
+    categoryCode: record.categoryCode,
+    label: labels.get(record.categoryCode) ?? record.categoryCode,
+    verifiedAt: record.decidedAt?.toISOString() ?? null,
+    checkedBy: record.checkedBy ?? 'Circl Trust & Safety',
+    expiresAt: record.expiresAt?.toISOString() ?? null,
+  }));

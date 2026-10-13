@@ -36,7 +36,9 @@ const build = (rows: Array<Record<string, unknown>>) => {
     ...(NINE as [never, never, never, never, never, never, never, never, never]),
     { enabled: async () => true } as never,
     { enqueue } as never,
-    // The three §2.9 collaborators and the data export builder, none of which this job touches.
+    // The §2.9 collaborators, the data export builder, the notification feed and the verification
+    // service, none of which this job touches.
+    {} as never,
     {} as never,
     {} as never,
     {} as never,
@@ -100,6 +102,7 @@ describe('safety.rescan-degraded', () => {
       ...(NINE as [never, never, never, never, never, never, never, never, never]),
       { enabled: async () => false } as never,
       { enqueue: jest.fn() } as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

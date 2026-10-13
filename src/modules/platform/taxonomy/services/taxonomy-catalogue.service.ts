@@ -16,7 +16,15 @@ export interface TaxonomyCatalogue {
   version: string;
   cities: Array<{ id: string; label: string; name: string; region: string | null }>;
   communityCategories: CatalogueTerm[];
+  /**
+   * The professional categories, each carrying its own `subcategories` (v2 §3.1).
+   *
+   * Extending this key rather than adding a parallel one, because every client already parses it
+   * and a second key would mean two vocabularies for one shelf.
+   */
   professions: CatalogueTerm[];
+  /** What a professional does, tagged by the categories it belongs to (v2 §3.4). */
+  skills: CatalogueTerm[];
   guideTopics: CatalogueTerm[];
   heritageTags: CatalogueTerm[];
   journeyStages: CatalogueTerm[];
@@ -91,6 +99,31 @@ export interface TaxonomyLimits {
   /** A prompt answer is a sentence on a card, not a paragraph. */
   minPromptAnswer: number;
   maxPromptAnswer: number;
+
+  // ── Professionals v2 (§3.5). The numbers the app enforces in the form, sent so a change to any
+  // of them needs no release.
+  maxListingCategories: number;
+  maxServiceMedia: number;
+  maxServiceVideos: number;
+  minServiceDescription: number;
+  maxServiceDescription: number;
+  maxServiceUpdates: number;
+  maxServiceMilestones: number;
+  maxSkills: number;
+  maxCustomSkills: number;
+  maxSkillLabel: number;
+  maxVerificationDocuments: number;
+  /** Marketplace (§9): videos per product, and what one may weigh. */
+  maxItemPhotos: number;
+  maxItemVideos: number;
+  /**
+   * Sixty seconds and fifty megabytes, which is the number they asked us to pick.
+   *
+   * The shopper on a 3G connection is who pays for a four-minute 4K clip somebody uploaded from a
+   * phone, and they pay for it before they can see whether they wanted it.
+   */
+  maxVideoSeconds: number;
+  maxVideoBytes: number;
 }
 
 /** The rule text behind the immigrant-friendly filter (D11). */
@@ -115,6 +148,23 @@ export const TAXONOMY_LIMITS: TaxonomyLimits = {
   minConnectPhotos: 3,
   minPromptAnswer: 20,
   maxPromptAnswer: 100,
+  maxListingCategories: 3,
+  maxServiceMedia: 10,
+  maxServiceVideos: 3,
+  minServiceDescription: 40,
+  maxServiceDescription: 1500,
+  maxServiceUpdates: 10,
+  maxServiceMilestones: 6,
+  maxSkills: 10,
+  maxCustomSkills: 3,
+  maxSkillLabel: 30,
+  maxVerificationDocuments: 5,
+  // Unchanged by v2, and stated because the video limit beside it would otherwise read as the
+  // whole rule for a product's media.
+  maxItemPhotos: 5,
+  maxItemVideos: 3,
+  maxVideoSeconds: 60,
+  maxVideoBytes: 50 * 1024 * 1024,
 };
 
 /**
@@ -185,6 +235,8 @@ export class TaxonomyCatalogueService {
       cities,
       communityCategories,
       professions,
+      subcategories,
+      skills,
       guideTopics,
       heritageTags,
       journeyStages,
@@ -217,6 +269,8 @@ export class TaxonomyCatalogueService {
       // Deactivated terms are returned too, marked `isActive: false`.
       this.taxonomy.list(TaxonomyKind.COMMUNITY_CATEGORY, false),
       this.taxonomy.list(TaxonomyKind.PROFESSION, false),
+      this.taxonomy.list(TaxonomyKind.PROFESSION_SUBCATEGORY, false),
+      this.taxonomy.list(TaxonomyKind.SKILL, false),
       this.taxonomy.list(TaxonomyKind.GUIDE_TOPIC, false),
       this.taxonomy.list(TaxonomyKind.HERITAGE_TAG, false),
       this.taxonomy.list(TaxonomyKind.JOURNEY_STAGE, false),
@@ -257,7 +311,8 @@ export class TaxonomyCatalogueService {
         region: city.region,
       })),
       communityCategories: communityCategories.map(flatten),
-      professions: professions.map(flatten),
+      professions: withSubcategories(professions, subcategories),
+      skills: skills.map(flatten),
       guideTopics: guideTopics.map(flatten),
       heritageTags: heritageTags.map(flatten),
       journeyStages: journeyStages.map(flatten),
@@ -300,6 +355,36 @@ export class TaxonomyCatalogueService {
 }
 
 /** Lifts each kind's `metadata` to the top level, because that is the shape the spec's example payload uses: `isRegulated` and `credentialBodies` sit beside `code` on a profession, not nested under a `metadata` key. */
+/**
+ * Each category with its own children (v2 §3.1).
+ *
+ * The parent is named in the child's `metadata.parentCode`, which is where a hierarchy belongs in a
+ * one-row-per-term table: the alternative was a `parent_id` column on every taxonomy kind, twenty
+ * of which have no children and never will.
+ *
+ * A child whose parent is not in the list is dropped rather than orphaned at the top level — a
+ * subcategory with no shelf is a chip nobody can reach, and silently promoting it to a category
+ * would put *Immigration solicitor* beside *Immigration*. `subcategories` is omitted entirely for
+ * a category with none, because the schema must not force an invented child.
+ */
+const withSubcategories = (categories: TermRecord[], children: TermRecord[]): CatalogueTerm[] => {
+  const byParent = new Map<string, CatalogueTerm[]>();
+
+  for (const child of children) {
+    const parent = (child.metadata as { parentCode?: string } | null)?.parentCode;
+
+    if (!parent) continue;
+
+    byParent.set(parent, [...(byParent.get(parent) ?? []), flatten(child)]);
+  }
+
+  return categories.map(category => {
+    const own = byParent.get(category.code);
+
+    return { ...flatten(category), ...(own?.length ? { subcategories: own } : {}) };
+  });
+};
+
 const flatten = (term: TermRecord): CatalogueTerm => ({
   code: term.code,
   label: term.label,

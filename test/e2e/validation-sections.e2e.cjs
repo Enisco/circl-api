@@ -85,17 +85,19 @@ const dobFor = y => {
     name: str(81),
   });
   check('Service.name: 81 rejected', r.status === 400, r.status);
+  // v2 §3.5 raised the description ceiling to 1500, so 501 is now ordinary text and the boundary
+  // moved with it. The name is unchanged at 2–80.
   r = await api(pro.token, 'POST', `/professionals/listings/${listingId}/services`, {
     name: str(20),
-    description: str(501),
+    description: str(1501),
   });
-  check('Service.description: 501 rejected', r.status === 400, r.status);
+  check('Service.description: 1501 rejected', r.status === 400, r.status);
   r = await api(pro.token, 'POST', `/professionals/listings/${listingId}/services`, {
     name: str(2),
-    description: str(500),
+    description: str(1500),
     price: 6500,
   });
-  check('Service: boundaries 2/500 accepted', r.status === 201, r.body?.error?.message);
+  check('Service: boundaries 2/1500 accepted', r.status === 201, r.body?.error?.message);
   const serviceId = r.body?.data?.id;
 
   r = await api(client.token, 'POST', '/professionals/briefs', {

@@ -25,6 +25,7 @@ import {
   DecideListingReviewDto,
   ListListingReviewsDto,
   SetGatedProfessionsDto,
+  SetVerificationGatesDto,
 } from '../dtos/admin-listing-review.dto';
 import { toMemberRef } from '../serializers/admin-member.serializer';
 import { caseMemberSelect } from '../serializers/admin-report-case.serializer';
@@ -664,6 +665,194 @@ export class AdminListingReviewService {
     await this.taxonomy.bumpVersion();
 
     return { data: { categories: await this.categories(), applied }, auditId };
+  }
+
+  /**
+   * The subcategories that require a category verification, with what a change would cost (v2 §3.2).
+   *
+   * Read through this rather than the generic taxonomy list because the number beside each row is
+   * the point: how many services are sold under that subcategory, and how many of those belong to
+   * somebody who is **not** approved for its category — which is exactly how many would go dark
+   * the moment the gate goes on.
+   */
+  async verificationGates() {
+    const terms = await this.database.taxonomyTerm.findMany({
+      where: { kind: TaxonomyKind.PROFESSION_SUBCATEGORY },
+      orderBy: [{ sort: 'asc' }, { code: 'asc' }],
+      select: { code: true, label: true, isActive: true, metadata: true },
+    });
+
+    /**
+     * One grouped query for both numbers, rather than reading every service into memory.
+     *
+     * The second number needs the owner's verification for the **category the service is sold
+     * under**, which is a join rather than a count — so it is SQL. The outer join is what makes
+     * "no approved verification" expressible at all: `v.id IS NULL` covers never submitted,
+     * pending, declined, revoked **and** lapsed, because the join itself excludes an approval whose
+     * renewal date has passed.
+     *
+     * visibility: an operator's count of what a gate change would do to live services. A
+     * visibility fragment here would hide exactly the rows the warning is about — a service held
+     * by the gate is the one the number is counting.
+     */
+    const counts = await this.database.$queryRaw<
+      Array<{ code: string; services: bigint; without_approval: bigint }>
+    >`
+      SELECT s."subcategory_code" AS code,
+             COUNT(*)::bigint AS services,
+             COUNT(*) FILTER (WHERE v."id" IS NULL)::bigint AS without_approval
+      FROM "professional_services" AS s
+      JOIN "professional_listings" AS l
+        ON l."id" = s."listing_id" AND l."deleted_at" IS NULL
+      LEFT JOIN "category_verifications" AS v
+        ON v."user_id" = l."user_id"
+       AND v."category_code" = s."category_code"
+       AND v."status" = 'APPROVED'
+       AND (v."expires_at" IS NULL OR v."expires_at" > now())
+      WHERE s."subcategory_code" IS NOT NULL
+        AND s."owner_state" = 'LIVE'
+      GROUP BY s."subcategory_code"
+    `;
+    const live = new Map(counts.map(row => [row.code, Number(row.services)]));
+    const unapproved = new Map(counts.map(row => [row.code, Number(row.without_approval)]));
+
+    return terms.map(term => {
+      const metadata = (term.metadata ?? {}) as Record<string, unknown>;
+
+      return {
+        code: term.code,
+        label: term.label,
+        isActive: term.isActive,
+        parentCode: (metadata.parentCode as string) ?? null,
+        /** Whether selling under it needs an approved verification. The operator owns this. */
+        requiresVerification: metadata.requiresVerification === true,
+        /** Who registers this work, for the reviewer looking for a licence. Reference only. */
+        credentialBodies: Array.isArray(metadata.credentialBodies) ? metadata.credentialBodies : [],
+        services: live.get(term.code) ?? 0,
+        /** Of those, the ones whose owner has no approved verification for the category. */
+        servicesWithoutApproval: unapproved.get(term.code) ?? 0,
+      };
+    });
+  }
+
+  /**
+   * Rewrites which subcategories require verification (v2 §3.2).
+   *
+   * Held by `professions:gate`, not `config:taxonomy`, and that is the whole reason this exists
+   * rather than leaving it to the generic taxonomy editor. Deciding that *Immigration solicitor*
+   * may not be sold unchecked is the same judgement as deciding a profession needs reviewing — it
+   * belongs to Trust & Safety, who deliberately do not hold the permission that lets somebody
+   * reword every vocabulary on the platform. It also writes `metadata` **merged** rather than
+   * wholesale, so a gate change cannot take `parentCode` or `credentialBodies` with it.
+   *
+   * The whole set, not a toggle: a toggle raced with another toggle leaves the list in a state
+   * nobody chose, and this write publishes and unpublishes live work.
+   *
+   * Nothing walks the services. A service's status is derived from this flag and the member's
+   * verification, so the write *is* the consequence — which is why the response says how many
+   * services changed side.
+   */
+  async setVerificationGates(actor: AdminPrincipal, dto: SetVerificationGatesDto) {
+    const reason = dto.assertReasoned();
+    const terms = await this.database.taxonomyTerm.findMany({
+      where: { kind: TaxonomyKind.PROFESSION_SUBCATEGORY },
+      select: { code: true, metadata: true },
+    });
+    const known = new Set(terms.map(term => term.code));
+    const asked = [...new Set(dto.codes)];
+    const unknown = asked.filter(code => !known.has(code));
+
+    if (unknown.length) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        `Not a subcategory: ${unknown.join(', ')}.`,
+        {
+          details: unknown.map(code => ({
+            field: 'codes',
+            message: `${code} is not a profession subcategory.`,
+          })),
+        },
+      );
+    }
+
+    const before = terms
+      .filter(
+        term => ((term.metadata ?? {}) as Record<string, unknown>).requiresVerification === true,
+      )
+      .map(term => term.code);
+    const wanted = new Set(asked);
+    const gating = asked.filter(code => !before.includes(code));
+    const ungating = before.filter(code => !wanted.has(code));
+
+    if (!gating.length && !ungating.length) {
+      // Said rather than written: an audit entry for a change that changed nothing is noise in the
+      // one place that should hold only decisions.
+      return {
+        data: {
+          subcategories: await this.verificationGates(),
+          applied: { gated: [], ungated: [], servicesBlocked: 0, servicesPublished: 0 },
+        },
+        auditId: null,
+      };
+    }
+
+    // What this is about to do to live work, counted **before** the write — afterwards the answer
+    // has already changed.
+    const rows = await this.verificationGates();
+    const byCode = new Map(rows.map(row => [row.code, row]));
+    const servicesBlocked = gating.reduce(
+      (total, code) => total + (byCode.get(code)?.servicesWithoutApproval ?? 0),
+      0,
+    );
+    const servicesPublished = ungating.reduce(
+      (total, code) => total + (byCode.get(code)?.servicesWithoutApproval ?? 0),
+      0,
+    );
+
+    const { auditId } = await this.audit.mutate(
+      {
+        action: 'professions.verification_gate_changed',
+        targetType: 'CONFIG',
+        targetId: 'PROFESSION_SUBCATEGORY.requiresVerification',
+        before: { gated: before },
+        after: { gated: asked },
+        reasonCode: reason.reasonCode,
+        policySubtype: reason.policySubtype,
+        reason: reason.note,
+        metadata: { gating, ungating, servicesBlocked, servicesPublished },
+      },
+      async tx => {
+        for (const term of terms) {
+          const metadata = { ...((term.metadata ?? {}) as Record<string, unknown>) };
+          const next = wanted.has(term.code);
+
+          if ((metadata.requiresVerification === true) === next) continue;
+
+          // Merged, not replaced — `parentCode` is what makes the term mean anything at all.
+          metadata.requiresVerification = next;
+
+          await tx.taxonomyTerm.update({
+            where: {
+              kind_code: { kind: TaxonomyKind.PROFESSION_SUBCATEGORY, code: term.code },
+            },
+            data: { metadata: toJson(metadata) },
+          });
+        }
+      },
+    );
+
+    // Every process caches the vocabulary and every client holds an ETag on it; the gate is read
+    // from that cache on every service write, so a change that does not bump this is a change that
+    // has not happened yet.
+    await this.taxonomy.bumpVersion();
+
+    return {
+      data: {
+        subcategories: await this.verificationGates(),
+        applied: { gated: gating, ungated: ungating, servicesBlocked, servicesPublished },
+      },
+      auditId,
+    };
   }
 
   // ─── Plumbing ──────────────────────────────────────────────────────────────

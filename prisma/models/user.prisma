@@ -118,13 +118,15 @@ model User {
   reputationSummary ReputationSummary?
 
   // ── Professionals ─────────────────────────────────────────────────────────
-  professionalListing ProfessionalListing?
-  briefs              ManagedBrief[]
-  bookingsAsClient    Booking[]            @relation("BookingClient")
-  bookingsAsPro       Booking[]            @relation("BookingProfessional")
-  disputesRaised      Dispute[]
-  disputeEvidence     DisputeEvidence[]
-  managedRequests     ManagedRequest[]
+  professionalListing   ProfessionalListing?
+  /// Keyed on the person, not their listing: a licence check survives a profile being rebuilt.
+  categoryVerifications CategoryVerification[]
+  briefs                ManagedBrief[]
+  bookingsAsClient      Booking[]              @relation("BookingClient")
+  bookingsAsPro         Booking[]              @relation("BookingProfessional")
+  disputesRaised        Dispute[]
+  disputeEvidence       DisputeEvidence[]
+  managedRequests       ManagedRequest[]
 
   // ── Connect ───────────────────────────────────────────────────────────────
   connectProfile ConnectProfile?

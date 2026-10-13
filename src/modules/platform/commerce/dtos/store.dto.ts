@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   Fulfilment,
   ItemAvailability,
+  MediaRole,
   StoreFulfilment,
   StoreStatus,
   Weekday,
@@ -307,6 +308,25 @@ export class StoreStatusDto {
   status: StoreStatus;
 }
 
+/**
+ * One attachment on a product, and what it is *of* (v2 §9.1).
+ *
+ * The same three roles the professionals' services use, under the marketplace's own labels: the
+ * thing itself, a customer speaking about it, or an advert. One vocabulary because the two
+ * features show the same three things, and the code is what matters to the server.
+ */
+export class ItemMediaKeyDto {
+  @ApiProperty({ description: 'The storage key the upload returned.' })
+  @IsString()
+  @MaxLength(512)
+  key: string;
+
+  @ApiPropertyOptional({ enum: MediaRole, default: MediaRole.SHOWCASE })
+  @IsEnum(MediaRole)
+  @IsOptional()
+  role?: MediaRole;
+}
+
 export class ItemDto {
   @ApiProperty({ minLength: 2, maxLength: 100 })
   @Trim()
@@ -381,6 +401,20 @@ export class ItemDto {
   @IsString({ each: true })
   @MaxLength(512, { each: true })
   photoKeys?: string[];
+
+  @ApiPropertyOptional({
+    type: [ItemMediaKeyDto],
+    description:
+      'Photos **and video** with what each one is of (v2 §9): the thing itself, a customer ' +
+      'speaking, or an advert. Five photos — the same allowance as `photoKeys` — and up to three ' +
+      'videos besides. Absent leaves the media alone; `[]` removes all of it.',
+  })
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => ItemMediaKeyDto)
+  @IsOptional()
+  mediaKeys?: ItemMediaKeyDto[];
 
   @ApiPropertyOptional({ description: 'Size or weight variants, free text for now.' })
   @Trim()

@@ -244,12 +244,24 @@ const KINDS: ContentKind[] = [
     author: null,
     authorVia: { table: 'professional_listings', on: 'listing_id', column: 'user_id' },
     city: null,
-    category: null,
+    // The category a service is **sold** under (v2 §5.1), which is not necessarily one of the
+    // listing's profile categories — so it is worth filtering on here rather than inferring from
+    // the professional.
+    category: 'category_code',
+    categoryKind: 'PROFESSION',
     created: 'created_at',
     // No `deleted_at` on this table: a service is removed outright, so there is nothing to
     // restore and `deleted` cannot be filtered on. The list says so rather than pretending.
     deleted: null,
-    status: `CASE WHEN c."is_active" THEN 'ACTIVE' ELSE 'INACTIVE' END`,
+    /**
+     * The **owner's** state, which is what this column can honestly answer (v2 §5.4).
+     *
+     * It read `is_active` until v2, which meant "not hidden" and said nothing about a draft. The
+     * full status — `PENDING_VERIFICATION`, `REJECTED`, `SUSPENDED` — is derived from the category
+     * verification and the visibility row, and is not a column on this table at all. A reviewer
+     * wanting that reads the member's verification queue, which is where the decision lives.
+     */
+    status: 'c."owner_state"::text',
     metrics: {},
     searchable: ['name', 'description'],
   },
