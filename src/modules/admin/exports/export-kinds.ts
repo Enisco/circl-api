@@ -121,9 +121,11 @@ export const EXPORT_KINDS: Record<AdminExportKind, ExportKind> = {
      * SQL joins authors, cities, categories and a per-kind status expression; none of that is
      * here, which is why this is a page per kind rather than seventeen bespoke builders.
      *
-     * A **type-specific** filter is refused rather than ignored: `?published=true` means something
-     * to guides and nothing to shops, and applying it across sixteen other kinds — or silently
-     * dropping it — would produce a file nobody could explain.
+     * `type` (a registry slug) narrows the file to one kind and takes that kind's own filters with
+     * it. Without it a **type-specific** filter is refused rather than ignored: `?published=true`
+     * means something to guides and nothing to shops. A filter every kind offers but some cannot
+     * answer — a city, a search — leaves those kinds out instead, because a review has no city and
+     * so cannot be in Leeds.
      */
     columns: [
       { key: 'targetType' },

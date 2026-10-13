@@ -514,6 +514,101 @@ const settle = async (headers, id, attempts = 40) => {
     res.status === 400 && /published/.test(JSON.stringify(res.body?.error?.details ?? [])),
     res.body?.error,
   );
+  check(
+    'and the refusal says how to ask for that kind, because "use its list" was not an option',
+    /Set "type"/.test(res.body?.error?.message ?? ''),
+    res.body?.error?.message,
+  );
+
+  /**
+   * One kind, with its own filters — the way out the refusal above promises.
+   *
+   * There was none: the message said "export from that type's list instead" and no such export
+   * existed, so a type-specific filter was simply unusable.
+   */
+  res = await api(
+    null,
+    'POST',
+    '/admin/exports',
+    {
+      kind: 'CONTENT',
+      columns: ['targetType', 'targetId'],
+      filters: { type: 'guides', published: 'true' },
+    },
+    bossHeaders,
+  );
+  check('a content export can be narrowed to one kind', res.status === 202, {
+    status: res.status,
+    error: res.body?.error,
+  });
+
+  const guidesFile = await settle(bossHeaders, res.body?.data?.id);
+  const guideLines = guidesFile?.state === 'READY' ? await linesOf(guidesFile.id, bossHeaders) : [];
+
+  check(
+    'and then takes that kind’s own filters, which the all-kinds file cannot',
+    guidesFile?.state === 'READY' &&
+      guideLines.length > 0 &&
+      guideLines.every(line => line.startsWith('GUIDE')),
+    { state: guidesFile?.state, rows: guideLines.length, first: guideLines[0] },
+  );
+
+  res = await api(
+    null,
+    'POST',
+    '/admin/exports',
+    { kind: 'CONTENT', columns: ['targetId'], filters: { type: 'stores', ratings: '5' } },
+    bossHeaders,
+  );
+  check(
+    'but another kind’s filter is still refused, even with a type set',
+    res.status === 400 && /ratings/.test(JSON.stringify(res.body?.error ?? {})),
+    res.body?.error?.message,
+  );
+
+  /**
+   * A filter every kind offers and some kinds cannot answer.
+   *
+   * Nine of the seventeen have no city column, and `scope()` **skipped** the clause for those —
+   * so a file asked for one city held every review, service and item on the platform. They are
+   * left out now: a review has no city, so it cannot be in one.
+   */
+  res = await api(
+    null,
+    'POST',
+    '/admin/exports',
+    {
+      kind: 'CONTENT',
+      columns: ['targetType', 'targetId'],
+      filters: { cityIds: 'LONDON' },
+    },
+    bossHeaders,
+  );
+
+  const cityFile = await settle(bossHeaders, res.body?.data?.id);
+  const cityTypes = new Set(
+    (cityFile?.state === 'READY' ? await linesOf(cityFile.id, bossHeaders) : []).map(
+      line => line.split(',')[0],
+    ),
+  );
+
+  check(
+    'a city-filtered content export leaves out the kinds that have no city',
+    cityFile?.state === 'READY' &&
+      cityTypes.size > 0 &&
+      !cityTypes.has('REVIEW') &&
+      !cityTypes.has('SERVICE') &&
+      !cityTypes.has('STORE_ITEM'),
+    [...cityTypes],
+  );
+
+  res = await api(null, 'GET', '/admin/content/reviews?cityIds=LONDON', null, bossHeaders);
+
+  check(
+    'and the list refuses the same filter by name rather than answering with every review',
+    res.status === 400 && /cityIds/.test(JSON.stringify(res.body?.error ?? {})),
+    { status: res.status, message: res.body?.error?.message },
+  );
 
   console.log('\n── What may be asked for ────────────────────────────────────');
 

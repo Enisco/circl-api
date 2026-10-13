@@ -53,6 +53,7 @@ import {
   visibilityColumnFor,
 } from './content-registry';
 import {
+  ExportContentDto,
   HideContentDto,
   ListContentDto,
   ListGroupMembersDto,
@@ -867,11 +868,31 @@ export class AdminContentService {
    * exactly when somebody needs telling.
    */
   private assertFiltersApply(kind: ContentKind, query: ListContentDto) {
+    /**
+     * Its own sentence, because this one has a reason worth giving.
+     *
+     * "Cannot be filtered by deleted" is true and unhelpful; what somebody needs to hear is that
+     * there is nothing to show because this kind is removed outright rather than hidden.
+     */
+    if (query.deleted && query.deleted !== 'exclude' && !kind.deleted) {
+      throw ApiException.badRequest(
+        ApiErrorCode.VALIDATION_FAILED,
+        `${kind.label} are removed outright rather than soft-deleted, so there are none to show.`,
+        { details: [{ field: 'deleted', message: `Not supported for ${kind.slug}.` }] },
+      );
+    }
+
     const allowed = new Set(TYPE_FILTERS[kind.slug] ?? []);
-    const offenders = ALL_TYPE_FILTERS.filter(
-      name =>
-        !allowed.has(name) && (query as unknown as Record<string, unknown>)[name] !== undefined,
-    );
+    const offenders = [
+      ...ALL_TYPE_FILTERS.filter(
+        name =>
+          !allowed.has(name) && (query as unknown as Record<string, unknown>)[name] !== undefined,
+      ),
+      // The shared filters this kind has no column for. They were **dropped** rather than
+      // refused: `?cityIds=LEEDS` on reviews returned every review on the platform, which reads
+      // as "every review is in Leeds" — the same lie the type-specific rule above exists to stop.
+      ...sharedFilterGaps(kind, query).filter(gap => gap !== 'deleted'),
+    ];
 
     if (offenders.length) {
       throw ApiException.badRequest(
@@ -886,14 +907,55 @@ export class AdminContentService {
         },
       );
     }
+  }
 
-    if (query.deleted && query.deleted !== 'exclude' && !kind.deleted) {
-      throw ApiException.badRequest(
-        ApiErrorCode.VALIDATION_FAILED,
-        `${kind.label} are removed outright rather than soft-deleted, so there are none to show.`,
-        { details: [{ field: 'deleted', message: `Not supported for ${kind.slug}.` }] },
-      );
+  /**
+   * What §5.26's content export may not ask for.
+   *
+   * With `type` set the rules are the list's exactly, because the file is then one kind's rows and
+   * anything the list refuses would be just as wrong here. Without it the file covers every kind,
+   * so a type-specific filter has no single meaning and is refused by name — and the shared
+   * filters are handled by `exportSlugs` instead, which leaves out the kinds that cannot answer
+   * them rather than returning their rows unfiltered.
+   */
+  assertExportFilters(query: ExportContentDto): void {
+    if (query.type) {
+      this.assertFiltersApply(this.kindOrThrow(query.type), query);
+
+      return;
     }
+
+    const offenders = ALL_TYPE_FILTERS.filter(
+      name => (query as unknown as Record<string, unknown>)[name] !== undefined,
+    );
+
+    if (!offenders.length) return;
+
+    throw ApiException.badRequest(
+      ApiErrorCode.VALIDATION_FAILED,
+      `The content export covers every kind, so it takes no type-specific filter: ${offenders.join(', ')}. Set "type" to export one kind with its own filters.`,
+      {
+        details: offenders.map(field => ({
+          field: `filters.${field}`,
+          message: 'Belongs to one content type. Set "type" to that kind, or drop this filter.',
+        })),
+        data: { types: CONTENT_SLUGS },
+      },
+    );
+  }
+
+  /**
+   * Which kinds the export walks.
+   *
+   * One when `type` says so. Otherwise every kind that can answer the filters asked for: a review
+   * has no city, so it cannot be in Leeds, and leaving it out of a city-filtered file is the
+   * correct reading rather than a narrowing. Including them unfiltered — which is what happened
+   * before — put every review on the platform in a file labelled Leeds.
+   */
+  exportSlugs(query: ExportContentDto): string[] {
+    if (query.type) return [query.type];
+
+    return CONTENT_SLUGS.filter(slug => !sharedFilterGaps(CONTENT_KINDS[slug], query).length);
   }
 
   private authorExpression(kind: ContentKind): Prisma.Sql {
@@ -1352,3 +1414,22 @@ export class AdminContentService {
     );
   }
 }
+
+/**
+ * The shared filters a kind has no column to answer.
+ *
+ * `cityIds`, `q` and `deleted` are offered on every type and cannot be honoured by every type:
+ * nine kinds have no city, several have nothing searchable, and a few are deleted outright rather
+ * than soft-deleted. Named here once so the list can refuse them and the export can skip the kind.
+ */
+const sharedFilterGaps = (kind: ContentKind, query: ListContentDto): string[] => {
+  const gaps: string[] = [];
+
+  if (query.cityIds?.length && !kind.city) gaps.push('cityIds');
+  if (query.q && !kind.searchable.length) gaps.push('q');
+  // `exclude` and `include` are both honest on a kind that cannot be soft-deleted — nothing is
+  // deleted, so both answers are "all of it". Only `only` is a question with no rows behind it.
+  if (query.deleted === 'only' && !kind.deleted) gaps.push('deleted');
+
+  return gaps;
+};

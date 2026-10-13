@@ -585,6 +585,227 @@ async function main() {
     trail.find(entry => entry.action === 'announcement.cancelled')?.metadata,
   );
 
+  heading('8. the four things the portal found');
+
+  /** A draft over the same twelve-member audience, ready to be sent or scheduled. */
+  const drafted = async (channels, body = 'Something short enough for a push.') => {
+    const made = await api(
+      null,
+      'POST',
+      '/admin/announcements',
+      { title: 'Portal findings', body, channels, audience },
+      { ...asSender, ...key() },
+    );
+
+    return made.body?.data?.id;
+  };
+
+  // ── 1. Send now on something already scheduled ────────────────────────────
+  const overridden = await drafted(['IN_APP']);
+
+  let res = await api(
+    null,
+    'POST',
+    `/admin/announcements/${overridden}/schedule`,
+    { scheduledAt: new Date(Date.now() + 40 * 60_000).toISOString() },
+    { ...asSender, ...key() },
+  );
+
+  check('an announcement is scheduled forty minutes out', res.status === 200, res.body?.error);
+
+  res = await api(
+    null,
+    'POST',
+    `/admin/announcements/${overridden}/send`,
+    { confirmAudienceCount: res.body?.data?.audienceCount ?? 12 },
+    { ...asSender, ...key() },
+  );
+
+  check('and sending it now is accepted', res.status === 200, res.body?.error);
+
+  /**
+   * The bug: the delayed job kept the announcement's id as its `jobId`, so the `add` for "now"
+   * was dropped as a duplicate and nothing went out until the time somebody had just overruled.
+   * Proved by the fan-out actually finishing, not by the row saying `SENDING`.
+   */
+  const sentNow = await until(
+    async () =>
+      (await prisma.announcement.findUnique({ where: { id: overridden }, select: { state: true } }))
+        ?.state === 'SENT',
+    'the overridden schedule to go out now',
+  );
+
+  check('and it actually goes out now, rather than at the time it was scheduled for', sentNow, {
+    state: (
+      await prisma.announcement.findUnique({ where: { id: overridden }, select: { state: true } })
+    )?.state,
+  });
+
+  // ── 2. Push is its own channel ────────────────────────────────────────────
+  res = await api(
+    null,
+    'POST',
+    '/admin/announcements',
+    { title: 'Push alone', body: 'Short.', channels: ['PUSH'], audience },
+    { ...asSender, ...key() },
+  );
+
+  check(
+    'push on its own is refused, because a push is how an in-app announcement reaches a phone',
+    res.status === 422 && /In-app/.test(res.body?.error?.message ?? ''),
+    { status: res.status, message: res.body?.error?.message },
+  );
+
+  // One handset among the twelve, so the push rows can be told apart by what was actually possible.
+  await prisma.pushDevice.create({
+    data: {
+      userId: members[0].id,
+      token: `an-token-${Math.random().toString(36).slice(2)}`,
+      platform: 'ANDROID',
+    },
+  });
+
+  const withPush = await drafted(['IN_APP', 'PUSH']);
+
+  res = await api(
+    null,
+    'POST',
+    `/admin/announcements/${withPush}/send`,
+    { confirmAudienceCount: 12 },
+    { ...asSender, ...key() },
+  );
+
+  check('an in-app plus push announcement is sent', res.status === 200, res.body?.error);
+
+  await until(
+    async () =>
+      (await prisma.announcement.findUnique({ where: { id: withPush }, select: { state: true } }))
+        ?.state === 'SENT',
+    'the push fan-out',
+  );
+
+  const pushRows = await prisma.announcementDelivery.findMany({
+    where: { announcementId: withPush, channel: 'PUSH' },
+    select: { userId: true, status: true, error: true },
+  });
+
+  /**
+   * The push row now says what happened to the push. It used to be marked `SENT` for everybody
+   * the preference allowed — including members with no handset at all, so the stats could report
+   * more pushes than the preview said were reachable.
+   */
+  check(
+    'the member with a handset has a push marked sent',
+    pushRows.find(row => row.userId === members[0].id)?.status === 'SENT',
+    pushRows.find(row => row.userId === members[0].id),
+  );
+  check(
+    'and the members without one are failed with the reason, not counted as pushed',
+    pushRows.filter(row => row.userId !== members[0].id).every(row => row.status === 'FAILED') &&
+      pushRows.some(row => /No push device/.test(row.error ?? '')),
+    pushRows.filter(row => row.userId !== members[0].id).slice(0, 2),
+  );
+
+  // ── 3. Editing a schedule is re-checked against the floor ─────────────────
+  const narrowing = await drafted(['IN_APP']);
+
+  res = await api(
+    null,
+    'POST',
+    `/admin/announcements/${narrowing}/schedule`,
+    { scheduledAt: new Date(Date.now() + 2 * 86_400_000).toISOString() },
+    { ...asSender, ...key() },
+  );
+
+  check('a second announcement is scheduled two days out', res.status === 200, res.body?.error);
+
+  res = await api(
+    null,
+    'PATCH',
+    `/admin/announcements/${narrowing}`,
+    { audience: { everyone: false, filter: { cityIds: ['BRISTOL'], gender: ['NOT_A_GENDER'] } } },
+    { ...asSender, ...key() },
+  );
+
+  check(
+    'a filter value nothing matches is refused rather than silently narrowing a schedule',
+    res.status === 400 || res.status === 422,
+    { status: res.status, code: res.body?.error?.code },
+  );
+
+  res = await api(
+    null,
+    'PATCH',
+    `/admin/announcements/${narrowing}`,
+    // Bristol holds this suite's twelve and nobody from the demo dataset, and none of them is
+    // planning a move — so this is a real filter over a real taxonomy that reaches nobody.
+    {
+      audience: { everyone: false, filter: { cityIds: ['BRISTOL'], journeyStages: ['PLANNING'] } },
+    },
+    { ...asSender, ...key() },
+  );
+
+  /**
+   * The floor was applied when it was scheduled and never again, so a `PATCH` could narrow an
+   * approved crowd to four people and nothing between the edit and 3am would notice.
+   */
+  check(
+    'and narrowing a scheduled announcement below the floor is 422 AUDIENCE_TOO_SMALL',
+    res.status === 422 && res.body?.error?.code === 'AUDIENCE_TOO_SMALL',
+    { status: res.status, code: res.body?.error?.code, message: res.body?.error?.message },
+  );
+
+  res = await api(null, 'GET', `/admin/announcements/${narrowing}`, null, asSender);
+
+  check(
+    'the schedule is untouched by the refused edit',
+    res.body?.data?.state === 'SCHEDULED',
+    res.body?.data?.state,
+  );
+
+  // ── 4. A failed fan-out is not a dead end ────────────────────────────────
+  const brokenRun = await drafted(['IN_APP']);
+
+  await prisma.announcement.update({
+    where: { id: brokenRun },
+    data: {
+      state: 'FAILED',
+      failureReason: 'Stopped after 3 members: pretend the worker died.',
+      audienceCount: 12,
+    },
+  });
+
+  res = await api(
+    null,
+    'POST',
+    `/admin/announcements/${brokenRun}/send`,
+    { confirmAudienceCount: 12 },
+    { ...asSender, ...key() },
+  );
+
+  /**
+   * It used to be a dead end: the fan-out wrote `FAILED` on the first of three attempts, the
+   * retries found a state they refuse and returned, and `live()` refused it too — so neither the
+   * queue nor a human could pick it up.
+   */
+  check('a failed announcement can be sent again', res.status === 200, {
+    status: res.status,
+    error: res.body?.error,
+  });
+
+  const resumed = await until(
+    async () =>
+      (await prisma.announcement.findUnique({ where: { id: brokenRun }, select: { state: true } }))
+        ?.state === 'SENT',
+    'the resumed fan-out',
+  );
+
+  check('and the resumed fan-out finishes it', resumed, {
+    state: (
+      await prisma.announcement.findUnique({ where: { id: brokenRun }, select: { state: true } })
+    )?.state,
+  });
+
   await prisma.announcement.deleteMany({ where: { createdById: sender.id } });
   await prisma.role.deleteMany({ where: { code: { startsWith: 'e2e-an-' } } });
   await sweep('announcements');

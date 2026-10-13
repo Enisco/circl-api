@@ -64,6 +64,8 @@ async function main() {
     'disputes:manage',
     'moderation:assign',
     'members:read',
+    // For `linkable-cases`, which is what a grant's reason is chosen from (S9.1).
+    'messages:read',
   ]);
   // Support's own shape: they read the pipeline and cannot act on it.
   const agentRole = await register('agent', ['support:read', 'members:read']);
@@ -434,6 +436,81 @@ async function main() {
     rePlace.body?.data,
   );
 
+  const releasedBooking = await prisma.booking.findUnique({
+    where: { id: placed.body?.data?.bookingId },
+    select: { state: true },
+  });
+
+  /**
+   * The booking goes with the placement.
+   *
+   * Re-opening cleared `bookingId` off the brief and left the booking itself live, so the
+   * professional kept a `PENDING_ACCEPTANCE` job for work that had been taken off them — and the
+   * next placement made a second one. Cancelled through the member's own path, so the timeline
+   * entry and the notice to the professional come with it.
+   */
+  check(
+    'and the booking behind it is cancelled, not left live on the professional',
+    releasedBooking?.state === 'CANCELLED',
+    releasedBooking,
+  );
+
+  const proHeard = await prisma.notification.count({
+    where: { userId: pro.id, title: { contains: 'cancelled' } },
+  });
+
+  check(
+    'with the professional told, as any other cancellation tells them',
+    proHeard >= 1,
+    proHeard,
+  );
+
+  // Placed again, then accepted, to prove the other half of the rule.
+  const placedAgain = await api(
+    null,
+    'POST',
+    `/admin/managed/briefs/${briefId}/place`,
+    { listingId, note: 'Second attempt.' },
+    { ...asLead, ...key() },
+  );
+
+  check(
+    'the brief can be placed again afterwards',
+    placedAgain.status === 200,
+    placedAgain.body?.error,
+  );
+
+  const accepted = await api(
+    pro.token,
+    'POST',
+    `/bookings/${placedAgain.body?.data?.bookingId}/accept`,
+    {},
+    key(),
+  );
+
+  check('the professional accepts the second placement', accepted.status === 200, {
+    status: accepted.status,
+    error: accepted.body?.error,
+  });
+
+  const refusedReopen = await api(
+    null,
+    'PATCH',
+    `/admin/managed/briefs/${briefId}`,
+    { state: 'OPEN', note: 'Changed my mind again.' },
+    { ...asLead, ...key() },
+  );
+
+  check(
+    'but once the professional has accepted, opening it again is refused rather than cancelling their work',
+    refusedReopen.status === 409 && refusedReopen.body?.error?.code === 'INVALID_TRANSITION',
+    {
+      status: refusedReopen.status,
+      code: refusedReopen.body?.error?.code,
+      message: refusedReopen.body?.error?.message,
+    },
+  );
+
   // ── 5. Disputes ───────────────────────────────────────────────────────────
   heading('5. a disagreement, and a finding both of them read');
 
@@ -502,6 +579,30 @@ async function main() {
     disputeListed?.raisedBy?.id === member.id && disputeListed?.otherParty?.id === pro.id,
     { raisedBy: disputeListed?.raisedBy?.id, other: disputeListed?.otherParty?.id },
   );
+
+  /**
+   * Both sides of a dispute can be offered it as a reason to read the thread.
+   *
+   * §5.6 accepts a dispute from either party — raiser, or the other side of the booking — but this
+   * list only queried `raisedById`, so the professional whose work is being disputed had a valid
+   * reason that was never shown. The only way through was to ask a colleague to take the grant.
+   */
+  for (const [who, id] of [
+    ['the member who raised it', member.id],
+    ['the professional it is about', pro.id],
+  ]) {
+    const options = await api(null, 'GET', `/admin/members/${id}/linkable-cases`, null, asLead);
+
+    check(
+      `the dispute is offered to a reviewer working with ${who}`,
+      options.status === 200 &&
+        (options.body?.data ?? []).some(row => row.type === 'DISPUTE' && row.id === disputeId),
+      {
+        status: options.status,
+        offered: (options.body?.data ?? []).map(row => `${row.type}:${row.id}`),
+      },
+    );
+  }
 
   const agentDispute = await api(null, 'GET', '/admin/disputes', null, asAgent);
 

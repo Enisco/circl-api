@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { QueueJobStatus } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
+import { ApiErrorCode, ApiException, CRON_RUN, JobFailure, JobRunContext } from '@/common';
 import { AuditChainService } from '../audit/audit-chain.service';
 import { AdminExportService } from '../exports/admin-export.service';
 import { RetentionPurgeService } from './retention-purge.service';
@@ -37,12 +38,16 @@ export class AdminJobsService {
    * when it said it would" and "it ended when somebody next looked".
    */
   @Cron(CronExpression.EVERY_5_MINUTES, { name: 'enforcement.expire-suspensions' })
-  async expireSuspensions() {
-    await this.run('enforcement.expire-suspensions', async () => {
-      const lifted = await this.enforcement.expireSuspensions();
+  async expireSuspensions(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'enforcement.expire-suspensions',
+      async () => {
+        const lifted = await this.enforcement.expireSuspensions();
 
-      return lifted ? `ended ${lifted} suspension(s)` : null;
-    });
+        return lifted ? `ended ${lifted} suspension(s)` : null;
+      },
+      context,
+    );
   }
 
   /**
@@ -58,14 +63,18 @@ export class AdminJobsService {
    * queries the live tables.
    */
   @Cron(CronExpression.EVERY_10_MINUTES, { name: 'analytics.refresh-member-dimensions' })
-  async refreshMemberDimensions() {
-    await this.run('analytics.refresh-member-dimensions', async () => {
-      await this.database.$executeRawUnsafe(
-        'REFRESH MATERIALIZED VIEW CONCURRENTLY "mv_member_dimensions"',
-      );
+  async refreshMemberDimensions(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'analytics.refresh-member-dimensions',
+      async () => {
+        await this.database.$executeRawUnsafe(
+          'REFRESH MATERIALIZED VIEW CONCURRENTLY "mv_member_dimensions"',
+        );
 
-      return 'refreshed';
-    });
+        return 'refreshed';
+      },
+      context,
+    );
   }
 
   /**
@@ -77,14 +86,18 @@ export class AdminJobsService {
    * purge and the abandoned-job cleanup ride along in the same pass (see `expire`).
    */
   @Cron(CronExpression.EVERY_HOUR, { name: 'exports.expire' })
-  async expireExports() {
-    await this.run('exports.expire', async () => {
-      const { expired, purged, abandoned } = await this.exports.expire();
+  async expireExports(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'exports.expire',
+      async () => {
+        const { expired, purged, abandoned } = await this.exports.expire();
 
-      return expired || purged || abandoned
-        ? `expired ${expired} file(s), failed ${abandoned} abandoned, purged ${purged} row(s)`
-        : null;
-    });
+        return expired || purged || abandoned
+          ? `expired ${expired} file(s), failed ${abandoned} abandoned, purged ${purged} row(s)`
+          : null;
+      },
+      context,
+    );
   }
 
   /**
@@ -99,8 +112,8 @@ export class AdminJobsService {
    * two places somebody would look, rather than a summary string that reads green.
    */
   @Cron(CronExpression.EVERY_DAY_AT_2AM, { name: 'audit.verify-chain' })
-  async verifyAuditChain() {
-    await this.run('audit.verify-chain', () => this.chain.run());
+  async verifyAuditChain(context: JobRunContext = CRON_RUN) {
+    await this.run('audit.verify-chain', () => this.chain.run(), context);
   }
 
   /**
@@ -111,27 +124,25 @@ export class AdminJobsService {
    * spec's, and it is the quietest one for a job that deletes from a dozen tables.
    */
   @Cron(CronExpression.EVERY_DAY_AT_3AM, { name: 'retention.purge' })
-  async purgeRetention() {
-    await this.run('retention.purge', () => this.retention.run());
+  async purgeRetention(context: JobRunContext = CRON_RUN) {
+    await this.run('retention.purge', () => this.retention.run(), context);
   }
 
-  private onDemand = false;
-
-  private readonly onDemandJobs: Record<string, () => Promise<void>> = {
-    'enforcement.expire-suspensions': () => this.expireSuspensions(),
+  private readonly onDemandJobs: Record<string, (context: JobRunContext) => Promise<void>> = {
+    'enforcement.expire-suspensions': context => this.expireSuspensions(context),
     // On demand as well as on a schedule, because the first thing anybody does after a seed or a
     // backfill is open the dashboard and find it fifteen minutes out of date.
-    'analytics.refresh-member-dimensions': () => this.refreshMemberDimensions(),
+    'analytics.refresh-member-dimensions': context => this.refreshMemberDimensions(context),
     // On demand as well, so an operator can make the seven-day boundary happen now rather than
     // waiting for the hour — and so the end-to-end checks can prove the sweep rather than trust it.
-    'exports.expire': () => this.expireExports(),
+    'exports.expire': context => this.expireExports(context),
     // On demand as well, so the chain can be sealed and checked the moment somebody suspects
     // something rather than at two in the morning — and so the end-to-end checks can prove the
     // detection rather than trust it.
-    'audit.verify-chain': () => this.verifyAuditChain(),
+    'audit.verify-chain': context => this.verifyAuditChain(context),
     // On demand as well, so a retention question can be answered now rather than tomorrow — and
     // so the end-to-end checks can prove each rule rather than trust the dates in the table.
-    'retention.purge': () => this.purgeRetention(),
+    'retention.purge': context => this.purgeRetention(context),
   };
 
   async runNow(name: string, actorId?: string): Promise<boolean> {
@@ -139,52 +150,69 @@ export class AdminJobsService {
 
     if (!job) return false;
 
-    this.onDemand = true;
-    this.onDemandActor = actorId ?? null;
-
-    try {
-      await job();
-    } finally {
-      this.onDemand = false;
-      this.onDemandActor = null;
-    }
+    await job({ trigger: 'MANUAL', actorId: actorId ?? null });
 
     return true;
   }
 
-  /** Who asked for the on-demand run, for the history row. Null on the schedule. */
-  private onDemandActor: string | null = null;
-
   /** The same wrapper the platform jobs use: one failure must not take the others down. */
-  private async run(name: string, work: () => Promise<string | null>): Promise<void> {
-    if (!this.onDemand && this.config.get<string>('DISABLE_SCHEDULED_JOBS') === 'true') return;
+  private async run(
+    name: string,
+    work: () => Promise<string | null>,
+    context: JobRunContext,
+  ): Promise<void> {
+    if (
+      context.trigger === 'CRON' &&
+      this.config.get<string>('DISABLE_SCHEDULED_JOBS') === 'true'
+    ) {
+      return;
+    }
 
     const started = Date.now();
     const startedAt = new Date();
-    const trigger = this.onDemand ? 'MANUAL' : 'CRON';
-    const actorId = this.onDemandActor;
 
     try {
       const summary = await work();
 
       if (summary) this.logger.log(`${name}: ${summary} (${Date.now() - started}ms)`);
 
-      await this.note(name, startedAt, started, trigger, actorId, QueueJobStatus.SUCCESS, summary);
+      await this.note(name, startedAt, started, context, QueueJobStatus.SUCCESS, summary);
     } catch (error) {
       this.logger.error(`${name} failed: ${(error as Error).message}`, (error as Error).stack);
+
+      /**
+       * The work it did before it failed is kept, not replaced by the error.
+       *
+       * `audit.verify-chain` seals the trail and then checks the seals: a run that sealed four
+       * stretches and found a difference in a fifth has done something worth recording, and a
+       * history row that says only "verification failed" loses it.
+       */
+      const summary = error instanceof JobFailure ? error.summary : null;
 
       await this.note(
         name,
         startedAt,
         started,
-        trigger,
-        actorId,
+        context,
         QueueJobStatus.FAILED,
-        null,
+        summary,
         (error as Error).message,
       );
 
-      if (this.onDemand) throw error;
+      /**
+       * A manual run answers with the failure; a scheduled one has nobody to answer.
+       *
+       * As an `ApiException` rather than the original error, because the original became a 500
+       * "Something went wrong" — so a `verify-chain` mismatch, which is the one job whose failure
+       * is a *finding*, reached the staff member as a shrug. The run's own error is the message.
+       */
+      if (context.trigger === 'MANUAL') {
+        throw ApiException.conflict(
+          ApiErrorCode.JOB_FAILED,
+          `${name} ran and failed: ${(error as Error).message}`,
+          { data: { job: name, summary } },
+        );
+      }
     }
   }
 
@@ -203,8 +231,7 @@ export class AdminJobsService {
     name: string,
     startedAt: Date,
     startedMs: number,
-    trigger: string,
-    actorId: string | null,
+    context: JobRunContext,
     status: QueueJobStatus,
     summary: string | null,
     error?: string,
@@ -215,8 +242,8 @@ export class AdminJobsService {
           queueName: 'admin-jobs',
           operation: name,
           status,
-          trigger,
-          userId: actorId,
+          trigger: context.trigger,
+          userId: context.actorId,
           startedAt,
           durationMs: Date.now() - startedMs,
           error: error ? error.slice(0, 1000) : null,

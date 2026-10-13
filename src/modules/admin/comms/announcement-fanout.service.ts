@@ -13,10 +13,34 @@ import {
   NotificationPreferenceService,
 } from '@/modules/platform/notifications';
 import { ResendProvider } from '@/modules/infrastructure/notification/providers/email/resend.provider';
+import { AUDIENCE_FLOOR } from '../dtos/admin-announcement.dto';
 import { ANNOUNCEMENT_CATEGORY, AdminAnnouncementService } from './admin-announcement.service';
 
 /** §5.18's batch size. Five hundred recipients resolved and written at a time. */
 const BATCH = 500;
+
+/**
+ * The states a fan-out will pick up.
+ *
+ * `FAILED` is here so a failure can be resumed — by BullMQ's own retry, or by a staff member
+ * pressing send again. The delivery rows make that safe: they are written before the attempt, so
+ * everybody who already has it is skipped.
+ */
+const RESUMABLE: AnnouncementState[] = [
+  AnnouncementState.SENDING,
+  AnnouncementState.SCHEDULED,
+  AnnouncementState.FAILED,
+];
+
+/**
+ * Which attempt this is, so only the last one declares the announcement failed.
+ *
+ * Defaulted to the last attempt: a caller that does not say is a caller with no retry behind it,
+ * and leaving a row `SENDING` with nothing coming back for it is the worse mistake.
+ */
+export interface Attempt {
+  last: boolean;
+}
 
 /**
  * The fan-out (§5.18).
@@ -50,7 +74,7 @@ export class AnnouncementFanoutService {
     private readonly resend: ResendProvider,
   ) {}
 
-  async run(announcementId: string): Promise<void> {
+  async run(announcementId: string, attempt: Attempt = { last: true }): Promise<void> {
     const row = await this.database.announcement.findUnique({ where: { id: announcementId } });
 
     if (!row) {
@@ -59,9 +83,16 @@ export class AnnouncementFanoutService {
       return;
     }
 
-    // A delayed job for a schedule that was cancelled, or a retry of one that finished. Either
-    // way the state is the control, not the job.
-    if (row.state !== AnnouncementState.SENDING && row.state !== AnnouncementState.SCHEDULED) {
+    /**
+     * A delayed job for a schedule that was cancelled, or a retry of one that finished. Either way
+     * the state is the control, not the job.
+     *
+     * `FAILED` is in the list because a failed fan-out has to be resumable: the delivery rows are
+     * written before each attempt, so whoever already has it is skipped. It used to be excluded,
+     * which made a failure a dead end — the retry found `FAILED` and returned, and the comment
+     * claiming "a retry resumes" was describing something that could not happen.
+     */
+    if (!RESUMABLE.includes(row.state)) {
       this.logger.log(`Announcement ${announcementId} is ${row.state}; not sending.`);
 
       return;
@@ -72,6 +103,31 @@ export class AnnouncementFanoutService {
     // scheduled announcement the audience was sized days ago, and "who it went to" is who it went
     // to. `stats.targeted` reads this column, so a null here is a stats panel reporting zero.
     const audienceCount = await this.database.user.count({ where });
+
+    /**
+     * The floor, again, at the moment it would actually go out (§5.18).
+     *
+     * Checked when it was scheduled too, but days can pass: an audience narrowed by an edit, or
+     * members who left, can take a crowd below ten without anybody pressing anything. Failing with
+     * the number in the reason is the honest outcome — the alternative is an announcement to four
+     * people that nobody decided to send.
+     */
+    if (audienceCount < AUDIENCE_FLOOR) {
+      await this.database.announcement.update({
+        where: { id: announcementId },
+        data: {
+          state: AnnouncementState.FAILED,
+          audienceCount,
+          failureReason: `Not sent: the audience is ${audienceCount} ${audienceCount === 1 ? 'person' : 'people'} now, below the floor of ${AUDIENCE_FLOOR}.`,
+        },
+      });
+
+      this.logger.warn(
+        `Announcement ${announcementId} not sent: audience ${audienceCount} is below the floor.`,
+      );
+
+      return;
+    }
 
     await this.database.announcement.update({
       where: { id: announcementId },
@@ -127,15 +183,24 @@ export class AnnouncementFanoutService {
 
       this.logger.log(`Announcement ${announcementId} went out to ${reached} members.`);
     } catch (error) {
-      // FAILED with a reason, because an announcement that silently did not go out is worse than
-      // one that visibly did not. Re-thrown so BullMQ retries — and a retry resumes rather than
-      // restarts, because the delivery rows are already there.
+      /**
+       * `FAILED` only once there are no attempts left.
+       *
+       * An announcement that silently did not go out is worse than one that visibly did not — but
+       * writing `FAILED` on the first of three attempts stopped the other two before they started,
+       * because `run` refuses a state it is not expecting. So a middle attempt keeps the row
+       * `SENDING` and says what went wrong in `failureReason`, and the last one marks it failed.
+       *
+       * Re-thrown either way, so BullMQ retries; a retry resumes rather than restarts, because the
+       * delivery rows are already there.
+       */
+      const reason = `Stopped after ${reached} members: ${(error as Error).message}`;
+
       await this.database.announcement.update({
         where: { id: announcementId },
-        data: {
-          state: AnnouncementState.FAILED,
-          failureReason: `Stopped after ${reached} members: ${(error as Error).message}`,
-        },
+        data: attempt.last
+          ? { state: AnnouncementState.FAILED, failureReason: reason }
+          : { failureReason: `${reason} — retrying.` },
       });
 
       throw error;
@@ -154,9 +219,14 @@ export class AnnouncementFanoutService {
     batch: Array<{ id: string; email: string | null; firstName: string }>,
   ): Promise<void> {
     const ids = batch.map(member => member.id);
-    const [pushAllowed, emailAllowed] = await Promise.all([
+    const pushing = announcement.channels.includes(AnnouncementChannel.PUSH);
+    const [pushAllowed, emailAllowed, withDevice] = await Promise.all([
       this.allowed(ids, 'push'),
       this.allowed(ids, 'email'),
+      // One query per batch, not one per member. Without it the push row was marked `SENT` for
+      // members with no handset at all, so the stats could report more pushes than the audience
+      // preview said were reachable — and `reachable.PUSH` counts devices.
+      pushing ? this.devices(ids) : Promise.resolve(new Set<string>()),
     ]);
 
     // Written first, all of them, as PENDING. A worker that dies after this and before the
@@ -184,10 +254,18 @@ export class AnnouncementFanoutService {
 
         try {
           if (channel === AnnouncementChannel.IN_APP) {
-            // `raise` writes the row and pushes it where the member allows push, so the in-app
-            // channel is the carrier. It is fire-and-forget by design, which is why the delivery
-            // row records "we raised it" rather than "the handset showed it" — the second is not
-            // something any server can honestly claim.
+            /**
+             * `raise` writes the feed row, and **pushes only if push was chosen**.
+             *
+             * The push rides on this row because that is the only path that applies the
+             * preference and reaches every handset — but it used to ride on it unconditionally,
+             * which made `['IN_APP']` buzz every phone on a body up to five thousand characters,
+             * past the five hundred that choosing push would have enforced.
+             *
+             * Fire-and-forget by design, which is why the delivery row records "we raised it"
+             * rather than "the handset showed it" — the second is not something any server can
+             * honestly claim.
+             */
             this.notifications.raise({
               userId: member.id,
               kind: NotificationKind.ANNOUNCEMENT,
@@ -196,6 +274,7 @@ export class AnnouncementFanoutService {
               body: announcement.body,
               route: announcement.route,
               metadata: { announcementId: announcement.id },
+              push: pushing,
             });
 
             await mark(DeliveryStatus.SENT);
@@ -204,12 +283,28 @@ export class AnnouncementFanoutService {
           }
 
           if (channel === AnnouncementChannel.PUSH) {
-            // The push itself rides on the in-app row above (that is the only path that applies
-            // the preference and reaches every handset). This row records whether it was allowed
-            // to, which is the honest thing to count.
-            await mark(
-              pushAllowed.has(member.id) ? DeliveryStatus.SENT : DeliveryStatus.SKIPPED_PREFERENCE,
-            );
+            /**
+             * The row records what actually happened to the push, in the order that matters.
+             *
+             * Preference first, because a member who turned announcements off was respected
+             * rather than failed to (§5.18 counts those separately). Then the handset: no device
+             * is a `FAILED` row with a reason, exactly as no email address is on the email
+             * channel — the member cannot be pushed to and the file should say why, rather than
+             * counting a push that never left the building.
+             */
+            if (!pushAllowed.has(member.id)) {
+              await mark(DeliveryStatus.SKIPPED_PREFERENCE);
+
+              continue;
+            }
+
+            if (!withDevice.has(member.id)) {
+              await mark(DeliveryStatus.FAILED, { error: 'No push device on the account.' });
+
+              continue;
+            }
+
+            await mark(DeliveryStatus.SENT);
 
             continue;
           }
@@ -238,6 +333,17 @@ export class AnnouncementFanoutService {
     }
 
     await this.refreshStats(announcement.id);
+  }
+
+  /** Who has a handset registered at all, which is what makes a push possible (§5.18). */
+  private async devices(ids: string[]): Promise<Set<string>> {
+    const rows = await this.database.pushDevice.findMany({
+      where: { userId: { in: ids } },
+      select: { userId: true },
+      distinct: ['userId'],
+    });
+
+    return new Set(rows.map(row => row.userId));
   }
 
   /**

@@ -12,8 +12,7 @@ import { AdminAuditService } from '../services/admin-audit.service';
 import { AdminEnforcementLogService } from '../services/admin-enforcement-log.service';
 import { AdminReportCaseService } from '../services/admin-report-case.service';
 import { AdminContentService } from '../content/admin-content.service';
-import { CONTENT_SLUGS } from '../content/content-registry';
-import { ListContentDto } from '../content/admin-content.dto';
+import { ExportContentDto } from '../content/admin-content.dto';
 import { ListEnforcementDto } from '../dtos/admin-enforcement.dto';
 import { ListReportCasesDto } from '../dtos/admin-report-case.dto';
 import { AdminSupportService } from '../services/admin-support.service';
@@ -443,12 +442,13 @@ export class AdminExportRunner {
   }
 
   /**
-   * §5.26's content export: **every** kind in one file.
+   * §5.26's content export: every kind in one file, or one kind when asked for.
    *
-   * `targetType` is one of its columns, so the file covers the lot — seventeen kinds, one query
+   * `targetType` is one of its columns, so the file can cover the lot — seventeen kinds, one query
    * each, concatenated. That is only possible because the four columns asked for are the four
    * every kind has: the list's own per-kind SQL joins authors, cities, categories and a status
-   * expression, and none of those is here.
+   * expression, and none of those is here. `type` narrows it to one kind, which is how a
+   * type-specific filter becomes usable at all.
    *
    * The kinds are walked in the registry's order so the file is grouped by type, which is how
    * somebody reads it.
@@ -457,13 +457,22 @@ export class AdminExportRunner {
     columns: string[],
     filters: Record<string, unknown>,
   ): Promise<{ body: Buffer; rowCount: number }> {
-    const query = plainToInstance(ListContentDto, filters);
+    const query = plainToInstance(ExportContentDto, filters);
     const cap = await this.config.get(SYSTEM_CONFIG_KEYS.EXPORT_MAX_ROWS);
     const chunks: string[] = [CSV_BOM, csvRow(columns)];
 
+    /**
+     * Which kinds this file covers, asked rather than assumed.
+     *
+     * One kind when the request named a `type`. Otherwise every kind that can answer the filters:
+     * a review has no city, so a city-filtered file leaves reviews out instead of including every
+     * one of them unfiltered, which is what it used to do.
+     */
+    const slugs = this.content.exportSlugs(query);
+
     let rowCount = 0;
 
-    for (const slug of CONTENT_SLUGS) {
+    for (const slug of slugs) {
       let offset = 0;
 
       for (;;) {

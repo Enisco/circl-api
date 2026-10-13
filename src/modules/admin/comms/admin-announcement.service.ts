@@ -438,6 +438,21 @@ export class AdminAnnouncementService {
 
     if (dto.audience) await this.audienceWhere(dto.audience);
 
+    /**
+     * An edit to something already scheduled is re-checked against the floor (§5.18).
+     *
+     * The floor was applied when it was scheduled, and then a `PATCH` could narrow the audience to
+     * four people — approved as a crowd, sent as a handful, with nothing between the edit and 3am
+     * to notice. The count is also stored, so the row keeps saying who it is for.
+     *
+     * Only on `SCHEDULED`, and only when the audience itself changed: a draft is somebody still
+     * working, and a title fix should not be refused because the audience shrank on its own.
+     */
+    const rescheduledCount =
+      row.state === AnnouncementState.SCHEDULED && dto.audience
+        ? await this.assertCrowd(dto.audience, 'today')
+        : null;
+
     await this.audit.mutate(
       {
         action: 'announcement.updated' as const,
@@ -456,6 +471,7 @@ export class AdminAnnouncementService {
             ...(dto.route === undefined ? {} : { route: dto.route }),
             ...(dto.channels ? { channels: dto.channels } : {}),
             ...(dto.audience ? { audience: toJson(dto.audience) } : {}),
+            ...(rescheduledCount === null ? {} : { audienceCount: rescheduledCount }),
           },
         }),
     );
@@ -465,20 +481,18 @@ export class AdminAnnouncementService {
 
   /** §5.18: the audience is counted fresh, and the sender's number has to still be right. */
   async send(actor: AdminPrincipal, id: string, dto: SendAnnouncementDto) {
-    const row = await this.live(id);
+    /**
+     * `FAILED` is sendable, which is the only way back from one.
+     *
+     * The three automatic attempts are spent by then, and the delivery rows make a resume safe —
+     * everybody who already has it is skipped. Without this a fan-out that failed halfway was a
+     * dead end: not resumable by the queue, not editable, not sendable.
+     */
+    const row = await this.live(id, [AnnouncementState.FAILED]);
 
     this.assertSendable(row.body, row.channels, row.route ?? undefined);
 
-    const where = await this.audienceWhere(row.audience as unknown as AnnouncementAudienceDto);
-    const count = await this.database.user.count({ where });
-
-    if (count < AUDIENCE_FLOOR) {
-      throw ApiException.unprocessable(
-        ApiErrorCode.AUDIENCE_TOO_SMALL,
-        `That reaches ${count} ${count === 1 ? 'person' : 'people'}. An announcement is for a crowd — send a message instead.`,
-        { data: { members: count, floor: AUDIENCE_FLOOR } },
-      );
-    }
+    const count = await this.assertCrowd(row.audience as unknown as AnnouncementAudienceDto, 'now');
 
     // ±5%: the filter is evaluated twice, minutes apart, and members join and leave in between.
     // The tolerance is there so an ordinary drift does not block a send, and the refusal is there
@@ -516,6 +530,16 @@ export class AdminAnnouncementService {
         }),
     );
 
+    /**
+     * The delayed job goes first, exactly as `schedule` does.
+     *
+     * `jobId` is the announcement's own id, so BullMQ treats a second `add` for the same id as a
+     * duplicate and **drops it**. Sending a scheduled announcement now therefore enqueued nothing:
+     * the row said `SENDING` with no `scheduledAt`, and the fan-out did not start until the time
+     * somebody had just overridden. Cancelling first is what makes "send now" mean now.
+     */
+    await this.queue.cancel(id);
+
     // After the row says SENDING, so a queue that is down leaves an announcement visibly stuck
     // rather than one that looks like a draft and has already been audited as sent.
     await this.queue.enqueue(id);
@@ -549,18 +573,12 @@ export class AdminAnnouncementService {
     }
 
     // Counted now, so a schedule over four people is refused when it is set rather than at 3am
-    // when it fires and nobody is watching.
-    const count = await this.database.user.count({
-      where: await this.audienceWhere(row.audience as unknown as AnnouncementAudienceDto),
-    });
-
-    if (count < AUDIENCE_FLOOR) {
-      throw ApiException.unprocessable(
-        ApiErrorCode.AUDIENCE_TOO_SMALL,
-        `That reaches ${count} ${count === 1 ? 'person' : 'people'} today. An announcement is for a crowd.`,
-        { data: { members: count, floor: AUDIENCE_FLOOR } },
-      );
-    }
+    // when it fires and nobody is watching. The fan-out counts again when it runs, because days
+    // pass and an audience can shrink without anybody touching it.
+    const count = await this.assertCrowd(
+      row.audience as unknown as AnnouncementAudienceDto,
+      'today',
+    );
 
     await this.audit.mutate(
       {
@@ -649,12 +667,12 @@ export class AdminAnnouncementService {
 
   // ─── Internals ─────────────────────────────────────────────────────────────
 
-  private async live(id: string) {
+  private async live(id: string, also: AnnouncementState[] = []) {
     const row = await this.database.announcement.findUnique({ where: { id } });
 
     if (!row) throw ApiException.notFound('No such announcement.');
 
-    if (!EDITABLE.includes(row.state)) {
+    if (![...EDITABLE, ...also].includes(row.state)) {
       throw ApiException.conflict(
         ApiErrorCode.INVALID_TRANSITION,
         row.state === AnnouncementState.SENT
@@ -667,10 +685,51 @@ export class AdminAnnouncementService {
     return row;
   }
 
-  /** The three rules that have to hold before anything can go out. */
+  /**
+   * The floor, counted fresh. Returns the count so the caller can store it.
+   *
+   * One implementation for send, schedule and a scheduled edit, because three copies of "is this a
+   * crowd" is how one of them comes to be missing — which is exactly what happened to the edit.
+   */
+  private async assertCrowd(
+    audience: AnnouncementAudienceDto,
+    when: 'now' | 'today',
+  ): Promise<number> {
+    const count = await this.database.user.count({ where: await this.audienceWhere(audience) });
+
+    if (count < AUDIENCE_FLOOR) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.AUDIENCE_TOO_SMALL,
+        when === 'now'
+          ? `That reaches ${count} ${count === 1 ? 'person' : 'people'}. An announcement is for a crowd — send a message instead.`
+          : `That reaches ${count} ${count === 1 ? 'person' : 'people'} today. An announcement is for a crowd.`,
+        { data: { members: count, floor: AUDIENCE_FLOOR } },
+      );
+    }
+
+    return count;
+  }
+
+  /** The rules that have to hold before anything can go out. */
   private assertSendable(body: string, channels: AnnouncementChannel[], route?: string): void {
     const pushing = channels.includes(AnnouncementChannel.PUSH);
     const limit = pushing ? PUSH_BODY_MAX : BODY_MAX;
+
+    /**
+     * A push is how an in-app announcement reaches a handset, so it cannot be the only channel.
+     *
+     * `['PUSH']` on its own used to be accepted and then push nothing at all: the push rides on
+     * the notification row the in-app channel writes, so with no in-app row there was nothing to
+     * push — while every delivery row was marked `SENT`. Refused by name instead, because the
+     * alternative is a notification nobody can go back and read.
+     */
+    if (pushing && !channels.includes(AnnouncementChannel.IN_APP)) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'A push is how an in-app announcement reaches a phone, so choose In-app as well — or send by email only.',
+        { details: [{ field: 'channels', message: 'PUSH requires IN_APP.' }] },
+      );
+    }
 
     if (body.length > limit) {
       throw ApiException.unprocessable(

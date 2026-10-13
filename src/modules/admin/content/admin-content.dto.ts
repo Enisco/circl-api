@@ -13,6 +13,7 @@ import {
   Min,
 } from 'class-validator';
 import { AdminPageOptionsDto, CsvArray, ReasonedDto, ToBoolean } from '@/common';
+import { CONTENT_SLUGS } from './content-registry';
 
 export const CONTENT_SORTS = ['createdAt', 'reports', 'riskScore'] as const;
 
@@ -216,6 +217,26 @@ export class ListContentDto extends AdminPageOptionsDto {
 }
 
 /** §5.7's hide. */
+/**
+ * The §5.26 content export's query: the list's filters, plus the one thing it needs that the list
+ * gets from its path.
+ *
+ * A separate class rather than a `type?` on `ListContentDto`, because the list would then accept
+ * `?type=guides` on `/admin/content/requests` and quietly ignore it — the exact silent-ignore this
+ * field exists to end. The list reads its type from the path and refuses anything else.
+ */
+export class ExportContentDto extends ListContentDto {
+  @ApiPropertyOptional({
+    enum: CONTENT_SLUGS,
+    description:
+      'Narrows the file to one content type. Without it the export covers every kind, and only ' +
+      'the filters every kind understands may be used.',
+  })
+  @IsIn([...CONTENT_SLUGS])
+  @IsOptional()
+  type?: string;
+}
+
 export class HideContentDto extends ReasonedDto {
   @ApiPropertyOptional({
     default: true,

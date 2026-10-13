@@ -182,7 +182,27 @@ export type ConfigRule =
   | { type: 'number'; min: number; max: number }
   | { type: 'boolean' }
   | { type: 'string'; pattern?: RegExp; maxLength?: number }
+  /**
+   * An IANA time zone, checked against the platform's own database rather than by length.
+   *
+   * `Europe/Londn` is sixteen valid characters and the thing that reads it throws — on the write
+   * path of every anonymous post, because that is where the working-hours deadline is computed. A
+   * setting that can only be discovered to be wrong by breaking something else is not validated.
+   */
+  | { type: 'timezone' }
   | { type: 'enumList'; of: readonly string[]; min?: number; max?: number }
+  /**
+   * A list of whole numbers from a fixed set — ISO weekdays, as it happens.
+   *
+   * Separate from `enumList` because that one compares `String(item)`, so `["6"]` passed and was
+   * stored as text while the scheduler compared numbers: Saturday was configured and no day ever
+   * matched. The type that accepts it has to be the type that stores it.
+   */
+  | { type: 'intList'; of: readonly number[]; min?: number; max?: number }
+  /**
+   * `increasing` names fields that must each exceed the one before. Whole numbers, or `HH:MM`
+   * times — a window whose end is at or before its start is not a window.
+   */
   | { type: 'object'; fields: Record<string, ConfigRule>; increasing?: string[] }
   | { type: 'record'; value: ConfigRule }
   | { type: 'stringList'; maxLength?: number; max?: number };
@@ -351,11 +371,14 @@ export const SYSTEM_CONFIG_META: Record<string, ConfigMeta> = {
     rule: {
       type: 'object',
       fields: {
-        tz: { type: 'string', maxLength: 64 },
-        days: { type: 'enumList', of: ['1', '2', '3', '4', '5', '6', '7'], min: 1, max: 7 },
+        tz: { type: 'timezone' },
+        days: { type: 'intList', of: [1, 2, 3, 4, 5, 6, 7], min: 1, max: 7 },
         start: { type: 'string', pattern: /^([01]\d|2[0-3]):[0-5]\d$/ },
         end: { type: 'string', pattern: /^([01]\d|2[0-3]):[0-5]\d$/ },
       },
+      // A window that closes before it opens is one the reader has to fall back out of, which
+      // makes every working-hours deadline a wall-clock one without saying so.
+      increasing: ['start', 'end'],
     },
   },
   'appeals.slaHours': {

@@ -73,6 +73,49 @@ describe('what a refusal says', () => {
       }),
     ).toEqual(['start: is not in the expected form']);
   });
+
+  /**
+   * The three ways `moderation.workingHours` could be saved wrong and only break something else.
+   *
+   * Every one of them was storable: the zone was checked by length and then threw inside the
+   * deadline calculation on the write path of an anonymous post; the days were accepted as text
+   * and compared as numbers, so a Saturday configured that way made every day a non-working day;
+   * and a window could close before it opened, which silently turns every working-hours deadline
+   * into a wall-clock one.
+   */
+  const workingHours = (over: Record<string, unknown>) =>
+    checkConfigValue(SYSTEM_CONFIG_META['moderation.workingHours'].rule, {
+      tz: 'Europe/London',
+      days: [1, 2, 3, 4, 5],
+      start: '09:00',
+      end: '18:00',
+      ...over,
+    });
+
+  it('refuses a time zone the platform does not know', () => {
+    expect(workingHours({ tz: 'Europe/Londn' })).toEqual([
+      'tz: “Europe/Londn” is not a time zone — use an IANA name such as Europe/London',
+    ]);
+    // An alias a hand-written list would have missed, which is why the zone database is asked.
+    expect(workingHours({ tz: 'Europe/Kyiv' })).toEqual([]);
+    expect(workingHours({ tz: 'UTC' })).toEqual([]);
+  });
+
+  it('refuses days sent as text, which is how a configured Saturday matched nothing', () => {
+    expect(workingHours({ days: ['6'] })).toEqual([
+      'days: “6” must be one of 1, 2, 3, 4, 5, 6, 7, as a number',
+    ]);
+    expect(workingHours({ days: [6] })).toEqual([]);
+  });
+
+  it('refuses a window that closes before it opens', () => {
+    expect(workingHours({ start: '18:00', end: '09:00' })).toEqual([
+      'end (09:00) must be after start (18:00)',
+    ]);
+    expect(workingHours({ start: '09:00', end: '09:00' })).toEqual([
+      'end (09:00) must be after start (09:00)',
+    ]);
+  });
 });
 
 describe('app versions compare numerically', () => {

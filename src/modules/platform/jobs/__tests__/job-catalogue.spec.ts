@@ -76,10 +76,17 @@ describe('the job catalogue', () => {
   it('only marks a job on-demand when a runner will actually take it', () => {
     // `runNow` has its own table in each service, and a job absent from it answers 404. A
     // catalogue claiming otherwise is a button that cannot work.
+    // The entry passes the run's context through — `context => this.job(context)` — because the
+    // trigger travels per call rather than on the service.
+    const entries = /'([a-z.-]+)': context => this\.\w+\(context\)/g;
     const runnable = new Set([
-      ...[...PLATFORM.matchAll(/'([a-z.-]+)': \(\) => this\.\w+\(\)/g)].map(m => m[1]),
-      ...[...ADMIN.matchAll(/'([a-z.-]+)': \(\) => this\.\w+\(\)/g)].map(m => m[1]),
+      ...[...PLATFORM.matchAll(entries)].map(m => m[1]),
+      ...[...ADMIN.matchAll(entries)].map(m => m[1]),
     ]);
+
+    // The sentinel: a regex that stopped matching would make every assertion below pass over an
+    // empty set, which is the one failure this kind of test cannot otherwise report.
+    expect(runnable.size).toBeGreaterThan(10);
 
     for (const job of JOB_CATALOGUE) {
       expect(job.onDemand).toBe(runnable.has(job.name));

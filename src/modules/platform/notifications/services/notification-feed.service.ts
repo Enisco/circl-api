@@ -69,6 +69,15 @@ export interface RaiseNotificationInput {
    * then thanked somebody for answering has their name — and their id — handed to that person.
    */
   isActorAnonymous?: boolean;
+  /**
+   * Whether the row is also pushed to the member's handsets. Default true.
+   *
+   * Set `false` only where the caller is already deciding the push itself. §5.18's announcements
+   * are the case: `IN_APP` and `PUSH` are two channels a staff member picks between, and a feed
+   * row that pushed regardless meant choosing `IN_APP` alone still buzzed every phone — past the
+   * shorter body limit that picking push would have applied.
+   */
+  push?: boolean;
 }
 
 /** The bucket boundaries, in the member's own timezone (D32). */
@@ -154,7 +163,7 @@ export class NotificationFeedService {
     void this.write(input)
       // Without the push the row exists and nothing on the member's device changes, so the header
       // badge only moves when they happen to reopen the list (G14 15.1).
-      .then(pushed => (pushed ? this.push(pushed) : undefined))
+      .then(pushed => (pushed && input.push !== false ? this.push(pushed) : undefined))
       .catch(error => this.logger.warn(`Notification not recorded: ${(error as Error).message}`));
   }
 

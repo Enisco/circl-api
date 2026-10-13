@@ -699,10 +699,22 @@ async function main() {
 
   r = await runChain();
 
+  /**
+   * 409 `JOB_FAILED`, carrying the run's own error.
+   *
+   * It used to be a bare 500: `runNow` re-threw a plain `Error`, so the one job whose failure is a
+   * **finding** rather than a fault reached the staff member as "Something went wrong". The
+   * message is the thing somebody has to read today.
+   */
   check(
     'a row inside a sealed stretch that does not match its digest fails the run',
-    r.status >= 500,
+    r.status === 409 && r.body?.error?.code === 'JOB_FAILED',
     { status: r.status, code: r.body?.error?.code },
+  );
+  check(
+    'and the refusal itself says what was found, not "something went wrong"',
+    /no longer matches its own digest/.test(r.body?.error?.message ?? ''),
+    r.body?.error?.message?.slice(0, 200),
   );
   /**
    * The 500 says nothing, on purpose — an internal error carries no internals to the caller — so
@@ -758,8 +770,22 @@ async function main() {
 
   check(
     'and a row removed from a sealed stretch fails it too',
-    r.status >= 500 && /row\(s\) missing/.test(chainRun?.error ?? ''),
+    r.status === 409 && /row\(s\) missing/.test(chainRun?.error ?? ''),
     { status: r.status, error: chainRun?.error?.slice(0, 240) },
+  );
+
+  entry = await prisma.auditLog.findFirst({
+    where: { action: 'job.run', targetId: 'audit.verify-chain' },
+    orderBy: { occurredAt: 'desc' },
+    select: { metadata: true },
+  });
+
+  // §5.22: the failed run is audited too. It used to be audited only after a *successful* one, so
+  // the trail skipped exactly the runs anybody asks about afterwards.
+  check(
+    'and running it by hand is audited with its outcome, failures included',
+    entry?.metadata?.outcome === 'FAILED' && entry?.metadata?.trigger === 'MANUAL',
+    entry?.metadata,
   );
 
   // Putting it back is not possible — that is the point of the table — so the repair is the one a

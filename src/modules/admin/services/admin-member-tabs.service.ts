@@ -1171,8 +1171,24 @@ export class AdminMemberTabsService {
     // cannot use — and §5.6 refuses it on exactly that permission, so the option was an invitation
     // to ask a colleague to take the grant instead.
     if (actor.permissions.has('disputes:manage')) {
+      /**
+       * Either party, not just the one who complained.
+       *
+       * §5.6 accepts a dispute as a reason to read the thread when the member is on *either* side
+       * of it — raiser, the other party to the booking, or the other party to the enquiry. This
+       * list only offered the ones they raised, so the commonest case (a professional whose work
+       * is being disputed) had a valid reason that was never shown, and the only way through was
+       * to ask a colleague to take the grant instead.
+       */
       const disputes = await this.database.dispute.findMany({
-        where: { raisedById: id, createdAt: { gte: since } },
+        where: {
+          createdAt: { gte: since },
+          OR: [
+            { raisedById: id },
+            { booking: { OR: [{ clientId: id }, { professionalId: id }] } },
+            { enquiry: { OR: [{ buyerId: id }, { sellerId: id }] } },
+          ],
+        },
         select: { id: true, reasonCode: true, state: true, createdAt: true },
         orderBy: { createdAt: 'desc' },
         take: 25,

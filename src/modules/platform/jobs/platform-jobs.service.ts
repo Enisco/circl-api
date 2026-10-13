@@ -17,7 +17,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
 import { DataExportBuilderService } from '../account';
-import { ApiException } from '@/common';
+import { ApiErrorCode, ApiException, CRON_RUN, JobRunContext } from '@/common';
 import {
   ContentSafetyQueue,
   ContentSafetyService,
@@ -73,39 +73,51 @@ export class PlatformJobsService {
 
   /** A booking auto-completes 7 days after delivery (2.9.5). */
   @Cron(CronExpression.EVERY_HOUR, { name: 'bookings.auto-complete' })
-  async autoCompleteBookings() {
-    await this.run('bookings.auto-complete', async () => {
-      const closed = await this.bookings.runAutoComplete();
+  async autoCompleteBookings(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'bookings.auto-complete',
+      async () => {
+        const closed = await this.bookings.runAutoComplete();
 
-      return closed ? `closed ${closed} delivered bookings` : null;
-    });
+        return closed ? `closed ${closed} delivered bookings` : null;
+      },
+      context,
+    );
   }
 
   /** D24: an enquiry nobody confirms goes stale after 30 days. */
   @Cron(CronExpression.EVERY_HOUR, { name: 'enquiries.expire' })
-  async expireEnquiries() {
-    await this.run('enquiries.expire', async () => {
-      const expired = await this.enquiries.runExpiry();
+  async expireEnquiries(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'enquiries.expire',
+      async () => {
+        const expired = await this.enquiries.runExpiry();
 
-      return expired ? `expired ${expired} stale enquiries` : null;
-    });
+        return expired ? `expired ${expired} stale enquiries` : null;
+      },
+      context,
+    );
   }
 
   /** Requests with a `neededOn` that has passed are no longer open questions. */
   @Cron(CronExpression.EVERY_DAY_AT_3AM, { name: 'requests.expire' })
-  async expireRequests() {
-    await this.run('requests.expire', async () => {
-      const cutoff = new Date();
+  async expireRequests(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'requests.expire',
+      async () => {
+        const cutoff = new Date();
 
-      cutoff.setUTCHours(0, 0, 0, 0);
+        cutoff.setUTCHours(0, 0, 0, 0);
 
-      const result = await this.database.communityRequest.updateMany({
-        where: { status: 'OPEN', deletedAt: null, neededOn: { lt: cutoff } },
-        data: { status: 'EXPIRED' },
-      });
+        const result = await this.database.communityRequest.updateMany({
+          where: { status: 'OPEN', deletedAt: null, neededOn: { lt: cutoff } },
+          data: { status: 'EXPIRED' },
+        });
 
-      return result.count ? `expired ${result.count} past-dated requests` : null;
-    });
+        return result.count ? `expired ${result.count} past-dated requests` : null;
+      },
+      context,
+    );
   }
 
   /**
@@ -113,22 +125,30 @@ export class PlatformJobsService {
    * `attach` covers the common case; only the sweep visits media uploaded but never attached.
    */
   @Cron(CronExpression.EVERY_30_MINUTES, { name: 'media.derive' })
-  async deriveMedia() {
-    await this.run('media.derive', async () => {
-      const derived = await this.derivation.sweep();
+  async deriveMedia(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'media.derive',
+      async () => {
+        const derived = await this.derivation.sweep();
 
-      return derived ? `read ${derived} object header(s)` : null;
-    });
+        return derived ? `read ${derived} object header(s)` : null;
+      },
+      context,
+    );
   }
 
   /** Orphan media is deleted after 24 hours if never attached to a post (0.11). */
   @Cron(CronExpression.EVERY_HOUR, { name: 'media.sweep-orphans' })
-  async sweepOrphanMedia() {
-    await this.run('media.sweep-orphans', async () => {
-      const swept = await this.media.sweepOrphans();
+  async sweepOrphanMedia(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'media.sweep-orphans',
+      async () => {
+        const swept = await this.media.sweepOrphans();
 
-      return swept ? `removed ${swept} orphaned uploads` : null;
-    });
+        return swept ? `removed ${swept} orphaned uploads` : null;
+      },
+      context,
+    );
   }
 
   /**
@@ -143,101 +163,105 @@ export class PlatformJobsService {
    * who has nothing to read, and the member would be waiting on a decision nobody can take.
    */
   @Cron(CronExpression.EVERY_30_MINUTES, { name: 'listings.infected-documents' })
-  async removeInfectedDocuments() {
-    await this.run('listings.infected-documents', async () => {
-      const infected = await this.database.media.findMany({
-        where: {
-          ownerType: LISTING_DOCUMENT_OWNER,
-          supersededAt: null,
-          scanStatus: MediaScanStatus.INFECTED,
-        },
-        select: { id: true, ownerId: true },
-        take: 200,
-      });
-
-      if (!infected.length) return null;
-
-      const listingIds = [...new Set(infected.map(row => row.ownerId as string))];
-
-      await this.database.media.updateMany({
-        where: { id: { in: infected.map(row => row.id) } },
-        data: { supersededAt: new Date() },
-      });
-
-      let rejected = 0;
-
-      for (const listingId of listingIds) {
-        const left = await this.database.media.count({
-          where: { ownerType: LISTING_DOCUMENT_OWNER, ownerId: listingId, supersededAt: null },
+  async removeInfectedDocuments(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'listings.infected-documents',
+      async () => {
+        const infected = await this.database.media.findMany({
+          where: {
+            ownerType: LISTING_DOCUMENT_OWNER,
+            supersededAt: null,
+            scanStatus: MediaScanStatus.INFECTED,
+          },
+          select: { id: true, ownerId: true },
+          take: 200,
         });
 
-        if (left > 0) continue;
+        if (!infected.length) return null;
 
-        // visibility: a job reading the listing whose documents it has just removed, to decide
-        // whether anything is left to review. No reader is being served, so no filter applies.
-        const listing = await this.database.professionalListing.findUnique({
-          where: { id: listingId },
-          select: { id: true, userId: true, reviewState: true },
+        const listingIds = [...new Set(infected.map(row => row.ownerId as string))];
+
+        await this.database.media.updateMany({
+          where: { id: { in: infected.map(row => row.id) } },
+          data: { supersededAt: new Date() },
         });
 
-        // Only one that is still waiting. A listing already approved keeps its approval: the
-        // decision was taken on documents a reviewer read, and one of them failing a scan
-        // afterwards is not grounds to undo it silently.
-        if (!listing || listing.reviewState !== ListingReviewState.PENDING) continue;
+        let rejected = 0;
 
-        await this.database.$transaction(async tx => {
-          await tx.professionalListing.update({
-            where: { id: listing.id },
-            data: {
-              reviewState: ListingReviewState.REJECTED,
-              reviewDecidedAt: new Date(),
-              reviewNote: INFECTED_DOCUMENT_MESSAGE,
-            },
+        for (const listingId of listingIds) {
+          const left = await this.database.media.count({
+            where: { ownerType: LISTING_DOCUMENT_OWNER, ownerId: listingId, supersededAt: null },
           });
 
-          await this.safety.applyDecision(tx, {
-            targetType: ReportTargetType.PROFESSIONAL_LISTING,
-            targetId: listing.id,
-            state: ContentVisibilityState.REJECTED,
-            decision: ModerationDecision.REJECT,
-            // No staff member decided this; the scanner did. Recorded as the subject's own listing
-            // rather than crediting a reviewer who never saw it.
-            reviewerId: listing.userId,
+          if (left > 0) continue;
+
+          // visibility: a job reading the listing whose documents it has just removed, to decide
+          // whether anything is left to review. No reader is being served, so no filter applies.
+          const listing = await this.database.professionalListing.findUnique({
+            where: { id: listingId },
+            select: { id: true, userId: true, reviewState: true },
           });
 
-          await tx.moderationQueueItem.updateMany({
-            where: {
-              type: ModerationQueueType.PROFESSIONAL_REVIEW,
+          // Only one that is still waiting. A listing already approved keeps its approval: the
+          // decision was taken on documents a reviewer read, and one of them failing a scan
+          // afterwards is not grounds to undo it silently.
+          if (!listing || listing.reviewState !== ListingReviewState.PENDING) continue;
+
+          await this.database.$transaction(async tx => {
+            await tx.professionalListing.update({
+              where: { id: listing.id },
+              data: {
+                reviewState: ListingReviewState.REJECTED,
+                reviewDecidedAt: new Date(),
+                reviewNote: INFECTED_DOCUMENT_MESSAGE,
+              },
+            });
+
+            await this.safety.applyDecision(tx, {
+              targetType: ReportTargetType.PROFESSIONAL_LISTING,
               targetId: listing.id,
-              state: { not: ModerationQueueState.RESOLVED },
-            },
-            data: {
-              state: ModerationQueueState.RESOLVED,
+              state: ContentVisibilityState.REJECTED,
               decision: ModerationDecision.REJECT,
-              decisionNote: 'Documents could not be accepted.',
-              decidedAt: new Date(),
-            },
+              // No staff member decided this; the scanner did. Recorded as the subject's own listing
+              // rather than crediting a reviewer who never saw it.
+              reviewerId: listing.userId,
+            });
+
+            await tx.moderationQueueItem.updateMany({
+              where: {
+                type: ModerationQueueType.PROFESSIONAL_REVIEW,
+                targetId: listing.id,
+                state: { not: ModerationQueueState.RESOLVED },
+              },
+              data: {
+                state: ModerationQueueState.RESOLVED,
+                decision: ModerationDecision.REJECT,
+                decisionNote: 'Documents could not be accepted.',
+                decidedAt: new Date(),
+              },
+            });
           });
-        });
 
-        this.notifications.raise({
-          userId: listing.userId,
-          kind: NotificationKind.MODERATION,
-          categoryCode: 'ACCOUNT',
-          title: 'We couldn’t accept one of your documents',
-          body: 'Please upload it again.',
-          // The form, not the listing: this row exists because the member has to re-upload, and
-          // the listing view has no documents step to do it from.
-          route: LISTING_ROUTE.edit,
-        });
+          this.notifications.raise({
+            userId: listing.userId,
+            kind: NotificationKind.MODERATION,
+            categoryCode: 'ACCOUNT',
+            title: 'We couldn’t accept one of your documents',
+            body: 'Please upload it again.',
+            // The form, not the listing: this row exists because the member has to re-upload, and
+            // the listing view has no documents step to do it from.
+            route: LISTING_ROUTE.edit,
+          });
 
-        rejected += 1;
-      }
+          rejected += 1;
+        }
 
-      return `removed ${infected.length} infected document(s)${
-        rejected ? `, rejected ${rejected} listing(s)` : ''
-      }`;
-    });
+        return `removed ${infected.length} infected document(s)${
+          rejected ? `, rejected ${rejected} listing(s)` : ''
+        }`;
+      },
+      context,
+    );
   }
 
   /**
@@ -248,26 +272,30 @@ export class PlatformJobsService {
    * anyway is the difference between a retention policy and a filing cabinet.
    */
   @Cron(CronExpression.EVERY_DAY_AT_3AM, { name: 'retention.purge-documents' })
-  async purgeSupersededDocuments() {
-    await this.run('retention.purge-documents', async () => {
-      const cutoff = new Date(Date.now() - DOCUMENT_RETENTION_DAYS * 86_400_000);
-      const expired = await this.database.media.findMany({
-        where: { ownerType: LISTING_DOCUMENT_OWNER, supersededAt: { lt: cutoff } },
-        select: { id: true, storageKey: true },
-        take: 500,
-      });
+  async purgeSupersededDocuments(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'retention.purge-documents',
+      async () => {
+        const cutoff = new Date(Date.now() - DOCUMENT_RETENTION_DAYS * 86_400_000);
+        const expired = await this.database.media.findMany({
+          where: { ownerType: LISTING_DOCUMENT_OWNER, supersededAt: { lt: cutoff } },
+          select: { id: true, storageKey: true },
+          take: 500,
+        });
 
-      if (!expired.length) return null;
+        if (!expired.length) return null;
 
-      // Storage first, then the rows: a deleted row with the object still in the bucket is a file
-      // nothing points at and nothing will ever clean up.
-      await Promise.all(
-        expired.map(row => this.storage.delete(row.storageKey).catch(() => undefined)),
-      );
-      await this.database.media.deleteMany({ where: { id: { in: expired.map(row => row.id) } } });
+        // Storage first, then the rows: a deleted row with the object still in the bucket is a file
+        // nothing points at and nothing will ever clean up.
+        await Promise.all(
+          expired.map(row => this.storage.delete(row.storageKey).catch(() => undefined)),
+        );
+        await this.database.media.deleteMany({ where: { id: { in: expired.map(row => row.id) } } });
 
-      return `purged ${expired.length} superseded document(s)`;
-    });
+        return `purged ${expired.length} superseded document(s)`;
+      },
+      context,
+    );
   }
 
   /** Idempotency records are worthless after their 24-hour window (0.12). */
@@ -280,49 +308,65 @@ export class PlatformJobsService {
    * one indexed query.
    */
   @Cron(CronExpression.EVERY_5_MINUTES, { name: 'data-exports.build' })
-  async buildDataExports(): Promise<void> {
-    await this.run('data-exports.build', () => this.dataExports.buildPending());
+  async buildDataExports(context: JobRunContext = CRON_RUN): Promise<void> {
+    await this.run('data-exports.build', () => this.dataExports.buildPending(), context);
   }
 
   @Cron(CronExpression.EVERY_6_HOURS, { name: 'idempotency.sweep' })
-  async sweepIdempotency() {
-    await this.run('idempotency.sweep', async () => {
-      const result = await this.database.idempotencyRecord.deleteMany({
-        where: { expiresAt: { lt: new Date() } },
-      });
+  async sweepIdempotency(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'idempotency.sweep',
+      async () => {
+        const result = await this.database.idempotencyRecord.deleteMany({
+          where: { expiresAt: { lt: new Date() } },
+        });
 
-      return result.count ? `removed ${result.count} expired idempotency records` : null;
-    });
+        return result.count ? `removed ${result.count} expired idempotency records` : null;
+      },
+      context,
+    );
   }
 
   /** `medianResponseMinutes` is one definition read by three surfaces: the profile, the dashboard and the maxResponseHours filter (2.11). */
   @Cron(CronExpression.EVERY_DAY_AT_4AM, { name: 'professionals.response-times' })
-  async recomputeResponseTimes() {
-    await this.run('professionals.response-times', async () => {
-      const updated = await this.professionals.recomputeResponseTimes();
+  async recomputeResponseTimes(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'professionals.response-times',
+      async () => {
+        const updated = await this.professionals.recomputeResponseTimes();
 
-      return updated ? `updated ${updated} listings` : null;
-    });
+        return updated ? `updated ${updated} listings` : null;
+      },
+      context,
+    );
   }
 
   /** Circl Intelligence: the demand rollup behind Guided Creation. */
   @Cron(CronExpression.EVERY_2_HOURS, { name: 'intelligence.demand' })
-  async rebuildDemand() {
-    await this.run('intelligence.demand', async () => {
-      const written = await this.demand.rebuild();
+  async rebuildDemand(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'intelligence.demand',
+      async () => {
+        const written = await this.demand.rebuild();
 
-      return written ? `rebuilt ${written} demand signals` : null;
-    });
+        return written ? `rebuilt ${written} demand signals` : null;
+      },
+      context,
+    );
   }
 
   /** Circl Intelligence: Auto-Guides. */
   @Cron(CronExpression.EVERY_DAY_AT_2AM, { name: 'intelligence.auto-guides' })
-  async draftAutoGuides() {
-    await this.run('intelligence.auto-guides', async () => {
-      const { clusters, drafted } = await this.autoGuides.run();
+  async draftAutoGuides(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'intelligence.auto-guides',
+      async () => {
+        const { clusters, drafted } = await this.autoGuides.run();
 
-      return drafted ? `drafted ${drafted} guides from ${clusters} question clusters` : null;
-    });
+        return drafted ? `drafted ${drafted} guides from ${clusters} question clusters` : null;
+      },
+      context,
+    );
   }
 
   /** Circl Intelligence: the Pulse dashboards, precomputed per section per city. */
@@ -333,22 +377,30 @@ export class PlatformJobsService {
    * answer. Runs before the metrics job so both read the same day.
    */
   @Cron(CronExpression.EVERY_DAY_AT_4AM, { name: 'intelligence.search-demand' })
-  async rebuildSearchDemand() {
-    await this.run('intelligence.search-demand', async () => {
-      const written = await this.searchDemand.rebuild();
+  async rebuildSearchDemand(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'intelligence.search-demand',
+      async () => {
+        const written = await this.searchDemand.rebuild();
 
-      return `${written} snapshots`;
-    });
+        return `${written} snapshots`;
+      },
+      context,
+    );
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_5AM, { name: 'intelligence.metrics' })
-  async rebuildMetrics() {
-    await this.run('intelligence.metrics', async () => {
-      const monthly = await this.metrics.rebuild('MONTH');
-      const weekly = await this.metrics.rebuild('WEEK');
+  async rebuildMetrics(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'intelligence.metrics',
+      async () => {
+        const monthly = await this.metrics.rebuild('MONTH');
+        const weekly = await this.metrics.rebuild('WEEK');
 
-      return `rebuilt ${monthly + weekly} metric snapshots`;
-    });
+        return `rebuilt ${monthly + weekly} metric snapshots`;
+      },
+      context,
+    );
   }
 
   /**
@@ -368,82 +420,82 @@ export class PlatformJobsService {
    * there is no second opinion to come back for.
    */
   @Cron(CronExpression.EVERY_10_MINUTES, { name: 'safety.rescan-degraded' })
-  async rescanDegraded() {
-    await this.run('safety.rescan-degraded', async () => {
-      if (!(await this.classifier.enabled())) return null;
+  async rescanDegraded(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'safety.rescan-degraded',
+      async () => {
+        if (!(await this.classifier.enabled())) return null;
 
-      const now = Date.now();
-      const rows = await this.database.contentSafety.findMany({
-        where: {
-          // Only what the worker could actually re-read. A message's row is observe-only and has
-          // no source, so re-queueing it would record it degraded again and bring it straight
-          // back here on the next pass (§6.8).
-          targetType: { in: SCANNABLE_TARGETS },
-          OR: [
-            {
-              scanStatus: ContentScanStatus.DEGRADED,
-              updatedAt: { gte: new Date(now - 24 * 3_600_000) },
-            },
-            {
-              scanStatus: ContentScanStatus.PENDING,
-              createdAt: { lt: new Date(now - 5 * 60_000) },
-            },
-          ],
-        },
-        select: { targetType: true, targetId: true, scanVersion: true, scanStatus: true },
-        orderBy: { updatedAt: 'asc' },
-        take: RESCAN_BATCH,
-      });
+        const now = Date.now();
+        const rows = await this.database.contentSafety.findMany({
+          where: {
+            // Only what the worker could actually re-read. A message's row is observe-only and has
+            // no source, so re-queueing it would record it degraded again and bring it straight
+            // back here on the next pass (§6.8).
+            targetType: { in: SCANNABLE_TARGETS },
+            OR: [
+              {
+                scanStatus: ContentScanStatus.DEGRADED,
+                updatedAt: { gte: new Date(now - 24 * 3_600_000) },
+              },
+              {
+                scanStatus: ContentScanStatus.PENDING,
+                createdAt: { lt: new Date(now - 5 * 60_000) },
+              },
+            ],
+          },
+          select: { targetType: true, targetId: true, scanVersion: true, scanStatus: true },
+          orderBy: { updatedAt: 'asc' },
+          take: RESCAN_BATCH,
+        });
 
-      if (!rows.length) return null;
+        if (!rows.length) return null;
 
-      // A DEGRADED row has already been through the worker, so its version would dedupe against
-      // the finished job. Bumping it is what makes the retry a new scan rather than a no-op — and
-      // it moves `scanStatus` back to PENDING, which is the state `finalise` will act on.
-      for (const row of rows) {
-        const next =
-          row.scanStatus === ContentScanStatus.DEGRADED ? row.scanVersion + 1 : row.scanVersion;
+        // A DEGRADED row has already been through the worker, so its version would dedupe against
+        // the finished job. Bumping it is what makes the retry a new scan rather than a no-op — and
+        // it moves `scanStatus` back to PENDING, which is the state `finalise` will act on.
+        for (const row of rows) {
+          const next =
+            row.scanStatus === ContentScanStatus.DEGRADED ? row.scanVersion + 1 : row.scanVersion;
 
-        if (next !== row.scanVersion) {
-          await this.database.contentSafety.update({
-            where: {
-              targetType_targetId: { targetType: row.targetType, targetId: row.targetId },
-            },
-            data: { scanVersion: next, scanStatus: ContentScanStatus.PENDING },
+          if (next !== row.scanVersion) {
+            await this.database.contentSafety.update({
+              where: {
+                targetType_targetId: { targetType: row.targetType, targetId: row.targetId },
+              },
+              data: { scanVersion: next, scanStatus: ContentScanStatus.PENDING },
+            });
+          }
+
+          await this.safetyQueue.enqueue({
+            targetType: row.targetType,
+            targetId: row.targetId,
+            scanVersion: next,
+            trigger: ContentScanTrigger.RESCAN,
           });
         }
 
-        await this.safetyQueue.enqueue({
-          targetType: row.targetType,
-          targetId: row.targetId,
-          scanVersion: next,
-          trigger: ContentScanTrigger.RESCAN,
-        });
-      }
-
-      return `re-queued ${rows.length} scan(s)`;
-    });
+        return `re-queued ${rows.length} scan(s)`;
+      },
+      context,
+    );
   }
 
   /** Runs one job now, by name. */
-  private onDemand = false;
-  /** Who asked for the on-demand run, for the history row. Null on the schedule. */
-  private onDemandActor: string | null = null;
-
   async runNow(name: string, actorId?: string): Promise<string> {
-    const jobs: Record<string, () => Promise<void>> = {
-      'bookings.auto-complete': () => this.autoCompleteBookings(),
-      'enquiries.expire': () => this.expireEnquiries(),
-      'requests.expire': () => this.expireRequests(),
-      'media.sweep-orphans': () => this.sweepOrphanMedia(),
-      'idempotency.sweep': () => this.sweepIdempotency(),
-      'professionals.response-times': () => this.recomputeResponseTimes(),
-      'intelligence.demand': () => this.rebuildDemand(),
-      'intelligence.auto-guides': () => this.draftAutoGuides(),
-      'intelligence.metrics': () => this.rebuildMetrics(),
-      'intelligence.search-demand': () => this.rebuildSearchDemand(),
-      'safety.rescan-degraded': () => this.rescanDegraded(),
-      'data-exports.build': () => this.buildDataExports(),
+    const jobs: Record<string, (context: JobRunContext) => Promise<void>> = {
+      'bookings.auto-complete': context => this.autoCompleteBookings(context),
+      'enquiries.expire': context => this.expireEnquiries(context),
+      'requests.expire': context => this.expireRequests(context),
+      'media.sweep-orphans': context => this.sweepOrphanMedia(context),
+      'idempotency.sweep': context => this.sweepIdempotency(context),
+      'professionals.response-times': context => this.recomputeResponseTimes(context),
+      'intelligence.demand': context => this.rebuildDemand(context),
+      'intelligence.auto-guides': context => this.draftAutoGuides(context),
+      'intelligence.metrics': context => this.rebuildMetrics(context),
+      'intelligence.search-demand': context => this.rebuildSearchDemand(context),
+      'safety.rescan-degraded': context => this.rescanDegraded(context),
+      'data-exports.build': context => this.buildDataExports(context),
     };
 
     const job = jobs[name];
@@ -454,32 +506,35 @@ export class PlatformJobsService {
       );
     }
 
-    this.onDemand = true;
-    this.onDemandActor = actorId ?? null;
-
-    try {
-      await job();
-    } finally {
-      this.onDemand = false;
-      this.onDemandActor = null;
-    }
+    // The trigger travels with the call, not on the service. Two instance fields were shared by
+    // every concurrent run: a cron firing while somebody pressed "run now" was recorded as their
+    // manual run, and it re-threw into a scheduler with nobody to tell.
+    await job({ trigger: 'MANUAL', actorId: actorId ?? null });
 
     return name;
   }
 
   /** One wrapper so every job logs the same way and none can take the others down with it. */
-  private async run(name: string, work: () => Promise<string | null>): Promise<void> {
+  private async run(
+    name: string,
+    work: () => Promise<string | null>,
+    context: JobRunContext,
+  ): Promise<void> {
     // Cron jobs run per instance.
     //
     // No history row for a run that did not happen: on an instance with the schedule switched off
     // this branch is taken by fifteen jobs every few minutes, and a table full of "this instance
     // does not run jobs" is configuration restated thousands of times a day, not history.
-    if (!this.onDemand && this.config.get<string>('DISABLE_SCHEDULED_JOBS') === 'true') return;
+    if (
+      context.trigger === 'CRON' &&
+      this.config.get<string>('DISABLE_SCHEDULED_JOBS') === 'true'
+    ) {
+      return;
+    }
 
     const started = Date.now();
     const startedAt = new Date();
-    const trigger = this.onDemand ? 'MANUAL' : 'CRON';
-    const actorId = this.onDemandActor;
+    const { trigger, actorId } = context;
 
     try {
       const summary = await work();
@@ -506,7 +561,13 @@ export class PlatformJobsService {
       );
 
       // On the schedule a failure is logged and the next job still runs: one bad job must not take the others down.
-      if (this.onDemand) throw error;
+      if (context.trigger === 'MANUAL') {
+        throw ApiException.conflict(
+          ApiErrorCode.JOB_FAILED,
+          `${name} ran and failed: ${(error as Error).message}`,
+          { data: { job: name } },
+        );
+      }
     }
   }
 

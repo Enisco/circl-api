@@ -182,6 +182,8 @@ export const ApiErrorCode = {
   IMMUTABLE_FIELD: 'IMMUTABLE_FIELD',
   ALREADY_EXISTS: 'ALREADY_EXISTS',
   JOB_ALREADY_RUNNING: 'JOB_ALREADY_RUNNING',
+  /** A job somebody ran by hand did its work and failed. The message is the run's own error. */
+  JOB_FAILED: 'JOB_FAILED',
 
   // ─── Private threads and PII ───────────────────────────────────────────────
   THREAD_ACCESS_REQUIRED: 'THREAD_ACCESS_REQUIRED',

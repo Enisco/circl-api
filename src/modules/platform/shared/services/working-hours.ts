@@ -39,6 +39,24 @@ const minutesOfDay = (value: string): number | null => {
 };
 
 /**
+ * Whether the configured zone is one this platform knows.
+ *
+ * `dayjs().tz('Europe/Londn')` **throws**, and this is called from the write path of every
+ * anonymous post — so an unknown zone would take down posting rather than produce a wrong
+ * deadline. The config rule refuses one now; this is what stands between a value stored before
+ * that and a member who cannot post.
+ */
+const isZone = (tz: string): boolean => {
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone: tz });
+
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
  * ISO weekday, Monday = 1, in the configured zone.
  *
  * `dayjs().day()` is 0 for Sunday, and `WorkingHours.days` is documented as ISO — so Sunday is 7
@@ -58,12 +76,22 @@ const isoWeekday = (moment: dayjs.Dayjs): number => moment.day() || 7;
 export const addWorkingMinutes = (from: Date, minutes: number, hours: WorkingHours): Date => {
   const start = minutesOfDay(hours.start);
   const end = minutesOfDay(hours.end);
-  const days = hours.days?.filter(day => day >= 1 && day <= 7) ?? [];
+  /**
+   * Coerced, because the setting could have been stored as text.
+   *
+   * The config rule accepted `["6"]` for a while, and a string day never equalled a numeric
+   * weekday — so a Saturday configured then was a week with no working days in it, and every
+   * deadline silently became a wall-clock one. The rule now refuses text; this keeps the values
+   * that are already stored working rather than making them mean nothing.
+   */
+  const days = (hours.days ?? [])
+    .map(day => Number(day))
+    .filter(day => Number.isInteger(day) && day >= 1 && day <= 7);
 
   // A window that is not a window. Falling back to the wall clock is the honest answer: the
   // deadline is still a deadline, and silently returning `from` would mark everything overdue the
   // moment it was created.
-  if (start === null || end === null || end <= start || !days.length) {
+  if (start === null || end === null || end <= start || !days.length || !isZone(hours.tz)) {
     return new Date(from.getTime() + minutes * 60_000);
   }
 
@@ -112,14 +140,15 @@ export const isWorkingTime = (at: Date, hours: WorkingHours): boolean => {
   const start = minutesOfDay(hours.start);
   const end = minutesOfDay(hours.end);
 
-  if (start === null || end === null) return true;
+  // The same two tolerances as `addWorkingMinutes`, for the same reason: a setting stored before
+  // the rule tightened must read as something rather than throw inside a report.
+  if (start === null || end === null || !isZone(hours.tz)) return true;
 
   const moment = dayjs(at).tz(hours.tz);
   const minuteOfDay = moment.hour() * 60 + moment.minute();
+  const days = (hours.days ?? []).map(day => Number(day));
 
-  return (
-    (hours.days ?? []).includes(isoWeekday(moment)) && minuteOfDay >= start && minuteOfDay < end
-  );
+  return days.includes(isoWeekday(moment)) && minuteOfDay >= start && minuteOfDay < end;
 };
 
 /** Exported for the spec, which is the only place that should know how a time string is parsed. */

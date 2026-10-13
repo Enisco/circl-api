@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   BriefState,
   BriefUrgency,
+  JobState,
   ManagedRequestClosedReason,
   ManagedRequestState,
   NotificationKind,
@@ -86,6 +87,14 @@ const URGENCY_ORDER: BriefUrgency[] = [
  * somebody is dealing with it, and a pipeline that moves silently is one the member experiences as
  * nothing happening.
  */
+/**
+ * Booking states that need no releasing: nothing is live, so a brief can open again freely.
+ *
+ * `EXPIRED` is in here because an offer the professional never answered has lapsed on its own,
+ * which is the same fact as a cancellation for this purpose.
+ */
+const RELEASED_STATES: JobState[] = [JobState.CANCELLED, JobState.EXPIRED];
+
 @Injectable()
 export class AdminManagedService {
   constructor(
@@ -509,6 +518,8 @@ export class AdminManagedService {
           'Placing a brief again is a lead’s call (`moderation:assign`).',
         );
       }
+
+      await this.releaseBooking(brief.bookingId, brief.userId);
     }
 
     await this.audit.mutate(
@@ -536,6 +547,49 @@ export class AdminManagedService {
     );
 
     return this.briefDetail(id);
+  }
+
+  /**
+   * The booking the last placement made, before the brief is opened again.
+   *
+   * Re-opening cleared `bookingId` and left the booking itself alone, so the professional kept a
+   * live `PENDING_ACCEPTANCE` job for work that had been taken off them — and the next placement
+   * created a second one. Two bookings, one brief, and nobody told.
+   *
+   * Cancelled through the member's own path rather than with an update here, so it is the same
+   * transition the member's cancel is: the timeline entry, the stage and the notice to the
+   * professional all come with it. Once it has been **accepted** the re-open is refused instead:
+   * work may have started, and a booking somebody agreed to is not an administrative detail.
+   *
+   * Before the audited update rather than inside it, which is the same order `placeBrief` uses for
+   * the same reason: `BookingService` owns its own transaction. If the update then failed the
+   * brief would still read `PLACED` against a cancelled booking — visible and recoverable, unlike
+   * an open brief with a live booking nobody can see.
+   */
+  private async releaseBooking(bookingId: string | null, memberId: string): Promise<void> {
+    if (!bookingId) return;
+
+    const booking = await this.database.booking.findUnique({
+      where: { id: bookingId },
+      select: { id: true, state: true },
+    });
+
+    if (!booking) return;
+
+    if (booking.state !== JobState.PENDING_ACCEPTANCE) {
+      // Already cancelled or declined: nothing is live, so the brief can open with no fuss.
+      if (RELEASED_STATES.includes(booking.state)) return;
+
+      throw ApiException.conflict(
+        ApiErrorCode.INVALID_TRANSITION,
+        `That booking is ${booking.state.toLowerCase().replace(/_/g, ' ')}. Settle it with the professional before opening the brief again.`,
+        { data: { bookingId, state: booking.state } },
+      );
+    }
+
+    await this.bookings.cancel(memberId, bookingId, {
+      reason: 'The brief was opened again, so this placement was withdrawn.',
+    });
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { AuditDigestInput, rowDigest, segmentHash } from '@/common';
+import { AuditDigestInput, JobFailure, rowDigest, segmentHash } from '@/common';
 import { AuditService } from './audit.service';
 
 /**
@@ -135,9 +135,15 @@ export class AuditChainService {
       const named = findings.problems.slice(0, PROBLEMS_IN_MESSAGE);
       const rest = findings.problems.length - named.length;
 
-      throw new Error(
+      /**
+       * Thrown with the summary attached, so the sealing survives into the run's history row.
+       * A night that sealed four stretches and found a difference in a fifth did both, and a row
+       * that says only "verification failed" has lost half of what happened.
+       */
+      throw new JobFailure(
         `Audit chain verification failed: ${named.map(problem => problem.detail).join('; ')}` +
           (rest ? ` (and ${rest} more)` : ''),
+        summary,
       );
     }
 

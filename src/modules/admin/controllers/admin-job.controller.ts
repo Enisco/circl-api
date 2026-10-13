@@ -89,18 +89,34 @@ export class AdminJobController {
       'all, and the run is recorded in `:name/runs` either way.',
   })
   async run(@CurrentUser() actor: AdminPrincipal, @Param('name') name: string) {
-    const ran = await this.jobs.run(name, actor.id);
+    /**
+     * Audited either way (§5.22).
+     *
+     * `job.run` was in the action registry and nothing wrote it, so running a job by hand left no
+     * trace at all. Then it was written only after a *successful* run — and a failed one is the
+     * one somebody asks about afterwards, so the trail skipped exactly the runs worth recording.
+     * The outcome is in the entry rather than in whether there is one.
+     */
+    const noted = (outcome: 'SUCCESS' | 'FAILED', error?: string) =>
+      this.audit.note({
+        action: 'job.run',
+        targetType: 'JOB',
+        targetId: name,
+        targetLabel: name,
+        metadata: { trigger: 'MANUAL', outcome, ...(error ? { error } : {}) },
+      });
 
-    // Audited (§5.22). `job.run` was in the action registry and nothing wrote it, so running a
-    // job by hand — re-queueing scans, rebuilding metrics, purging documents — left no trace.
-    // Written after the run so the entry describes something that happened.
-    await this.audit.note({
-      action: 'job.run',
-      targetType: 'JOB',
-      targetId: ran,
-      targetLabel: ran,
-      metadata: { trigger: 'MANUAL' },
-    });
+    let ran: string;
+
+    try {
+      ran = await this.jobs.run(name, actor.id);
+    } catch (error) {
+      await noted('FAILED', (error as Error).message.slice(0, 500));
+
+      throw error;
+    }
+
+    await noted('SUCCESS');
 
     return { data: { job: ran }, message: `Ran ${ran}` };
   }

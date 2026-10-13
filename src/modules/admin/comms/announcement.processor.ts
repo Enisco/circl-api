@@ -20,11 +20,15 @@ export class AnnouncementProcessor extends WorkerHost {
   }
 
   async process(job: Job<AnnouncementJob>): Promise<void> {
-    try {
-      await this.fanout.run(job.data.announcementId);
-    } catch (error) {
-      const attempts = job.opts.attempts ?? 1;
+    const attempts = job.opts.attempts ?? 1;
+    // Which attempt this is, passed down rather than guessed: the fan-out leaves the row `SENDING`
+    // on a middle attempt and only writes `FAILED` on the last, because a row marked failed is one
+    // the next attempt refuses to pick up.
+    const last = job.attemptsMade + 1 >= attempts;
 
+    try {
+      await this.fanout.run(job.data.announcementId, { last });
+    } catch (error) {
       this.logger.error(
         `Announcement ${job.data.announcementId} failed on attempt ${job.attemptsMade + 1}/${attempts}: ${(error as Error).message}`,
       );

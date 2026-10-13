@@ -181,6 +181,80 @@ async function main() {
 
   check('and a change with no reason is refused', noReason.status === 422, noReason.status);
 
+  /**
+   * The working-hours window, which could be saved wrong three ways and only break something else.
+   *
+   * It is read on the **write path** of every anonymous post, where the deadline is computed — so
+   * a zone the platform does not know threw there rather than here, a day saved as text matched no
+   * day at all, and a window that closed before it opened turned every working-hours deadline into
+   * a wall-clock one without saying so.
+   */
+  const workingHours = (value, note) =>
+    api(
+      null,
+      'PATCH',
+      '/admin/config/moderation.workingHours',
+      { value, reasonCode: 'CORRECTION', note },
+      { ...asOwner, ...key() },
+    );
+
+  const badZone = await workingHours(
+    { tz: 'Europe/Londn', days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00' },
+    'Typo in the zone.',
+  );
+
+  check(
+    'a time zone the platform does not know is refused here rather than thrown later',
+    badZone.status === 422 && /is not a time zone/.test(badZone.body?.error?.message ?? ''),
+    { status: badZone.status, message: badZone.body?.error?.message },
+  );
+
+  const textDays = await workingHours(
+    { tz: 'Europe/London', days: ['6'], start: '09:00', end: '18:00' },
+    'Days as text.',
+  );
+
+  check(
+    'a day sent as text is refused, because the scheduler compares numbers',
+    textDays.status === 422 && /as a number/.test(textDays.body?.error?.message ?? ''),
+    { status: textDays.status, message: textDays.body?.error?.message },
+  );
+
+  const backwards = await workingHours(
+    { tz: 'Europe/London', days: [1, 2, 3, 4, 5], start: '18:00', end: '09:00' },
+    'Closes before it opens.',
+  );
+
+  check(
+    'and a window that closes before it opens is refused',
+    backwards.status === 422 && /must be after start/.test(backwards.body?.error?.message ?? ''),
+    { status: backwards.status, message: backwards.body?.error?.message },
+  );
+
+  const goodHours = await workingHours(
+    { tz: 'Europe/London', days: [1, 2, 3, 4, 5, 6], start: '08:30', end: '17:30' },
+    'A real Saturday.',
+  );
+
+  check(
+    'while a Saturday as a number, in a zone that exists, is saved',
+    goodHours.status === 200 &&
+      JSON.stringify(goodHours.body?.data?.value?.days) === JSON.stringify([1, 2, 3, 4, 5, 6]),
+    { status: goodHours.status, value: goodHours.body?.data?.value },
+  );
+
+  await api(
+    null,
+    'PATCH',
+    '/admin/config/moderation.workingHours',
+    {
+      value: { tz: 'Europe/London', days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00' },
+      reasonCode: 'CORRECTION',
+      note: 'Back to the default.',
+    },
+    { ...asOwner, ...key() },
+  );
+
   // ── 4. A change takes effect ──────────────────────────────────────────────
   heading('4. a change is live, recorded, and reversible');
 

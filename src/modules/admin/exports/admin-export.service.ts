@@ -12,8 +12,8 @@ import { ListMembersDto } from '../dtos/analytics-filter.dto';
 import { ListAuditDto } from '../dtos/admin-audit.dto';
 import { ListEnforcementDto } from '../dtos/admin-enforcement.dto';
 import { ListReportCasesDto } from '../dtos/admin-report-case.dto';
-import { ListContentDto } from '../content/admin-content.dto';
-import { ALL_TYPE_FILTERS } from '../content/admin-content.service';
+import { ExportContentDto } from '../content/admin-content.dto';
+import { AdminContentService } from '../content/admin-content.service';
 import { ListSupportThreadsDto } from '../dtos/admin-support.dto';
 import { AdminMemberService } from '../services/admin-member.service';
 import { StaffRefView, staffRefSelect, toStaffRef } from '../serializers/admin-staff.serializer';
@@ -72,6 +72,7 @@ export class AdminExportService {
     private readonly storage: StorageProvider,
     private readonly media: MediaService,
     private readonly members: AdminMemberService,
+    private readonly content: AdminContentService,
   ) {}
 
   async request(actor: AdminPrincipal, dto: CreateExportDto): Promise<ExportView> {
@@ -383,7 +384,7 @@ export class AdminExportService {
       [AdminExportKind.SUPPORT_THREADS]: ListSupportThreadsDto,
       [AdminExportKind.REPORTS]: ListReportCasesDto,
       [AdminExportKind.ENFORCEMENT]: ListEnforcementDto,
-      [AdminExportKind.CONTENT]: ListContentDto,
+      [AdminExportKind.CONTENT]: ExportContentDto,
     };
     const Dto = dtoForKind[kind];
 
@@ -408,28 +409,14 @@ export class AdminExportService {
     }
 
     /**
-     * A **type-specific** content filter is refused rather than ignored.
+     * The content export's filters, judged by the service that owns them.
      *
-     * The content export covers every kind in one file, and `?published=true` means something to
-     * guides and nothing to shops. Applying it across the other sixteen would be wrong and
-     * dropping it silently would produce a file nobody could explain — so it is named, with the
-     * suggestion that belongs to it: ask for that kind's list instead.
+     * Not reimplemented here: which filters a content kind can answer is seventeen tables' worth
+     * of knowledge, and the list already holds it. A second copy would drift into a file that
+     * disagrees with the screen — the thing the whole kind-by-kind export was built to avoid.
      */
     if (kind === AdminExportKind.CONTENT) {
-      const typeSpecific = ALL_TYPE_FILTERS.filter(filter => filters[filter] !== undefined);
-
-      if (typeSpecific.length) {
-        throw ApiException.badRequest(
-          ApiErrorCode.VALIDATION_FAILED,
-          `The content export covers every kind, so it takes no type-specific filter: ${typeSpecific.join(', ')}.`,
-          {
-            details: typeSpecific.map(field => ({
-              field: `filters.${field}`,
-              message: 'Belongs to one content type. Export from that type’s list instead.',
-            })),
-          },
-        );
-      }
+      this.content.assertExportFilters(plainToInstance(ExportContentDto, filters));
     }
 
     if (kind === AdminExportKind.MEMBERS) {

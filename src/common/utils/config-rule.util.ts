@@ -43,6 +43,43 @@ export const checkConfigValue = (rule: ConfigRule, value: unknown, path = ''): s
 
       return [];
 
+    case 'timezone': {
+      if (typeof value !== 'string') return [`${at}must be a time zone`];
+
+      /**
+       * Asked of the platform's own zone database rather than matched against a list.
+       *
+       * `Intl` throws `RangeError` for a zone it does not know, which is the same question the
+       * reader asks when it formats a deadline — so this accepts exactly what will work later,
+       * including the aliases a hand-written list would miss.
+       */
+      try {
+        new Intl.DateTimeFormat('en-GB', { timeZone: value });
+      } catch {
+        return [`${at}“${value}” is not a time zone — use an IANA name such as Europe/London`];
+      }
+
+      return [];
+    }
+
+    case 'intList': {
+      if (!Array.isArray(value)) return [`${at}must be a list`];
+      if (rule.min !== undefined && value.length < rule.min) {
+        return [`${at}must hold at least ${rule.min}`];
+      }
+      if (rule.max !== undefined && value.length > rule.max) {
+        return [`${at}must hold ${rule.max} or fewer`];
+      }
+
+      // Whole numbers, not text that looks like one: `"6"` stored as text is a day the scheduler
+      // never matches, and accepting it here is how that came to be stored in the first place.
+      return value.flatMap(item =>
+        Number.isInteger(item) && rule.of.includes(item as number)
+          ? []
+          : [`${at}“${String(item)}” must be one of ${rule.of.join(', ')}, as a number`],
+      );
+    }
+
     case 'stringList': {
       if (!Array.isArray(value)) return [`${at}must be a list`];
       if (rule.max && value.length > rule.max) return [`${at}must hold ${rule.max} or fewer`];
@@ -104,12 +141,20 @@ export const checkConfigValue = (rule: ConfigRule, value: unknown, path = ''): s
       // `safety.tierThresholds`, because a MEDIUM floor above the HIGH floor is a band nothing can
       // ever land in — and the tiers would silently stop being reachable rather than fail.
       if (rule.increasing && !problems.length) {
-        const values = rule.increasing.map(key => given[key] as number);
+        const values = rule.increasing.map(key => comparable(given[key]));
 
         for (let index = 1; index < values.length; index += 1) {
-          if (values[index] <= values[index - 1]) {
+          if (values[index] === null || values[index - 1] === null) continue;
+
+          if ((values[index] as number) <= (values[index - 1] as number)) {
+            const higher = rule.increasing[index];
+            const lower = rule.increasing[index - 1];
+            // "above" for a threshold, "after" for a time. The same constraint, and a sentence
+            // that reads like the thing it is about.
+            const word = typeof given[higher] === 'number' ? 'above' : 'after';
+
             problems.push(
-              `${at}${rule.increasing[index]} (${values[index]}) must be above ${rule.increasing[index - 1]} (${values[index - 1]})`,
+              `${at}${higher} (${String(given[higher])}) must be ${word} ${lower} (${String(given[lower])})`,
             );
           }
         }
@@ -118,4 +163,21 @@ export const checkConfigValue = (rule: ConfigRule, value: unknown, path = ''): s
       return problems;
     }
   }
+};
+
+/**
+ * A value `increasing` can order: a number, or `HH:MM` as minutes after midnight.
+ *
+ * Times are compared as minutes rather than as strings so the message can name them as the person
+ * typed them, and so `9:00` orders the same as `09:00`. Anything else answers null and is left
+ * alone — an ordering constraint on a field of another shape is a configuration mistake, and the
+ * field's own rule will have said so already.
+ */
+const comparable = (value: unknown): number | null => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string') return null;
+
+  const match = /^(\d{1,2}):([0-5]\d)$/.exec(value);
+
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
 };
