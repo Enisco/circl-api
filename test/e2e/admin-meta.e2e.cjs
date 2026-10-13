@@ -75,6 +75,10 @@ const {
       'disputeOutcomes',
       'dealProblemStates',
       'dealTracks',
+      // §5.18's. The channel list drives a form whose body limit depends on it.
+      'announcementStates',
+      'announcementChannels',
+      'deliveryStatuses',
       'auditAreas',
     ].every(key => (enums[key] ?? []).length > 0 && enums[key].every(e => e.code && e.label)),
     Object.fromEntries(Object.entries(enums).map(([key, list]) => [key, list?.length])),

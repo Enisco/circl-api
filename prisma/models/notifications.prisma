@@ -90,3 +90,87 @@ model SupportResource {
   @@index([countryCode, isActive, isCrisis, sort])
   @@map("support_resources")
 }
+
+/// §5.18: one message from Circl to many members at once.
+///
+/// The row is the record of a decision as much as a message. An announcement reaches thousands of
+/// people's phones in Circl's name, and the thing a staff member needs to be able to answer
+/// afterwards is "who did this go to, who sent it, and when" — which is why `audience` is a
+/// **snapshot** of the filter rather than a live query, and why `audienceCount` is frozen at send
+/// time. A filter re-run a month later describes a different population, and the question was
+/// never "who matches this now".
+model Announcement {
+  id String @id @default(uuid())
+
+  /// ≤ 80. The push title and the in-app row's heading.
+  title String  @map("title")
+  /// ≤ 500 when PUSH is selected, ≤ 5000 otherwise — a push is truncated by the OS, and a body
+  /// nobody can read in the only place it appears is not a message.
+  body  String  @map("body")
+  /// An allowlisted app route, so a deep link cannot be an arbitrary URL (§3.16).
+  route String? @map("route")
+
+  channels AnnouncementChannel[] @map("channels")
+
+  /// The member filter and section flags **as sent**. A snapshot, not a live query: re-running the
+  /// filter later answers a different question from the one the sender asked.
+  audience      Json @map("audience")
+  /// Resolved at send time and frozen. Null until then.
+  audienceCount Int? @map("audience_count")
+
+  state AnnouncementState @default(DRAFT) @map("state")
+
+  scheduledAt DateTime? @map("scheduled_at") @db.Timestamptz
+  startedAt   DateTime? @map("started_at") @db.Timestamptz
+  completedAt DateTime? @map("completed_at") @db.Timestamptz
+  cancelledAt DateTime? @map("cancelled_at") @db.Timestamptz
+
+  /// Why a FAILED one failed, in a sentence a staff member can act on.
+  failureReason String? @map("failure_reason")
+
+  /// No foreign keys, like every other staff reference in the admin surface: the record of who
+  /// sent a message to the whole platform outlives the account that sent it.
+  createdById String  @map("created_by_id")
+  sentById    String? @map("sent_by_id")
+
+  /// Cached counters per channel, recomputed by the worker as batches land. The delivery rows are
+  /// the truth; this is so the stats panel is one read rather than a count over hundreds of
+  /// thousands of rows.
+  stats Json? @map("stats")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  deliveries AnnouncementDelivery[]
+
+  /// The scheduler's own query: what is due to go out.
+  @@index([state, scheduledAt])
+  @@map("announcements")
+}
+
+/// One recipient, one channel, one outcome (§5.18).
+///
+/// Written before the attempt rather than after it, so a fan-out that dies halfway can be resumed
+/// without sending anybody twice — the primary key is the idempotency.
+model AnnouncementDelivery {
+  announcementId String       @map("announcement_id")
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  /// No relation to `User`: a member who deletes their account should not take the record of what
+  /// the platform sent them with it, and a cascade here would do exactly that.
+  userId String @map("user_id")
+
+  channel AnnouncementChannel @map("channel")
+  status  DeliveryStatus      @default(PENDING) @map("status")
+
+  /// The `Notification` row, for IN_APP. It is what carries "opened".
+  notificationId String? @map("notification_id")
+  error          String? @map("error")
+
+  sentAt   DateTime? @map("sent_at") @db.Timestamptz
+  openedAt DateTime? @map("opened_at") @db.Timestamptz
+
+  @@id([announcementId, userId, channel])
+  @@index([announcementId, status])
+  @@map("announcement_deliveries")
+}

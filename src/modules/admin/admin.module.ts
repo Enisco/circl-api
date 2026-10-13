@@ -27,6 +27,10 @@ import { AdminEnforcementController } from './controllers/admin-enforcement.cont
 import { AdminFlagController } from './controllers/admin-flag.controller';
 import { AdminQueueController } from './controllers/admin-queue.controller';
 import { AdminQueueService } from './services/admin-queue.service';
+import { AdminAnnouncementService } from './comms/admin-announcement.service';
+import { AnnouncementFanoutService } from './comms/announcement-fanout.service';
+import { AnnouncementProcessor } from './comms/announcement.processor';
+import { ANNOUNCEMENTS_QUEUE, AnnouncementQueue } from './comms/announcement.queue';
 import { AdminConfigService } from './services/admin-config.service';
 import { AdminDisputeService } from './services/admin-dispute.service';
 import { AdminManagedService } from './services/admin-managed.service';
@@ -42,6 +46,7 @@ import { AdminReportController } from './controllers/admin-report.controller';
 import { AdminMetaController } from './controllers/admin-meta.controller';
 import { AdminTeamController } from './controllers/admin-team.controller';
 import { AdminThreadController } from './controllers/admin-thread.controller';
+import { AdminAnnouncementController } from './controllers/admin-announcement.controller';
 import { AdminConfigController } from './controllers/admin-config.controller';
 import { AdminDisputeController } from './controllers/admin-dispute.controller';
 import { AdminManagedController } from './controllers/admin-managed.controller';
@@ -129,6 +134,7 @@ const CONTROLLERS = [
   AdminMetaController,
   AdminExportController,
   AdminThreadController,
+  AdminAnnouncementController,
   AdminConfigController,
   AdminDisputeController,
   AdminManagedController,
@@ -175,6 +181,9 @@ const CONTROLLERS = [
     // neither the producer nor a worker for it: an export reads member data under a staff
     // member's permissions, and the member API has no business being able to build one.
     BullModule.registerQueue({ name: ADMIN_EXPORTS_QUEUE }),
+    // §5.18's fan-out, registered here for the same reason: an announcement goes out under a
+    // staff member's authority, and the member process has no business being able to start one.
+    BullModule.registerQueue({ name: ANNOUNCEMENTS_QUEUE }),
     RouterModule.register([{ path: 'api/v1', module: AdminModule, children: CONTROLLERS }]),
   ],
   controllers: CONTROLLERS,
@@ -233,6 +242,10 @@ const CONTROLLERS = [
     AdminAppealService,
     AdminListingReviewService,
     AdminQueueService,
+    AdminAnnouncementService,
+    AnnouncementFanoutService,
+    AnnouncementProcessor,
+    AnnouncementQueue,
     AdminConfigService,
     AdminDisputeService,
     AdminManagedService,

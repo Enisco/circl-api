@@ -148,6 +148,10 @@ export const AUDIT_ACTIONS = {
   'announcement.created': AuditArea.COMMS,
   'announcement.updated': AuditArea.COMMS,
   'announcement.sent': AuditArea.COMMS,
+  /// §5.18's scheduled send. Its own action rather than a `sent` with a future date: "somebody
+  /// armed this for Tuesday" and "somebody sent this" are different acts, and only one of them has
+  /// already reached anybody.
+  'announcement.scheduled': AuditArea.COMMS,
   'announcement.cancelled': AuditArea.COMMS,
 
   // ─── Configuration (CONFIG) ────────────────────────────────────────────────

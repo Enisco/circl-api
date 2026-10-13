@@ -989,6 +989,38 @@ enum EnforcementSourceType {
 }
 
 /// What an internal note is about. One note table serves every subject, so the kinds live here.
+/// §5.18. `SENDING` is the one that matters operationally: a fan-out in progress can be stopped
+/// between batches, so the state is a real position in a process rather than a label on a record.
+/// `FAILED` carries a reason, because an announcement that silently did not go out is worse than
+/// one that visibly did not.
+enum AnnouncementState {
+  DRAFT
+  SCHEDULED
+  SENDING
+  SENT
+  CANCELLED
+  FAILED
+}
+
+/// How an announcement reaches somebody (§5.18). `IN_APP` is a notification row, which is what
+/// carries the "opened" signal — the other two cannot be measured honestly: a push open is only
+/// the ones the device reports, and email opens are not tracked at all, deliberately.
+enum AnnouncementChannel {
+  IN_APP
+  PUSH
+  EMAIL
+}
+
+/// One recipient on one channel (§5.18). `SKIPPED_PREFERENCE` is its own outcome rather than a
+/// failure: a member who turned announcements off was not failed to, they were respected, and a
+/// stats panel that counts the two together makes a working fan-out look broken.
+enum DeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED_PREFERENCE
+}
+
 /// Why a managed request was closed (§5.16). The spec types this as a free string on the model and
 /// then constrains the five values on the endpoint; an enum is the same contract expressed once,
 /// and this is a vocabulary the support pipeline reports on — a typo in a string column becomes a

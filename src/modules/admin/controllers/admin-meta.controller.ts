@@ -3,10 +3,13 @@ import { ApiExcludeController, ApiOperation, ApiPropertyOptional, ApiTags } from
 import { IsIn } from 'class-validator';
 import {
   AdminReasonCode,
+  AnnouncementChannel,
+  AnnouncementState,
   BriefState,
   BriefUrgency,
   DealProblemState,
   DealTrack,
+  DeliveryStatus,
   DisputeOutcome,
   DisputeReason,
   DisputeState,
@@ -158,6 +161,12 @@ export class AdminMetaController {
         disputeOutcomes: codes(Object.values(DisputeOutcome)),
         dealProblemStates: codes(Object.values(DealProblemState)),
         dealTracks: codes(Object.values(DealTrack)),
+        // §5.18's three. `announcementChannels` is the one that matters on a form: the body limit
+        // depends on whether PUSH is among them, so the portal has to know the vocabulary to warn
+        // before the API refuses.
+        announcementStates: codes(Object.values(AnnouncementState)),
+        announcementChannels: codes(Object.values(AnnouncementChannel)),
+        deliveryStatuses: codes(Object.values(DeliveryStatus)),
         auditAreas: codes([...new Set(auditActionList().map(entry => entry.area))]),
       },
       message: SuccessMessage.RESOURCE_FETCHED('Enums'),
