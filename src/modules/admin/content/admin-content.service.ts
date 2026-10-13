@@ -81,8 +81,15 @@ const TYPE_FILTERS: Record<string, string[]> = {
 /** A case nobody has decided yet, which is what `openCaseId` means on a row. */
 const OPEN_CASE_STATES = [ReportCaseState.OPEN, ReportCaseState.IN_REVIEW];
 
-/** Every type-specific filter, so one that belongs to another kind can be named in the refusal. */
-const ALL_TYPE_FILTERS = [...new Set(Object.values(TYPE_FILTERS).flat())];
+/**
+ * Every type-specific filter, so one that belongs to another kind can be named in the refusal.
+ *
+ * Exported because the CSV export has the same problem one step further out: it covers all
+ * seventeen kinds in one file, so *every* name in this list is one it cannot honour. Deriving it
+ * from the table above rather than restating it there means a new type-specific filter is refused
+ * by the export the moment it is declared here, without anybody remembering to go and add it.
+ */
+export const ALL_TYPE_FILTERS = [...new Set(Object.values(TYPE_FILTERS).flat())];
 
 @Injectable()
 export class AdminContentService {
@@ -913,6 +920,60 @@ export class AdminContentService {
         .map(name => [name, Number(row[`metric_${name}`] ?? 0)])
         .filter(([, value]) => Number.isFinite(value)),
     );
+  }
+
+  /**
+   * One kind's rows, for §5.26's content export.
+   *
+   * The export covers **every** kind in one file — `targetType` is one of its columns — so this is
+   * called once per kind and the results are concatenated. Four columns only, which is what makes
+   * it possible at all: the list's per-kind SQL joins authors, cities, categories and a status
+   * expression, and none of those is asked for here.
+   *
+   * Only the filters every kind understands are applied, which is checked by the caller: a
+   * type-specific filter belongs to one kind, and silently ignoring it across the other sixteen
+   * would produce a file nobody could explain.
+   */
+  async exportPage(
+    slug: string,
+    query: ListContentDto,
+    offset: number,
+    size: number,
+  ): Promise<
+    Array<{
+      targetType: string;
+      targetId: string;
+      visibilityState: string | null;
+      createdAt: string;
+    }>
+  > {
+    const kind = this.kindOrThrow(slug);
+    const table = tableFor(kind);
+    const visibility = visibilityColumnFor(kind);
+    const authorJoin = kind.authorVia
+      ? Prisma.raw(`LEFT JOIN "${kind.authorVia.table}" p ON p."id" = c."${kind.authorVia.on}"`)
+      : Prisma.empty;
+
+    const rows = await this.database.$queryRaw<
+      Array<{ id: string; visibility_state: string | null; created_at: Date }>
+    >`
+      SELECT c."id",
+             c."${Prisma.raw(visibility)}"::text AS visibility_state,
+             c."${Prisma.raw(kind.created)}" AS created_at
+      FROM "${Prisma.raw(table)}" c
+      ${authorJoin}
+      WHERE ${this.scope(kind, query)}
+      -- By id, so the offset is stable while the platform is written to during a long export.
+      ORDER BY c."id" ASC
+      LIMIT ${size} OFFSET ${offset}
+    `;
+
+    return rows.map(row => ({
+      targetType: kind.targetType,
+      targetId: String(row.id),
+      visibilityState: row.visibility_state,
+      createdAt: new Date(row.created_at).toISOString(),
+    }));
   }
 
   private scope(kind: ContentKind, query: ListContentDto): Prisma.Sql {

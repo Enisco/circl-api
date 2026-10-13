@@ -153,17 +153,23 @@ const settle = async (headers, id, attempts = 40) => {
     res.status,
   );
 
-  console.log('\n── Kinds that are not built say so ──────────────────────────');
+  console.log('\n── The one kind the API does not build ─────────────────────');
 
+  /**
+   * Every data kind is built now, so the refusal left is the one that is **not** a refusal of
+   * unfinished work: a chart CSV is written in the browser from the payload the staff member is
+   * already looking at, and sending the same numbers back out through an export job would be a
+   * second path to data that has already left the API.
+   */
   res = await api(
     null,
     'POST',
     '/admin/exports',
-    { kind: 'REPORTS', columns: ['id'] },
+    { kind: 'ANALYTICS_CHART', columns: ['id'] },
     bossHeaders,
   );
   check(
-    'a kind that is not built yet is 422 NOT_AVAILABLE_YET',
+    'a chart export is 422 NOT_AVAILABLE_YET',
     res.status === 422 && res.body?.error?.code === 'NOT_AVAILABLE_YET',
     [res.status, res.body?.error?.code],
   );
@@ -171,8 +177,8 @@ const settle = async (headers, id, attempts = 40) => {
   // the moment that milestone shipped — a refusal that cites a delivered milestone tells a staff
   // member the opposite of the truth.
   check(
-    'and says what is actually missing rather than naming a milestone',
-    /not built yet/.test(res.body?.error?.message ?? '') &&
+    'and says where the file comes from instead, rather than naming a milestone',
+    /portal/.test(res.body?.error?.message ?? '') &&
       !/M2|M3|M4/.test(res.body?.error?.message ?? ''),
     res.body?.error?.message,
   );
@@ -294,6 +300,219 @@ const settle = async (headers, id, attempts = 40) => {
       boss: bossThreads?.rowCount,
       guard: guardThreads,
     },
+  );
+
+  console.log('\n── The three lists that export themselves ──────────────────');
+
+  /**
+   * A case, a strike and a piece of content, **made** rather than assumed.
+   *
+   * Every check below compares the file's row count with the list's own total, and two counts over
+   * an empty table agree without proving anything. The fixtures are in LONDON rather than BRISTOL
+   * because the member export above asserts an exact BRISTOL row count.
+   */
+  const author = await makeUser('exp-author', { cityId: 'LONDON' });
+  const reporter = await makeUser('exp-reporter', { cityId: 'LONDON' });
+  const warned = await makeUser('exp-warned', { cityId: 'LONDON' });
+
+  res = await api(author.token, 'POST', '/community/requests', {
+    title: 'A flat share near the station',
+    description: 'Posted so the content export has something of this member’s to find.',
+    categoryCode: 'ACCOMMODATION',
+    cityId: 'LONDON',
+  });
+
+  const authored = res.body?.data?.id;
+
+  check('a request is posted, to be reported and exported', res.status === 201, res.body?.error);
+
+  res = await api(reporter.token, 'POST', '/moderation/reports', {
+    targetType: 'REQUEST',
+    targetId: authored,
+    reasonCode: 'SPAM',
+    note: 'Reported so the case export has a case in it.',
+  });
+  check('and reported, so there is a case to export', res.status === 202, res.body?.error);
+
+  res = await api(
+    null,
+    'POST',
+    `/admin/members/${warned.id}/warn`,
+    { reasonCode: 'POLICY_VIOLATION', policySubtype: 'SPAM', message: 'Please stop.' },
+    { ...bossHeaders, 'Idempotency-Key': require('crypto').randomUUID() },
+  );
+  check('and a warning is issued, which the enforcement log carries', res.status === 200, [
+    res.status,
+    res.body?.error,
+  ]);
+
+  /** The list's own total for the same question, which is what the file has to agree with. */
+  const listTotal = async (route, headersFor) => {
+    const page = await api(null, 'GET', route, null, headersFor);
+
+    return page.body?.meta?.totalCount ?? -1;
+  };
+
+  /** The file, read as lines with the header dropped. */
+  const linesOf = async (id, headersFor) => {
+    const link = await api(null, 'POST', `/admin/exports/${id}/download`, null, headersFor);
+    const url = link.body?.data?.url;
+
+    // A check that cannot read the file has to fail as a check rather than as a stack trace: a
+    // crash here ends the run and takes every check after it with it.
+    if (!url) {
+      check('the file could be downloaded, so the rows below were read', false, link.body?.error);
+
+      return [];
+    }
+
+    const file = await fetch(url);
+    const csv = Buffer.from(await file.arrayBuffer()).toString('utf8');
+
+    return csv.replace(/^﻿/, '').trim().split('\r\n').slice(1);
+  };
+
+  res = await api(
+    null,
+    'POST',
+    '/admin/exports',
+    { kind: 'REPORTS', columns: ['id', 'state', 'reasonCodes', 'firstReportedAt'] },
+    bossHeaders,
+  );
+  check('a report-case export is accepted', res.status === 202, res.status || res.body?.error);
+
+  const casesFile = await settle(bossHeaders, res.body?.data?.id);
+  const openCases = await listTotal('/admin/reports/cases?perPage=1', bossHeaders);
+
+  check('and it builds', casesFile?.state === 'READY', casesFile);
+  check(
+    'over the list’s own predicate, so the file and the screen are the same set of cases',
+    casesFile?.rowCount === openCases && openCases > 0,
+    { rowCount: casesFile?.rowCount, list: openCases },
+  );
+
+  res = await api(
+    null,
+    'POST',
+    '/admin/exports',
+    { kind: 'REPORTS', columns: ['id', 'state'], filters: { state: 'DISMISSED' } },
+    bossHeaders,
+  );
+
+  const decidedFile = await settle(bossHeaders, res.body?.data?.id);
+  const decidedCases = await listTotal(
+    '/admin/reports/cases?state=DISMISSED&perPage=1',
+    bossHeaders,
+  );
+
+  check(
+    'and a state filter narrows the file exactly as it narrows the list',
+    decidedFile?.rowCount === decidedCases && decidedFile?.rowCount < openCases,
+    { rowCount: decidedFile?.rowCount, list: decidedCases, open: openCases },
+  );
+
+  res = await api(
+    null,
+    'POST',
+    '/admin/exports',
+    { kind: 'REPORTS', columns: ['id'], filters: { stat: 'OPEN' } },
+    bossHeaders,
+  );
+  check(
+    'a misspelled case filter is a 400 naming it, not a file over every case',
+    res.status === 400 && /stat/.test(JSON.stringify(res.body?.error?.details ?? [])),
+    res.body?.error,
+  );
+
+  res = await api(null, 'POST', '/admin/exports', { kind: 'REPORTS', columns: ['id'] }, headers);
+  check(
+    'and exporting cases needs the case list’s permission, which this role has not got',
+    res.status === 403,
+    res.status,
+  );
+
+  res = await api(
+    null,
+    'POST',
+    '/admin/exports',
+    {
+      kind: 'ENFORCEMENT',
+      columns: ['member', 'kind', 'reasonCode', 'issuedAt', 'active'],
+      // No `sort`: an export covers every matching row, so the service refuses paging parameters
+      // by name. The order is the log's own, which is what makes the offset paging under this safe.
+      filters: { kind: 'STRIKE' },
+    },
+    bossHeaders,
+  );
+  check('an enforcement export is accepted', res.status === 202, res.status || res.body?.error);
+
+  const logFile = await settle(bossHeaders, res.body?.data?.id);
+  const logTotal = await listTotal('/admin/enforcement?perPage=1&kind=STRIKE', bossHeaders);
+
+  check('and it builds', logFile?.state === 'READY', logFile);
+  check(
+    'with one row per strike and suspension, the list’s own union',
+    logFile?.rowCount === logTotal && logTotal > 0,
+    { rowCount: logFile?.rowCount, list: logTotal },
+  );
+
+  const logLines = await linesOf(logFile?.id, bossHeaders);
+
+  check(
+    'naming the member and their id, so a row can be looked up from the file',
+    logLines.some(line => line.includes(`(${warned.id})`)),
+    logLines.slice(0, 2),
+  );
+
+  res = await api(
+    null,
+    'POST',
+    '/admin/exports',
+    { kind: 'CONTENT', columns: ['targetType', 'targetId', 'visibilityState', 'createdAt'] },
+    bossHeaders,
+  );
+  check('a content export is accepted', res.status === 202, res.status || res.body?.error);
+
+  const contentFile = await settle(bossHeaders, res.body?.data?.id);
+
+  check('and it builds', contentFile?.state === 'READY', contentFile);
+
+  const contentLines = await linesOf(contentFile?.id, bossHeaders);
+  const types = new Set(contentLines.map(line => line.split(',')[0]));
+
+  check(
+    'covering every kind in one file, which is what the targetType column is for',
+    types.size > 1 && contentLines.length === contentFile?.rowCount,
+    { types: [...types].slice(0, 6), lines: contentLines.length, rowCount: contentFile?.rowCount },
+  );
+
+  res = await api(
+    null,
+    'POST',
+    '/admin/exports',
+    { kind: 'CONTENT', columns: ['targetType', 'targetId'], filters: { authorId: author.id } },
+    bossHeaders,
+  );
+
+  const mineFile = await settle(bossHeaders, res.body?.data?.id);
+
+  check(
+    'a filter every kind understands narrows it, here to one member’s content',
+    mineFile?.rowCount >= 1 && mineFile?.rowCount < contentFile?.rowCount,
+    { mine: mineFile?.rowCount, all: contentFile?.rowCount },
+  );
+
+  res = await api(
+    null,
+    'POST',
+    '/admin/exports',
+    { kind: 'CONTENT', columns: ['targetId'], filters: { published: 'true' } },
+    bossHeaders,
+  );
+  check(
+    'but a filter belonging to one kind is refused by name, not applied to the other sixteen',
+    res.status === 400 && /published/.test(JSON.stringify(res.body?.error?.details ?? [])),
+    res.body?.error,
   );
 
   console.log('\n── What may be asked for ────────────────────────────────────');

@@ -108,15 +108,17 @@ export class AdminReportCaseService {
     private readonly appeals: AdminAppealService,
   ) {}
 
-  async list(actor: AdminPrincipal, query: ListReportCasesDto) {
-    const now = new Date();
-    // Overdue only means anything about a case somebody could still act on, so it narrows the
-    // states rather than sitting beside them. Spread as a second `state` key it would have
-    // *replaced* the caller's filter, and `?overdue=true&state=ACTIONED` would have quietly
-    // answered with open work instead.
-    const asked = query.state?.length ? query.state : LIVE;
-    const states = query.overdue ? asked.filter(state => LIVE.includes(state)) : asked;
-    const where: Prisma.ReportCaseWhereInput = {
+  /**
+   * The list's own predicate, for §5.26's export.
+   *
+   * Extracted rather than copied, which is the whole reason the export waited: a second
+   * implementation of eleven filters would hand somebody a CSV describing a different set of cases
+   * from the screen they exported it from, and nothing would say which was right.
+   */
+  whereFor(actor: AdminPrincipal, query: ListReportCasesDto, now = new Date()) {
+    const states = statesFor(query);
+
+    return {
       state: { in: states },
       ...(query.priority?.length ? { priority: { in: query.priority } } : {}),
       ...(query.reasonCodes?.length ? { reasonCodes: { hasSome: query.reasonCodes } } : {}),
@@ -136,7 +138,15 @@ export class AdminReportCaseService {
             },
           }
         : {}),
-    };
+    } satisfies Prisma.ReportCaseWhereInput;
+  }
+
+  async list(actor: AdminPrincipal, query: ListReportCasesDto) {
+    const now = new Date();
+    // The same narrowing the predicate uses, so the sort and the filter can never disagree about
+    // which states are being listed.
+    const states = statesFor(query);
+    const where = this.whereFor(actor, query, now);
 
     const [total, rows, urgentUnclaimed, overdueCount] = await this.database.$transaction([
       this.database.reportCase.count({ where }),
@@ -918,3 +928,20 @@ export class AdminReportCaseService {
     };
   }
 }
+
+/**
+ * Which states a query is asking about.
+ *
+ * `overdue` **narrows** the states rather than sitting beside them: spread as a second `state` key
+ * it would have replaced the caller's filter, and `?overdue=true&state=ACTIONED` would have
+ * quietly answered with open work instead. A decided case cannot be late any more.
+ *
+ * One function because two callers need the answer — the predicate and the default sort — and a
+ * list whose ordering disagreed with its filter about which states it held would pick the wrong
+ * default without anything looking wrong.
+ */
+const statesFor = (query: ListReportCasesDto): ReportCaseState[] => {
+  const asked = query.state?.length ? query.state : LIVE;
+
+  return query.overdue ? asked.filter(state => LIVE.includes(state)) : asked;
+};

@@ -55,6 +55,36 @@ export class AdminEnforcementLogService {
     private readonly media: MediaService,
   ) {}
 
+  /**
+   * The log's own rows, for §5.26's export.
+   *
+   * It reuses `list` rather than rebuilding the union, which is the point: the union is where
+   * "active" means two different things in two tables — a strike runs out, a permanent suspension
+   * never does — and a second copy of that would export a different set of rows from the screen.
+   *
+   * Offset paging, which is safe here because the order is `issued_at DESC, id ASC`: a stable
+   * total order, so a row cannot move between pages while the file is built.
+   */
+  async exportPage(query: ListEnforcementDto, page: number, size: number) {
+    /**
+     * Cloned through the prototype, not spread.
+     *
+     * `{ ...query }` is a plain object, and `list` calls `query.sortField(...)` — a prototype
+     * method. A spread would have thrown `sortField is not a function` on the first page of every
+     * enforcement export, and the `as ListEnforcementDto` that a spread needs is exactly the cast
+     * that hides it from the compiler.
+     */
+    const paged: ListEnforcementDto = Object.assign(
+      Object.create(Object.getPrototypeOf(query) as object) as ListEnforcementDto,
+      query,
+      { currentPage: page, size },
+    );
+
+    const { data } = await this.list(paged);
+
+    return data;
+  }
+
   async list(query: ListEnforcementDto) {
     const kinds: EnforcementKind[] = query.kind?.length ? query.kind : ['STRIKE', 'SUSPENSION'];
     const sort = query.sortField(['issuedAt', 'expiresAt'], 'issuedAt');

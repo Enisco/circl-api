@@ -10,6 +10,10 @@ import { AdminPrincipal } from '../common/admin-principal';
 import { CreateExportDto, ListExportsDto } from '../dtos/admin-export.dto';
 import { ListMembersDto } from '../dtos/analytics-filter.dto';
 import { ListAuditDto } from '../dtos/admin-audit.dto';
+import { ListEnforcementDto } from '../dtos/admin-enforcement.dto';
+import { ListReportCasesDto } from '../dtos/admin-report-case.dto';
+import { ListContentDto } from '../content/admin-content.dto';
+import { ALL_TYPE_FILTERS } from '../content/admin-content.service';
 import { ListSupportThreadsDto } from '../dtos/admin-support.dto';
 import { AdminMemberService } from '../services/admin-member.service';
 import { StaffRefView, staffRefSelect, toStaffRef } from '../serializers/admin-staff.serializer';
@@ -377,6 +381,9 @@ export class AdminExportService {
       [AdminExportKind.MEMBERS]: ListMembersDto,
       [AdminExportKind.AUDIT]: ListAuditDto,
       [AdminExportKind.SUPPORT_THREADS]: ListSupportThreadsDto,
+      [AdminExportKind.REPORTS]: ListReportCasesDto,
+      [AdminExportKind.ENFORCEMENT]: ListEnforcementDto,
+      [AdminExportKind.CONTENT]: ListContentDto,
     };
     const Dto = dtoForKind[kind];
 
@@ -394,6 +401,31 @@ export class AdminExportService {
             details: errors.map(error => ({
               field: `filters.${error.property}`,
               message: Object.values(error.constraints ?? {})[0] ?? 'Not a filter.',
+            })),
+          },
+        );
+      }
+    }
+
+    /**
+     * A **type-specific** content filter is refused rather than ignored.
+     *
+     * The content export covers every kind in one file, and `?published=true` means something to
+     * guides and nothing to shops. Applying it across the other sixteen would be wrong and
+     * dropping it silently would produce a file nobody could explain — so it is named, with the
+     * suggestion that belongs to it: ask for that kind's list instead.
+     */
+    if (kind === AdminExportKind.CONTENT) {
+      const typeSpecific = ALL_TYPE_FILTERS.filter(filter => filters[filter] !== undefined);
+
+      if (typeSpecific.length) {
+        throw ApiException.badRequest(
+          ApiErrorCode.VALIDATION_FAILED,
+          `The content export covers every kind, so it takes no type-specific filter: ${typeSpecific.join(', ')}.`,
+          {
+            details: typeSpecific.map(field => ({
+              field: `filters.${field}`,
+              message: 'Belongs to one content type. Export from that type’s list instead.',
             })),
           },
         );

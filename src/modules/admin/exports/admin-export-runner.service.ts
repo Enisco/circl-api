@@ -9,6 +9,13 @@ import { ListAuditDto } from '../dtos/admin-audit.dto';
 import { ListSupportThreadsDto } from '../dtos/admin-support.dto';
 import { AdminPrincipal } from '../common/admin-principal';
 import { AdminAuditService } from '../services/admin-audit.service';
+import { AdminEnforcementLogService } from '../services/admin-enforcement-log.service';
+import { AdminReportCaseService } from '../services/admin-report-case.service';
+import { AdminContentService } from '../content/admin-content.service';
+import { CONTENT_SLUGS } from '../content/content-registry';
+import { ListContentDto } from '../content/admin-content.dto';
+import { ListEnforcementDto } from '../dtos/admin-enforcement.dto';
+import { ListReportCasesDto } from '../dtos/admin-report-case.dto';
 import { AdminSupportService } from '../services/admin-support.service';
 import { MemberExportRow, AdminMemberService } from '../services/admin-member.service';
 import { CSV_BOM, CSV_MIME, csvRow } from './export-csv';
@@ -78,6 +85,9 @@ export class AdminExportRunner {
     // scope each one applies on screen is the scope the file is built under.
     private readonly auditTrail: AdminAuditService,
     private readonly support: AdminSupportService,
+    private readonly cases: AdminReportCaseService,
+    private readonly enforcement: AdminEnforcementLogService,
+    private readonly content: AdminContentService,
   ) {}
 
   async run(exportId: string, options: { lastAttempt: boolean }): Promise<void> {
@@ -146,6 +156,12 @@ export class AdminExportRunner {
         return this.buildAudit(row, columns, filters);
       case AdminExportKind.SUPPORT_THREADS:
         return this.buildSupportThreads(row, columns, filters);
+      case AdminExportKind.REPORTS:
+        return this.buildReports(row, columns, filters);
+      case AdminExportKind.ENFORCEMENT:
+        return this.buildEnforcement(columns, filters);
+      case AdminExportKind.CONTENT:
+        return this.buildContent(columns, filters);
       default:
         // Unreachable: the service refuses every other kind at request time. Here so that adding
         // a kind to the enum without a builder fails loudly rather than producing an empty file.
@@ -295,6 +311,186 @@ export class AdminExportRunner {
       if (rowCount > cap) throw new ExportTooLarge(cap);
 
       cursor = page[page.length - 1].conversationId;
+    }
+
+    return { body: Buffer.from(chunks.join(''), 'utf8'), rowCount };
+  }
+
+  /**
+   * §5.26's report case export, over the case list's **own** predicate.
+   *
+   * `whereFor` is the list's, extracted rather than copied — eleven filters reimplemented here
+   * would hand somebody a CSV describing a different set of cases from the screen they exported it
+   * from, and nothing would say which was right.
+   */
+  private async buildReports(
+    row: AdminExport,
+    columns: string[],
+    filters: Record<string, unknown>,
+  ): Promise<{ body: Buffer; rowCount: number }> {
+    const actor = await this.actorOf(row);
+    const query = plainToInstance(ListReportCasesDto, filters);
+    const where = this.cases.whereFor(actor, query);
+    const cap = await this.config.get(SYSTEM_CONFIG_KEYS.EXPORT_MAX_ROWS);
+    const chunks: string[] = [CSV_BOM, csvRow(columns)];
+
+    let cursor: string | undefined;
+    let rowCount = 0;
+
+    for (;;) {
+      const page = await this.database.reportCase.findMany({
+        where,
+        select: {
+          id: true,
+          priority: true,
+          state: true,
+          reasonCodes: true,
+          reportCount: true,
+          firstReportedAt: true,
+          decision: true,
+        },
+        orderBy: { id: 'asc' },
+        take: PAGE_SIZE,
+        ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      });
+
+      if (!page.length) break;
+
+      for (const entry of page) {
+        chunks.push(
+          csvRow(
+            columns.map(column => {
+              if (column === 'priority') return entry.priority;
+              if (column === 'state') return entry.state;
+              // Joined with a space, not a comma: the cell is already comma-quoted and a reader
+              // opening it in a spreadsheet should see a list, not a nested CSV.
+              if (column === 'reasonCodes') return entry.reasonCodes.join(' ');
+              if (column === 'reportCount') return entry.reportCount;
+              if (column === 'firstReportedAt') return entry.firstReportedAt.toISOString();
+              if (column === 'decision') return entry.decision;
+
+              return entry.id;
+            }),
+          ),
+        );
+        rowCount += 1;
+      }
+
+      if (rowCount > cap) throw new ExportTooLarge(cap);
+
+      cursor = page[page.length - 1].id;
+    }
+
+    return { body: Buffer.from(chunks.join(''), 'utf8'), rowCount };
+  }
+
+  /**
+   * §5.26's enforcement export, over the log's own union.
+   *
+   * The log reads strikes and suspensions as one list, and `active` means different things in the
+   * two tables — a strike runs out, a permanent suspension never does. That is exactly the rule a
+   * second implementation would get wrong, so this pages the list itself rather than querying the
+   * tables again.
+   */
+  private async buildEnforcement(
+    columns: string[],
+    filters: Record<string, unknown>,
+  ): Promise<{ body: Buffer; rowCount: number }> {
+    const query = plainToInstance(ListEnforcementDto, filters);
+    const cap = await this.config.get(SYSTEM_CONFIG_KEYS.EXPORT_MAX_ROWS);
+    const chunks: string[] = [CSV_BOM, csvRow(columns)];
+
+    let page = 1;
+    let rowCount = 0;
+
+    for (;;) {
+      const rows = await this.enforcement.exportPage(query, page, PAGE_SIZE);
+
+      if (!rows.length) break;
+
+      for (const entry of rows) {
+        chunks.push(
+          csvRow(
+            columns.map(column => {
+              if (column === 'member') {
+                const member = entry.member;
+
+                return member
+                  ? `${[member.firstName, member.lastName].filter(Boolean).join(' ')} (${member.id})`
+                  : null;
+              }
+              if (column === 'kind') return entry.kind;
+              if (column === 'reasonCode') return entry.reasonCode;
+              if (column === 'issuedAt') return entry.issuedAt;
+              if (column === 'expiresAt') return entry.expiresAt;
+
+              // `active` is the log's own `isActive`, which is the only field here that cannot be
+              // derived from the two dates without knowing which table the row came from.
+              return entry.isActive;
+            }),
+          ),
+        );
+        rowCount += 1;
+      }
+
+      if (rowCount > cap) throw new ExportTooLarge(cap);
+      if (rows.length < PAGE_SIZE) break;
+
+      page += 1;
+    }
+
+    return { body: Buffer.from(chunks.join(''), 'utf8'), rowCount };
+  }
+
+  /**
+   * §5.26's content export: **every** kind in one file.
+   *
+   * `targetType` is one of its columns, so the file covers the lot — seventeen kinds, one query
+   * each, concatenated. That is only possible because the four columns asked for are the four
+   * every kind has: the list's own per-kind SQL joins authors, cities, categories and a status
+   * expression, and none of those is here.
+   *
+   * The kinds are walked in the registry's order so the file is grouped by type, which is how
+   * somebody reads it.
+   */
+  private async buildContent(
+    columns: string[],
+    filters: Record<string, unknown>,
+  ): Promise<{ body: Buffer; rowCount: number }> {
+    const query = plainToInstance(ListContentDto, filters);
+    const cap = await this.config.get(SYSTEM_CONFIG_KEYS.EXPORT_MAX_ROWS);
+    const chunks: string[] = [CSV_BOM, csvRow(columns)];
+
+    let rowCount = 0;
+
+    for (const slug of CONTENT_SLUGS) {
+      let offset = 0;
+
+      for (;;) {
+        const rows = await this.content.exportPage(slug, query, offset, PAGE_SIZE);
+
+        if (!rows.length) break;
+
+        for (const entry of rows) {
+          chunks.push(
+            csvRow(
+              columns.map(column => {
+                if (column === 'targetType') return entry.targetType;
+                if (column === 'targetId') return entry.targetId;
+                if (column === 'visibilityState') return entry.visibilityState;
+
+                return entry.createdAt;
+              }),
+            ),
+          );
+          rowCount += 1;
+        }
+
+        if (rowCount > cap) throw new ExportTooLarge(cap);
+        if (rows.length < PAGE_SIZE) break;
+
+        offset += PAGE_SIZE;
+      }
     }
 
     return { body: Buffer.from(chunks.join(''), 'utf8'), rowCount };

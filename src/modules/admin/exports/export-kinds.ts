@@ -79,13 +79,10 @@ export const EXPORT_KINDS: Record<AdminExportKind, ExportKind> = {
 
   [AdminExportKind.REPORTS]: {
     listPermissions: ['reports:read'],
-    available: false,
-    // The list exists (§5.10). What this needs is the one thing an export of it cannot copy: the
-    // list's `where` is built inline from eleven filters, so an export has to either share it or
-    // reimplement it — and a reimplementation that drifts would hand somebody a CSV describing a
-    // different set of cases from the screen they exported it from. Extracting it is the work.
-    pending:
-      'The report case export is not built yet: it needs the case list’s filter to be shared rather than copied.',
+    // The list's predicate is shared rather than copied (`AdminReportCaseService.whereFor`), which
+    // is what this was waiting for: eleven filters reimplemented here would describe a different
+    // set of cases from the screen the file came from, with nothing to say which was right.
+    available: true,
     columns: [
       { key: 'id' },
       { key: 'priority' },
@@ -99,10 +96,10 @@ export const EXPORT_KINDS: Record<AdminExportKind, ExportKind> = {
 
   [AdminExportKind.ENFORCEMENT]: {
     listPermissions: ['moderation:read'],
-    available: false,
-    // Same shape of work as the reports export, and the same reason for not guessing at it.
-    pending:
-      'The enforcement export is not built yet: it needs the enforcement list’s filter to be shared rather than copied.',
+    available: true,
+    // Pages the log itself rather than querying strikes and suspensions again: "active" means a
+    // strike that has not run out **or** a suspension that may never end, and that is exactly the
+    // rule a second implementation gets wrong.
     columns: [
       { key: 'member' },
       { key: 'kind' },
@@ -115,16 +112,19 @@ export const EXPORT_KINDS: Record<AdminExportKind, ExportKind> = {
 
   [AdminExportKind.CONTENT]: {
     listPermissions: ['content:read'],
-    available: false,
+    available: true,
     /**
-     * The hardest of the five, and the reason is structural rather than scheduling: §5.7's list is
-     * raw SQL **per content kind** — seventeen tables with different author columns, different
-     * date columns and different status expressions — so "export the content list" is seventeen
-     * queries, not one. It wants its own pass rather than a builder that quietly covers four kinds
-     * and returns empty for the rest.
+     * Every kind in one file — `targetType` is a column, so the file covers the lot: seventeen
+     * queries, one per kind, concatenated in the registry's order so it reads grouped by type.
+     *
+     * Possible only because the four columns asked for are the four every kind has. The list's own
+     * SQL joins authors, cities, categories and a per-kind status expression; none of that is
+     * here, which is why this is a page per kind rather than seventeen bespoke builders.
+     *
+     * A **type-specific** filter is refused rather than ignored: `?published=true` means something
+     * to guides and nothing to shops, and applying it across sixteen other kinds — or silently
+     * dropping it — would produce a file nobody could explain.
      */
-    pending:
-      'The content export is not built yet: §5.7’s list is a query per content kind, and an export has to cover all seventeen or none.',
     columns: [
       { key: 'targetType' },
       { key: 'targetId' },

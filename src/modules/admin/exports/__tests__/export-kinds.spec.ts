@@ -32,6 +32,9 @@ describe('export kinds', () => {
     expect(available).toEqual([
       AdminExportKind.MEMBERS,
       AdminExportKind.AUDIT,
+      AdminExportKind.REPORTS,
+      AdminExportKind.ENFORCEMENT,
+      AdminExportKind.CONTENT,
       AdminExportKind.SUPPORT_THREADS,
     ]);
   });
@@ -81,6 +84,18 @@ describe('export kinds', () => {
       'email',
       'phone',
     ]);
+  });
+
+  /**
+   * Every built kind offers columns, because a kind marked available with an empty allowlist
+   * refuses every request: `orderColumns` drops what it cannot find, and the service refuses an
+   * empty column set. ANALYTICS_CHART is the one exception and is unavailable for that reason.
+   */
+  it.each(KINDS.filter(kind => EXPORT_KINDS[kind].available))('%s offers columns', kind => {
+    expect(EXPORT_KINDS[kind].columns.length).toBeGreaterThan(0);
+    expect(new Set(EXPORT_KINDS[kind].columns.map(column => column.key)).size).toBe(
+      EXPORT_KINDS[kind].columns.length,
+    );
   });
 
   it('reserves ANALYTICS_CHART with no columns, because chart CSVs are built in the browser', () => {
