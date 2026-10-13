@@ -1,10 +1,18 @@
 model SystemConfig {
-  id          String   @id @default(uuid())
-  key         String   @unique @map("key")
-  value       Json?    @map("value")
-  description String?  @map("description")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id          String  @id @default(uuid())
+  key         String  @unique @map("key")
+  value       Json?   @map("value")
+  description String? @map("description")
+
+  /// Who changed it last (§5.21's `ConfigEntry.updatedBy`).
+  ///
+  /// No foreign key, for the reason the audit log has none: the record of who moved a threshold has
+  /// to outlive the account that moved it. Null for a row nobody has overridden — the seeded
+  /// defaults — and for anything the platform writes itself.
+  updatedById String? @map("updated_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("system_config")
 }

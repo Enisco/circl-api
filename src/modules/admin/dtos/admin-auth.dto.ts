@@ -1,6 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
-import { IsEmail, IsIn, IsOptional, IsString, Length, MaxLength } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsEmail,
+  IsIn,
+  IsOptional,
+  IsString,
+  Length,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
+import { StrictBoolean } from '@/common';
 import { ADMIN_ROLE_CODES } from '../common/admin-policy.service';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
@@ -154,4 +163,43 @@ export class AdminUpdateProfileDto {
   @IsString()
   @MaxLength(64)
   avatarMediaId?: string | null;
+}
+
+/** §5.2's three alert toggles. Named rather than a free map, so an unknown key is a 400. */
+export class AdminAlertPreferencesDto {
+  @ApiPropertyOptional({ description: 'An URGENT report arriving.' })
+  @StrictBoolean()
+  @IsOptional()
+  urgentReports?: boolean;
+
+  @ApiPropertyOptional({ description: 'A CRITICAL Guard case opening.' })
+  @StrictBoolean()
+  @IsOptional()
+  criticalGuard?: boolean;
+
+  @ApiPropertyOptional({ description: 'Work being assigned to me.' })
+  @StrictBoolean()
+  @IsOptional()
+  assignedToMe?: boolean;
+}
+
+/**
+ * §5.2's staff preferences.
+ *
+ * `alerts` is **merged**, not replaced: the portal's settings screen has three switches and sends
+ * the one that moved. Replacing would mean a screen that saves one toggle silently turning the
+ * other two off — which for `criticalGuard` is somebody who stops being told about safeguarding
+ * cases and has no way to know it happened.
+ */
+export class AdminPreferencesDto {
+  @ApiPropertyOptional({ enum: ['light', 'dark', 'system'] })
+  @IsIn(['light', 'dark', 'system'])
+  @IsOptional()
+  theme?: 'light' | 'dark' | 'system';
+
+  @ApiPropertyOptional({ type: AdminAlertPreferencesDto })
+  @ValidateNested()
+  @Type(() => AdminAlertPreferencesDto)
+  @IsOptional()
+  alerts?: AdminAlertPreferencesDto;
 }

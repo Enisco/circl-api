@@ -80,6 +80,19 @@ export class SystemConfigService {
   }
 
   /**
+   * Drops the cached copy of one key without writing anything.
+   *
+   * For a caller that has already written the row itself — §5.21's `PATCH admin/config/:key`
+   * writes it inside the audit transaction, because S11.1 wants the change and its trail to stand
+   * or fall together, and `set` above cannot join a transaction it does not know about. Without
+   * this the staff member who made the change would read the old value back for up to a minute
+   * and reasonably conclude it had not saved.
+   */
+  async invalidate(key: SystemConfigKey): Promise<void> {
+    await this.cache.delete(`${SystemConfigService.PREFIX}${key}`);
+  }
+
+  /**
    * A stored value, if it is the same shape as the default; otherwise the default.
    *
    * Shape rather than schema: a number stays a number, an array stays an array, and an object keeps

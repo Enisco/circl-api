@@ -162,3 +162,230 @@ export const SYSTEM_CONFIG_DEFAULTS = {
 export type SystemConfigValues = {
   [K in SystemConfigKey]: (typeof SYSTEM_CONFIG_DEFAULTS)[K];
 };
+
+/** §5.21's grouping: which tab of the settings screen a key belongs on. */
+export type ConfigGroup = 'LIMITS' | 'SAFETY' | 'SLAS' | 'OPERATIONS';
+
+/**
+ * How a value is checked before it is stored, in the smallest vocabulary that covers these keys.
+ *
+ * Not JSON Schema, and the reason is the error message. §5.21 says "JSON-schema validated per key",
+ * and a schema validator's output — `/low: must be <= 100` against a draft pointer — is a sentence
+ * for a developer, not for the person who typed 300 into a box labelled "Low". These rules carry
+ * their own bounds, so a refusal can name the field, the limit and the value in words.
+ *
+ * `record` is the one that needed a shape of its own: `safety.classifier.weights` is "any of these
+ * category names, each a number in range", which is a key set nobody should have to declare.
+ */
+export type ConfigRule =
+  | { type: 'integer'; min: number; max: number }
+  | { type: 'number'; min: number; max: number }
+  | { type: 'boolean' }
+  | { type: 'string'; pattern?: RegExp; maxLength?: number }
+  | { type: 'enumList'; of: readonly string[]; min?: number; max?: number }
+  | { type: 'object'; fields: Record<string, ConfigRule>; increasing?: string[] }
+  | { type: 'record'; value: ConfigRule }
+  | { type: 'stringList'; maxLength?: number; max?: number };
+
+export interface ConfigMeta {
+  label: string;
+  group: ConfigGroup;
+  description: string;
+  rule: ConfigRule;
+}
+
+const count = (min: number, max: number): ConfigRule => ({ type: 'integer', min, max });
+const minutes = (max = 10_080): ConfigRule => ({ type: 'integer', min: 1, max });
+
+/**
+ * Every key the settings screen shows, with the words staff read beside it.
+ *
+ * Held here rather than in the database because a description is documentation, and documentation
+ * that lives in a row is documentation nobody reviews. The **value** is in the database; what the
+ * value means is in the repository.
+ *
+ * `appVersions` is deliberately absent: it has its own endpoint, its own shape and its own
+ * validation (semver, ordered, a store host per platform), and offering it in a generic "edit this
+ * JSON" box is how somebody ships a force-update with a typo in it.
+ */
+export const SYSTEM_CONFIG_META: Record<string, ConfigMeta> = {
+  'limits.maxInterests': {
+    label: 'Interests a member may pick',
+    group: 'LIMITS',
+    description:
+      'The ceiling on a profile’s interests. The app’s picker reads it from the catalogue.',
+    rule: count(1, 30),
+  },
+  'limits.maxLanguages': {
+    label: 'Languages a member may list',
+    group: 'LIMITS',
+    description: 'Spoken languages on a profile.',
+    rule: count(1, 20),
+  },
+  'limits.connectMinimumAge': {
+    label: 'Minimum age for Connect',
+    group: 'LIMITS',
+    description:
+      'Nobody below this age reaches Connect at all. Raising it does not remove existing profiles; it stops new ones.',
+    rule: count(16, 25),
+  },
+  'limits.nearMeRadiusKm': {
+    label: '“Near me” radius (km)',
+    group: 'LIMITS',
+    description: 'How far “near me” reaches on the member’s own map.',
+    rule: count(1, 200),
+  },
+  'limits.maxHobbies': {
+    label: 'Hobbies a member may pick',
+    group: 'LIMITS',
+    description: 'The ceiling on a Connect profile’s hobbies.',
+    rule: count(1, 30),
+  },
+  'limits.minHobbies': {
+    label: 'Hobbies a Connect profile needs',
+    group: 'LIMITS',
+    description:
+      'Checked when a profile is created, never when one is edited: a member who joined before the rule keeps their place.',
+    rule: count(0, 10),
+  },
+  'limits.minConnectPhotos': {
+    label: 'Photos a Connect profile needs',
+    group: 'LIMITS',
+    description: 'Checked on create only, for the same reason as the hobby floor.',
+    rule: count(0, 10),
+  },
+  'limits.maxCardPhotos': {
+    label: 'Photos on a Connect card',
+    group: 'LIMITS',
+    description: 'How many of their gallery a member may pin to the card other people swipe.',
+    rule: count(1, 10),
+  },
+  'limits.minPromptAnswer': {
+    label: 'Shortest prompt answer',
+    group: 'LIMITS',
+    description:
+      'Characters. Low on purpose: “Nigerian jollof” is a complete answer to “Ask me about”.',
+    rule: count(1, 200),
+  },
+  'limits.maxPromptAnswer': {
+    label: 'Longest prompt answer',
+    group: 'LIMITS',
+    description: 'Characters.',
+    rule: count(20, 1000),
+  },
+
+  'safety.tierThresholds': {
+    label: 'Risk tier thresholds',
+    group: 'SAFETY',
+    description:
+      'The score at which content becomes LOW, MEDIUM, HIGH and CRITICAL. Must increase: a MEDIUM floor above the HIGH floor is a band nothing can ever land in.',
+    rule: {
+      type: 'object',
+      fields: {
+        low: count(0, 1000),
+        medium: count(0, 1000),
+        high: count(0, 1000),
+        critical: count(0, 1000),
+      },
+      increasing: ['low', 'medium', 'high', 'critical'],
+    },
+  },
+  'safety.classifier': {
+    label: 'Classifier',
+    group: 'SAFETY',
+    description:
+      'Whether the model runs, how long it is given, how much of the blended score it contributes, and the per-category multipliers. Switching it off leaves the lexicon, which is the half staff maintain.',
+    rule: {
+      type: 'object',
+      fields: {
+        enabled: { type: 'boolean' },
+        model: { type: 'string', maxLength: 64 },
+        timeoutMs: count(100, 30_000),
+        /** How much of the blended score the classifier contributes beside the lexicon (§6.3). */
+        weight: { type: 'number', min: 0, max: 1 },
+        /** Per-category multipliers. Any category not listed multiplies by 1. */
+        multipliers: { type: 'record', value: { type: 'number', min: 0, max: 5 } },
+      },
+    },
+  },
+  'safety.criticalCategories': {
+    label: 'Categories that escalate on their own',
+    group: 'SAFETY',
+    description:
+      'A single phrase in one of these, weighing as much as the HIGH threshold, opens a Guard case rather than adding to a score.',
+    rule: { type: 'stringList', maxLength: 40, max: 20 },
+  },
+  'safety.strikeExpiryDays': {
+    label: 'Strike expiry (days)',
+    group: 'SAFETY',
+    description: 'How long a strike counts against a member.',
+    rule: count(1, 3650),
+  },
+  'safety.suggestSuspensionAtStrikes': {
+    label: 'Suggest suspension at',
+    group: 'SAFETY',
+    description:
+      'Active strikes at which the portal suggests a suspension. A suggestion, never an automatic one.',
+    rule: count(1, 20),
+  },
+
+  'reports.slaMinutes': {
+    label: 'Report deadlines (minutes)',
+    group: 'SLAS',
+    description: 'Per priority. Wall clock, not working hours.',
+    rule: {
+      type: 'object',
+      fields: { URGENT: minutes(), HIGH: minutes(), NORMAL: minutes() },
+    },
+  },
+  'moderation.anonymousSlaWorkingMinutes': {
+    label: 'Anonymous post deadline (working minutes)',
+    group: 'SLAS',
+    description: 'Counted against the working hours below, because nobody is on at 3am.',
+    rule: minutes(),
+  },
+  'moderation.workingHours': {
+    label: 'Working hours',
+    group: 'OPERATIONS',
+    description: 'The window the working-hours deadlines are counted in.',
+    rule: {
+      type: 'object',
+      fields: {
+        tz: { type: 'string', maxLength: 64 },
+        days: { type: 'enumList', of: ['1', '2', '3', '4', '5', '6', '7'], min: 1, max: 7 },
+        start: { type: 'string', pattern: /^([01]\d|2[0-3]):[0-5]\d$/ },
+        end: { type: 'string', pattern: /^([01]\d|2[0-3]):[0-5]\d$/ },
+      },
+    },
+  },
+  'appeals.slaHours': {
+    label: 'Appeal deadline (hours)',
+    group: 'SLAS',
+    description: 'How long an appeal has before it reads as overdue.',
+    rule: count(1, 720),
+  },
+  'support.firstResponseSlaMinutes': {
+    label: 'Support first response (minutes)',
+    group: 'SLAS',
+    description: 'A support thread with no staff reply inside this is overdue.',
+    rule: minutes(),
+  },
+
+  'exports.maxRows': {
+    label: 'Export row ceiling',
+    group: 'OPERATIONS',
+    description:
+      'An export above this is refused rather than built, with a message telling the asker to narrow the filters.',
+    rule: count(100, 1_000_000),
+  },
+  'analytics.cacheTtlSeconds': {
+    label: 'Analytics cache (seconds)',
+    group: 'OPERATIONS',
+    description:
+      'Today’s numbers are cached briefly and historical ones for longer, because yesterday does not change.',
+    rule: {
+      type: 'object',
+      fields: { today: count(0, 86_400), historical: count(0, 604_800) },
+    },
+  },
+};

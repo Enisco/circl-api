@@ -527,6 +527,80 @@ async function inviteFor(email, roleCode = 'super_admin') {
   r = await api(null, 'POST', '/admin/jobs/intelligence.search-demand/run', {}, adminHeaders(ts));
   check('but cannot run scheduled jobs, which only a super admin may', r.status === 403, r.status);
 
+  console.log('\n── My own portal settings (§5.2) ───────────────────────────');
+
+  const asSupport = adminHeaders(support);
+
+  r = await api(null, 'GET', '/admin/me/preferences', null, asSupport);
+  check(
+    'every key is present, filled in from the defaults',
+    r.status === 200 &&
+      r.body?.data?.theme === 'system' &&
+      r.body?.data?.alerts?.urgentReports === true &&
+      r.body?.data?.alerts?.criticalGuard === true &&
+      r.body?.data?.alerts?.assignedToMe === true,
+    r.body?.data,
+  );
+
+  r = await api(null, 'PUT', '/admin/me/preferences', { theme: 'dark' }, asSupport);
+  check('the theme saves', r.status === 200 && r.body?.data?.theme === 'dark', r.body?.data);
+
+  // The merge is the point: the screen has three switches and sends the one that moved. Replacing
+  // would mean saving one toggle silently turns the other two off — and for `criticalGuard` that
+  // is somebody who stops hearing about safeguarding cases with no way to know it happened.
+  r = await api(
+    null,
+    'PUT',
+    '/admin/me/preferences',
+    { alerts: { assignedToMe: false } },
+    asSupport,
+  );
+  check(
+    'one switch moves and the other two keep their state',
+    r.body?.data?.alerts?.assignedToMe === false &&
+      r.body?.data?.alerts?.urgentReports === true &&
+      r.body?.data?.alerts?.criticalGuard === true,
+    r.body?.data?.alerts,
+  );
+  check(
+    'and the theme set a moment ago is still there',
+    r.body?.data?.theme === 'dark',
+    r.body?.data,
+  );
+
+  r = await api(null, 'GET', '/admin/me/preferences', null, asSupport);
+  check(
+    'read back, it is what was written',
+    r.body?.data?.theme === 'dark' && r.body?.data?.alerts?.assignedToMe === false,
+    r.body?.data,
+  );
+
+  r = await api(null, 'PUT', '/admin/me/preferences', { theme: 'midnight' }, asSupport);
+  check('a theme nobody has is refused', r.status === 400, r.status);
+
+  r = await api(
+    null,
+    'PUT',
+    '/admin/me/preferences',
+    { alerts: { urgentRepots: false } },
+    asSupport,
+  );
+  check(
+    'and a mistyped switch is a 400, not a setting somebody believes they changed',
+    r.status === 400,
+    { status: r.status, message: r.body?.error?.message },
+  );
+
+  const themeEntries = await prisma.auditLog.count({
+    where: { actorId: support.id, action: 'staff.profile_updated' },
+  });
+
+  check(
+    'preferences are not audited: a choice of theme in that trail is noise',
+    themeEntries === 0,
+    themeEntries,
+  );
+
   console.log('\n── Audit ───────────────────────────────────────────────────');
 
   const entries = await prisma.auditLog.findMany({

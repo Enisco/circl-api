@@ -217,12 +217,22 @@ export class AdminTaxonomyService {
     ): Promise<void> => {
       for (const row of await rows) add(row.code, Number(row.total));
     };
-    // A JSON array column: `interests` and `languages` hold several codes per member, so the count
-    // is "profiles holding this code" rather than a group by one column.
-    const inJsonArray = async (column: 'interests' | 'languages'): Promise<void> => {
+    /**
+     * A JSON array column: several codes per row, so the count is "rows holding this code" rather
+     * than a group by one column.
+     *
+     * The table is a parameter because Connect's hobbies live on `connect_profiles` rather than on
+     * the member profile — and `HOBBY` is editable, so without this a staff member deactivating a
+     * hobby was told nobody used it while hundreds of profiles held it.
+     */
+    const inJsonArray = async (
+      table: 'user_profile' | 'connect_profiles',
+      column: 'interests' | 'languages' | 'hobbies' | 'learning_languages',
+    ): Promise<void> => {
       const rows = await this.database.$queryRaw<Array<{ code: string; total: bigint }>>`
         SELECT code, COUNT(*) AS total
-        FROM "user_profile", jsonb_array_elements_text(${Prisma.raw(`"${column}"`)}) AS code
+        FROM ${Prisma.raw(`"${table}"`)},
+             jsonb_array_elements_text(${Prisma.raw(`"${column}"`)}) AS code
         WHERE ${Prisma.raw(`"${column}"`)} IS NOT NULL
         GROUP BY 1
       `;
@@ -300,14 +310,33 @@ export class AdminTaxonomyService {
         );
         break;
       case TaxonomyKind.INTEREST:
-        await inJsonArray('interests');
+        await inJsonArray('user_profile', 'interests');
         break;
       case TaxonomyKind.LANGUAGE:
-        await inJsonArray('languages');
+        // Both sides of a language: spoken on the member profile, and being learnt on a Connect
+        // profile. A code used only by learners is still in use, and deactivating it would empty
+        // the exchange half of Connect.
+        await inJsonArray('user_profile', 'languages');
+        await inJsonArray('connect_profiles', 'learning_languages');
+        break;
+      case TaxonomyKind.HOBBY:
+        // On `connect_profiles`, not the member profile. `HOBBY` became editable with Connect v2
+        // and fell through to zero until this.
+        await inJsonArray('connect_profiles', 'hobbies');
+        break;
+      case TaxonomyKind.PROFESSION:
+        // A join table — a listing carries several professions — so the count is listings per
+        // code. It is countable after all, and it is the one staff are likeliest to prune: a
+        // profession nobody lists under is a picker row nobody needs.
+        await tally(
+          this.database.professionalListingCategory
+            .groupBy({ by: ['code'], _count: { _all: true } })
+            .then(rows => rows.map(r => ({ code: r.code, total: r._count._all }))),
+        );
         break;
       default:
-        // PROFESSION and MANAGED_CATEGORY are join tables and the rest are seed-only; both return
-        // zero rather than a number nobody could act on.
+        // The rest are seed-only vocabularies with no column to count — sort options, experience
+        // levels, notification categories. Zero rather than a number nobody could act on.
         break;
     }
 

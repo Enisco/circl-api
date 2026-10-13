@@ -159,7 +159,15 @@ export const AUDIT_ACTIONS = {
   'city.created': AuditArea.CONFIG,
   'city.updated': AuditArea.CONFIG,
   'config.updated': AuditArea.CONFIG,
+  /// §5.21's app version policy. Its own action rather than a `config.updated` on the
+  /// `appVersions` key, because this is the one setting that can lock every member out of the app
+  /// — a force-update is an outage somebody chose — and it should be findable by name in the trail.
+  'config.app_versions_updated': AuditArea.CONFIG,
   'support_resource.upserted': AuditArea.CONFIG,
+  /// §5.20's deactivation. Its own action rather than an `upserted` with `isActive: false`,
+  /// because taking a crisis line off the list is the one change here anybody would come looking
+  /// for by name.
+  'support_resource.deactivated': AuditArea.CONFIG,
   'job.run': AuditArea.CONFIG,
 
   // ─── Exports and analytics ─────────────────────────────────────────────────

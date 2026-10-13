@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import {
+  AppVersionInterceptor,
   DeviceInfoMiddleware,
   CommonModule,
   CustomThrottlerGuard,
@@ -79,7 +80,17 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
     // have — which is the boundary telling the truth rather than getting in the way.
     ...(appSurface() === 'admin'
       ? []
-      : [{ provide: APP_INTERCEPTOR, useClass: MemberActivityInterceptor }]),
+      : [
+          { provide: APP_INTERCEPTOR, useClass: MemberActivityInterceptor },
+          // §5.21's force-update gate. Member routes only: a staff request carries no
+          // `x-app-version`, and the portal is not a build anybody updates from a store.
+          //
+          // The app's own launch check is what should catch this; the interceptor is for the case
+          // it does not — a client holding a stale policy, one that ignored the answer, or a build
+          // old enough not to ask. It skips the paths a locked-out app still needs, and the crisis
+          // lines are one of them.
+          { provide: APP_INTERCEPTOR, useClass: AppVersionInterceptor },
+        ]),
   ],
 })
 export class AppModule {

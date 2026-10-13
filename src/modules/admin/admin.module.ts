@@ -27,8 +27,10 @@ import { AdminEnforcementController } from './controllers/admin-enforcement.cont
 import { AdminFlagController } from './controllers/admin-flag.controller';
 import { AdminQueueController } from './controllers/admin-queue.controller';
 import { AdminQueueService } from './services/admin-queue.service';
+import { AdminConfigService } from './services/admin-config.service';
 import { AdminDisputeService } from './services/admin-dispute.service';
 import { AdminManagedService } from './services/admin-managed.service';
+import { AdminPlacesService } from './services/admin-places.service';
 import { AdminThreadAccessService } from './services/admin-thread-access.service';
 import { AdminEnforcementService } from './services/admin-enforcement.service';
 import { AdminContentTargetService } from './services/admin-content-target.service';
@@ -40,8 +42,10 @@ import { AdminReportController } from './controllers/admin-report.controller';
 import { AdminMetaController } from './controllers/admin-meta.controller';
 import { AdminTeamController } from './controllers/admin-team.controller';
 import { AdminThreadController } from './controllers/admin-thread.controller';
+import { AdminConfigController } from './controllers/admin-config.controller';
 import { AdminDisputeController } from './controllers/admin-dispute.controller';
 import { AdminManagedController } from './controllers/admin-managed.controller';
+import { AdminPlacesController } from './controllers/admin-places.controller';
 import { AdminSupportController } from './controllers/admin-support.controller';
 import { AdminMediaController } from './controllers/admin-media.controller';
 import { AdminAuditController } from './controllers/admin-audit.controller';
@@ -125,8 +129,10 @@ const CONTROLLERS = [
   AdminMetaController,
   AdminExportController,
   AdminThreadController,
+  AdminConfigController,
   AdminDisputeController,
   AdminManagedController,
+  AdminPlacesController,
   AdminSupportController,
   AdminMediaController,
   AdminAuditController,
@@ -227,8 +233,10 @@ const CONTROLLERS = [
     AdminAppealService,
     AdminListingReviewService,
     AdminQueueService,
+    AdminConfigService,
     AdminDisputeService,
     AdminManagedService,
+    AdminPlacesService,
     AdminThreadAccessService,
     AdminContentTargetService,
     AdminEnforcementService,

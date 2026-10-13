@@ -200,10 +200,21 @@ model UserAuth {
 }
 
 model AdminProfile {
-  id        String   @id @default(uuid())
-  userId    String   @unique @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  avatar    String?  @map("avatar")
+  id     String  @id @default(uuid())
+  userId String  @unique @map("user_id")
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  avatar String? @map("avatar")
+
+  /// §5.2's staff preferences: the portal's theme, and which of three things are worth
+  /// interrupting somebody for.
+  ///
+  /// One JSON column rather than four typed ones, and that is the trade being made on purpose:
+  /// this is a per-person UI setting with no query over it — nothing filters, groups or reports on
+  /// a staff member's theme — so a column per key buys nothing and costs a migration every time
+  /// the portal adds a toggle. The **shape** is enforced in the DTO, where a bad value is a 400
+  /// rather than a row nobody notices.
+  preferences Json? @map("preferences")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 

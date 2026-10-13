@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   UseGuards,
 } from '@nestjs/common';
 import { ApiExcludeController, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -20,6 +21,7 @@ import { AdminAuthenticated, AdminPrincipal } from '../common/admin-principal';
 import { AdminMeService } from '../services/admin-me.service';
 import {
   AdminChangePasswordDto,
+  AdminPreferencesDto,
   AdminReauthenticateDto,
   AdminUpdateProfileDto,
 } from '../dtos/admin-auth.dto';
@@ -54,6 +56,40 @@ export class AdminMeController {
     const { me, auditId } = await this.me.updateProfile(actor, dto);
 
     return { data: me, meta: { auditId }, message: 'Saved.' };
+  }
+
+  @Get('preferences')
+  @AdminAuthenticated()
+  @ApiOperation({
+    summary: 'My portal settings',
+    description:
+      'Every key present, with the defaults filled in — a staff member who has never opened this ' +
+      'screen reads the same shape as one who has, because the portal binds three switches and a ' +
+      'theme and a missing key is a switch with no state to draw.\n\n' +
+      'All three alerts default **on**. The two that matter are an urgent report and a critical ' +
+      'Guard case, and somebody who has never visited this screen should not be the last to hear ' +
+      'about either.',
+  })
+  async preferences(@CurrentUser() actor: AdminPrincipal) {
+    return {
+      data: await this.me.preferences(actor),
+      message: SuccessMessage.RESOURCE_FETCHED('Preferences'),
+    };
+  }
+
+  @Put('preferences')
+  @AdminAuthenticated()
+  @ApiOperation({
+    summary: 'Change them',
+    description:
+      '`alerts` is **merged**: send the switch that moved. Replacing would mean saving one toggle ' +
+      'silently turns the other two off — and for `criticalGuard` that is somebody who stops ' +
+      'being told about safeguarding cases with no way to know it happened.\n\n' +
+      'An unknown key is a 400. Not audited: the trail answers "who did what to whom", and one ' +
+      'person’s choice of theme in that list is noise that makes the signal harder to find.',
+  })
+  async setPreferences(@CurrentUser() actor: AdminPrincipal, @Body() dto: AdminPreferencesDto) {
+    return { data: await this.me.setPreferences(actor, dto), message: 'Saved.' };
   }
 
   @Post('password')

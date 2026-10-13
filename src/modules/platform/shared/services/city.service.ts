@@ -44,6 +44,21 @@ export class CityService {
     this.loadedAt = Date.now();
   }
 
+  /**
+   * Drops the cached city list, so a change in the portal is visible on the next read.
+   *
+   * §5.20 asks for it explicitly: the cache is five minutes long, and a staff member who adds a
+   * city and then cannot find it in a picker reasonably concludes the save failed. Per-instance,
+   * which is honest about what it is — another process keeps its copy until its own TTL expires,
+   * and a city list five minutes stale has never been a problem worth a broadcast channel for.
+   */
+  invalidate(): void {
+    this.cache = null;
+    this.byName = null;
+    this.byLoose = null;
+    this.loadedAt = 0;
+  }
+
   async list(): Promise<City[]> {
     await this.ensureLoaded();
 

@@ -60,9 +60,17 @@ const GAP_ENDPOINTS = [
 
   console.log('\n── Auth is marked, so the Authorize button works ────────────');
   const open = ops.filter(o => !o.op.security).map(o => `${o.method.toUpperCase()} ${o.path}`);
+  /**
+   * The allowlist of routes that answer without a token — and the point of the check is that it is
+   * a list somebody has to edit on purpose.
+   *
+   * `app/version-policy` is public because a build below the forced-update floor cannot sign in,
+   * so an endpoint behind authentication could not tell it why it is stuck (§5.21). It returns a
+   * version policy and nothing about anybody.
+   */
   check(
     'only the public routes are unauthenticated',
-    open.every(route => /auth\/(register|verify)|\/taxonomy$/.test(route)),
+    open.every(route => /auth\/(register|verify)|\/taxonomy$|\/app\/version-policy$/.test(route)),
     open,
   );
   check(

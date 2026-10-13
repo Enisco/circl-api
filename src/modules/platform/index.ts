@@ -2,6 +2,8 @@
 // pulls in every platform module, and `SearchModule` imports `UsersModule`, so going through here
 // closes the cycle and Nest boots with one of the two undefined.
 import { AccountCoreModule } from './account/account-core.module';
+import { AppPolicyCoreModule } from './app/app-policy-core.module';
+import { AppPolicyModule } from './app/app-policy.module';
 import { AccountModule } from './account/account.module';
 import { CommerceModule } from './commerce/commerce.module';
 import { DealsModule } from './deals/deals.module';
@@ -27,6 +29,9 @@ import { TrustModule } from './trust/trust.module';
 /** The product sections, in dependency order. */
 export const PLATFORM_MODULES = [
   PlatformSharedModule,
+  // §5.21's public version gate. Early, because the force-update interceptor is global and a
+  // provider it needs has to be resolvable before any product route is served.
+  AppPolicyModule,
   NotificationsModule,
   IntelligenceModule,
   MessagingModule,
@@ -103,6 +108,10 @@ export const ADMIN_SURFACE_DEPENDENCIES = [
   // `ModerationController` and a staff process serving `POST /moderation/reports` would be a
   // member endpoint nobody is looking for there.
   ModerationCoreModule,
+  // §5.21's version verdict, for the staff screen that sets the policy. The **core** module: the
+  // public `GET /app/version-policy` is a member route, and mounting it here would put one on the
+  // staff host. The surface test asserts exactly that and caught the first version of this.
+  AppPolicyCoreModule,
   // Professionals (core only): §5.16's brief placement creates the booking **the member would
   // have created themselves** — same state, same thread, same notification to the professional,
   // same `NOT_ACCEPTING_WORK` refusal — and §5.17 reads a dispute's subject. The *core* module,

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AdminSession, AdminSessionRevokeReason } from '@prisma/client';
 import { PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException } from '@/common';
+import { ApiErrorCode, ApiException, toJson } from '@/common';
 import { AuditService } from '../audit/audit.service';
 import { AdminPrincipal } from '../common/admin-principal';
 import { AdminPasswordService } from '../auth/admin-password.service';
@@ -70,6 +70,64 @@ export class AdminMeService {
       permissions: [...actor.permissions].sort(),
       mfaEnabled: user.adminCredential?.totpEnabledAt !== null,
     };
+  }
+
+  /**
+   * §5.2's preferences, with the defaults filled in.
+   *
+   * Defaults live here rather than in the column so a staff member who has never opened the
+   * settings screen reads the same shape as one who has — the portal binds three switches and a
+   * theme, and a missing key is a switch with no state to draw.
+   *
+   * All three alerts default **on**: the two that matter are an urgent report and a critical Guard
+   * case, and somebody who has never visited this screen should not be the last to hear about
+   * either.
+   */
+  async preferences(actor: AdminPrincipal): Promise<AdminPreferencesView> {
+    const row = await this.database.adminProfile.findUnique({
+      where: { userId: actor.id },
+      select: { preferences: true },
+    });
+
+    return withDefaults(row?.preferences);
+  }
+
+  /**
+   * Writes them, merging `alerts` rather than replacing it.
+   *
+   * The screen has three switches and sends the one that moved. Replacing would mean saving one
+   * toggle silently turns the other two off — and for `criticalGuard` that is somebody who stops
+   * being told about safeguarding cases with no way to know it happened.
+   */
+  async setPreferences(
+    actor: AdminPrincipal,
+    input: {
+      theme?: 'light' | 'dark' | 'system';
+      alerts?: { urgentReports?: boolean; criticalGuard?: boolean; assignedToMe?: boolean };
+    },
+  ): Promise<AdminPreferencesView> {
+    const current = await this.preferences(actor);
+    const next: AdminPreferencesView = {
+      theme: input.theme ?? current.theme,
+      alerts: {
+        urgentReports: input.alerts?.urgentReports ?? current.alerts.urgentReports,
+        criticalGuard: input.alerts?.criticalGuard ?? current.alerts.criticalGuard,
+        assignedToMe: input.alerts?.assignedToMe ?? current.alerts.assignedToMe,
+      },
+    };
+
+    await this.database.adminProfile.upsert({
+      where: { userId: actor.id },
+      update: { preferences: toJson(next) },
+      // A staff member may have no profile row yet: it is created on first avatar or, now, on
+      // first preference. `upsert` rather than requiring one to exist.
+      create: { userId: actor.id, preferences: toJson(next) },
+    });
+
+    // Deliberately **not** audited. The trail is read to answer "who did what to whom", and one
+    // person's choice of theme in that list is noise that makes the signal harder to find. Nothing
+    // here touches a member, a decision or a permission.
+    return next;
   }
 
   async updateProfile(
@@ -300,3 +358,33 @@ export class AdminMeService {
     );
   }
 }
+
+/** §5.2's `preferences` payload, with every key present. */
+export interface AdminPreferencesView {
+  theme: 'light' | 'dark' | 'system';
+  alerts: { urgentReports: boolean; criticalGuard: boolean; assignedToMe: boolean };
+}
+
+/**
+ * A stored value, with anything it does not carry filled in from the defaults.
+ *
+ * Shape-tolerant on purpose: the column is JSON, so a row written before a key existed is normal
+ * rather than exceptional, and the portal must never be handed a switch with no state.
+ */
+const withDefaults = (stored: unknown): AdminPreferencesView => {
+  const given = (stored && typeof stored === 'object' ? stored : {}) as Record<string, unknown>;
+  const alerts = (given.alerts && typeof given.alerts === 'object' ? given.alerts : {}) as Record<
+    string,
+    unknown
+  >;
+  const theme = given.theme;
+
+  return {
+    theme: theme === 'light' || theme === 'dark' || theme === 'system' ? theme : 'system',
+    alerts: {
+      urgentReports: alerts.urgentReports !== false,
+      criticalGuard: alerts.criticalGuard !== false,
+      assignedToMe: alerts.assignedToMe !== false,
+    },
+  };
+};
