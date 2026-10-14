@@ -9,6 +9,7 @@ import {
   SERVICE_MEDIA_RULES,
 } from '../media.service';
 import { TAXONOMY_LIMITS } from '../../../taxonomy/services/taxonomy-catalogue.service';
+import { SERVICE_LIMITS } from '../../../professionals/dtos/service.dto';
 
 /**
  * The limits the client is **told** are the limits the server **holds**.
@@ -64,6 +65,15 @@ describe('the published media limits', () => {
     expect(SERVICE_MEDIA_RULES.limitCode).toBe('MEDIA_LIMIT_REACHED');
     expect(ITEM_MEDIA_RULES.limitCode).toBe('MEDIA_LIMIT_REACHED');
     expect(POST_MEDIA_RULES.limitCode).toBeUndefined();
+  });
+
+  /**
+   * Not media, and here anyway: it is the same failure, which is a number the form enforces and the
+   * server also enforces from somewhere else. circl-mobile was holding thirty of its own because
+   * `limits` did not carry it.
+   */
+  it('serves the services-per-listing cap the write actually refuses on', () => {
+    expect(TAXONOMY_LIMITS.maxServicesPerListing).toBe(SERVICE_LIMITS.perListing);
   });
 
   it('carries the sixty seconds into both sets of rules', () => {

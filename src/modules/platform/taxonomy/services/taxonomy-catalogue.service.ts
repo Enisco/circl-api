@@ -3,6 +3,7 @@ import { TaxonomyKind } from '@prisma/client';
 import { createHash } from 'crypto';
 import { SYSTEM_CONFIG_KEYS } from '@/common';
 import { CityService, SystemConfigService, TaxonomyService, TermRecord } from '../../shared';
+import { SERVICE_LIMITS } from '../../professionals/dtos/service.dto';
 
 export interface CatalogueTerm {
   code: string;
@@ -103,6 +104,14 @@ export interface TaxonomyLimits {
   // ── Professionals v2 (§3.5). The numbers the app enforces in the form, sent so a change to any
   // of them needs no release.
   maxListingCategories: number;
+  /**
+   * How many services one profile may hold.
+   *
+   * Asked for by §8 — "if you cap services per listing, tell us the number" — and then asked for
+   * again once it was clear the client was holding thirty of its own: a limit the form enforces and
+   * the server also enforces, from two places, is one number until somebody changes one of them.
+   */
+  maxServicesPerListing: number;
   maxServiceMedia: number;
   maxServiceVideos: number;
   minServiceDescription: number;
@@ -149,6 +158,9 @@ export const TAXONOMY_LIMITS: TaxonomyLimits = {
   minPromptAnswer: 20,
   maxPromptAnswer: 100,
   maxListingCategories: 3,
+  // Read from the DTO's own constant rather than restated, so the number the form is told and the
+  // number the write refuses on cannot drift apart.
+  maxServicesPerListing: SERVICE_LIMITS.perListing,
   maxServiceMedia: 10,
   maxServiceVideos: 3,
   minServiceDescription: 40,

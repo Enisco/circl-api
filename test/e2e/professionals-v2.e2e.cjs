@@ -121,7 +121,11 @@ async function main() {
       limits.maxSkills === 10 &&
       limits.maxCustomSkills === 3 &&
       limits.maxItemVideos === 3 &&
-      limits.maxVideoSeconds === 60,
+      limits.maxItemPhotos === 5 &&
+      limits.maxVideoSeconds === 60 &&
+      limits.maxVideoBytes === 50 * 1024 * 1024 &&
+      // The cap the client was holding its own copy of, until it was served (§8).
+      limits.maxServicesPerListing === 30,
     limits,
   );
 
