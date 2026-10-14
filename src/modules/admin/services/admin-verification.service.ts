@@ -30,6 +30,22 @@ import { toMemberRef } from '../serializers/admin-member.serializer';
 const CHECKED_BY = 'Circl Trust & Safety';
 
 /**
+ * The only services a decision here moves, in one place.
+ *
+ * Written once because the queue's warning and the number returned afterwards were built from two
+ * copies of this and the copies had drifted: the warning counted services a moderator had already
+ * taken down, so a reviewer was told one number before deciding and a different one after. Both
+ * read this now, so they cannot disagree again.
+ *
+ * `LIVE` is the owner's intent and `VISIBLE` is everybody else's: a draft, a hidden service and one
+ * held by moderation are none of them things an approval publishes or a revocation suspends.
+ */
+const DECIDABLE = {
+  ownerState: ServiceOwnerState.LIVE,
+  visibilityState: ContentVisibilityState.VISIBLE,
+} as const;
+
+/**
  * The review queue of Professionals v2 (§12), and the thing that replaced "a listing awaiting
  * approval".
  *
@@ -159,15 +175,35 @@ export class AdminVerificationService {
   async decide(actor: AdminPrincipal, id: string, dto: DecideVerificationDto) {
     const row = await this.record(id);
 
-    if (row.status === CategoryVerificationStatus.APPROVED && dto.decision === 'APPROVE') {
+    /**
+     * **Either** decision on an approved record is refused, not just a second approval.
+     *
+     * A `REJECT` on a live approval went through: the member's services came down, and the one
+     * action that is supposed to record taking somebody's work off the platform — `revoke`, with
+     * its note, its `verification.revoked` entry and its `servicesSuspended` count — was skipped
+     * entirely. Two doors to the same consequence, one of them unaudited. Revoking is the door.
+     */
+    if (row.status === CategoryVerificationStatus.APPROVED) {
       throw ApiException.conflict(
         ApiErrorCode.ALREADY_DECIDED,
-        'That is already approved. Revoke it first if you need to change it.',
-        { data: { status: row.status, decidedAt: row.decidedAt } },
+        'That is already approved. Revoke it first if you need to take it back.',
+        { data: { status: row.status, decidedAt: row.decidedAt, decision: dto.decision } },
       );
     }
 
     const approving = dto.decision === 'APPROVE';
+    const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : undefined;
+
+    // The same refusal as `PATCH :id/expiry`, for the same reason: a date in the past would
+    // suspend their services the moment it was saved, and if that is what somebody means they
+    // should revoke and say why. One rule, two routes — it was only on one of them.
+    if (expiresAt && expiresAt.getTime() <= Date.now()) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'An expiry in the past would suspend their services immediately. Revoke it instead if that is what you mean.',
+        { details: [{ field: 'expiresAt', message: 'Must be in the future.' }] },
+      );
+    }
 
     if (!approving && !dto.note?.trim()) {
       throw ApiException.unprocessable(
@@ -217,7 +253,20 @@ export class AdminVerificationService {
             decisionNote: dto.note ?? null,
             licenceSeen: dto.licenceSeen ?? null,
             checkedBy: CHECKED_BY,
-            expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+            /**
+             * Omitted means **unchanged**, not cleared.
+             *
+             * It read `dto.expiresAt ? … : null`, so a reviewer saving a decision without the
+             * field erased a renewal date somebody had set on purpose — and nothing on the screen
+             * would have suggested that is what saving does. The one exception is an approval
+             * carrying a date that has already passed, which has to go or the approval is expired
+             * the instant it is granted.
+             */
+            ...(expiresAt
+              ? { expiresAt }
+              : approving && row.expiresAt && row.expiresAt.getTime() <= Date.now()
+                ? { expiresAt: null }
+                : {}),
           },
           include: VERIFICATION_INCLUDE,
         }),
@@ -380,20 +429,35 @@ export class AdminVerificationService {
   }
 
   /**
+   * The filter behind **both** counts — the warning before a decision and the number after it.
+   *
+   * Written once because they disagreed: the queue's count left out `visibilityState`, so a
+   * reviewer was warned about a service a moderator had already taken down and then told a
+   * different number once they had decided. The two numbers answer the same question and now read
+   * the same rows.
+   *
+   * `LIVE` and `VISIBLE` only: a draft, a hidden service and one staff have held are not things
+   * this decision publishes or takes down.
+   */
+  private static servicesWhere(
+    userId: string,
+    categoryCode: string,
+  ): Prisma.ProfessionalServiceWhereInput {
+    return { ...DECIDABLE, categoryCode, listing: { userId, deletedAt: null } };
+  }
+
+  /**
    * How many of their services this category decides.
    *
    * Counted rather than derived from a stored flag, because there is no stored flag — which is the
-   * point of §5.4. `LIVE` only: a draft or a hidden service is not something a decision takes down
-   * or puts up.
+   * point of §5.4.
    */
   private async countServices(userId: string, categoryCode: string): Promise<number> {
+    // visibility: `DECIDABLE` is the fragment — live and not held by anybody else — and it is the
+    // whole point of this count that a service a moderator took down is not one this decision
+    // publishes or suspends.
     return this.database.professionalService.count({
-      where: {
-        categoryCode,
-        ownerState: ServiceOwnerState.LIVE,
-        visibilityState: ContentVisibilityState.VISIBLE,
-        listing: { userId, deletedAt: null },
-      },
+      where: AdminVerificationService.servicesWhere(userId, categoryCode),
     });
   }
 
@@ -409,24 +473,41 @@ export class AdminVerificationService {
     return new Map(rows.map(row => [row.ownerId ?? '', row._count._all]));
   }
 
-  /** How many services each row would publish or suspend, for the queue's own warning. */
+  /**
+   * How many services each row would publish or suspend, for the queue's own warning.
+   *
+   * Tallied per **`(member, category)`**, which is what a verification is keyed on. Grouping by
+   * category alone added every other member on the page to each row's number: two people waiting
+   * in Immigration were each warned about the other's services, and the warning is the entire
+   * reason the number is on the screen.
+   *
+   * One query for the page, narrowed in memory, because Prisma cannot group by a field on the
+   * related listing — and the owner is on the listing, not on the service.
+   */
   private async waitingCounts(
     rows: Array<{ id: string; userId: string; categoryCode: string }>,
   ): Promise<Map<string, number>> {
     if (!rows.length) return new Map();
 
-    const counted = await this.database.professionalService.groupBy({
-      by: ['categoryCode'],
+    // visibility: the same `DECIDABLE` fragment `countServices` uses, widened to the page — the
+    // two numbers answer one question and must read one set of rows.
+    const services = await this.database.professionalService.findMany({
       where: {
-        categoryCode: { in: rows.map(row => row.categoryCode) },
-        ownerState: ServiceOwnerState.LIVE,
-        listing: { userId: { in: rows.map(row => row.userId) }, deletedAt: null },
+        ...DECIDABLE,
+        categoryCode: { in: [...new Set(rows.map(row => row.categoryCode))] },
+        listing: { userId: { in: [...new Set(rows.map(row => row.userId))] }, deletedAt: null },
       },
-      _count: { _all: true },
+      select: { categoryCode: true, listing: { select: { userId: true } } },
     });
-    const byCategory = new Map(counted.map(row => [row.categoryCode ?? '', row._count._all]));
+    const tally = new Map<string, number>();
 
-    return new Map(rows.map(row => [row.id, byCategory.get(row.categoryCode) ?? 0]));
+    for (const service of services) {
+      const key = `${service.listing.userId}:${service.categoryCode}`;
+
+      tally.set(key, (tally.get(key) ?? 0) + 1);
+    }
+
+    return new Map(rows.map(row => [row.id, tally.get(`${row.userId}:${row.categoryCode}`) ?? 0]));
   }
 
   private toRow(

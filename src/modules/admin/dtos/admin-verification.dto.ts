@@ -68,7 +68,10 @@ export class DecideVerificationDto {
   licenceSeen?: string;
 
   @ApiPropertyOptional({
-    description: 'When the approval lapses. Omit for one that does not.',
+    description:
+      'When the approval lapses. **Omitting it changes nothing** — it does not clear a date set ' +
+      'earlier, which is what `PATCH :id/expiry` with `null` is for. A date in the past is ' +
+      'refused here exactly as it is there: it would suspend their services the moment it saved.',
   })
   @IsISO8601()
   @IsOptional()

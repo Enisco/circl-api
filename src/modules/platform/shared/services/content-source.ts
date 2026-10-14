@@ -33,6 +33,15 @@ export interface ContentSource {
    * the same row, as are a listing's photo and its cover.
    */
   mediaOwners?: string[];
+  /**
+   * Owner types holding a **poster frame** rather than a gallery item.
+   *
+   * Scanned exactly like any other still — for a video it is the only frame the classifier can
+   * look at, since it fetches images — but kept apart from `mediaOwners` because it is not
+   * something the member put in their gallery: a staff screen that counted it would tell a
+   * reviewer a product has four photographs when it has three and a clip.
+   */
+  posterOwners?: string[];
   /** A target that *is* an image, whose key is on the row itself rather than in `media`. */
   ownKey?: string;
 }
@@ -125,8 +134,10 @@ export const CONTENT_SOURCE: Partial<Record<ReportTargetType, ContentSource>> = 
   },
   [ReportTargetType.CONNECT_POST]: {
     // The photos, plus the poster frame of a video — which is the only frame of it the classifier
-    // can look at, since it fetches still images.
-    mediaOwners: ['CONNECT_POST', 'CONNECT_POSTER'],
+    // can look at, since it fetches still images. The poster is listed as one because it is not a
+    // gallery item, and a staff screen counting it would be wrong about how many photos there are.
+    mediaOwners: ['CONNECT_POST'],
+    posterOwners: ['CONNECT_POSTER'],
     table: 'connect_posts',
     toFields: row => ({ caption: text(row.caption) }),
   },
@@ -144,6 +155,16 @@ export const CONTENT_SOURCE: Partial<Record<ReportTargetType, ContentSource>> = 
     }),
   },
   [ReportTargetType.PROFESSIONAL_SERVICE]: {
+    /**
+     * A service has had photos and video since v2 §5.1, and this said it had none.
+     *
+     * The consequence was quiet in both directions: the classifier never looked at an image on a
+     * service page, and the staff detail showed `media: []` for a service with ten files on it —
+     * so a reported service could be decided about by somebody who could not see what was
+     * reported.
+     */
+    mediaOwners: ['PROFESSIONAL_SERVICE'],
+    posterOwners: ['PROFESSIONAL_SERVICE_POSTER'],
     table: 'professional_services',
     toFields: row => ({ name: text(row.name), description: text(row.description) }),
   },
@@ -167,6 +188,8 @@ export const CONTENT_SOURCE: Partial<Record<ReportTargetType, ContentSource>> = 
   },
   [ReportTargetType.STORE_ITEM]: {
     mediaOwners: ['STORE_ITEM'],
+    // v2 §9 gave a product video, and a poster frame with it.
+    posterOwners: ['STORE_ITEM_POSTER'],
     table: 'store_items',
     toFields: row => ({
       name: text(row.name),

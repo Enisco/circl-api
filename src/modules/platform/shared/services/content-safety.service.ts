@@ -697,11 +697,15 @@ export class ContentSafetyService {
       return typeof key === 'string' ? [key] : [];
     }
 
-    if (!source.mediaOwners?.length) return [];
+    // The gallery **and** the poster frames: a poster is the only still a video has, so leaving it
+    // out would mean a clip nothing ever looked at.
+    const owners = [...(source.mediaOwners ?? []), ...(source.posterOwners ?? [])];
+
+    if (!owners.length) return [];
 
     const rows = await this.database.media.findMany({
       where: {
-        ownerType: { in: source.mediaOwners },
+        ownerType: { in: owners },
         ownerId: targetId,
         type: MediaType.IMAGE,
       },

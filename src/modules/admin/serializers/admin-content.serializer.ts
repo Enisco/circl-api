@@ -1,4 +1,4 @@
-import { ContentVisibilityState, MediaType, ReportTargetType } from '@prisma/client';
+import { ContentVisibilityState, MediaRole, MediaType, ReportTargetType } from '@prisma/client';
 import { ContentTargetView } from '../services/admin-content-target.service';
 import { MemberRefView } from './admin-member.serializer';
 import { RiskView } from './admin-risk.serializer';
@@ -111,10 +111,29 @@ export interface AdminContentPageView extends Omit<AdminContentRowView, 'author'
   media: Array<{
     mediaId: string;
     type: MediaType;
+    /** A video's still frame rather than a gallery item. Not counted in `mediaCounts.images`. */
+    isPoster: boolean;
+    /** What the file is *of*, where its owner records one (v2 §9.1). Null everywhere else. */
+    role: MediaRole | null;
+    /** How long a clip runs, once the derivation has read its header. */
+    durationMs: number | null;
     url: string | null;
     thumbnailUrl: string | null;
     moderationState: string;
   }>;
+  /** Split by kind, because "there is a video here" is its own question (v2 §5.1). */
+  mediaCounts: { images: number; videos: number };
+  /**
+   * A service's updates and milestones (v2 §5.3), and null on every other kind.
+   *
+   * The member's own claims about their own work, verified by nobody — the name says so because a
+   * screen that renders them beside a verification chip is the portal implying Circl checked
+   * something it did not.
+   */
+  selfReported: {
+    updates: Array<{ id: string; title: string | null; body: string; publishedAt: string }>;
+    milestones: Array<{ id: string; label: string; year: number | null; issuer: string | null }>;
+  } | null;
   risk: RiskView | null;
   author: (MemberRefView & { activeStrikes: number; accountAgeDays: number }) | null;
   /** An author's own deletion cannot be restored (`RESTORE_NOT_ALLOWED`). */

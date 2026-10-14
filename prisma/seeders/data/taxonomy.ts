@@ -54,6 +54,16 @@ const communityCategories: Array<[string, string, boolean, string[]]> = [
 //   - `requiresVerification` — may this person offer this **service** at all until somebody has
 //     read their papers. False on every category and true on 35 subcategories, because
 //     *Immigration* is not sensitive and *Immigration solicitor* is (§3.2).
+//
+//     Six of those 35 have **no statutory regulator** — `FINANCE_ACCOUNTANT`,
+//     `FINANCE_TAX_ADVISER`, `TRANSLATION_CERTIFIED`, `HEALTH_THERAPIST`, `PROPERTY_SURVEYOR` and
+//     `LOGISTICS_VEHICLE_HIRE`. "Accountant" is not a protected title here, anyone may certify a
+//     translation, and counselling is unregulated. They are gated anyway, by the product owner's
+//     decision of 2026-10-14: an unnecessary gate costs one member their listing until somebody
+//     reads their papers, and a missing one puts an unchecked adviser in front of this audience.
+//     Flagged to circl-mobile and left on deliberately — do not "correct" them to false here.
+//     Changing any of them is a portal save (`PUT admin/professional-reviews/verification-gates`),
+//     and this key is operator-owned, so the seed will not undo it.
 //   - `requiresReview` — should a human read the whole **listing** before anybody can find it. Off
 //     everywhere now. Holding a category grants nothing (§2.6), so there is nothing left for it to
 //     protect; it stays because it is still the lever an operator can pull on a category that

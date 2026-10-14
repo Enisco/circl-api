@@ -995,6 +995,8 @@ async function main() {
     ],
   });
 
+  const itemId = res.body?.data?.id;
+
   check('a product takes photos and video together', res.status === 201, res.body?.error);
   check(
     'and `photos` stays images-only while `media` carries both',
@@ -1234,6 +1236,184 @@ async function main() {
 
   await prisma.categoryVerification.deleteMany({
     where: { userId: { in: [legacy.id, ungatedPro.id] } },
+  });
+
+  // ── 12. What the portal has to be able to see and trust ───────────────────
+  heading('12. the queue warns per member, and the content tool sees a service');
+
+  /**
+   * Two professionals waiting in the **same** category, with different numbers of services.
+   *
+   * The count beside each row is what a reviewer is warned with before they decide, and it was
+   * grouped by category alone — so each of these two was told about the other's services as well
+   * as their own. Two rows, two different right answers, is the only arrangement that catches it.
+   */
+  const queueA = await makeUser('pv2-queue-a', { cityId: 'MANCHESTER' });
+  const queueB = await makeUser('pv2-queue-b', { cityId: 'MANCHESTER' });
+  const waiting = async (user, services) => {
+    const { id: listing } = await listingFor(user);
+
+    await api(user.token, 'POST', '/professionals/me/verifications', {
+      categoryCode: 'IMMIGRATION',
+      documentIds: [(await uploadDocument(user.token, { fileName: 'iaa.pdf' })).id],
+    });
+
+    for (let index = 0; index < services; index += 1) {
+      await api(user.token, 'POST', `/professionals/listings/${listing}/services`, {
+        name: `Spouse visa help ${index + 1}`,
+        description:
+          'A full review of your application and the documents behind it before you submit it.',
+        categoryCode: 'IMMIGRATION',
+        subcategoryCode: 'IMMIGRATION_SOLICITOR',
+        pricePence: 25000,
+      });
+    }
+
+    return listing;
+  };
+
+  await waiting(queueA, 2);
+  await waiting(queueB, 1);
+
+  res = await api(null, 'GET', '/admin/verifications?status=PENDING&perPage=100', null, asStaff);
+
+  const rowA = (res.body?.data ?? []).find(row => row.member?.id === queueA.id);
+  const rowB = (res.body?.data ?? []).find(row => row.member?.id === queueB.id);
+
+  check('both are in the queue', !!rowA && !!rowB, {
+    rows: (res.body?.data ?? []).length,
+  });
+  check(
+    'and each is warned about its own services only, not the other’s',
+    rowA?.servicesInCategory === 2 && rowB?.servicesInCategory === 1,
+    { a: rowA?.servicesInCategory, b: rowB?.servicesInCategory },
+  );
+
+  // A date in the past on a decision is refused here exactly as it is on the expiry route: it
+  // would suspend the services it had just published.
+  res = await api(
+    null,
+    'POST',
+    `/admin/verifications/${rowA.id}/decide`,
+    {
+      decision: 'APPROVE',
+      licenceSeen: 'IAA F2024-0001',
+      expiresAt: new Date(Date.now() - 86_400_000).toISOString(),
+    },
+    { ...asStaff, ...key() },
+  );
+
+  check('a decision carrying a past expiry is refused', res.status === 422, {
+    status: res.status,
+    message: res.body?.error?.message,
+  });
+
+  const renewal = new Date(Date.now() + 365 * 86_400_000).toISOString();
+
+  await api(
+    null,
+    'PATCH',
+    `/admin/verifications/${rowA.id}/expiry`,
+    { expiresAt: renewal },
+    { ...asStaff, ...key() },
+  );
+
+  res = await api(
+    null,
+    'POST',
+    `/admin/verifications/${rowA.id}/decide`,
+    { decision: 'APPROVE', licenceSeen: 'IAA F2024-0001' },
+    { ...asStaff, ...key() },
+  );
+
+  check(
+    'the decision publishes exactly the services the warning named',
+    res.status === 200 && res.body?.data?.servicesAffected === 2,
+    { status: res.status, affected: res.body?.data?.servicesAffected, error: res.body?.error },
+  );
+  check(
+    'and a decision that says nothing about the renewal date leaves it alone',
+    res.body?.data?.expiresAt === renewal,
+    { expected: renewal, got: res.body?.data?.expiresAt },
+  );
+
+  res = await api(
+    null,
+    'POST',
+    `/admin/verifications/${rowA.id}/decide`,
+    { decision: 'REJECT', note: 'Changed my mind about this one.' },
+    { ...asStaff, ...key() },
+  );
+
+  check(
+    'declining a live approval is refused: taking work down goes through revoke',
+    res.status === 409 && res.body?.error?.code === 'ALREADY_DECIDED',
+    { status: res.status, code: res.body?.error?.code },
+  );
+
+  // ── The content tool ──────────────────────────────────────────────────────
+  res = await api(
+    null,
+    'GET',
+    '/admin/content/services?categories=TECH_SOFTWARE&perPage=50',
+    null,
+    asStaff,
+  );
+
+  check(
+    'services filter by the category they are sold under',
+    res.status === 200 &&
+      (res.body?.data ?? []).length > 0 &&
+      (res.body?.data ?? []).every(row => row.category?.code === 'TECH_SOFTWARE'),
+    { status: res.status, codes: (res.body?.data ?? []).map(row => row.category?.code).slice(0, 5) },
+  );
+
+  // A milestone back on it, because section 7 proved `[]` clears them and left it cleared. Both
+  // kinds of self-reported content have to reach a reviewer, so both are on the service here.
+  await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/services/${web.id}`, {
+    milestones: [{ label: '200 applications supported', year: 2025 }],
+  });
+
+  res = await api(null, 'GET', `/admin/content/services/${web.id}`, null, asStaff);
+  const serviceDetail = res.body?.data;
+
+  check(
+    'a reviewer can see the media on a service, with the poster marked rather than counted',
+    res.status === 200 &&
+      serviceDetail?.media?.length === 3 &&
+      serviceDetail?.mediaCounts?.images === 1 &&
+      serviceDetail?.mediaCounts?.videos === 1 &&
+      serviceDetail.media.filter(file => file.isPoster).length === 1,
+    { status: res.status, counts: serviceDetail?.mediaCounts, media: serviceDetail?.media?.length },
+  );
+  check(
+    'and the updates and milestones, named as the member’s own claims',
+    serviceDetail?.selfReported?.updates?.length === 1 &&
+      serviceDetail?.selfReported?.milestones?.length === 1,
+    serviceDetail?.selfReported,
+  );
+  check(
+    'the video carries what it is of, and how long it runs',
+    serviceDetail?.media?.some(
+      file => file.type === 'VIDEO' && file.role === 'TESTIMONIAL' && 'durationMs' in file,
+    ),
+    serviceDetail?.media?.filter(file => file.type === 'VIDEO'),
+  );
+
+  res = await api(null, 'GET', `/admin/content/items/${itemId}`, null, asStaff);
+  const itemDetail = res.body?.data;
+
+  check(
+    'a product’s video reaches moderation with its role, and its poster is not a fourth photo',
+    res.status === 200 &&
+      itemDetail?.mediaCounts?.images === 1 &&
+      itemDetail?.mediaCounts?.videos === 1 &&
+      itemDetail?.media?.some(file => file.type === 'VIDEO' && file.role === 'TESTIMONIAL'),
+    { status: res.status, counts: itemDetail?.mediaCounts, media: itemDetail?.media },
+  );
+
+  await prisma.categoryVerification.deleteMany({
+    where: { userId: { in: [queueA.id, queueB.id] } },
   });
 
   await prisma.store.deleteMany({ where: { ownerId: seller.id } });

@@ -9,6 +9,7 @@ import {
   ModerationDecision,
   ModerationQueueState,
   ModerationQueueType,
+  MediaType,
   Prisma,
   ReportCaseState,
   ReportTargetType,
@@ -71,9 +72,12 @@ const TYPE_FILTERS: Record<string, string[]> = {
   'connect-profiles': ['categories', 'dmPolicy', 'isVisible'],
   'connect-stories': ['active'],
   listings: ['experienceLevels', 'acceptingWork', 'professions'],
-  // A service belongs to a listing, so it is filtered by **its listing's** professions — which is
-  // what "show me the electricians' services" means, and the only profession a service has.
-  services: ['professions'],
+  // Two different questions, and a service answers both. `professions` is its **listing's**
+  // professions — "show me the electricians' services" — and `categories` is the category the
+  // service itself is sold under (v2 §5.1), which need not be one of them. The registry has wired
+  // `category_code` since v2; the allowlist had not caught up, so `?categories=` on services was
+  // refused as a filter the kind does not understand.
+  services: ['professions', 'categories'],
   stores: ['categories', 'storeStatus', 'complianceState'],
   items: ['categories', 'availability'],
   reviews: ['ratings', 'context'],
@@ -282,6 +286,10 @@ export class AdminContentService {
     const view = target.get(`${kind.targetType}:${id}`) ?? null;
     const deletedAt = kind.deleted ? (row[kind.deleted] as Date | null) : null;
     const fields = view?.fields ?? {};
+    const selfReported =
+      kind.targetType === ReportTargetType.PROFESSIONAL_SERVICE
+        ? await this.serviceSelfReported(id)
+        : null;
 
     return {
       ...toContentRef(
@@ -312,7 +320,32 @@ export class AdminContentService {
         text: Object.values(fields).find(Boolean) ?? '',
         ...fields,
       },
+      /**
+       * A service's updates and milestones (v2 §5.3), which exist on no other kind.
+       *
+       * Named for what they are: **the member's own claims about their own work**, unverified by
+       * anybody. They are published copy, so they are reportable and removable like anything else
+       * — and a reviewer deciding about a service could not see them at all, because they live in
+       * their own tables and the detail reads one row.
+       *
+       * Deliberately not folded into `body`, which is "every **scanned** field by name" and is
+       * what the risk signals' offsets are measured against. These are not scanned: the classifier
+       * re-reads a target from its own table when it runs, so a field it cannot re-read is one a
+       * rescan would silently drop. Flagged to circl-mobile rather than quietly left out.
+       */
+      selfReported,
       media,
+      /**
+       * Split by kind, the same pair the member's own read carries (v2 §5.1).
+       *
+       * "There is a video here" is a different promise from "there are four photographs", and a
+       * reviewer deciding about a product page is asking the first question before they open
+       * anything.
+       */
+      mediaCounts: {
+        images: media.filter(item => item.type === MediaType.IMAGE && !item.isPoster).length,
+        videos: media.filter(item => item.type === MediaType.VIDEO).length,
+      },
       // The scan as §5.0 spells it. This was serving `classifierScores` and `heldReason` — the
       // columns, under the column names — so the portal's risk panel read `classifier` as
       // undefined and could not say whether a model had run at all.
@@ -1287,17 +1320,71 @@ export class AdminContentService {
     };
   }
 
+  /**
+   * A service's updates and milestones, for the staff detail (v2 §5.3).
+   *
+   * Both are the member's own words about their own work and neither is verified, which is how the
+   * portal is asked to present them.
+   */
+  private async serviceSelfReported(serviceId: string) {
+    const [updates, milestones] = await Promise.all([
+      // visibility: child rows of one service a reviewer already has open, and neither table
+      // carries a visibility state of its own — they are taken down with the service.
+      this.database.serviceUpdate.findMany({
+        where: { serviceId },
+        orderBy: { publishedAt: 'desc' },
+        select: { id: true, title: true, body: true, publishedAt: true },
+      }),
+      this.database.serviceMilestone.findMany({
+        where: { serviceId },
+        orderBy: [{ year: 'desc' }, { label: 'asc' }],
+        select: { id: true, label: true, year: true, issuer: true },
+      }),
+    ]);
+
+    return {
+      updates: updates.map(update => ({
+        id: update.id,
+        title: update.title,
+        body: update.body,
+        publishedAt: update.publishedAt.toISOString(),
+      })),
+      milestones,
+    };
+  }
+
   /** Everything attached to this item, from every slot the kind uses. */
   private async mediaFor(kind: ContentKind, id: string) {
-    const owners = CONTENT_SOURCE[kind.targetType]?.mediaOwners ?? [];
+    const source = CONTENT_SOURCE[kind.targetType];
+    const gallery = source?.mediaOwners ?? [];
+    const posters = source?.posterOwners ?? [];
 
-    if (!owners.length) return [];
+    if (!gallery.length && !posters.length) return [];
 
-    const found = await Promise.all(owners.map(owner => this.media.forOwner(owner, id)));
+    const found = await Promise.all(
+      [...gallery, ...posters].map(async owner => {
+        const rows = await this.media.forOwner(owner, id);
 
-    return found.flat().map(item => ({
+        // Marked rather than mixed in. A reviewer looking at a product with three photographs and
+        // a clip should not be shown four photographs, and the counts below read this flag.
+        return rows.map(row => ({ row, isPoster: posters.includes(owner) }));
+      }),
+    );
+
+    return found.flat().map(({ row: item, isPoster }) => ({
+      isPoster,
       mediaId: item.id,
       type: item.type,
+      /**
+       * What the file is *of* (v2 §9.1), where its owner records one.
+       *
+       * Null everywhere else, and worth sending rather than inferring: without it a reviewer
+       * cannot tell a customer's testimonial from the shop's own advert, which is most of what
+       * deciding about a product video is.
+       */
+      role: item.role ?? null,
+      /** How long a clip runs, once the derivation has read its header. Null until then. */
+      durationMs: item.durationMs ?? null,
       url: this.media.sign(item.storageKey) ?? null,
       thumbnailUrl: item.thumbnailKey ? (this.media.sign(item.thumbnailKey) ?? null) : null,
       // The media's **own** visibility, not its scan status: a photo can be held while its scan

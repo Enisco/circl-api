@@ -66,7 +66,12 @@ describe('CONTENT_SOURCE', () => {
     expect(owners.size).toBeGreaterThan(10);
 
     const invented = sources
-      .flatMap(([target, source]) => (source!.mediaOwners ?? []).map(owner => ({ target, owner })))
+      .flatMap(([target, source]) =>
+        [...(source!.mediaOwners ?? []), ...(source!.posterOwners ?? [])].map(owner => ({
+          target,
+          owner,
+        })),
+      )
       .filter(({ owner }) => !owners.has(owner))
       .map(({ target, owner }) => `${target} → ${owner}`);
 
@@ -78,10 +83,34 @@ describe('CONTENT_SOURCE', () => {
       ([, source]) => source!.mediaOwners?.length || source!.ownKey,
     );
 
-    // Eleven of the eighteen content kinds, plus `MEDIA`, which *is* an image. The seven without
-    // are a response, two kinds of reply, a Connect profile (its photos are its posts), a
-    // service, a review and the written part of a profile — none of which takes a photo of its
-    // own.
-    expect(withImages).toHaveLength(12);
+    // Twelve of the eighteen content kinds, plus `MEDIA`, which *is* an image. The six without are
+    // a response, two kinds of reply, a Connect profile (its photos are its posts), a review and
+    // the written part of a profile — none of which takes a photo of its own.
+    //
+    // A **service** was in that list until v2 §5.1 gave it photos and video, and this file said it
+    // had none for as long as that was wrong: nothing scanned an image on a service page, and the
+    // staff detail showed an empty gallery for a service with ten files on it.
+    expect(withImages).toHaveLength(13);
+  });
+
+  /**
+   * A poster frame is scanned like any other still — for a video it is the only frame there is —
+   * but it is not a gallery item, so it is declared separately and the staff screens do not count
+   * it as a photograph.
+   */
+  it('keeps poster frames out of the galleries while still scanning them', () => {
+    const posters = sources.filter(([, source]) => source!.posterOwners?.length);
+
+    expect(posters.map(([target]) => target).sort()).toEqual([
+      'CONNECT_POST',
+      'PROFESSIONAL_SERVICE',
+      'STORE_ITEM',
+    ]);
+
+    for (const [, source] of posters) {
+      for (const owner of source!.posterOwners!) {
+        expect(source!.mediaOwners ?? []).not.toContain(owner);
+      }
+    }
   });
 });
