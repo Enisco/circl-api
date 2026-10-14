@@ -24,6 +24,9 @@ jest.mock('../../../../prisma/seeders/role.seeder', () => ({ seedRoles: jest.fn(
 jest.mock('../../../../prisma/seeders/city.seeder', () => ({ seedCities: jest.fn() }));
 jest.mock('../../../../prisma/seeders/taxonomy.seeder', () => ({ seedTaxonomy: jest.fn() }));
 jest.mock('../../../../prisma/seeders/risk-term.seeder', () => ({ seedRiskTerms: jest.fn() }));
+jest.mock('../../../../prisma/seeders/verification-carryover.seeder', () => ({
+  carryOverListingApprovals: jest.fn(async () => ({ verifications: 0, documents: 0 })),
+}));
 jest.mock('../../../../prisma/seeders/support-resource.seeder', () => ({
   seedSupportResources: jest.fn(),
 }));
@@ -35,6 +38,7 @@ const base = () => [
   require('../../../../prisma/seeders/role.seeder').seedRoles,
   require('../../../../prisma/seeders/city.seeder').seedCities,
   require('../../../../prisma/seeders/taxonomy.seeder').seedTaxonomy,
+  require('../../../../prisma/seeders/verification-carryover.seeder').carryOverListingApprovals,
   require('../../../../prisma/seeders/risk-term.seeder').seedRiskTerms,
   require('../../../../prisma/seeders/support-resource.seeder').seedSupportResources,
 ];
@@ -74,7 +78,28 @@ describe('runStartupSeeds', () => {
       for (const seeder of base()) expect(seeder).toHaveBeenCalledTimes(1);
     });
 
+    /**
+     * The carry-over reads the verification gates, and the gates are seeded rather than migrated
+     * (v2 §7). It was in the migration first, where it silently carried nothing over —
+     * `migrate deploy` runs before the app boots, so there were no subcategories to read — so the
+     * order here is the fix, and this is the test that keeps it.
+     */
+    it('carries listing approvals over after the taxonomy, never before it', async () => {
+      await runStartupSeeds(mockPrisma(), {}, silentLog());
+
+      // Read off `base()` rather than re-requiring: the two sit next to each other in that list
+      // because they sit next to each other in the boot, and the order is the contract.
+      const [, , , taxonomy, carryOver] = base();
+
+      expect(carryOver).toHaveBeenCalledTimes(1);
+      expect(taxonomy.mock.invocationCallOrder[0]).toBeLessThan(
+        carryOver.mock.invocationCallOrder[0],
+      );
+    });
+
     it('stops the boot when it fails — serving without a taxonomy is not survivable', async () => {
+      // Index 3 is the taxonomy seeder, which is what this is about: the carry-over sits after it
+      // precisely because it reads what that seed wrote.
       base()[3].mockRejectedValueOnce(new Error('no taxonomy'));
 
       await expect(runStartupSeeds(mockPrisma(), {}, silentLog())).rejects.toThrow('no taxonomy');

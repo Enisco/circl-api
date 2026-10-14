@@ -6,6 +6,7 @@ import { seedRiskTerms } from '../../../prisma/seeders/risk-term.seeder';
 import { seedRoles } from '../../../prisma/seeders/role.seeder';
 import { seedSupportResources } from '../../../prisma/seeders/support-resource.seeder';
 import { seedTaxonomy } from '../../../prisma/seeders/taxonomy.seeder';
+import { carryOverListingApprovals } from '../../../prisma/seeders/verification-carryover.seeder';
 import { seedDemo } from '../../../prisma/seeders/demo';
 
 /** Either signal saying production is production — see `dev-otp.constant.ts` for why both. */
@@ -44,6 +45,11 @@ export const runStartupSeeds = async (
     await seedRoles(prisma);
     await seedCities(prisma);
     await seedTaxonomy(prisma);
+    // Straight after the taxonomy, because what it reads is the verification gates that seed
+    // wrote: it carries an approved listing review over to an approved category verification so
+    // nobody who has already been through a review is asked to do it again (v2 §7). Idempotent,
+    // and silent after the first run — see the seeder for why it is not in the migration.
+    await carryOverListingApprovals(prisma, log);
     await seedRiskTerms(prisma);
     await seedSupportResources(prisma);
   } catch (error) {

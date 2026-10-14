@@ -81,7 +81,7 @@ export class MediaUploadService {
     for (const [index, file] of dto.files.entries()) {
       const type = this.assertType(file, dto.purpose, index);
 
-      this.assertSize(file, type, index);
+      this.assertSize(file, type, index, dto.purpose);
       this.assertAudioFields(file, type, index);
 
       // The server mints the key, so the client never invents one.
@@ -183,8 +183,21 @@ export class MediaUploadService {
     return type;
   }
 
-  private assertSize(file: UploadFileDto, type: MediaType, index: number): void {
-    const max = MediaService.maxBytesFor(type);
+  /**
+   * The declared byte size against the ceiling for this type **and purpose**.
+   *
+   * Checked here, before a key is minted, because this is the only moment the platform knows how
+   * big a file claims to be without having stored it. A product's or a service's video caps at
+   * fifty megabytes — the number `limits.maxVideoBytes` publishes — rather than the hundred a
+   * Connect story may use (v2 §9.2).
+   */
+  private assertSize(
+    file: UploadFileDto,
+    type: MediaType,
+    index: number,
+    purpose: MediaPurpose,
+  ): void {
+    const max = MediaService.maxBytesFor(type, purpose);
 
     if (file.byteSize > max) {
       const megabytes = Math.floor(max / (1024 * 1024));

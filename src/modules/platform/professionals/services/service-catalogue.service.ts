@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   ContentScanTrigger,
   ContentVisibilityState,
+  Media,
   MediaRole,
   Prisma,
   ReportTargetType,
@@ -41,6 +42,16 @@ import {
 
 /** Where a service's own media hangs. */
 export const SERVICE_MEDIA_OWNER = 'PROFESSIONAL_SERVICE';
+
+/**
+ * Where a video's still frame is filed (v2 §9.2).
+ *
+ * Its own owner type, like Connect's poster, for two reasons: the gallery reads
+ * `SERVICE_MEDIA_OWNER` and must not render the frame as an eleventh photograph, and the poster
+ * has to be attached to something or the orphan sweep deletes it within the day and the thumbnail
+ * breaks.
+ */
+export const SERVICE_POSTER_OWNER = 'PROFESSIONAL_SERVICE_POSTER';
 
 /** Everything a service read needs in one query. */
 const SERVICE_INCLUDE = {
@@ -176,6 +187,7 @@ export class ServiceCatalogueService {
       await this.writeUpdates(tx, service.id, dto.updates);
       await this.writeMilestones(tx, service.id, dto.milestones);
       await this.media.attach(tx, media.files, SERVICE_MEDIA_OWNER, service.id, media.roles);
+      await this.media.attachPosters(tx, media.posters, SERVICE_POSTER_OWNER, service.id);
 
       // A service's name and description are published copy (§6.1), so they are scanned like any
       // other. One transaction, because the verdict and the row belong together.
@@ -293,7 +305,11 @@ export class ServiceCatalogueService {
 
       if (media) {
         await this.media.releaseOwner(tx, SERVICE_MEDIA_OWNER, serviceId);
+        // The posters go with the set they belonged to. Left behind they would be attached to a
+        // video that is no longer here, which is a file nothing renders and nothing collects.
+        await this.media.releaseOwner(tx, SERVICE_POSTER_OWNER, serviceId);
         await this.media.attach(tx, media.files, SERVICE_MEDIA_OWNER, serviceId, media.roles);
+        await this.media.attachPosters(tx, media.posters, SERVICE_POSTER_OWNER, serviceId);
       }
 
       if (dto.name !== undefined || dto.description !== undefined) {
@@ -670,8 +686,9 @@ export class ServiceCatalogueService {
   ): Promise<{
     files: Awaited<ReturnType<MediaService['validate']>>;
     roles: Map<string, MediaRole>;
+    posters: Map<string, Media>;
   }> {
-    if (!keys?.length) return { files: [], roles: new Map() };
+    if (!keys?.length) return { files: [], roles: new Map(), posters: new Map() };
 
     const files = await this.media.validate(
       keys.map(entry => entry.key),
@@ -683,6 +700,9 @@ export class ServiceCatalogueService {
     return {
       files,
       roles: new Map(keys.map(entry => [entry.key, entry.role ?? MediaRole.SHOWCASE])),
+      // The still frames, validated against the videos they claim to be of before anything is
+      // written: a poster paired with a photograph is a client bug, not a thumbnail.
+      posters: await this.media.posters(keys, files, userId, 'mediaKeys'),
     };
   }
 

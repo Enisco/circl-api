@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   Media,
+  MediaPurpose,
   MediaRole,
   MediaScanStatus,
   MediaStatus,
@@ -14,6 +15,28 @@ import { MediaDerivationService } from '../../media/derivation/media-derivation.
 import { ApiErrorCode, ApiException } from '@/common';
 import { StorageProvider } from '../../media/storage/storage.interface';
 import { UrlSigner } from '../serializers/media.serializer';
+
+/**
+ * The video a **shop or a professional** attaches, which is a stricter rule than a Connect post's
+ * (v2 §9.2).
+ *
+ * `maxVideoBytes` is published in `limits` as fifty megabytes, and a served limit the server does
+ * not hold is worse than no limit at all: the form refuses at fifty and the API quietly takes
+ * ninety, so the two disagree about what the product's rule is. The number is theirs — "somebody
+ * will upload a four-minute 4K clip from a phone, and the shopper on 3G is who pays for it" — and
+ * fifty megabytes is also what makes sixty seconds enforceable in practice, since a minute of
+ * phone video is tens of megabytes and four minutes of 4K is hundreds.
+ *
+ * Connect keeps the looser cap it shipped with: a story is watched once by people who chose to
+ * open it, not loaded into a product grid.
+ */
+export const MAX_SELLING_VIDEO_BYTES = 50 * 1024 * 1024;
+
+/** The purposes that cap at {@link MAX_SELLING_VIDEO_BYTES}: a product page and a service page. */
+const SELLING_PURPOSES: MediaPurpose[] = [MediaPurpose.COMMERCE, MediaPurpose.PROFESSIONAL];
+
+/** Sixty seconds, as published. Checked where the duration is known — see `validate`. */
+export const MAX_SELLING_VIDEO_MS = 60_000;
 
 export interface MediaRules {
   maxImages: number;
@@ -41,6 +64,26 @@ export interface MediaRules {
    * and the API quietly takes thirteen, so the two disagree about what the product's rule is.
    */
   maxTotal?: number;
+  /**
+   * How long a video may be, where the duration is **already known**.
+   *
+   * Read off the row rather than measured here: the derivation reads an object's header after it is
+   * attached (0.11.4), so a clip uploaded moments ago has `durationMs: null` and nothing to check
+   * against. That is why the byte ceiling is the enforcing rule and this is the second net — it
+   * catches a file uploaded earlier, measured by the sweep, and attached now. Published as
+   * `maxVideoSeconds`, and the form is expected to refuse before any of this.
+   */
+  maxDurationMs?: number;
+  /**
+   * The code a limit refusal carries, where the caller's contract names one.
+   *
+   * The platform has sent `MEDIA_LIMIT_EXCEEDED` since 0.11 and the community and Connect clients
+   * branch on it, so it stays the default. Professionals v2 asked for `MEDIA_LIMIT_REACHED` on the
+   * two surfaces it introduced (§8) — "we branch on these" — and a code the client switches on
+   * that the server never sends is a generic error message on a screen that could have said
+   * "that is one video too many".
+   */
+  limitCode?: ApiErrorCode;
 }
 
 /** The default post rules from 0.11: 5 images or 1 video, never both. */
@@ -61,6 +104,8 @@ export const SERVICE_MEDIA_RULES: MediaRules = {
   allowMixed: true,
   // Ten **together**, which is the number served as `maxServiceMedia`.
   maxTotal: 10,
+  maxDurationMs: MAX_SELLING_VIDEO_MS,
+  limitCode: ApiErrorCode.MEDIA_LIMIT_REACHED,
 };
 
 /**
@@ -77,6 +122,8 @@ export const ITEM_MEDIA_RULES: MediaRules = {
   allowAudio: false,
   maxVideos: 3,
   allowMixed: true,
+  maxDurationMs: MAX_SELLING_VIDEO_MS,
+  limitCode: ApiErrorCode.MEDIA_LIMIT_REACHED,
 };
 
 /** One still image. Avatars, store logos, group photos (0.16.2, 4.1.2, 1.7.3). */
@@ -132,10 +179,18 @@ export class MediaService {
     return null;
   }
 
-  static maxBytesFor(type: MediaType): number {
+  /**
+   * The ceiling for one file, by type and — for video — by what it is being uploaded *for*.
+   *
+   * `purpose` is optional so the dozen callers that only know the type keep working; the upload
+   * endpoint, which is the one place a byte size is declared before anything is stored, passes it.
+   */
+  static maxBytesFor(type: MediaType, purpose?: MediaPurpose): number {
     switch (type) {
       case MediaType.VIDEO:
-        return MAX_VIDEO_BYTES;
+        return purpose && SELLING_PURPOSES.includes(purpose)
+          ? MAX_SELLING_VIDEO_BYTES
+          : MAX_VIDEO_BYTES;
       case MediaType.AUDIO:
         return MAX_AUDIO_BYTES;
       default:
@@ -214,7 +269,7 @@ export class MediaService {
 
     if (images.length > rules.maxImages) {
       throw ApiException.unprocessable(
-        ApiErrorCode.MEDIA_LIMIT_EXCEEDED,
+        rules.limitCode ?? ApiErrorCode.MEDIA_LIMIT_EXCEEDED,
         `You can attach up to ${rules.maxImages} photos.`,
         { details: [{ field, message: `You can attach up to ${rules.maxImages} photos.` }] },
       );
@@ -228,17 +283,52 @@ export class MediaService {
           ? 'Video is not supported here.'
           : `You can attach ${maxVideos === 1 ? 'one video' : `up to ${maxVideos} videos`}.`;
 
-      throw ApiException.unprocessable(ApiErrorCode.MEDIA_LIMIT_EXCEEDED, limit, {
-        details: [{ field, message: limit }],
-      });
+      throw ApiException.unprocessable(
+        rules.limitCode ?? ApiErrorCode.MEDIA_LIMIT_EXCEEDED,
+        limit,
+        {
+          details: [{ field, message: limit }],
+        },
+      );
+    }
+
+    /**
+     * A clip the sweep has already measured and found too long.
+     *
+     * `durationMs === null` is "not measured yet" and is left alone rather than refused: refusing
+     * it would refuse every video in the seconds between upload and derivation, which is every
+     * video a member attaches straight after choosing it.
+     */
+    if (rules.maxDurationMs !== undefined) {
+      const tooLong = videos.find(
+        row => row.durationMs !== null && row.durationMs > rules.maxDurationMs!,
+      );
+
+      if (tooLong) {
+        const seconds = Math.round(rules.maxDurationMs / 1000);
+        const message = `A video can be up to ${seconds} seconds.`;
+
+        throw ApiException.unprocessable(
+          rules.limitCode ?? ApiErrorCode.MEDIA_LIMIT_EXCEEDED,
+          message,
+          {
+            details: [{ field, message }],
+            data: { maxDurationMs: rules.maxDurationMs, durationMs: tooLong.durationMs },
+          },
+        );
+      }
     }
 
     if (rules.maxTotal !== undefined && rows.length > rules.maxTotal) {
       const message = `You can attach up to ${rules.maxTotal} photos and videos in total.`;
 
-      throw ApiException.unprocessable(ApiErrorCode.MEDIA_LIMIT_EXCEEDED, message, {
-        details: [{ field, message }],
-      });
+      throw ApiException.unprocessable(
+        rules.limitCode ?? ApiErrorCode.MEDIA_LIMIT_EXCEEDED,
+        message,
+        {
+          details: [{ field, message }],
+        },
+      );
     }
 
     if (audio.length > (rules.allowAudio ? 1 : 0)) {
@@ -317,6 +407,94 @@ export class MediaService {
     }
 
     return grouped;
+  }
+
+  /**
+   * The still frame a video is rendered with, kept with the video it belongs to (v2 §9.2).
+   *
+   * > `thumbnailUrl` is required on a video. A video tile with no poster frame is a grey box.
+   *
+   * **Nothing here derives a frame from a video** — the platform decodes no video anywhere, which
+   * is why Connect has taken a `posterKey` from the client since it shipped (3.2.1). This is the
+   * same bargain for a product and a service page: the client sends the frame it is already
+   * showing in its own picker, and the server files it against the video so `thumbnailUrl` falls
+   * out of the serialiser every other image uses.
+   *
+   * The poster is attached under its **own owner type** so it is never rendered as a gallery item,
+   * and so it is released with the set it belongs to rather than lingering as an orphan.
+   */
+  async attachPosters(
+    tx: Prisma.TransactionClient,
+    posters: Map<string, Media>,
+    posterOwnerType: string,
+    ownerId: string,
+    /**
+     * The attached files, so the **response** carries the thumbnail too.
+     *
+     * Passed in and updated in place because a caller that serialises the array it already holds —
+     * a product's create does, to avoid a second read — would otherwise answer with
+     * `thumbnailUrl: null` while the row in the database has one. The grey box the poster exists
+     * to prevent, on the one screen that renders immediately after the write.
+     */
+    files?: Media[],
+  ): Promise<void> {
+    if (!posters.size) return;
+
+    await this.attach(tx, [...posters.values()], posterOwnerType, ownerId);
+
+    for (const [videoKey, poster] of posters) {
+      await tx.media.updateMany({
+        where: { storageKey: videoKey },
+        data: { thumbnailKey: poster.storageKey },
+      });
+
+      const file = files?.find(row => row.storageKey === videoKey);
+
+      if (file) file.thumbnailKey = poster.storageKey;
+    }
+  }
+
+  /**
+   * Validates the poster frames in a set of media keys, against the videos they claim to be of.
+   *
+   * A poster on an image is refused rather than ignored: it means the client has paired the two
+   * up wrongly, and silently dropping it would show a grey tile and no reason for it.
+   */
+  async posters(
+    keys: Array<{ key: string; posterKey?: string }>,
+    files: Media[],
+    uploaderId: string,
+    field: string,
+  ): Promise<Map<string, Media>> {
+    const posters = new Map<string, Media>();
+    const byKey = new Map(files.map(file => [file.storageKey, file]));
+
+    for (const entry of keys) {
+      if (!entry.posterKey) continue;
+
+      const video = byKey.get(entry.key);
+
+      if (!video || video.type !== MediaType.VIDEO) {
+        throw ApiException.unprocessable(
+          ApiErrorCode.VALIDATION_FAILED,
+          'A poster frame belongs to a video.',
+          {
+            details: [{ field, message: `${entry.key} is not a video, so it takes no poster.` }],
+          },
+        );
+      }
+
+      const [poster] = await this.validate(
+        [entry.posterKey],
+        uploaderId,
+        SINGLE_IMAGE_RULES,
+        field,
+      );
+
+      posters.set(entry.key, poster);
+    }
+
+    return posters;
   }
 
   /** Detaches and removes media when its owning resource is hard-deleted. */

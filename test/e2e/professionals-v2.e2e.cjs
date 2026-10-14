@@ -549,11 +549,12 @@ async function main() {
 
   const png = await uploadPng(pro.token, 'PROFESSIONAL', 1200, 900);
   const clip = await uploadStubVideo(pro.token, 'PROFESSIONAL');
+  const poster = await uploadPng(pro.token, 'PROFESSIONAL', 1080, 1920);
 
   res = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/services/${web.id}`, {
     mediaKeys: [
       { key: png, role: 'SHOWCASE' },
-      { key: clip, role: 'TESTIMONIAL' },
+      { key: clip, role: 'TESTIMONIAL', posterKey: poster },
     ],
     updates: [{ title: 'Fee change from April', body: 'The Home Office fee rises on 9 April.' }],
     milestones: [{ label: '200 applications supported', year: 2025 }],
@@ -566,6 +567,13 @@ async function main() {
       res.body?.data?.mediaCounts?.videos === 1 &&
       res.body?.data?.media?.find(file => file.type === 'VIDEO')?.role === 'TESTIMONIAL',
     { counts: res.body?.data?.mediaCounts, media: res.body?.data?.media },
+  );
+  check(
+    'a service video carries its poster frame too, and the poster is not a second photo',
+    /^https?:\/\//.test(
+      res.body?.data?.media?.find(file => file.type === 'VIDEO')?.thumbnailUrl ?? '',
+    ) && res.body?.data?.mediaCounts?.images === 1,
+    res.body?.data?.media,
   );
   check(
     'a milestone with no issuer sends no issuer, rather than an empty one',
@@ -972,6 +980,7 @@ async function main() {
 
   const itemPhoto = await uploadPng(seller.token, 'COMMERCE', 1000, 1000);
   const itemClip = await uploadStubVideo(seller.token, 'COMMERCE');
+  const itemPoster = await uploadPng(seller.token, 'COMMERCE', 1080, 1920);
 
   res = await api(seller.token, 'POST', `/commerce/stores/${storeId}/items`, {
     name: 'Jollof rice, party size',
@@ -980,7 +989,9 @@ async function main() {
     categoryCode: 'FOOD_GROCERIES',
     mediaKeys: [
       { key: itemPhoto, role: 'SHOWCASE' },
-      { key: itemClip, role: 'TESTIMONIAL' },
+      // The poster the client is already showing in its picker. Nothing here derives a frame from
+      // a video, so a tile without one is a grey box (§9.2).
+      { key: itemClip, role: 'TESTIMONIAL', posterKey: itemPoster },
     ],
   });
 
@@ -995,6 +1006,59 @@ async function main() {
       media: res.body?.data?.media,
       counts: res.body?.data?.mediaCounts,
     },
+  );
+
+  const itemMedia = res.body?.data?.media ?? [];
+  const itemVideo = itemMedia.find(file => file.type === 'VIDEO');
+
+  check(
+    'the video comes back with the poster frame as its thumbnail',
+    typeof itemVideo?.thumbnailUrl === 'string' && /^https?:\/\//.test(itemVideo.thumbnailUrl),
+    itemVideo,
+  );
+  check(
+    'and the poster is not a sixth photograph in the gallery',
+    itemMedia.filter(file => file.type === 'IMAGE').length === 1,
+    itemMedia.map(file => `${file.type}:${file.role}`),
+  );
+
+  res = await api(seller.token, 'POST', `/commerce/stores/${storeId}/items`, {
+    name: 'A poster on a photograph',
+    description: 'Which is a client pairing two files up wrongly.',
+    price: 100,
+    categoryCode: 'FOOD_GROCERIES',
+    mediaKeys: [{ key: itemPhoto, role: 'SHOWCASE', posterKey: itemPoster }],
+  });
+
+  check(
+    'a poster sent for a photo is refused rather than silently dropped',
+    res.status === 422,
+    { status: res.status, message: res.body?.error?.message },
+  );
+
+  // The published video limits, actually enforced. `maxVideoBytes` is checked where the size is
+  // declared — before a key is minted and before a byte is stored — because that is the only moment
+  // the platform knows how big a file claims to be.
+  res = await api(seller.token, 'POST', '/media/uploads', {
+    purpose: 'COMMERCE',
+    files: [{ mimeType: 'video/mp4', byteSize: 60 * 1024 * 1024, fileName: 'four-minutes.mp4' }],
+  });
+
+  check(
+    'a product video over the published 50MB is refused at the upload, not at the attach',
+    res.status === 422 && res.body?.error?.code === 'MEDIA_TOO_LARGE',
+    { status: res.status, error: res.body?.error?.code },
+  );
+
+  res = await api(seller.token, 'POST', '/media/uploads', {
+    purpose: 'CONNECT',
+    files: [{ mimeType: 'video/mp4', byteSize: 60 * 1024 * 1024, fileName: 'a-story.mp4' }],
+  });
+
+  check(
+    'while a Connect story keeps the looser cap it shipped with',
+    res.status === 201,
+    { status: res.status, error: res.body?.error },
   );
 
   const tooMany = [];
@@ -1012,10 +1076,165 @@ async function main() {
   });
 
   check(
-    'a fourth video is refused by name',
-    res.status === 422 && /video/i.test(res.body?.error?.message ?? ''),
-    { status: res.status, message: res.body?.error?.message },
+    'a fourth video is refused by name, with the code §8 says to branch on',
+    res.status === 422 &&
+      res.body?.error?.code === 'MEDIA_LIMIT_REACHED' &&
+      /video/i.test(res.body?.error?.message ?? ''),
+    { status: res.status, code: res.body?.error?.code, message: res.body?.error?.message },
   );
+
+  // ── 11. §7: nobody is asked to do it twice ────────────────────────────────
+  heading('11. an approved listing review carries over to a verification');
+
+  /**
+   * The carry-over, run the way a deploy runs it.
+   *
+   * It lives in the seed rather than in the migration, and that is the thing worth pinning: the
+   * rule reads the verification gates, the gates are **seeded**, and `start:prod` runs
+   * `migrate deploy` before the app boots — so in the migration the rule saw no subcategories at
+   * all and carried nothing over. Invisible on a fresh database, and wrong on the only database it
+   * exists for.
+   */
+  const {
+    carryOverListingApprovals,
+  } = require('../../dist/prisma/seeders/verification-carryover.seeder.js');
+
+  const legacy = await makeUser('pv2-legacy', { cityId: 'MANCHESTER' });
+  const legacyListing = await api(
+    legacy.token,
+    'POST',
+    '/professionals/listings',
+    {
+      professionTitle: 'Immigration Adviser',
+      experienceLevel: 'MID_LEVEL',
+      about: 'I have been doing family route applications for six years, mostly in Manchester.',
+      categoryCodes: ['IMMIGRATION'],
+      cityId: 'MANCHESTER',
+      consentAccepted: true,
+    },
+  );
+  const legacyListingId = legacyListing.body?.data?.listing?.id;
+
+  check('a listing in a category with gated work exists', !!legacyListingId, legacyListing.body?.error);
+
+  // The state v2 inherited: a review a human approved, with the documents it rested on. Written
+  // directly because the flow that produced it is the one v2 replaced.
+  const legacyDoc = await uploadDocument(legacy.token, { fileName: 'iaa-certificate.pdf' });
+
+  await prisma.professionalListing.update({
+    where: { id: legacyListingId },
+    data: {
+      reviewState: 'APPROVED',
+      reviewSubmittedAt: new Date(Date.now() - 20 * 86_400_000),
+      reviewDecidedAt: new Date(Date.now() - 14 * 86_400_000),
+      reviewNote: 'IAA registration checked.',
+    },
+  });
+  await prisma.media.update({
+    where: { id: legacyDoc.id },
+    data: {
+      ownerType: 'LISTING_DOCUMENT',
+      ownerId: legacyListingId,
+      status: 'ATTACHED',
+      attachedAt: new Date(Date.now() - 20 * 86_400_000),
+    },
+  });
+
+  // And somebody approved under a profession no gated work sits under, who must not be handed a
+  // badge nobody earned.
+  const ungatedPro = await makeUser('pv2-legacy-tech', { cityId: 'MANCHESTER' });
+  const ungatedListing = await api(ungatedPro.token, 'POST', '/professionals/listings', {
+    professionTitle: 'React developer',
+    experienceLevel: 'MID_LEVEL',
+    about: 'I build web apps for small businesses, mostly React and Node, nine years of it.',
+    categoryCodes: ['TECH_SOFTWARE'],
+    cityId: 'MANCHESTER',
+    consentAccepted: true,
+  });
+
+  await prisma.professionalListing.update({
+    where: { id: ungatedListing.body?.data?.listing?.id },
+    data: { reviewState: 'APPROVED', reviewDecidedAt: new Date() },
+  });
+
+  const carried = await carryOverListingApprovals(prisma);
+
+  check(
+    'the carry-over writes a verification and moves the documents',
+    carried.verifications >= 1 && carried.documents >= 1,
+    carried,
+  );
+
+  const carriedRecord = await prisma.categoryVerification.findUnique({
+    where: { userId_categoryCode: { userId: legacy.id, categoryCode: 'IMMIGRATION' } },
+  });
+
+  check(
+    'the professional is approved for the category they were reviewed under',
+    carriedRecord?.status === 'APPROVED',
+    carriedRecord?.status,
+  );
+  check(
+    'with the original decision’s date rather than today’s',
+    carriedRecord &&
+      Date.now() - carriedRecord.decidedAt.getTime() > 13 * 86_400_000,
+    carriedRecord?.decidedAt,
+  );
+  check(
+    'the note says where the approval came from, and no licence is invented',
+    /Carried over from the profile review/.test(carriedRecord?.note ?? '') &&
+      carriedRecord?.licenceSeen === null &&
+      carriedRecord?.checkedBy === 'Circl Trust & Safety',
+    { note: carriedRecord?.note, licenceSeen: carriedRecord?.licenceSeen },
+  );
+
+  const movedDoc = await prisma.media.findUnique({
+    where: { id: legacyDoc.id },
+    select: { ownerType: true, ownerId: true },
+  });
+
+  check(
+    'and the evidence is filed under the record that now carries the approval',
+    movedDoc?.ownerType === 'CATEGORY_VERIFICATION' && movedDoc?.ownerId === carriedRecord?.id,
+    movedDoc,
+  );
+
+  res = await api(legacy.token, 'GET', '/professionals/me/verifications');
+
+  check(
+    'the member sees it as theirs, with its document',
+    res.body?.data?.[0]?.categoryCode === 'IMMIGRATION' &&
+      res.body?.data?.[0]?.documentCount === 1,
+    res.body?.data,
+  );
+
+  check(
+    'nobody is approved for work that needed no approval',
+    (await prisma.categoryVerification.count({ where: { userId: ungatedPro.id } })) === 0,
+  );
+
+  // Every boot runs it. The second run has to be a no-op, or a revocation would be undone by a
+  // deploy.
+  await prisma.categoryVerification.update({
+    where: { id: carriedRecord.id },
+    data: { status: 'REVOKED', decisionNote: 'Register says it lapsed.' },
+  });
+
+  const again = await carryOverListingApprovals(prisma);
+  const afterSecondRun = await prisma.categoryVerification.findUnique({
+    where: { id: carriedRecord.id },
+    select: { status: true },
+  });
+
+  check(
+    'running it again writes nothing and leaves a revocation revoked',
+    again.verifications === 0 && afterSecondRun?.status === 'REVOKED',
+    { again, status: afterSecondRun?.status },
+  );
+
+  await prisma.categoryVerification.deleteMany({
+    where: { userId: { in: [legacy.id, ungatedPro.id] } },
+  });
 
   await prisma.store.deleteMany({ where: { ownerId: seller.id } });
   await prisma.professionalListing.deleteMany({ where: { userId: pro.id } });

@@ -35,6 +35,15 @@ import { StoreService } from './store.service';
 export const ITEM_MEDIA_OWNER = 'STORE_ITEM';
 
 /**
+ * Where a product video's still frame is filed (v2 §9.2).
+ *
+ * Its own owner type, like Connect's poster and a service's: the product gallery reads
+ * `ITEM_MEDIA_OWNER` and must not render the frame as a sixth photograph, and an unattached poster
+ * would be collected by the orphan sweep within the day, breaking the thumbnail it exists for.
+ */
+export const ITEM_POSTER_OWNER = 'STORE_ITEM_POSTER';
+
+/**
  * What to store for "can somebody buy this". `availability` is the answer; `isAvailable` is the
  * same answer to the narrower question and is written in step, so the older field and every index
  * built on it stay right. Absent leaves both alone.
@@ -111,6 +120,13 @@ export class ItemService {
         created.id,
         attachments.roles,
       );
+      await this.media.attachPosters(
+        tx,
+        attachments.posters,
+        ITEM_POSTER_OWNER,
+        created.id,
+        attachments.files,
+      );
 
       // Keeps the store's category hint honest without the seller maintaining it.
       await tx.storeCategory.upsert({
@@ -167,7 +183,17 @@ export class ItemService {
     const updated = await this.database.$transaction(async tx => {
       if (attachments) {
         await this.media.releaseOwner(tx, ITEM_MEDIA_OWNER, itemId);
+        // The posters go with the set they belonged to, or they are frames of a video that is no
+        // longer here.
+        await this.media.releaseOwner(tx, ITEM_POSTER_OWNER, itemId);
         await this.media.attach(tx, attachments.files, ITEM_MEDIA_OWNER, itemId, attachments.roles);
+        await this.media.attachPosters(
+          tx,
+          attachments.posters,
+          ITEM_POSTER_OWNER,
+          itemId,
+          attachments.files,
+        );
       }
 
       const patched = await tx.storeItem.update({
@@ -242,6 +268,7 @@ export class ItemService {
 
     await this.database.$transaction(async tx => {
       await this.media.releaseOwner(tx, ITEM_MEDIA_OWNER, item.id);
+      await this.media.releaseOwner(tx, ITEM_POSTER_OWNER, item.id);
       await tx.storeItem.delete({ where: { id: item.id } });
     });
 
@@ -419,24 +446,33 @@ export class ItemService {
    */
   private async itemMedia(
     userId: string,
-    dto: { mediaKeys?: Array<{ key: string; role?: MediaRole }>; photoKeys?: string[] },
-  ): Promise<{ files: Media[]; roles: Map<string, MediaRole> }> {
-    const keys = dto.mediaKeys?.length
+    dto: {
+      mediaKeys?: Array<{ key: string; role?: MediaRole; posterKey?: string }>;
+      photoKeys?: string[];
+    },
+  ): Promise<{ files: Media[]; roles: Map<string, MediaRole>; posters: Map<string, Media> }> {
+    // Annotated, because the two arms are no longer the same shape: `photoKeys` carries no role
+    // and no poster, and an inferred union of the two loses the tuple type below.
+    const keys: Array<{ key: string; role?: MediaRole; posterKey?: string }> = dto.mediaKeys?.length
       ? dto.mediaKeys
       : (dto.photoKeys ?? []).map(key => ({ key, role: MediaRole.SHOWCASE }));
 
-    if (!keys.length) return { files: [], roles: new Map() };
+    if (!keys.length) return { files: [], roles: new Map(), posters: new Map() };
 
+    const field = dto.mediaKeys?.length ? 'mediaKeys' : 'photoKeys';
     const files = await this.media.validate(
       keys.map(entry => entry.key),
       userId,
       ITEM_MEDIA_RULES,
-      dto.mediaKeys?.length ? 'mediaKeys' : 'photoKeys',
+      field,
     );
 
     return {
       files,
       roles: new Map(keys.map(entry => [entry.key, entry.role ?? MediaRole.SHOWCASE])),
+      // The still frames the client sends with its videos. Validated against the videos they claim
+      // to be of before anything is written (v2 §9.2).
+      posters: await this.media.posters(keys, files, userId, field),
     };
   }
 

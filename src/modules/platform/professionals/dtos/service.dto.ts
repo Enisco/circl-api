@@ -48,6 +48,18 @@ export class ServiceMediaKeyDto {
   @IsEnum(MediaRole)
   @IsOptional()
   role?: MediaRole;
+
+  @ApiPropertyOptional({
+    description:
+      'A still frame, where this entry is a **video**. It becomes the video’s `thumbnailUrl` — ' +
+      'nothing on the server derives a frame from a video, and a video tile with no poster is a ' +
+      'grey box (v2 §9.2). Upload it like any other image and send its key here. A poster on a ' +
+      'photo is refused rather than ignored.',
+  })
+  @IsString()
+  @MaxLength(512)
+  @IsOptional()
+  posterKey?: string;
 }
 
 export class ServiceUpdateDto {

@@ -47,6 +47,7 @@ import {
   toVerifiedCategories,
 } from '../serializers/listing.serializer';
 import { CategoryVerificationService, effectiveStatus } from './category-verification.service';
+import { SERVICE_MEDIA_OWNER, SERVICE_POSTER_OWNER } from './service-catalogue.service';
 
 /**
  * Everything the owner's view of a listing reads, declared once.
@@ -807,7 +808,14 @@ export class ListingService {
       return { removed: false, service: toServiceView(deactivated) };
     }
 
-    await this.database.professionalService.delete({ where: { id: serviceId } });
+    await this.database.$transaction(async tx => {
+      // The media goes with it. A service's photos and videos arrived with v2, and a delete that
+      // left them attached to an id that no longer exists would leave files nothing renders and
+      // the orphan sweep never visits — it only collects media that was never attached at all.
+      await this.media.releaseOwner(tx, SERVICE_MEDIA_OWNER, serviceId);
+      await this.media.releaseOwner(tx, SERVICE_POSTER_OWNER, serviceId);
+      await tx.professionalService.delete({ where: { id: serviceId } });
+    });
 
     return { removed: true, service: null };
   }
@@ -836,6 +844,14 @@ export class ListingService {
         distinct: ['serviceId'],
       });
       const bookedIds = new Set(booked.map(row => row.serviceId).filter(Boolean) as string[]);
+
+      // Same rule as the single delete: whatever is about to stop existing takes its media with
+      // it. An older client cannot send media, but the services it is replacing may well have
+      // some from a newer one.
+      for (const row of existing.filter(item => !bookedIds.has(item.id))) {
+        await this.media.releaseOwner(tx, SERVICE_MEDIA_OWNER, row.id);
+        await this.media.releaseOwner(tx, SERVICE_POSTER_OWNER, row.id);
+      }
 
       await tx.professionalService.deleteMany({
         where: { listingId: listing.id, id: { notIn: [...bookedIds] } },
