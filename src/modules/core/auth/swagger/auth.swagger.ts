@@ -149,13 +149,13 @@ export const AuthSwagger = {
     ApiOperation({
       summary: 'Send verification token',
       description:
-        'Sends a 4-digit OTP to the given email — always, whether or not the account exists. ' +
+        'Sends a 6-digit OTP to the given email — always, whether or not the account exists. ' +
         'The response message is worded neutrally to prevent email enumeration. ' +
         'OTP expires after 10 minutes. Rate limited to 10 attempts per minute.',
     }),
     ApiBody({
       type: SendVerificationTokenDto,
-      description: 'Email to send a 4-digit OTP to',
+      description: 'Email to send a 6-digit OTP to',
       examples: {
         example: {
           summary: 'Send OTP',
@@ -210,7 +210,7 @@ export const AuthSwagger = {
     ApiOperation({
       summary: 'Verify OTP',
       description:
-        'Verifies the 4-digit OTP. ' +
+        'Verifies the 6-digit OTP. ' +
         'New users receive a short-lived signup token to proceed to POST /auth/register. ' +
         'Existing users receive a full session. ' +
         'Failed attempts against existing accounts are tracked; the account is locked after too many failures.',

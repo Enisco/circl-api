@@ -11,7 +11,8 @@ import { Pool } from 'pg';
  * There is no seeded default administrator and no default password anywhere in this repository,
  * because a known starting credential is a known way in for as long as somebody forgets to change
  * it. Instead this prints a single-use invitation link, valid 72 hours, and the person who runs it
- * sets their own password and enrols their own authenticator.
+ * sets their own password and is signed in — accepting the link proves they hold the inbox, which
+ * is the same thing the emailed sign-in code checks from then on.
  *
  * It refuses to run while an active super admin exists: the way to add a second is to invite them
  * from the portal, where the act is attributable to somebody.

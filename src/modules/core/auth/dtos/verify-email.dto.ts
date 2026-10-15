@@ -19,14 +19,14 @@ export class VerifyEmailDto {
   email: string;
 
   @ApiProperty({
-    description: '4-digit verification code received via email',
-    example: '4821',
-    minLength: 4,
-    maxLength: 4,
-    pattern: '^[0-9]{4}$',
+    description: '6-digit verification code received via email',
+    example: '482193',
+    minLength: 6,
+    maxLength: 6,
+    pattern: '^[0-9]{6}$',
   })
-  @Matches(/^[0-9]{4}$/, { message: 'Verification code must contain exactly 4 digits' })
-  @Length(4, 4, { message: 'Verification code must be exactly 4 digits' })
+  @Matches(/^[0-9]{6}$/, { message: 'Verification code must contain exactly 6 digits' })
+  @Length(6, 6, { message: 'Verification code must be exactly 6 digits' })
   @IsString({ message: 'Verification code must be a string' })
   @IsNotEmpty({ message: 'Verification code is required' })
   code: string;

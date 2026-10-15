@@ -9,7 +9,6 @@ import { AdminAuthService } from '../auth/admin-auth.service';
 import { AdminInviteService } from '../auth/admin-invite.service';
 import {
   AdminAcceptInviteDto,
-  AdminEnrolMfaDto,
   AdminInviteTokenDto,
   AdminLoginDto,
   AdminLogoutDto,
@@ -45,16 +44,18 @@ export class AdminAuthController {
   @ApiOperation({
     summary: 'Step one: email and password',
     description:
-      'Never completes a sign-in on its own. Returns a short-lived ticket for the second factor, ' +
-      'or the enrolment path when no authenticator is set up yet.\n\n' +
-      'Every failure — unknown email, not staff, deactivated, wrong password, locked, MFA not ' +
-      'enrolled — returns the same 401 `INVALID_CREDENTIALS` in about the same time. The account ' +
+      'Never completes a sign-in on its own. Emails a six-digit code to the address on the ' +
+      'account and returns a short-lived ticket to spend it against. There is one outcome and no ' +
+      'enrolment path: nothing has to be set up before an account can use this.\n\n' +
+      'Every failure — unknown email, not staff, deactivated, wrong password, locked — returns ' +
+      'the same 401 `INVALID_CREDENTIALS` in about the same time, and no email is sent until the ' +
+      'password has verified, so watching for one tells a caller nothing either. The account ' +
       'owner is told about a lock by email, which is a channel an attacker does not control.',
   })
   async login(@Body() dto: AdminLoginDto) {
     const data = await this.auth.login(dto.email, dto.password);
 
-    return { data, message: 'Continue with your authenticator.' };
+    return { data, message: 'We have emailed you a code.' };
   }
 
   @Public()
@@ -62,11 +63,13 @@ export class AdminAuthController {
   @HttpCode(HttpStatus.OK)
   @RateLimit('ADMIN_MFA')
   @ApiOperation({
-    summary: 'Step two: the authenticator code, or a recovery code',
+    summary: 'Step two: the emailed code, or a recovery code',
     description:
-      'Creates the session. A recovery code is accepted here in either case and with or without ' +
-      'its hyphen, because somebody reading one off paper at a bad moment should not be refused ' +
-      'over punctuation — and using one emails the account owner.',
+      'Creates the session. The code is good for ten minutes, works once, and belongs to the one ' +
+      'ticket it was issued with — a second sign-in gets a second code, and neither cancels the ' +
+      'other. Five wrong codes abandon the ticket. A recovery code is accepted here in ' +
+      'either case and with or without its hyphen, because somebody reading one off paper at a ' +
+      'bad moment should not be refused over punctuation — and using one emails the account owner.',
   })
   async verifyMfa(@Body() dto: AdminMfaVerifyDto) {
     const data = await this.auth.verifyMfa(dto.mfaToken, dto.code);
@@ -124,30 +127,17 @@ export class AdminAuthController {
   @HttpCode(HttpStatus.CREATED)
   @RateLimit('ADMIN_SETUP')
   @ApiOperation({
-    summary: 'Set a password and start enrolling an authenticator',
+    summary: 'Set a password and finish setting up',
     description:
-      'The account exists after this but cannot sign in until enrolment completes. `secret` is ' +
-      'returned for anyone typing it in by hand rather than scanning the QR code.',
+      'The whole of setup. Returns the ten recovery codes **once** — this is the only moment they ' +
+      'exist outside the holder’s own notes, and they are stored hashed — along with a session, ' +
+      'because the invitation link arrived in that inbox and was spent in this request: email ' +
+      'control is already proved, and emailing a code to the same address would be the same ' +
+      'factor twice.',
   })
   async accept(@Body() dto: AdminAcceptInviteDto) {
     const account = await this.invites.accept(dto);
-    const setup = await this.auth.beginEnrolment(account.userId, account.email, account.epoch);
-
-    return { data: setup, message: 'Now add Circl Admin to your authenticator app.' };
-  }
-
-  @Public()
-  @Post('mfa/enroll')
-  @HttpCode(HttpStatus.CREATED)
-  @RateLimit('ADMIN_SETUP')
-  @ApiOperation({
-    summary: 'Confirm the authenticator and finish setting up',
-    description:
-      'Returns the ten recovery codes **once**: this is the only moment they exist outside the ' +
-      "holder's own notes. Stored as hashes, so they cannot be shown again.",
-  })
-  async enrol(@Body() dto: AdminEnrolMfaDto) {
-    const data = await this.auth.enrol(dto.mfaSetupToken, dto.code);
+    const data = await this.auth.completeSetup(account.userId);
 
     return { data, message: 'Save your recovery codes somewhere safe. They are shown once.' };
   }

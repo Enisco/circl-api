@@ -10,7 +10,11 @@ import { adminContext } from '../common/admin-context';
 import { AdminMailService } from './admin-mail.service';
 import { AdminPasswordService } from './admin-password.service';
 import { AdminRecoveryCodeService } from './admin-recovery-code.service';
-import { AdminTotpService } from './admin-totp.service';
+import {
+  ADMIN_OTP_MAX_ATTEMPTS,
+  ADMIN_OTP_TTL_SECONDS,
+  AdminOtpService,
+} from './admin-otp.service';
 import {
   ADMIN_ACCESS_TTL_SECONDS,
   ADMIN_REFRESH_GRACE_MS,
@@ -18,10 +22,13 @@ import {
 } from './admin-session.service';
 import { ADMIN_TOKEN_AUDIENCE, ADMIN_TOKEN_ISSUER, ADMIN_TOKEN_TYPE } from './admin-jwt.strategy';
 
-/** How long the half-finished login lives. Long enough to find a phone, short enough to be no use later. */
-const MFA_TOKEN_TTL_SECONDS = 300;
-const MFA_SETUP_TTL_SECONDS = 900;
-const MFA_MAX_ATTEMPTS = 5;
+/**
+ * How long the half-finished login lives: the same ten minutes the emailed code is good for.
+ *
+ * One constant for both, because two would be a bug waiting to happen — a ticket that outlives its
+ * code is a dead end, and a code that outlives its ticket is a code that cannot be used.
+ */
+const MFA_TOKEN_TTL_SECONDS = ADMIN_OTP_TTL_SECONDS;
 /** Consecutive failures before the account locks. */
 const LOCK_THRESHOLD = 5;
 const LOCK_BASE_MINUTES = 15;
@@ -35,35 +42,41 @@ export interface TokenPairView {
   sessionId: string;
 }
 
-export type LoginResult =
-  | { mfaRequired: true; mfaToken: string; mfaTokenExpiresIn: number }
-  | { mfaEnrollmentRequired: true; mfaSetupToken: string; otpauthUri: string; secret: string };
+/**
+ * One shape, always.
+ *
+ * There used to be a second — `mfaEnrollmentRequired`, handing back a TOTP secret to scan — and
+ * with an emailed code there is nothing to enrol, so the password step has exactly one outcome.
+ */
+export interface LoginResult {
+  mfaRequired: true;
+  mfaToken: string;
+  mfaTokenExpiresIn: number;
+}
 
 interface MfaTicket {
   userId: string;
   email: string;
+  /** The emailed code, hashed. See `AdminOtpService` for why a fast hash is the right one here. */
+  codeHash: string;
   attempts: number;
   ipHash: string;
   uaHash: string;
 }
 
-interface SetupTicket {
-  userId: string;
-  secretEnc: string;
-  keyId: string;
-  attempts: number;
-  /** The credential epoch this was issued under; a reset moves the epoch and strands the ticket. */
-  epoch: number;
-}
-
 /**
- * Staff sign-in: password, then a second factor, then a session.
+ * Staff sign-in: password, then a code sent to the account's address, then a session.
  *
  * Everything here is shaped by one rule — a failure must not say which failure it was. An unknown
- * email, a non-staff account, a deactivated account, a wrong password, a locked account and an
- * unenrolled authenticator all produce the same body in about the same time. Whoever is trying
- * addresses learns nothing about which ones are worth pursuing, and the account's owner is told by
- * email, which is a channel an attacker does not control.
+ * email, a non-staff account, a deactivated account, a wrong password and a locked account all
+ * produce the same body in about the same time. Whoever is trying addresses learns nothing about
+ * which ones are worth pursuing, and the account's owner is told by email, which is a channel an
+ * attacker does not control.
+ *
+ * The second factor is an emailed code rather than an authenticator app. That is a weaker factor —
+ * see `AdminOtpService` for the trade and how to swap back — and it changes one thing here worth
+ * naming: the code is only sent **after** the password verifies, so the endpoint still cannot be
+ * used to find out which addresses belong to staff by watching for an email.
  */
 @Injectable()
 export class AdminAuthService {
@@ -75,7 +88,7 @@ export class AdminAuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly passwords: AdminPasswordService,
-    private readonly totp: AdminTotpService,
+    private readonly otp: AdminOtpService,
     private readonly recoveryCodes: AdminRecoveryCodeService,
     private readonly sessions: AdminSessionService,
     private readonly audit: AuditService,
@@ -165,13 +178,9 @@ export class AdminAuthService {
       actorId: user.id,
     });
 
-    // Enrolled: hand back a ticket for the second factor. Not enrolled — an invite accepted but
-    // the setup window missed, or an MFA reset — hand back the enrolment path instead, so the
-    // account is never reachable with a password alone.
-    if (!credential.totpEnabledAt || !credential.totpSecretEnc) {
-      return this.beginEnrolment(user.id, user.email, credential.credentialEpoch);
-    }
-
+    // A code to the address on the account, and a ticket to spend it against. Every account
+    // reaches this: there is nothing to enrol, so there is no state in which a password alone is
+    // met with anything other than "now check your email".
     return {
       mfaRequired: true,
       mfaToken: await this.issueMfaTicket(user.id, normalised),
@@ -195,17 +204,12 @@ export class AdminAuthService {
       throw this.mfaTokenInvalid();
     }
 
-    const credential = await this.database.adminCredential.findUnique({
-      where: { userId: ticket.userId },
-    });
+    let method: 'email_otp' | 'recovery_code' = 'email_otp';
+    let accepted = this.otp.matches(ticket.codeHash, code);
 
-    if (!credential?.totpSecretEnc) throw this.mfaTokenInvalid();
-
-    const secret = this.totp.decrypt(credential.totpSecretEnc);
-    const totpResult = await this.totp.check(secret, code, credential.totpLastUsedStep);
-    let method: 'totp' | 'recovery_code' = 'totp';
-    let accepted = totpResult.valid;
-
+    // A recovery code still works here, for the account whose email they have lost access to.
+    // Nothing issues them automatically any more — they come from setup and from the security
+    // page — so for most accounts this branch simply never matches.
     if (!accepted) {
       accepted = await this.recoveryCodes.consume(ticket.userId, code);
       method = 'recovery_code';
@@ -214,7 +218,7 @@ export class AdminAuthService {
     if (!accepted) {
       const attempts = ticket.attempts + 1;
 
-      if (attempts >= MFA_MAX_ATTEMPTS) {
+      if (attempts >= ADMIN_OTP_MAX_ATTEMPTS) {
         await this.cache.delete(key);
         await this.registerFailure(ticket.userId, 'mfa', ticket.email);
 
@@ -229,22 +233,20 @@ export class AdminAuthService {
 
     await this.cache.delete(key);
 
-    const data: Record<string, unknown> = {
-      failedAttempts: 0,
-      failedMfaAttempts: 0,
-      lockedUntil: null,
-      lastLoginAt: new Date(),
-      lastLoginIp: adminContext.current()?.clientIp ?? null,
-      lastActiveAt: new Date(),
-    };
-
-    // Recorded only for a code that came from the authenticator: a recovery code has no step, and
-    // writing one would push the replay bound past codes the app is about to produce.
-    if (method === 'totp' && totpResult.step !== null) {
-      data.totpLastUsedStep = BigInt(totpResult.step);
-    }
-
-    await this.database.adminCredential.update({ where: { userId: ticket.userId }, data });
+    // No replay bound to record: the ticket was deleted a moment ago, and an emailed code exists
+    // only inside the one ticket it was issued for. That is the one thing this factor does better
+    // than TOTP — there is no 30-second window in which the same digits are still live.
+    await this.database.adminCredential.update({
+      where: { userId: ticket.userId },
+      data: {
+        failedAttempts: 0,
+        failedMfaAttempts: 0,
+        lockedUntil: null,
+        lastLoginAt: new Date(),
+        lastLoginIp: adminContext.current()?.clientIp ?? null,
+        lastActiveAt: new Date(),
+      },
+    });
 
     const pair = await this.openSession(ticket.userId);
 
@@ -277,108 +279,36 @@ export class AdminAuthService {
     return pair;
   }
 
-  // ─── Enrolment ──────────────────────────────────────────────────────────────
+  // ─── Setup ──────────────────────────────────────────────────────────────────
 
-  async beginEnrolment(userId: string, email: string, epoch: number): Promise<LoginResult> {
-    const secret = this.totp.newSecret();
-    const encrypted = this.totp.encrypt(secret);
-    const token = randomBytes(32).toString('base64url');
-
-    await this.cache.set(
-      this.setupKey(token),
-      {
-        userId,
-        secretEnc: encrypted.ciphertext,
-        keyId: encrypted.keyId,
-        attempts: 0,
-        epoch,
-      } satisfies SetupTicket,
-      MFA_SETUP_TTL_SECONDS,
-    );
-
-    return {
-      mfaEnrollmentRequired: true,
-      mfaSetupToken: token,
-      otpauthUri: this.totp.uri(secret, email),
-      secret,
-    };
-  }
-
-  async enrol(
-    setupToken: string,
-    code: string,
-  ): Promise<{ recoveryCodes: string[]; tokens: TokenPairView }> {
-    const key = this.setupKey(setupToken);
-    const ticket = await this.cache.get<SetupTicket>(key);
-
-    if (!ticket) throw this.mfaTokenInvalid();
-
-    const credential = await this.database.adminCredential.findUnique({
-      where: { userId: ticket.userId },
-    });
-
-    if (!credential) throw this.mfaTokenInvalid();
-
-    // A reset, deactivation or role change since the ticket was issued moves the epoch. Without
-    // this, a setup token obtained before a "reset everything" for a suspected compromise would
-    // still activate the account afterwards (S7.5a).
-    if (credential.credentialEpoch !== ticket.epoch) {
-      await this.cache.delete(key);
-
-      throw this.mfaTokenInvalid();
-    }
-
-    if (credential.totpEnabledAt) {
-      throw ApiException.conflict(
-        ApiErrorCode.MFA_ALREADY_ENROLLED,
-        'That account already has an authenticator set up.',
-      );
-    }
-
-    const secret = this.totp.decrypt(ticket.secretEnc);
-    const result = await this.totp.check(secret, code, null);
-
-    if (!result.valid) {
-      const attempts = ticket.attempts + 1;
-
-      if (attempts >= MFA_MAX_ATTEMPTS) {
-        await this.cache.delete(key);
-
-        throw this.mfaTokenInvalid();
-      }
-
-      await this.cache.set(key, { ...ticket, attempts }, MFA_SETUP_TTL_SECONDS);
-
-      throw this.genericFailure();
-    }
-
-    await this.cache.delete(key);
-
+  /**
+   * Finishes an accepted invitation: recovery codes, and a session.
+   *
+   * Signed in straight away, rather than sent round to the login screen for an emailed code. The
+   * invitation link arrived in that inbox and was just spent, so email control was proved in the
+   * same request that set the password — asking for a code to the same address sixty seconds later
+   * would be the same factor twice, dressed as two.
+   *
+   * The recovery codes are the one reason this is not simply "accept, then log in". They are shown
+   * once, and with the authenticator gone they are the only way back into an account whose inbox
+   * has been lost — so setup is the moment to hand them over, while there is a screen to show them
+   * on.
+   */
+  async completeSetup(userId: string): Promise<{ recoveryCodes: string[]; tokens: TokenPairView }> {
     const codes = await this.database.$transaction(async tx => {
-      await tx.adminCredential.update({
-        where: { userId: ticket.userId },
-        data: {
-          totpSecretEnc: ticket.secretEnc,
-          totpKeyId: ticket.keyId,
-          totpEnabledAt: new Date(),
-          totpLastUsedStep: result.step !== null ? BigInt(result.step) : null,
-          failedMfaAttempts: 0,
-        },
-      });
-
-      const issued = await this.recoveryCodes.issue(ticket.userId, tx);
+      const issued = await this.recoveryCodes.issue(userId, tx);
 
       await this.audit.record(tx, {
-        action: 'auth.mfa_enrolled',
+        action: 'auth.setup_completed',
         targetType: 'STAFF',
-        targetId: ticket.userId,
-        actorId: ticket.userId,
+        targetId: userId,
+        actorId: userId,
       });
 
       return issued;
     });
 
-    return { recoveryCodes: codes, tokens: await this.openSession(ticket.userId) };
+    return { recoveryCodes: codes, tokens: await this.openSession(userId) };
   }
 
   // ─── Refresh ────────────────────────────────────────────────────────────────
@@ -618,14 +548,28 @@ export class AdminAuthService {
     });
   }
 
+  /**
+   * Stores the half-finished login and emails the code that completes it.
+   *
+   * The code lives on the ticket rather than against the account, so two sign-in attempts are two
+   * independent attempts: each has its own code, each is bound to the address and client that
+   * started it, and neither cancels the other — they simply expire. What bounds the number of live
+   * codes is the sign-in limit above this, five in fifteen minutes, not any bookkeeping here.
+   *
+   * The alternative — one live code per account, replaced on each attempt — was rejected because
+   * it hands anybody who knows a staff address a way to invalidate the code that colleague is
+   * part-way through typing, by doing nothing more than starting a login of their own.
+   */
   private async issueMfaTicket(userId: string, email: string): Promise<string> {
     const token = randomBytes(32).toString('base64url');
+    const { code, codeHash } = this.otp.newCode();
 
     await this.cache.set(
       this.mfaKey(token),
       {
         userId,
         email,
+        codeHash,
         attempts: 0,
         ipHash: this.contextHash('ip'),
         uaHash: this.contextHash('ua'),
@@ -633,11 +577,12 @@ export class AdminAuthService {
       MFA_TOKEN_TTL_SECONDS,
     );
 
+    await this.otp.sendSignInCode(email, code);
+
     return token;
   }
 
   private mfaKey = (token: string) => `admin:mfa:${Util.tokenHash(token)}`;
-  private setupKey = (token: string) => `admin:mfa-setup:${Util.tokenHash(token)}`;
 
   private contextHash(part: 'ip' | 'ua'): string {
     const context = adminContext.current();

@@ -82,14 +82,15 @@ async function main() {
     );
 
     if (res.status !== 200) {
-      await fail(new Error(`could not ${label} the gate: ${res.status} ${JSON.stringify(res.body)}`));
+      await fail(
+        new Error(`could not ${label} the gate: ${res.status} ${JSON.stringify(res.body)}`),
+      );
     }
   };
 
   const gatedBefore = (
-    (
-      await api(null, 'GET', '/admin/professional-reviews/categories', undefined, headers)
-    ).body?.data ?? []
+    (await api(null, 'GET', '/admin/professional-reviews/categories', undefined, headers)).body
+      ?.data ?? []
   )
     .filter(row => row.requiresReview)
     .map(row => row.code);
@@ -727,7 +728,7 @@ async function main() {
 
   const signIn = await api(null, 'POST', '/auth/verify/email', {
     email: suspendMe.email,
-    code: '1234',
+    code: '111222',
   });
 
   check('sign-in is refused with 403', signIn.status === 403, signIn.status);
@@ -816,7 +817,7 @@ async function main() {
 
   const backIn = await api(null, 'POST', '/auth/verify/email', {
     email: suspendMe.email,
-    code: '1234',
+    code: '111222',
   });
 
   check(
@@ -859,8 +860,7 @@ async function main() {
   // Office runs through CIOL and ITI — and which therefore no longer makes the point.
   check(
     'and isRegulated is reported separately, read-only',
-    byCode.TECH_SOFTWARE?.requiresReview === false &&
-      byCode.TECH_SOFTWARE?.isRegulated === false,
+    byCode.TECH_SOFTWARE?.requiresReview === false && byCode.TECH_SOFTWARE?.isRegulated === false,
     byCode.TECH_SOFTWARE,
   );
   // Dropped from the admin responses at the portal's request (§2.9): a reviewer no longer checks a

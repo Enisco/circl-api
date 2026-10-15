@@ -21,6 +21,11 @@ model AdminCredential {
 
   /// base64(iv | tag | ciphertext), AES-256-GCM. `keyId` travels with it so the key can rotate
   /// without a migration that would have to decrypt every row at once.
+  ///
+  /// **Dormant.** The second factor is a code emailed at sign-in, so nothing writes these and
+  /// nothing reads them; the columns stay so switching back is a code change rather than a
+  /// migration, and every path that could restore an account still clears them. See
+  /// `AdminOtpService`.
   totpSecretEnc    String?   @map("totp_secret_enc")
   totpKeyId        String?   @map("totp_key_id")
   totpEnabledAt    DateTime? @map("totp_enabled_at") @db.Timestamptz
@@ -44,8 +49,11 @@ model AdminCredential {
   invitedById     String?   @map("invited_by_id")
 
   /// Bumped by every credential reset, deactivation, reactivation, role change and invite
-  /// acceptance. Setup tokens carry the epoch they were issued under, so a token obtained before a
-  /// "reset both" for a suspected compromise cannot still activate the account afterwards.
+  /// acceptance. Nothing reads it at present: it existed so an MFA setup token could be stranded
+  /// by a reset made after it was issued, and with the authenticator replaced by an emailed code
+  /// there are no setup tokens left to strand. Kept, and kept accurate, because it is the only
+  /// record of how many times an account's credentials have been reset — and because the guard it
+  /// was built for comes back with the authenticator if that ever returns.
   credentialEpoch Int @default(0) @map("credential_epoch")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz

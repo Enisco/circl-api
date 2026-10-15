@@ -3,12 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { ResendProvider } from '@/modules/infrastructure/notification/providers';
 
 /**
- * The four emails a staff account sends, written plainly.
+ * The emails a staff account sends, written plainly.
  *
  * Deliberately not routed through the member template registry. These are operational notices to
- * colleagues, not product messages: three of the four exist because the response to the person
- * doing the thing has to stay uninformative, so the account's owner is told out of band instead.
- * An account lock that is only visible in a log nobody reads is not a notification.
+ * colleagues, not product messages: most of them exist because the response to the person doing
+ * the thing has to stay uninformative, so the account's owner is told out of band instead. An
+ * account lock that is only visible in a log nobody reads is not a notification.
  *
  * Sending never fails the action it describes. A password that changed and an email that did not
  * arrive is recoverable; a password change refused because the mail provider was down is not.
@@ -35,6 +35,39 @@ export class AdminMailService {
       `${this.portalUrl}/invite/${token}`,
       ``,
       `If you were not expecting this, tell ${inviterName} and ignore the link.`,
+    ]);
+  }
+
+  /**
+   * The sign-in code — the second factor itself, not a notice about one.
+   *
+   * So this is the one email here whose failure to arrive stops somebody working, and the only
+   * mitigation that belongs in an email is to say how long it is good for and that another attempt
+   * replaces it. The send is still best-effort for the same reason as the rest: a provider outage
+   * that threw here would turn "no code arrived" into "the password step 500s", which is worse to
+   * diagnose and no more useful.
+   */
+  async signInCode(to: string, code: string, minutes: number): Promise<void> {
+    await this.send(to, `${code} is your Circl admin sign-in code`, [
+      `Your sign-in code is ${code}.`,
+      ``,
+      `It expires in ${minutes} minutes and works once. Starting again sends a different code;`,
+      `this one keeps working until it expires.`,
+      ``,
+      `If you were not signing in, somebody has your admin password — tell a super admin now.`,
+    ]);
+  }
+
+  /** The code for confirming a change to your own credentials while already signed in. */
+  async stepUpCode(to: string, code: string, minutes: number): Promise<void> {
+    await this.send(to, `${code} is your Circl admin confirmation code`, [
+      `Your confirmation code is ${code}.`,
+      ``,
+      `It expires in ${minutes} minutes and works once. It is needed because you are changing`,
+      `your own credentials.`,
+      ``,
+      `If you did not ask for this, somebody is using your signed-in session — change your`,
+      `password and tell a super admin.`,
     ]);
   }
 

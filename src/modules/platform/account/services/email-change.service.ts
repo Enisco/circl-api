@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException, Util } from '@/common';
+import { ApiErrorCode, ApiException, OTP_LENGTH, Util } from '@/common';
 import { EventBusService, UserLoginOtpEvent } from '@/modules/infrastructure/events';
 import { ChangeEmailDto, ConfirmEmailChangeDto } from '../dtos/account.dto';
 
@@ -48,7 +48,7 @@ export class EmailChangeService {
       );
     }
 
-    const code = Util.generateOtp(6);
+    const code = Util.generateOtp(OTP_LENGTH);
     const expiresAt = new Date(Date.now() + CODE_TTL_SECONDS * 1000);
 
     // Only one change can be in flight, so a second request replaces the first rather than

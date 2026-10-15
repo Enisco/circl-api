@@ -26,7 +26,13 @@ export interface TotpCheck {
 }
 
 /**
- * The second factor.
+ * The authenticator-app second factor. **Dormant — nothing calls this.**
+ *
+ * Sign-in and setup use a code emailed at the time instead (`AdminOtpService`), which is a weaker
+ * factor and a much shorter road for somebody setting up a new staff account. This file is kept
+ * whole rather than deleted because that choice was made "for now", and reversing it should be two
+ * call sites rather than a rewrite: `AdminAuthService.verifyMfa` to check a code against the
+ * stored secret again, and a setup path that hands one out.
  *
  * Secrets are encrypted at rest with a key that is not in the database, so a dump of the database
  * is not a set of working authenticators. The key id is stored beside each secret, which is what

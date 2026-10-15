@@ -12,17 +12,16 @@ import * as argon2 from 'argon2';
  * two-signal rule as the demo dataset, because a guard that reads one of them is off in exactly
  * the configuration that matters.
  *
- * ## No fake second factor
+ * ## The second factor needs no setup
  *
- * Admin sign-in is password **plus** TOTP, and `login` never returns a session for a password
- * alone: an account with no authenticator gets the enrolment path back instead. So these accounts
- * are seeded *unenrolled*, and the first sign-in walks through enrolment and shows a QR code.
+ * Admin sign-in is password **plus** a six-digit code emailed to the account, and `login` never
+ * returns a session for a password alone. There is nothing to enrol, so these accounts are usable
+ * the moment they are seeded — which is the whole reason the authenticator went.
  *
- * That is deliberate, and it is why there is no `123456` anywhere near this file. A TOTP secret is
- * generated and checked locally, so there is nothing here waiting on email delivery — the fixed
- * development code (see `dev-otp.constant.ts`) exists for the *emailed* codes, which are a
- * different mechanism with a different reason to be stubbed. Seeding a fixed authenticator secret
- * would be inventing a weakness to solve a problem that does not exist.
+ * Outside production that code is the fixed `111222` (see `dev-otp.constant.ts`), so a developer
+ * with no mail provider configured can still sign in. Note what that means here: on a machine
+ * where these accounts exist, the password is in this file and the code is a constant. That is two
+ * published factors, which is one more reason this seeder refuses to run in production.
  */
 
 /** Long enough and shapeless enough to pass the password rules the portal enforces. */
@@ -101,14 +100,12 @@ export const seedAdminAccounts = async (prisma: PrismaClient) => {
 
     const existing = await prisma.user.findUnique({
       where: { email: admin.email },
-      select: { id: true },
+      select: { id: true, adminCredential: { select: { passwordHash: true } } },
     });
 
     if (existing) {
       // The role and staff flag are re-asserted, because a role rename or a permission change
-      // should reach these accounts. The password is **not** reset: somebody may have changed it
-      // on a shared environment, and a seeder that quietly puts it back to the published one would
-      // undo that without saying so.
+      // should reach these accounts.
       await prisma.user.update({
         where: { id: existing.id },
         data: {
@@ -119,6 +116,35 @@ export const seedAdminAccounts = async (prisma: PrismaClient) => {
           },
         },
       });
+
+      // And so is the password, when it has stopped being the published one.
+      //
+      // This used to be left alone, on the reasoning that somebody may have changed it on a shared
+      // environment and a seeder should not quietly undo that. It is the wrong reasoning for these
+      // four rows: the password is printed in this file, so changing it makes nothing secret — it
+      // only strands the one credential the documentation tells people to use. That is exactly
+      // what happened on at least one database, where these accounts were created by an earlier
+      // version of this seeder and then kept a password nobody could name.
+      //
+      // Re-asserted rather than reset blindly, and announced when it changes anything, so the
+      // objection that stood behind the old behaviour — doing it *silently* — still does not apply.
+      const stale =
+        existing.adminCredential !== null &&
+        !(await argon2.verify(existing.adminCredential.passwordHash, PASSWORD).catch(() => false));
+
+      if (stale) {
+        await prisma.adminCredential.update({
+          where: { userId: existing.id },
+          data: {
+            passwordHash,
+            passwordUpdatedAt: new Date(),
+            lockedUntil: null,
+            failedAttempts: 0,
+          },
+        });
+        console.warn(`  ↺ ${admin.email}: password was not the published one, and has been reset`);
+      }
+
       kept += 1;
       continue;
     }
@@ -140,7 +166,8 @@ export const seedAdminAccounts = async (prisma: PrismaClient) => {
           create: {
             passwordHash,
             passwordUpdatedAt: new Date(),
-            // Unenrolled: the first sign-in goes through TOTP enrolment. See the note above.
+            // Dormant column, set explicitly so the row says so rather than leaving it to the
+            // default. Nothing reads it; the second factor is emailed.
             totpEnabledAt: null,
           },
         },
@@ -151,5 +178,5 @@ export const seedAdminAccounts = async (prisma: PrismaClient) => {
 
   console.info(`  ✅ ${created} staff account(s) created, ${kept} already present`);
   console.info(`     Password for all of them: ${PASSWORD}`);
-  console.info('     First sign-in sets up the authenticator app (no code is emailed).');
+  console.info('     Sign-in code: 111222 — the fixed development OTP, so no mail is needed.');
 };

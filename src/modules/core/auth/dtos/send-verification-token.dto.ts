@@ -5,7 +5,7 @@ import { ApiProperty } from '@nestjs/swagger';
 export class SendVerificationTokenDto {
   @ApiProperty({
     description:
-      "User's email address — a 4-digit OTP will be sent here regardless of whether an account exists",
+      "User's email address — a 6-digit OTP will be sent here regardless of whether an account exists",
     example: 'john.doe@example.com',
     format: 'email',
     maxLength: 254,

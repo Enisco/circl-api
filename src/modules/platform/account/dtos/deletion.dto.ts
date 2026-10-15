@@ -4,7 +4,7 @@ import { IsString, Length } from 'class-validator';
 
 export class ConfirmDeletionDto {
   @ApiProperty({
-    example: '123456',
+    example: '111222',
     description:
       'The 6-digit code sent to the email ON THE ACCOUNT, never to one supplied in the request. ' +
       'That is the whole point: it proves the person deleting the account can read that inbox, so ' +

@@ -92,6 +92,22 @@ export class AdminMeController {
     return { data: await this.me.setPreferences(actor, dto), message: 'Saved.' };
   }
 
+  @Post('security/code')
+  @AdminAuthenticated()
+  @HttpCode(HttpStatus.OK)
+  @RateLimit('ADMIN_REAUTH')
+  @ApiOperation({
+    summary: 'Email me a confirmation code',
+    description:
+      'For the two calls below, which re-authenticate before changing your own credentials. Good ' +
+      'for ten minutes, works once, and asking again replaces it rather than adding a second. ' +
+      'Sent to the address on the account, which is also the warning somebody gets if it was not ' +
+      'them who asked.',
+  })
+  async sendSecurityCode(@CurrentUser() actor: AdminPrincipal) {
+    return { data: await this.me.sendStepUpCode(actor), message: 'We have emailed you a code.' };
+  }
+
   @Post('password')
   @AdminAuthenticated()
   @HttpCode(HttpStatus.OK)
@@ -99,7 +115,7 @@ export class AdminMeController {
   @ApiOperation({
     summary: 'Change my password',
     description:
-      'Needs the current password **and** a live authenticator code. The threat is a machine ' +
+      'Needs the current password **and** a code from `security/code`. The threat is a machine ' +
       'somebody walked away from, where the old password is already in the password manager. ' +
       'Signs out every other session and emails the account owner.',
   })
@@ -117,7 +133,10 @@ export class AdminMeController {
     summary: 'Replace my recovery codes',
     description:
       'Invalidates the old set. Deliberately not replayable through `Idempotency-Key`: a response ' +
-      'carrying secrets must not be stored for a retry to hand back later.',
+      'carrying secrets must not be stored for a retry to hand back later.\n\n' +
+      'With the authenticator gone, these are the only way back into an account whose inbox has ' +
+      'been lost — the sign-in code goes to that same inbox. Issued at setup and replaced here; ' +
+      'nothing else hands them out.',
   })
   async regenerate(@CurrentUser() actor: AdminPrincipal, @Body() dto: AdminReauthenticateDto) {
     const { recoveryCodes, auditId } = await this.me.regenerateRecoveryCodes(actor, dto);

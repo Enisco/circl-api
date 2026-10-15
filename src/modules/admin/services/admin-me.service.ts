@@ -6,7 +6,7 @@ import { AuditService } from '../audit/audit.service';
 import { AdminPrincipal } from '../common/admin-principal';
 import { AdminPasswordService } from '../auth/admin-password.service';
 import { AdminRecoveryCodeService } from '../auth/admin-recovery-code.service';
-import { AdminTotpService } from '../auth/admin-totp.service';
+import { AdminOtpService } from '../auth/admin-otp.service';
 import { AdminSessionService } from '../auth/admin-session.service';
 import { AdminMailService } from '../auth/admin-mail.service';
 
@@ -19,6 +19,14 @@ export interface AdminMeView {
   avatarUrl: string | null;
   role: string;
   permissions: string[];
+  /**
+   * Always true for an account that can sign in.
+   *
+   * Kept in the shape rather than dropped, because the portal shows it — but it is no longer a
+   * property of the account. Every sign-in needs a code emailed to this address, so there is no
+   * second factor to turn on and none to be missing, and a screen offering to set one up would be
+   * offering something that does not exist.
+   */
   mfaEnabled: boolean;
 }
 
@@ -39,7 +47,7 @@ export class AdminMeService {
     private readonly database: PrismaService,
     private readonly audit: AuditService,
     private readonly passwords: AdminPasswordService,
-    private readonly totp: AdminTotpService,
+    private readonly otp: AdminOtpService,
     private readonly recoveryCodes: AdminRecoveryCodeService,
     private readonly sessions: AdminSessionService,
     private readonly mail: AdminMailService,
@@ -54,7 +62,7 @@ export class AdminMeService {
         lastName: true,
         email: true,
         adminProfile: { select: { avatar: true } },
-        adminCredential: { select: { totpEnabledAt: true } },
+        adminCredential: { select: { deactivatedAt: true } },
       },
     });
 
@@ -68,7 +76,7 @@ export class AdminMeService {
       // For the UI only. Every request re-resolves these server-side, so a stale copy in the
       // browser cannot grant anything (S5.4).
       permissions: [...actor.permissions].sort(),
-      mfaEnabled: user.adminCredential?.totpEnabledAt !== null,
+      mfaEnabled: user.adminCredential?.deactivatedAt === null,
     };
   }
 
@@ -175,7 +183,7 @@ export class AdminMeService {
   /**
    * Changes the password, having proved it is really them.
    *
-   * Both factors again, not just the old password: the threat is a session somebody walked away
+   * Both things again, not just the old password: the threat is a session somebody walked away
    * from, and the old password is written in the browser's password manager on that same machine.
    * Every other session is then signed out, because a password change is what you do when you
    * think somebody else has it.
@@ -184,9 +192,9 @@ export class AdminMeService {
     actor: AdminPrincipal,
     input: { currentPassword: string; newPassword: string; code: string },
   ): Promise<{ auditId: string }> {
-    // The new password is judged before the authenticator code is spent. The other way round, a
-    // password that broke the policy burned the code with it, so every correction needed a fresh
-    // thirty-second window — a punishment for mistyping.
+    // The new password is judged before the code is spent. The other way round, a password that
+    // broke the policy burned the code with it, so every correction needed a fresh email — a
+    // punishment for mistyping.
     await this.passwords.assertAcceptable(input.newPassword, {
       email: actor.email,
       firstName: actor.firstName,
@@ -320,7 +328,26 @@ export class AdminMeService {
   }
 
   /**
-   * Password and a live authenticator code, for a change to your own credentials.
+   * Asks for a confirmation code before changing your own credentials.
+   *
+   * A separate call rather than a code sent by the change itself, because the portal needs the
+   * code *in hand* to fill the dialog — and because one that arrived with every opened dialog
+   * would train people to ignore an email that is the only warning they get when somebody else is
+   * at their desk.
+   */
+  async sendStepUpCode(actor: AdminPrincipal): Promise<{ expiresInSeconds: number }> {
+    return this.otp.issueStepUp(actor.id, actor.email);
+  }
+
+  /**
+   * Password and a code emailed a moment ago, for a change to your own credentials.
+   *
+   * Still two things, and deliberately not the same two as sign-in: the threat is a machine
+   * somebody walked away from, where the password is already in the browser's password manager.
+   * The code goes to their inbox, which that machine may well be signed into — so this is weaker
+   * than it was with an authenticator in a pocket, and it is the one place where the trade bites.
+   * What it still catches is the case that made it worth having: a stranger at an open session who
+   * has neither the password nor the inbox.
    *
    * 422 rather than 401 on failure: a 401 would make the portal think the session had gone and log
    * the person out mid-dialog, when what actually happened is that they mistyped.
@@ -334,21 +361,13 @@ export class AdminMeService {
       where: { userId: actor.id },
     });
 
-    if (!credential?.totpSecretEnc) throw this.wrongCredentials();
+    if (!credential) throw this.wrongCredentials();
     if (!(await this.passwords.verify(credential.passwordHash, password))) {
       throw this.wrongCredentials();
     }
 
-    const secret = this.totp.decrypt(credential.totpSecretEnc);
-    const result = await this.totp.check(secret, code, credential.totpLastUsedStep);
-
-    if (!result.valid) throw this.wrongCredentials();
-
-    // Recorded so the same code cannot re-authenticate a second change.
-    await this.database.adminCredential.update({
-      where: { userId: actor.id },
-      data: { totpLastUsedStep: result.step !== null ? BigInt(result.step) : undefined },
-    });
+    // Spent on success inside `consumeStepUp`, so one code authorises one change.
+    if (!(await this.otp.consumeStepUp(actor.id, code))) throw this.wrongCredentials();
   }
 
   private wrongCredentials() {

@@ -19,6 +19,12 @@ export const AUDIT_ACTIONS = {
   'auth.login_failed': AuditArea.AUTH,
   'auth.login_success': AuditArea.AUTH,
   'auth.logout': AuditArea.AUTH,
+  /// Accepting an invitation and finishing setup in one step: password set, recovery codes issued,
+  /// signed in.
+  'auth.setup_completed': AuditArea.AUTH,
+  /// Nothing writes this any more — the authenticator was replaced by a code emailed at sign-in.
+  /// Kept in the registry because the trail is append-only: the entries are still there, and
+  /// dropping the key would take them out of the filter that is the only way to find them.
   'auth.mfa_enrolled': AuditArea.AUTH,
   'auth.password_changed': AuditArea.AUTH,
   'auth.recovery_codes_regenerated': AuditArea.AUTH,

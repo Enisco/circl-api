@@ -46,7 +46,7 @@ describe('request log redaction', () => {
 
   it('redacts credentials that should never have been in a query string', () => {
     const line = serialiseRequest({
-      query: { token: 'inv_abc', code: '123456', mfaToken: 'x', password: 'y', secret: 'z' },
+      query: { token: 'inv_abc', code: '111222', mfaToken: 'x', password: 'y', secret: 'z' },
     });
 
     expect(Object.values(line.query as Record<string, unknown>)).toEqual([

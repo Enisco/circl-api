@@ -28,9 +28,9 @@ export interface InviteView {
  * The only way a staff account comes into existence, and the only way one comes back.
  *
  * There is no self-service sign-up and no password reset by email, because either would make a
- * staff inbox sufficient to become an administrator. What there is instead: an existing
- * administrator issues a single-use link, and the account cannot sign in until a password and an
- * authenticator are both set up.
+ * staff inbox sufficient to *become* an administrator — a bigger thing than the emailed sign-in
+ * code, which only lets an existing one back in. What there is instead: an existing administrator
+ * issues a single-use link, and accepting it sets the password and finishes setup in one step.
  *
  * Every invalid state — unknown, expired, used, revoked, superseded — answers identically, so the
  * endpoint cannot be used to find out which addresses have been invited.
@@ -233,7 +233,7 @@ export class AdminInviteService {
     firstName: string;
     lastName: string;
     password: string;
-  }): Promise<{ userId: string; email: string; epoch: number }> {
+  }): Promise<{ userId: string; email: string }> {
     const invite = await this.liveByToken(input.token);
 
     await this.passwords.assertAcceptable(input.password, {
@@ -291,7 +291,7 @@ export class AdminInviteService {
       // outstanding is never undone. (There was a block here that re-applied the invite's role; it
       // sat behind the same condition that throws above, so it could never run — and would have
       // been wrong if it had.)
-      const credential = await tx.adminCredential.upsert({
+      await tx.adminCredential.upsert({
         where: { userId },
         update: {
           passwordHash,
@@ -301,7 +301,9 @@ export class AdminInviteService {
           failedAttempts: 0,
           failedMfaAttempts: 0,
           lockedUntil: null,
-          // MFA starts over: the account is only usable once an authenticator is enrolled.
+          // Cleared although nothing reads them: the second factor is an emailed code now, and
+          // a restored account must not quietly inherit an authenticator secret set before
+          // whatever went wrong — least of all if `AdminTotpService` is ever wired back in.
           totpSecretEnc: null,
           totpKeyId: null,
           totpEnabledAt: null,
@@ -329,7 +331,7 @@ export class AdminInviteService {
         metadata: { inviteId: invite.id, role: invite.role.code },
       });
 
-      return { userId, email: invite.email, epoch: credential.credentialEpoch };
+      return { userId, email: invite.email };
     });
   }
 

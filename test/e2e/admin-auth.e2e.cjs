@@ -6,9 +6,13 @@
  * personal data and private messages of the whole platform.
  *
  * So the checks here are in two halves. The first is that the front door works: invite, password,
- * authenticator, session, rotation. The second is that every other door is shut, and most of the
- * value is in the second half. */
-const { generate, NobleCryptoPlugin, ScureBase32Plugin } = require('otplib');
+ * emailed code, session, rotation. The second is that every other door is shut, and most of the
+ * value is in the second half.
+ *
+ * The second factor is now a six-digit code emailed at sign-in rather than an authenticator app.
+ * Outside production that code is the fixed `111222` — generated, not bypassed, so the ordinary
+ * hash comparison runs (`dev-otp.constant.ts`). That is what makes it typeable here, and it is why
+ * these checks no longer compute TOTP. */
 const jwt = require('jsonwebtoken');
 const {
   adminHeaders,
@@ -23,9 +27,8 @@ const {
   sweep,
 } = require('./harness.cjs');
 
-const base32 = new ScureBase32Plugin();
-const crypto = new NobleCryptoPlugin();
-const codeFor = secret => generate({ secret, base32, crypto, digits: 6, period: 30 });
+/** The fixed development OTP. Six digits of it for the admin codes. */
+const OTP = '111222';
 
 const PASSWORD = 'correct-horse-battery-staple-7';
 const bff = process.env.ADMIN_BFF_SECRET
@@ -123,66 +126,25 @@ async function inviteFor(email, roleCode = 'super_admin') {
     bff,
   );
   check('a real password is accepted', r.status === 201, r.body?.error);
-  const setup = r.body?.data;
-  check(
-    'and hands back a setup token and a scannable URI',
-    typeof setup?.mfaSetupToken === 'string' &&
-      /^otpauth:\/\/totp\/Circl%20Admin/.test(setup?.otpauthUri ?? ''),
-    setup?.otpauthUri,
-  );
-  check(
-    'with the secret in base32, for anyone typing it in by hand',
-    /^[A-Z2-7]{32}$/.test(setup?.secret ?? ''),
-    setup?.secret?.length,
-  );
-
-  r = await api(null, 'POST', '/admin/auth/invites/inspect', { token }, bff);
-  check('the invitation is single use', r.status === 404, r.status);
-
-  console.log('\n── The account cannot be used until MFA is enrolled ─────────');
-
-  r = await api(null, 'POST', '/admin/auth/login', { email, password: PASSWORD }, bff);
-  check(
-    'the password alone returns the enrolment path, never a session',
-    r.status === 200 && r.body?.data?.mfaEnrollmentRequired === true && !r.body?.data?.accessToken,
-    r.body?.data,
-  );
-
-  r = await api(
-    null,
-    'POST',
-    '/admin/auth/mfa/enroll',
-    { mfaSetupToken: setup.mfaSetupToken, code: '000000' },
-    bff,
-  );
-  check('a wrong enrolment code is refused', r.status === 401, r.status);
-
-  r = await api(
-    null,
-    'POST',
-    '/admin/auth/mfa/enroll',
-    { mfaSetupToken: setup.mfaSetupToken, code: await codeFor(setup.secret) },
-    bff,
-  );
-  check('the right code enrols', r.status === 201, r.body?.error);
   const recovery = r.body?.data?.recoveryCodes ?? [];
   const firstPair = r.body?.data?.tokens;
   check(
-    'and returns exactly ten recovery codes, once',
+    'and setup is finished in that one call: ten recovery codes, shown once',
     recovery.length === 10 &&
       recovery.every(code => /^[2-9A-HJ-NP-TV-Z]{5}-[2-9A-HJ-NP-TV-Z]{5}$/.test(code)),
     recovery.slice(0, 2),
   );
+  // Signed in without a code emailed to the same inbox the invitation arrived in: email control
+  // was proved by spending the link, and asking again would be the same factor twice.
   check('with a session', typeof firstPair?.accessToken === 'string', Object.keys(firstPair ?? {}));
-
-  r = await api(
-    null,
-    'POST',
-    '/admin/auth/mfa/enroll',
-    { mfaSetupToken: setup.mfaSetupToken, code: await codeFor(setup.secret) },
-    bff,
+  check(
+    'and nothing to enrol — no setup token, no secret, no QR code',
+    !r.body?.data?.mfaSetupToken && !r.body?.data?.otpauthUri && !r.body?.data?.secret,
+    Object.keys(r.body?.data ?? {}),
   );
-  check('the setup token cannot be used twice', r.status !== 201, r.status);
+
+  r = await api(null, 'POST', '/admin/auth/invites/inspect', { token }, bff);
+  check('the invitation is single use', r.status === 404, r.status);
 
   console.log('\n── Signing in ───────────────────────────────────────────────');
 
@@ -221,41 +183,75 @@ async function inviteFor(email, roleCode = 'super_admin') {
     r.status === 200 && r.body?.data?.mfaRequired === true && !r.body?.data?.accessToken,
     r.body?.data,
   );
+  check(
+    'and never the enrolment path, which no longer exists',
+    r.body?.data?.mfaEnrollmentRequired === undefined,
+    r.body?.data,
+  );
+  check(
+    'the ticket says how long it has, and it is long enough for an email to arrive',
+    r.body?.data?.mfaTokenExpiresIn >= 300,
+    r.body?.data?.mfaTokenExpiresIn,
+  );
   const ticket = r.body?.data?.mfaToken;
 
-  // Enrolment recorded the step its own code belonged to, so the same six digits are now refused —
-  // a code is good for thirty seconds, and the replay bound is what stops it being used twice
-  // inside them. The next step's code is within the server's tolerance and is a later step.
-  const live = await generate({
-    secret: setup.secret,
-    base32,
-    crypto,
-    digits: 6,
-    period: 30,
-    epoch: Math.floor(Date.now() / 1000) + 30,
-  });
+  r = await api(null, 'POST', '/admin/auth/mfa/verify', { mfaToken: ticket, code: '000000' }, bff);
+  check('a wrong code is refused', r.status === 401, r.status);
 
-  r = await api(null, 'POST', '/admin/auth/mfa/verify', { mfaToken: ticket, code: live }, bff);
-  check('the next authenticator code completes the sign-in', r.status === 200, r.body?.error);
+  r = await api(null, 'POST', '/admin/auth/mfa/verify', { mfaToken: ticket, code: OTP }, bff);
+  check('the emailed code completes the sign-in', r.status === 200, r.body?.error);
   const pair = r.body?.data;
 
-  r = await api(null, 'POST', '/admin/auth/mfa/verify', { mfaToken: ticket, code: live }, bff);
+  r = await api(null, 'POST', '/admin/auth/mfa/verify', { mfaToken: ticket, code: OTP }, bff);
   check('the ticket is spent', r.status === 401, r.status);
+
+  // The code lives on the ticket, not on the account. Two attempts are two attempts: each has its
+  // own code and neither cancels the other, so nobody can invalidate the code a colleague is
+  // part-way through typing by starting a login of their own.
+  await clearRateLimits();
+  r = await api(null, 'POST', '/admin/auth/login', { email, password: PASSWORD }, bff);
+  const firstTicket = r.body?.data?.mfaToken;
 
   await clearRateLimits();
   r = await api(null, 'POST', '/admin/auth/login', { email, password: PASSWORD }, bff);
-  r = await api(
-    null,
-    'POST',
-    '/admin/auth/mfa/verify',
-    { mfaToken: r.body?.data?.mfaToken, code: live },
-    bff,
-  );
+  const secondTicket = r.body?.data?.mfaToken;
+
+  check('each attempt gets its own ticket', firstTicket !== secondTicket, {
+    same: firstTicket === secondTicket,
+  });
+
+  r = await api(null, 'POST', '/admin/auth/mfa/verify', { mfaToken: secondTicket, code: OTP }, bff);
+  check('the newest ticket works', r.status === 200, r.body?.error);
+
+  r = await api(null, 'POST', '/admin/auth/mfa/verify', { mfaToken: firstTicket, code: OTP }, bff);
   check(
-    'and the same authenticator code cannot be replayed inside its own 30-second window',
+    'and so does the earlier one, until it expires: each is its own attempt, not a queue',
+    r.status === 200,
+    r.body?.error,
+  );
+
+  // Five wrong codes abandon the attempt, so the ticket is not a 10^6 keyspace to work through.
+  await clearRateLimits();
+  r = await api(null, 'POST', '/admin/auth/login', { email, password: PASSWORD }, bff);
+  const doomed = r.body?.data?.mfaToken;
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await clearRateLimits();
+    await api(null, 'POST', '/admin/auth/mfa/verify', { mfaToken: doomed, code: '000001' }, bff);
+  }
+
+  await clearRateLimits();
+  r = await api(null, 'POST', '/admin/auth/mfa/verify', { mfaToken: doomed, code: OTP }, bff);
+  check(
+    'five wrong codes burn the ticket, even for the right code afterwards',
     r.status === 401,
     r.status,
   );
+
+  await prisma.adminCredential.updateMany({
+    where: { user: { email } },
+    data: { lockedUntil: null, lockCount: 0, failedAttempts: 0, failedMfaAttempts: 0 },
+  });
 
   console.log('\n── The sign-in limit ───────────────────────────────────────');
 
@@ -451,6 +447,40 @@ async function inviteFor(email, roleCode = 'super_admin') {
   const recreated = await prisma.user.findUnique({ where: { email: orphanTarget.email } });
   check('and no account was created from it', recreated === null, recreated?.id);
 
+  console.log('\n── What "set up" means with nothing to enrol ────────────────');
+
+  // `PENDING` used to mean "password set, authenticator not added" — a real state, because such an
+  // account could not sign in. There is nothing to add now, so the only honest `PENDING` is an
+  // invitation nobody has accepted, and an account with a password is an account that works. Had
+  // the old query been left in place, every working account would have been counted as pending.
+  const asOwner = { Authorization: `Bearer ${firstPair.accessToken}`, ...bff };
+
+  r = await api(null, 'GET', '/admin/team?perPage=100', null, asOwner);
+  const mine = (r.body?.data ?? []).find(member => member.email === email);
+  check('the account that just finished setup is listed as ACTIVE', mine?.status === 'ACTIVE', {
+    status: mine?.status,
+  });
+  check(
+    'and reports a second factor, because every sign-in needs an emailed code',
+    mine?.mfaEnabled === true,
+    mine?.mfaEnabled,
+  );
+
+  const pendingRows = (r.body?.data ?? []).filter(member => member.status === 'PENDING');
+  check(
+    'every PENDING row in the list is an unaccepted invitation, not an account',
+    pendingRows.every(member => typeof member.inviteId === 'string'),
+    pendingRows.map(member => ({ email: member.email, inviteId: !!member.inviteId })),
+  );
+
+  const liveInvites = (await api(null, 'GET', '/admin/team/invites?state=LIVE', null, asOwner)).body
+    ?.data;
+  check(
+    'and the PENDING count is exactly the number of live invitations',
+    r.body?.meta?.counts?.PENDING === (liveInvites ?? []).length,
+    { counted: r.body?.meta?.counts?.PENDING, live: (liveInvites ?? []).length },
+  );
+
   console.log('\n── The doors that used to be open ──────────────────────────');
 
   const admin = await makeAdmin('guardcheck', 'super_admin');
@@ -606,14 +636,14 @@ async function inviteFor(email, roleCode = 'super_admin') {
   const entries = await prisma.auditLog.findMany({
     where: {
       occurredAt: { gte: runStartedAt },
-      action: { in: ['auth.login_success', 'auth.mfa_enrolled', 'auth.refresh_reuse'] },
+      action: { in: ['auth.login_success', 'auth.setup_completed', 'auth.refresh_reuse'] },
     },
     orderBy: { occurredAt: 'desc' },
   });
 
   check(
-    'signing in, enrolling and a refresh replay are all recorded',
-    ['auth.login_success', 'auth.mfa_enrolled', 'auth.refresh_reuse'].every(action =>
+    'signing in, finishing setup and a refresh replay are all recorded',
+    ['auth.login_success', 'auth.setup_completed', 'auth.refresh_reuse'].every(action =>
       entries.some(entry => entry.action === action),
     ),
     entries.map(entry => entry.action),

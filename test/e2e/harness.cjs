@@ -346,14 +346,15 @@ const dobFor = years => {
  * ten a minute keyed on the IP, and a whole sweep shares one IP, so a suite late in the run can be
  * refused for something no member would ever hit. Waits out the window the API itself names.
  */
-// The dev code is generated, not bypassed: `Util.generateOtp` returns a prefix of 123456 outside
-// production, so the four-digit sign-in code is 1234 and the ordinary hash comparison runs.
-async function verifyEmailCode(email, code = '1234', attempt = 0) {
+// The dev code is generated, not bypassed: `Util.generateOtp` returns the fixed 111222 outside
+// production, and the ordinary hash comparison runs. Six digits here as everywhere — member
+// sign-in was four until the mobile app moved to six.
+async function verifyEmailCode(email, code = '111222', attempt = 0) {
   // Request the code first. This used to go straight to `verify/email`, which worked only because
-  // `validateOtp` had a bypass that returned true for a literal `1111` with nothing in the cache
-  // at all. That bypass is gone, so the suites now drive the real flow: a code is sent, hashed and
-  // stored, and the comparison runs. Outside production the code generated is deterministic
-  // (`dev-otp.constant.ts`), which is what makes it typeable here.
+  // `validateOtp` had a bypass that returned true for one hard-coded literal, with nothing in the
+  // cache at all. That bypass is gone, so the suites now drive the real flow: a code is sent,
+  // hashed and stored, and the comparison runs. Outside production the code generated is
+  // deterministic (`dev-otp.constant.ts`), which is what makes it typeable here.
   if (attempt === 0) {
     await fetch(`${BASE}/auth/verify/send`, {
       method: 'POST',

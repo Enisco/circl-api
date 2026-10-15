@@ -30,7 +30,7 @@ export class VerificationService {
   /**
    * One path, always: hash the code that arrived and compare it with the one that was stored.
    *
-   * This used to return `true` early for the literal `1111` whenever `APP_ENV !== 'production'`.
+   * This used to return `true` early for one hard-coded literal whenever `APP_ENV !== 'production'`.
    * That branch is gone rather than corrected, because it was a second route through an
    * authentication check whose reachability depended on configuration — and it read only
    * `APP_ENV`, so a deployment with `NODE_ENV=production` and `APP_ENV` unset had it live.

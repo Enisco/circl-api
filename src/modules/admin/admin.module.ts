@@ -88,6 +88,7 @@ import { AdminPasswordService } from './auth/admin-password.service';
 import { AdminPermissionService } from './auth/admin-permission.service';
 import { AdminRecoveryCodeService } from './auth/admin-recovery-code.service';
 import { AdminSessionService } from './auth/admin-session.service';
+import { AdminOtpService } from './auth/admin-otp.service';
 import { AdminTotpService } from './auth/admin-totp.service';
 import { AdminBffGuard } from './common/admin-bff.guard';
 import { AdminClientContextMiddleware } from './common/admin-context';
@@ -205,6 +206,10 @@ const CONTROLLERS = [
     // Authentication.
     AdminAuthService,
     AdminPasswordService,
+    AdminOtpService,
+    // Not wired into sign-in: see `admin-otp.service.ts`. Registered so the swap back is a change
+    // to two call sites rather than a module to reassemble, and so its encryption key stays a
+    // required setting instead of one that silently rots while unused.
     AdminTotpService,
     AdminRecoveryCodeService,
     AdminSessionService,

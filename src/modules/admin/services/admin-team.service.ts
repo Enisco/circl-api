@@ -386,6 +386,12 @@ export class AdminTeamService {
           await this.policy.assertNotLastSuperAdmin(tx, targetId);
         }
 
+        // `'mfa'` no longer resets a secret, because there is no per-account second factor to
+        // reset: the code is emailed at sign-in. What it still does is clear the lock and the
+        // failed counters, drop the recovery codes, and sign every session out — worth having, and
+        // the honest answer to "this account may be compromised" is now `'both'`, which also takes
+        // the password away. The columns are cleared anyway, so nothing is inherited if the
+        // authenticator ever comes back.
         const clearMfa = input.scope === 'mfa' || input.scope === 'both';
 
         await tx.adminCredential.update({
@@ -420,8 +426,8 @@ export class AdminTeamService {
           await tx.adminRecoveryCode.deleteMany({ where: { userId: targetId } });
         }
 
-        // A password reset needs a new setup link; an MFA-only reset does not — the next sign-in
-        // with the existing password hands back the enrolment path on its own.
+        // A password reset needs a new setup link; an MFA-only reset does not — the account keeps
+        // its password and signs in again with a fresh emailed code.
         if (input.scope === 'mfa') return null;
 
         return this.invites.issueFor(actor, targetId, target.email, target.roleId, tx);
@@ -506,7 +512,6 @@ export class AdminTeamService {
       adminCredential: {
         select: {
           deactivatedAt: true,
-          totpEnabledAt: true,
           lastActiveAt: true,
           invitedById: true,
         },
@@ -528,14 +533,15 @@ export class AdminTeamService {
       email: row.email,
       avatarUrl: row.adminProfile?.avatar ?? null,
       role: roleCode,
-      status: row.adminCredential?.deactivatedAt
-        ? 'DEACTIVATED'
-        : row.adminCredential?.totpEnabledAt
-          ? 'ACTIVE'
-          : // Invited, password set, authenticator not yet added: the account exists and cannot
-            // sign in, which is neither active nor deactivated.
-            'PENDING',
-      mfaEnabled: Boolean(row.adminCredential?.totpEnabledAt),
+      // Two states now, not three. `PENDING` used to mean "password set, authenticator not yet
+      // added" — a real state, because such an account could not sign in. With a code emailed at
+      // sign-in there is nothing left to add, so an account with a password is an account that
+      // works. `PENDING` still appears in this list, from `pendingView`: an invitation nobody has
+      // accepted yet, which is the only thing it can honestly mean.
+      status: row.adminCredential?.deactivatedAt ? 'DEACTIVATED' : 'ACTIVE',
+      // Not a property of the account any more: every sign-in needs an emailed code, so this is
+      // true for anybody who can sign in at all. Kept because the portal reads it.
+      mfaEnabled: Boolean(row.adminCredential && !row.adminCredential.deactivatedAt),
       lastActiveAt: row.adminCredential?.lastActiveAt?.toISOString() ?? null,
       createdAt: row.createdAt.toISOString(),
       invitedBy: null,
@@ -562,23 +568,25 @@ export class AdminTeamService {
   }
 
   private async counts() {
-    const [active, deactivated, pendingAccounts, liveInvites] = await Promise.all([
+    const [active, deactivated, liveInvites] = await Promise.all([
       this.database.user.count({
-        where: {
-          isStaff: true,
-          adminCredential: { deactivatedAt: null, totpEnabledAt: { not: null } },
-        },
+        where: { isStaff: true, adminCredential: { deactivatedAt: null } },
       }),
       this.database.user.count({
         where: { isStaff: true, adminCredential: { deactivatedAt: { not: null } } },
       }),
-      this.database.user.count({
-        where: { isStaff: true, adminCredential: { deactivatedAt: null, totpEnabledAt: null } },
+      // `expiresAt` as well as the two nulls, which is what `InviteView.state` means by `LIVE`.
+      // Without it the badge counted invitations that lapsed days ago and the list below it showed
+      // none of them — a number nobody could reconcile with what was on the screen.
+      this.database.adminInvite.count({
+        where: { acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
       }),
-      this.database.adminInvite.count({ where: { acceptedAt: null, revokedAt: null } }),
     ]);
 
-    return { ACTIVE: active, PENDING: pendingAccounts + liveInvites, DEACTIVATED: deactivated };
+    // `PENDING` is live invitations alone. It used to also count accounts that had a password but
+    // no authenticator; with nothing to enrol, that set is empty by construction, and leaving the
+    // query in would have quietly counted every working account as pending instead.
+    return { ACTIVE: active, PENDING: liveInvites, DEACTIVATED: deactivated };
   }
 
   private async staffOrThrow(id: string) {

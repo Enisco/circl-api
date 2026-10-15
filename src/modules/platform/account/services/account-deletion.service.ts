@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { JobStage, JobState, Prisma, SystemMessageType, UserAccountStatus } from '@prisma/client';
 import { createHash } from 'crypto';
 import { CacheService, PrismaService } from '@/infrastructure';
-import { ApiErrorCode, ApiException, Util } from '@/common';
+import { ApiErrorCode, ApiException, OTP_LENGTH, Util } from '@/common';
 import { EventBusService, UserLoginOtpEvent } from '@/modules/infrastructure/events';
 import { LISTING_DOCUMENT_OWNER } from '../../shared';
 import { StorageProvider } from '../../media/storage';
@@ -75,7 +75,7 @@ export class AccountDeletionService {
       );
     }
 
-    const code = Util.generateOtp(6);
+    const code = Util.generateOtp(OTP_LENGTH);
 
     await this.cache.set(codeKey(userId), await Util.generateHash(code), CODE_TTL_SECONDS);
     await this.cache.set(attemptsKey(userId), attempts + 1, 3600);

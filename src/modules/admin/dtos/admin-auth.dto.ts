@@ -37,7 +37,7 @@ export class AdminMfaVerifyDto {
   @Length(10, 200)
   mfaToken: string;
 
-  @ApiProperty({ description: 'A 6-digit authenticator code, or a recovery code.' })
+  @ApiProperty({ description: 'The 6-digit code we emailed, or a recovery code.' })
   @Trim()
   @IsString()
   @Length(6, 20)
@@ -85,19 +85,6 @@ export class AdminAcceptInviteDto extends AdminInviteTokenDto {
   password: string;
 }
 
-export class AdminEnrolMfaDto {
-  @ApiProperty()
-  @IsString()
-  @Length(10, 200)
-  mfaSetupToken: string;
-
-  @ApiProperty({ description: 'The 6-digit code from the authenticator app.' })
-  @Trim()
-  @IsString()
-  @Length(6, 10)
-  code: string;
-}
-
 export class AdminCreateInviteDto {
   @ApiProperty({ example: 'newstaff@circl.app' })
   @Lower()
@@ -122,7 +109,10 @@ export class AdminChangePasswordDto {
   newPassword: string;
 
   @ApiProperty({
-    description: 'A current authenticator code: a password change is re-authenticated.',
+    description:
+      'The code from `POST admin/me/security/code`: a password change is re-authenticated. A ' +
+      'recovery code is not accepted here — it is for getting back in, not for authorising a ' +
+      'change from a session that is already open.',
   })
   @Trim()
   @IsString()
@@ -136,7 +126,7 @@ export class AdminReauthenticateDto {
   @Length(1, 256)
   password: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'The code from `POST admin/me/security/code`.' })
   @Trim()
   @IsString()
   @Length(6, 20)

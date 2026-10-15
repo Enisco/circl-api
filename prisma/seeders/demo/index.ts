@@ -1,25 +1,25 @@
-import { PrismaClient } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
-import { S3Storage } from '../../../src/modules/platform/media/storage/s3.storage';
-import { StorageProvider } from '../../../src/modules/platform/media/storage/storage.interface';
-import { DemoSeedContext, emailOf, userId } from './seed-demo';
-import { seedDemoPeople } from './seed-demo';
-import { seedCommunity } from './community';
-import { seedProfessionals } from './professionals';
-import { seedCommerce } from './commerce';
-import { seedSocial } from './social';
-import { seedNotifications } from './notifications';
-import { seedAccountSettings } from './account';
-import { seedAvailability } from './availability';
-import { seedModeration } from './moderation';
-import { seedCityFeeds } from './cities';
-import { seedSearchDemand } from './search-demand';
-import { PULSE_MEMBER_IDS, seedPulse } from './pulse';
-import { connectExtras, PEOPLE } from './people';
-import { hoursAgo, seedId } from './ids';
+import { PrismaClient } from '@prisma/client';
 import { MetricsService } from '../../../src/modules/platform/intelligence/services/metrics.service';
 import { SearchDemandService } from '../../../src/modules/platform/intelligence/services/search-demand.service';
+import { S3Storage } from '../../../src/modules/platform/media/storage/s3.storage';
+import { StorageProvider } from '../../../src/modules/platform/media/storage/storage.interface';
+import { FIXED_OTP } from '../../../src/common/constants/dev-otp.constant';
 import { TaxonomyService } from '../../../src/modules/platform/shared/services/taxonomy.service';
+import { seedAccountSettings } from './account';
+import { seedAvailability } from './availability';
+import { seedCityFeeds } from './cities';
+import { seedCommerce } from './commerce';
+import { seedCommunity } from './community';
+import { hoursAgo, seedId } from './ids';
+import { seedModeration } from './moderation';
+import { seedNotifications } from './notifications';
+import { connectExtras, PEOPLE } from './people';
+import { seedProfessionals } from './professionals';
+import { PULSE_MEMBER_IDS, seedPulse } from './pulse';
+import { seedSearchDemand } from './search-demand';
+import { DemoSeedContext, emailOf, seedDemoPeople, userId } from './seed-demo';
+import { seedSocial } from './social';
 
 /** The demo dataset (Appendix B). */
 
@@ -166,26 +166,31 @@ export const seedDemo = async (prisma: PrismaClient) => {
 
   // Ordered: people, then content, then the things that hang off content, then notifications, which reference all of it (B.7).
   const people = await seedDemoPeople(ctx);
+
   console.info(
     `  ✅ ${people} members (${PEOPLE.length} full, ${connectExtras().length} Connect-only)`,
   );
 
   const community = await seedCommunity(ctx);
+
   console.info(
     `  ✅ ${community.requests} requests, ${community.offers} offers, ${community.guides} guides, ${community.groups} groups`,
   );
 
   const professionals = await seedProfessionals(ctx);
+
   console.info(
     `  ✅ ${professionals.listings} listings, ${professionals.bookings} bookings, ${professionals.reviews} reviews`,
   );
 
   const commerce = await seedCommerce(ctx);
+
   console.info(
     `  ✅ ${commerce.stores} stores, ${commerce.items} items, ${commerce.enquiries} enquiries`,
   );
 
   const social = await seedSocial(ctx);
+
   console.info(`  ✅ ${social.connect} Connect profiles, ${social.threads} conversations`);
 
   await seedGuard(ctx);
@@ -193,9 +198,11 @@ export const seedDemo = async (prisma: PrismaClient) => {
 
   // The rows behind the settings screens and the surfaces that were opening empty.
   const account = await seedAccountSettings(ctx);
+
   console.info(`  ✅ ${account.sessions} device sessions, ${account.privacy} privacy rows`);
 
   const availability = await seedAvailability(ctx);
+
   console.info(
     `  ✅ ${availability.days} working days across the professionals, ${availability.occupied} slots taken`,
   );
@@ -203,6 +210,7 @@ export const seedDemo = async (prisma: PrismaClient) => {
   // Every city in the picker gets a feed, so a member signing up in Sheffield does not open an
   // empty app. BRISTOL is deliberately left empty for the client's quiet state.
   const feeds = await seedCityFeeds(ctx);
+
   console.info(
     `  ✅ ${feeds.updates} posts, ${feeds.replies} replies, ${feeds.requests} requests, ` +
       `${feeds.offers} offers, ${feeds.guides} guides across ${feeds.cities} cities ` +
@@ -212,6 +220,7 @@ export const seedDemo = async (prisma: PrismaClient) => {
   // What the four Pulse dashboards need before they will print anything (6.2). Runs before the
   // metrics rebuild below, because that is what reads these rows.
   const pulse = await seedPulse(ctx);
+
   console.info(
     `  ✅ ${pulse.members} more members, ${pulse.requests} requests (${pulse.replies} answered), ` +
       `${pulse.listings} listings with ${pulse.jobs} finished jobs, ` +
@@ -220,6 +229,7 @@ export const seedDemo = async (prisma: PrismaClient) => {
   );
 
   const moderation = await seedModeration(ctx);
+
   console.info(
     `  ✅ ${moderation.blocks} blocks, ${moderation.reports} reports, ${moderation.searches} searches behind the demand card`,
   );
@@ -228,12 +238,14 @@ export const seedDemo = async (prisma: PrismaClient) => {
   // the real job, so every floor and every resolution rule applies to the demo exactly as it will
   // apply to the first real week.
   const demand = await seedSearchDemand(ctx);
+
   console.info(
     `  ✅ ${demand.events} searches on ${demand.terms} terms across ${demand.cities} cities` +
       (demand.withdrawn !== demand.events ? ` (${demand.withdrawn} withdrawn)` : ''),
   );
 
   const notifications = await seedNotifications(ctx);
+
   console.info(`  ✅ ${notifications.notifications} notifications`);
 
   // Pulse reads precomputed snapshots, so without this the dashboards stay empty until the nightly job runs and the demo looks like nothing happened (B.8).
@@ -251,7 +263,9 @@ export const seedDemo = async (prisma: PrismaClient) => {
   console.info(`  ✅ Pulse snapshots rebuilt (${lists} search-demand lists)`);
 
   console.info('');
-  console.info(`  Sign in as ${emailOf(1)} with the code 1111 (any seed1..seed10@circl.test).`);
+  console.info(
+    `  Sign in as ${emailOf(1)} with the code ${FIXED_OTP} (any seed1..seed10@circl.test).`,
+  );
 };
 
 /** Wipes everything this seeder owns (B.7, resettable). */

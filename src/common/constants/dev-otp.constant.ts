@@ -1,13 +1,14 @@
 /**
- * The fixed one-time code used outside production, until email delivery is wired up.
+ * How long a one-time code is, and the fixed one used outside production.
  *
  * Every OTP in this API is emailed — sign-in verification, the email-change confirmation, the
- * account-deletion confirmation — and there is no mail provider yet, so a random code is a code
- * nobody can read. Until Resend is in place, non-production environments generate a known one.
+ * account-deletion confirmation, staff sign-in — and there is no mail provider yet, so a random
+ * code is a code nobody can read. Until Resend is in place, non-production environments generate a
+ * known one.
  *
  * ## Why this is a generator and not a bypass
  *
- * There was already a bypass: `validateOtp` accepted the literal `1111` whenever
+ * There was already a bypass: `validateOtp` accepted one hard-coded four-digit literal whenever
  * `APP_ENV !== 'production'`, short-circuiting the comparison entirely. Two things were wrong with
  * it, and the second is the serious one:
  *
@@ -25,7 +26,8 @@
  * is the thing we are choosing on purpose and only off production.
  *
  * Replace this by deleting `fixedOtp` and its one call in `Util.generateOtp`. Nothing else
- * references it, and no verification logic changes when it goes.
+ * references it, and no verification logic changes when it goes. `OTP_LENGTH` stays: it is a
+ * product decision, not a development aid.
  */
 
 /**
@@ -44,13 +46,25 @@ export const isProductionEnv = (): boolean =>
  */
 const optedOut = (): boolean => process.env.DEV_FIXED_OTP === 'false';
 
-export const FIXED_OTP = '123456';
+/**
+ * Six digits, everywhere.
+ *
+ * One number for the whole API rather than a length per flow. Member sign-in used to be four while
+ * every other code was six, which meant two fixed development codes to remember and a mobile app
+ * carrying a different validation rule from the rest of the surface. It is here, next to
+ * `FIXED_OTP`, because the two have to agree — see `fixedOtp`.
+ */
+export const OTP_LENGTH = 6;
+
+export const FIXED_OTP = '111222';
 
 /**
- * The fixed code at the length the caller asked for, or null when a real random one must be used.
+ * The fixed code, or null when a real random one must be used.
  *
- * Sliced rather than padded, so the four-digit sign-in code is `1234` and the six-digit ones are
- * `123456` — the same number, so there is one thing to remember rather than two.
+ * Refuses when the caller wants a length the fixed code cannot supply, rather than returning a
+ * truncated or short one: a wrong-length development code fails the DTO that validates it, which
+ * looks like a broken endpoint rather than a mismatched constant. Falling through to a random code
+ * leaves the flow working and the cause findable.
  */
 export const fixedOtp = (length: number): string | null =>
-  isProductionEnv() || optedOut() ? null : FIXED_OTP.slice(0, length);
+  isProductionEnv() || optedOut() || length !== FIXED_OTP.length ? null : FIXED_OTP;
