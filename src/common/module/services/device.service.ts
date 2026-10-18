@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PinoLogger } from 'nestjs-pino';
 import { UAParser } from 'ua-parser-js';
-import * as geoip from 'geoip-lite';
 import * as crypto from 'node:crypto';
 import { DeviceHeaders, DeviceInfo, ParsedDeviceInfo } from '../../types';
 
@@ -59,7 +58,17 @@ export class DeviceService {
     return ip.replace(/^::ffff:/i, '');
   }
 
-  /** Extract device info from request headers */
+  /**
+   * Extract device info from request headers.
+   *
+   * Deliberately no IP-to-location. `geoip-lite` read its city tables into memory when it was
+   * imported — ~140 MiB held for the life of the process, a quarter of a 512 MiB instance — to
+   * build a `location` string that nothing ever read: the sessions screen returns null on purpose
+   * (`session-list.service.ts`), no column stores it, and the fingerprint below is built from the
+   * browser, OS, type and device id. If that screen ever wants a location, geoip-lite's
+   * country-only tables cost ~20 MiB — delete `data/geoip-city*.dat` after install — and answer
+   * "GB" rather than "London, England, GB".
+   */
   private parseUserAgent(deviceHeaders: DeviceHeaders): ParsedDeviceInfo {
     const fallbackDeviceName = this.generateFallbackDeviceName(deviceHeaders.userAgent);
     const { userAgent, ipAddress, timezone, deviceId, deviceName, appVersion } = deviceHeaders;
@@ -72,19 +81,6 @@ export class DeviceService {
     const cleanedIp = this.normalizeIp(ipAddress);
     const resolvedTimezone = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-    // Get location from IP with error handling
-    let location = 'unknown location';
-
-    try {
-      const geo = geoip.lookup(cleanedIp);
-
-      if (geo) {
-        location = [geo.city, geo.region, geo.country].filter(Boolean).join(', ');
-      }
-    } catch (error) {
-      this.logger.warn(`Failed to lookup IP location: ${(error as Error).message}`);
-    }
-
     return {
       browser,
       os,
@@ -94,7 +90,6 @@ export class DeviceService {
       fullIp: cleanedIp,
       timezone: resolvedTimezone,
       userAgent,
-      location,
       deviceId,
       deviceName: deviceName || fallbackDeviceName,
       appVersion,
