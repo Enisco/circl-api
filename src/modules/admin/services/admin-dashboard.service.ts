@@ -8,6 +8,7 @@ import { POPULATION_FLOOR, suppressEverything } from '../analytics/suppression';
 import { AdminPrincipal } from '../common/admin-principal';
 import { MemberFilterBuilder, ResolvedMemberFilter } from '../filters/member-filter.builder';
 import { DashboardFilterDto } from '../dtos/admin-analytics.dto';
+import { OPEN_REQUEST_STATES } from '../dtos/admin-service-request.dto';
 import { AuditEntryView, auditScopeFor, toAuditEntry } from '../serializers/audit-entry.serializer';
 import { staffRefSelect, toStaffRef } from '../serializers/admin-staff.serializer';
 import { MediaService } from '@/modules/platform/shared';
@@ -203,21 +204,34 @@ const ATTENTION: Array<{
       ),
   },
   {
-    id: 'openManagedRequests',
-    label: 'Managed requests open',
+    /**
+     * The live support pipeline: a member asked Circl to find them somebody.
+     *
+     * This was `openManagedRequests`, counting `managed_requests` — the storefront and placement
+     * work — and that feature is retired: the portal has deleted its screen, so the card counted
+     * real rows and led to a 404. Removing it outright would have left the attention list silent
+     * about service requests, which is the pipeline that replaced it and the one a member is
+     * actually waiting on.
+     *
+     * The states are the queue's own default, imported rather than repeated, because the rule
+     * above only holds if the card and the page it opens cannot disagree. `NO_MATCH` is therefore
+     * out of both: nobody took the job, the member has been told, and it is not somebody's work.
+     *
+     * `managed_briefs` is `ServiceRequest`'s table — the model was renamed and its `@@map` kept,
+     * so no migration had to rewrite live ids.
+     */
+    id: 'openServiceRequests',
+    label: 'Service requests open',
     permission: 'support:read',
     severity: 'normal',
-    // The pipeline itself, not a `briefs` tab: that tab was the Smart Match shortlist screen and
-    // is gone. This card counts `managed_requests`, which is the storefront and placement work —
-    // service requests have their own queue at `/support/service-requests`.
-    href: '/support/managed',
+    href: '/support/service-requests',
     count: database =>
       oldestAndCount(
         database,
         Prisma.sql`
         SELECT COUNT(*)::int AS count, MIN(r."created_at") AS oldest
-        FROM "managed_requests" r
-        WHERE r."state" IN ('OPEN', 'IN_PROGRESS')
+        FROM "managed_briefs" r
+        WHERE r."state"::text IN (${Prisma.join(OPEN_REQUEST_STATES)})
       `,
       ),
   },

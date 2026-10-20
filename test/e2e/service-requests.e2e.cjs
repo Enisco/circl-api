@@ -848,5 +848,38 @@ const submit = async (member, body) => {
   );
   check('and cannot answer it afterwards', r.status === 409, r.status);
 
+  console.log('\n── The dashboard ────────────────────────────────────────────');
+
+  r = await api(staff, 'GET', '/admin/dashboard/attention', null, adminHeaders(staff));
+  const attention = r.body?.data ?? [];
+  const card = attention.find(item => item.id === 'openServiceRequests');
+
+  check(
+    'the retired managed-requests card is gone',
+    !attention.some(item => item.id === 'openManagedRequests'),
+    attention.map(item => item.id),
+  );
+
+  r = await api(staff, 'GET', '/admin/service-requests?perPage=1', null, adminHeaders(staff));
+  const openNow = r.body?.meta?.totalCount;
+
+  // The attention list's own rule: a badge equals the default page it opens, or it is worse than
+  // no badge. An item with a count of zero is omitted, so an empty queue means an absent card.
+  if (openNow > 0) {
+    check('the service-request card is offered', !!card, attention.map(item => item.id));
+    check(
+      'and it opens the queue, not the screen the portal deleted',
+      card?.href === '/support/service-requests',
+      card?.href,
+    );
+    check('and its badge equals that queue', card?.count === openNow, {
+      badge: card?.count,
+      queue: openNow,
+    });
+    check('and it carries the age of the oldest one', !!card?.oldestAt, card);
+  } else {
+    check('the card is absent because nothing is open', !card, card);
+  }
+
   await finish();
 })().catch(fail);

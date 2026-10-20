@@ -111,7 +111,7 @@ const defaultRoles: RoleData[] = [
   {
     name: 'Support',
     code: 'support',
-    description: 'The support inbox, managed requests, disputes and member help',
+    description: 'The support inbox, service requests, disputes and member help',
     isSystem: true,
     isAdmin: true,
     permissions: [

@@ -55,7 +55,11 @@ const permissions: Permission[] = [
   // ── Support ─────────────────────────────────────────────────────────────────
   { name: 'Read the support inbox', code: 'support:read', group: 'support' },
   { name: 'Work the support inbox', code: 'support:manage', group: 'support' },
-  { name: 'Act on managed requests', code: 'managed:manage', group: 'support' },
+  // The name staff read on the Team page, and what it grants today is service requests: placing a
+  // member with a professional in Circl's name. It said "managed requests", which is the retired
+  // storefront feature. The **code** stays `managed:manage` — it is what seven routes and both
+  // role seeds name, and renaming a code deletes the permission and every grant of it.
+  { name: 'Act on service requests', code: 'managed:manage', group: 'support' },
   { name: 'Act on disputes', code: 'disputes:manage', group: 'support' },
 
   // ── Communications ──────────────────────────────────────────────────────────
