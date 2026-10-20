@@ -205,6 +205,45 @@ async function inviteFor(email, roleCode = 'super_admin') {
   r = await api(null, 'POST', '/admin/auth/mfa/verify', { mfaToken: ticket, code: OTP }, bff);
   check('the ticket is spent', r.status === 401, r.status);
 
+  // The two halves of a sign-in do not have to look like the same caller. The ticket used to be
+  // refused when the address or the user-agent changed between them, and behind two proxies that
+  // is normal — the portal calls this API from its own server, and which edge answers is not
+  // something a member of staff can influence. It locked every remote sign-in out with
+  // `MFA_TOKEN_INVALID` and nothing to retry.
+  await clearRateLimits();
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/login',
+    { email, password: PASSWORD },
+    { ...bff, 'user-agent': 'circl-portal/1.0 (first hop)' },
+  );
+  const movedTicket = r.body?.data?.mfaToken;
+
+  r = await api(
+    null,
+    'POST',
+    '/admin/auth/mfa/verify',
+    { mfaToken: movedTicket, code: OTP },
+    { ...bff, 'user-agent': 'circl-portal/1.0 (another hop)', 'x-forwarded-for': '198.51.100.7' },
+  );
+  check(
+    'a sign-in whose second half arrives from a different client still completes',
+    r.status === 200,
+    r.body?.error,
+  );
+
+  // Signed out again straight away. `ADMIN_MAX_SESSIONS` is five and the oldest is revoked to make
+  // room — so a sign-in added here, in the middle of the file, would quietly take the session the
+  // team-list section further down still uses.
+  await api(
+    null,
+    'POST',
+    '/admin/auth/logout',
+    {},
+    { ...bff, Authorization: `Bearer ${r.body?.data?.accessToken}` },
+  );
+
   // The code lives on the ticket, not on the account. Two attempts are two attempts: each has its
   // own code and neither cancels the other, so nobody can invalidate the code a colleague is
   // part-way through typing by starting a login of their own.

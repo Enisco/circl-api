@@ -1,8 +1,5 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { ADMIN_BFF_HEADER, AdminBffCheck, adminBffCheck } from './admin-bff.guard';
 import { AsyncLocalStorage } from 'async_hooks';
-import { isIP } from 'net';
 import { NextFunction, Request, Response } from 'express';
 
 /** Who did it, from where, under which request. Attached to every audit entry. */
@@ -45,37 +42,24 @@ export const adminContext = {
 const MAX_USER_AGENT = 512;
 
 /**
- * Establishes the context for one admin request, and works out which IP to believe.
+ * Establishes the context for one admin request: who, from where, under which request id.
  *
- * The browser talks to the portal's own server, which talks to this API, so `req.ip` is the
- * portal — the same value for every member of staff. The portal therefore replaces
- * `X-Forwarded-For` with the browser's address and nothing else, and the platform edge appends its
- * own hop, leaving `<client>, <bff>`.
+ * **The address is `req.ip` and nothing else.** This used to parse `X-Forwarded-For` itself and
+ * pick the entry one hop from the right, on the assumption that the chain reads
+ * `<browser>, <portal>` — the portal rewriting the header and the platform edge appending one hop.
+ * That assumption is a property of somebody else's infrastructure, and it broke as soon as the API
+ * was deployed behind an edge that appends a different number of hops: the address came out
+ * different on two requests seconds apart, which locked staff out of sign-in, because the MFA
+ * ticket was bound to it.
  *
- * That chain is only worth reading **because** the trusted-client credential passed: without it,
- * anybody could set the header and choose which IP an audit entry blames. So the forwarded value
- * is used when the BFF guard has vouched for the request, and `req.ip` when it has not — and an
- * entry that names the portal is at least honest about what it knows.
+ * `req.ip` is Express's own answer, under the `trust proxy` setting configured in `main.ts`, and
+ * it is the one that stays correct when the hosting changes. Where that resolves to a proxy rather
+ * than a person, an audit entry naming the proxy is honest about what the API was told; a
+ * hand-picked entry from a header anybody can set was not.
  */
 @Injectable()
 export class AdminClientContextMiddleware implements NestMiddleware {
-  private readonly bff: AdminBffCheck;
-
-  constructor(config: ConfigService) {
-    this.bff = adminBffCheck(config);
-  }
-
   use(request: Request, response: Response, next: NextFunction): void {
-    // **Established here, not read from the guard.** Middleware runs before guards, so the flag
-    // `AdminBffGuard` sets does not exist yet at this point — reading it meant the forwarded
-    // client IP was never trusted, so every audit entry recorded the portal's own address and the
-    // IP-bound MFA ticket broke whenever the portal's outbound address changed between two
-    // requests. The guard still enforces the credential; this decides whether to believe the
-    // chain, which is a question only this middleware asks.
-    (request as Request & { adminBffTrusted?: boolean }).adminBffTrusted = this.bff.matches(
-      request.headers[ADMIN_BFF_HEADER],
-    );
-
     // The logger generates one per request when the caller sends no `x-correlation-id`, and puts
     // it on `req.id`. Reading only the header left every audit entry without a request id, which
     // is the field that ties an entry to the log lines around it.
@@ -86,13 +70,12 @@ export class AdminClientContextMiddleware implements NestMiddleware {
       (generated !== undefined ? String(generated) : undefined);
     const agent = request.headers['user-agent'];
 
-    const clientIp = this.clientIp(request);
+    const clientIp = request.ip ?? null;
 
     // Published on the request as well as in the context, for `CustomThrottlerGuard` — which is in
-    // `src/common` and must not import anything from the admin module. The throttler keyed
-    // unauthenticated routes on `req.ip`, which for every member of staff is the portal's own
-    // outbound address: one bucket for the whole team, so the sixth sign-in attempt in fifteen
-    // minutes **by anybody** was refused. It reads this field when it is set.
+    // `src/common` and must not import anything from the admin module. It reads this field when it
+    // is set. It is now the same value the throttler would have read for itself; the field stays
+    // so that the throttler has one source for the address and keeps working if this changes.
     (request as Request & { adminClientIp?: string | null }).adminClientIp = clientIp;
 
     const context: AdminContext = {
@@ -113,24 +96,5 @@ export class AdminClientContextMiddleware implements NestMiddleware {
     response.setHeader('Referrer-Policy', 'no-referrer');
 
     adminContext.run(context, () => next());
-  }
-
-  private clientIp(request: Request): string | null {
-    const trusted = (request as Request & { adminBffTrusted?: boolean }).adminBffTrusted === true;
-
-    if (trusted) {
-      const forwarded = request.headers['x-forwarded-for'];
-      const chain = (Array.isArray(forwarded) ? forwarded.join(',') : (forwarded ?? ''))
-        .split(',')
-        .map(part => part.trim())
-        .filter(Boolean);
-
-      // The entry immediately left of the hop the edge appended.
-      const candidate = chain.length >= 2 ? chain[chain.length - 2] : chain[0];
-
-      if (candidate && isIP(candidate)) return candidate;
-    }
-
-    return request.ip ?? null;
   }
 }

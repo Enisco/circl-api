@@ -60,6 +60,21 @@ interface MfaTicket {
   /** The emailed code, hashed. See `AdminOtpService` for why a fast hash is the right one here. */
   codeHash: string;
   attempts: number;
+  /**
+   * Where the password step came from, kept to be **compared and logged, not enforced**.
+   *
+   * Refusing the ticket when either changed locked staff out of any deployment sitting behind more
+   * than one proxy. The portal calls this API from its own server, so the address the API sees is
+   * a hop in somebody else's infrastructure, and it is free to differ between two requests seconds
+   * apart — a managed edge, a serverless function, a retry through another node. The old code was
+   * right about the risk and wrong about the signal: no member of staff can influence which edge
+   * answered them, so the refusal was unrecoverable and presented as "the OTP does not work".
+   *
+   * What still protects this step: the ticket is a 32-byte single-use secret, good for ten
+   * minutes, paired with a code that exists nowhere but inside it, capped at
+   * `ADMIN_OTP_MAX_ATTEMPTS` guesses, and deleted on success or on the last failure. An
+   * intercepted ticket without the emailed code is not a sign-in.
+   */
   ipHash: string;
   uaHash: string;
 }
@@ -196,12 +211,18 @@ export class AdminAuthService {
 
     if (!ticket) throw this.mfaTokenInvalid();
 
-    // Bound to the IP and client that passed the password step: a ticket intercepted in transit is
-    // of no use from anywhere else.
-    if (ticket.ipHash !== this.contextHash('ip') || ticket.uaHash !== this.contextHash('ua')) {
-      await this.cache.delete(key);
+    // Compared and logged, never refused — see `MfaTicket` for why this stopped being a gate. The
+    // log line is the only way anybody learns that the two halves of a sign-in looked like
+    // different callers, which is worth knowing and is not worth a lockout.
+    const ipChanged = ticket.ipHash !== this.contextHash('ip');
+    const uaChanged = ticket.uaHash !== this.contextHash('ua');
 
-      throw this.mfaTokenInvalid();
+    if (ipChanged || uaChanged) {
+      this.logger.warn(
+        `MFA ticket context changed between login and verify — ip ${
+          ipChanged ? 'differs' : 'same'
+        }, user-agent ${uaChanged ? 'differs' : 'same'}. Allowed.`,
+      );
     }
 
     let method: 'email_otp' | 'recovery_code' = 'email_otp';
