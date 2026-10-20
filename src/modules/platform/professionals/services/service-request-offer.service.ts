@@ -350,7 +350,7 @@ export class ServiceRequestOfferService {
     const name = displayNameOf(professional?.firstName ?? '', professional?.lastName);
     const title = professional?.professionalListing?.professionTitle;
     const introduction =
-      `Hi — I'm ${name}${title ? `, ${title}` : ''}. ` +
+      `Hi, I'm ${name}${title ? `, ${title}` : ''}. ` +
       `Circl passed me your request, and I'd like to help if I'm the right fit.`;
 
     const message = await tx.message.create({
