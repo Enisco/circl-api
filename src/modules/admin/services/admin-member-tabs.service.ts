@@ -288,9 +288,13 @@ const CONTENT_ARMS: Array<{
     id: Prisma.sql`gr."id"`,
   },
   {
-    type: ReportTargetType.CONNECT_MEDIA,
+    // The post, not the photo. This arm reads `connect_posts` and returns a post id, and it said
+    // `CONNECT_MEDIA` — which means one item out of a post — so every row named a type its id
+    // could not be looked up under: the link 404ed and a decision on the row would have gone
+    // looking for a media record that does not exist.
+    type: ReportTargetType.CONNECT_POST,
     body: Prisma.sql`
-      SELECT 'CONNECT_MEDIA' AS target_type, cp."id" AS id, NULL::text AS title,
+      SELECT 'CONNECT_POST' AS target_type, cp."id" AS id, NULL::text AS title,
              LEFT(COALESCE(cp."caption", ''), 280) AS excerpt,
              NULL::text AS visibility, cp."deleted_at" AS deleted_at,
              cp."posted_at" AS created_at

@@ -631,6 +631,14 @@ const jwt = require('jsonwebtoken');
   check('a reported photo reaches the queue against its uploader', !!photoQueue, {
     found: !!photoQueue,
   });
+  // One photo out of a post has no page of its own: its id is a media id, and the posts page
+  // routes on post ids. The link used to be built anyway, so every reported photo in the queue
+  // offered the reviewer a 404.
+  check(
+    'and its link is null rather than a posts-page path under a media id',
+    photoQueue?.content?.adminUrl === null,
+    photoQueue?.content,
+  );
 
   r = await decideViaCase('CONNECT_MEDIA', guardPhotos[0], {
     decision: 'REMOVE_CONTENT',

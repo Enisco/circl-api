@@ -287,13 +287,29 @@ const {
   check(
     'including the two arms that reach their table through a join',
     (res.body?.data ?? []).some(row => row.targetType === 'STORE_ITEM') &&
-      (res.body?.data ?? []).some(row => row.targetType === 'CONNECT_MEDIA'),
+      (res.body?.data ?? []).some(row => row.targetType === 'CONNECT_POST'),
     (res.body?.data ?? []).map(row => row.targetType),
   );
   check(
     'each row knows what it is and where it lives',
     (res.body?.data ?? []).every(row => !!row.targetType && !!row.adminUrl),
     res.body?.data?.[0],
+  );
+  // The path is the content registry's slug, because that is what the portal routes on and what
+  // this API's own `admin/content/:slug` endpoints are named after. A hand-written second copy
+  // sent `/guides` and `/content/store-items`, neither of which is a page.
+  const pathOf = type => (res.body?.data ?? []).find(row => row.targetType === type)?.adminUrl;
+
+  check(
+    'and the path is the registry slug, not a second copy of the routing table',
+    pathOf('GUIDE') === `/content/guides/${guide.id}` &&
+      (pathOf('STORE_ITEM') ?? '').startsWith('/content/items/') &&
+      (pathOf('CONNECT_POST') ?? '').startsWith('/content/connect-posts/'),
+    {
+      guide: pathOf('GUIDE'),
+      item: pathOf('STORE_ITEM'),
+      post: pathOf('CONNECT_POST'),
+    },
   );
   check(
     'an excerpt is truncated, and risk is null where nothing has looked',
@@ -333,7 +349,7 @@ const {
     'GUIDE',
     'GROUP_POST',
     'GROUP_POST_REPLY',
-    'CONNECT_MEDIA',
+    'CONNECT_POST',
     'CONNECT_STORY',
     'STORE_ITEM',
   ]) {
