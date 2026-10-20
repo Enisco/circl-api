@@ -42,7 +42,7 @@ model City {
   guides               Guide[]
   groups               Group[]
   professionalListings ProfessionalListing[]
-  briefs               ManagedBrief[]
+  serviceRequests      ServiceRequest[]
   connectProfiles      ConnectProfile[]
   stores               Store[]
 

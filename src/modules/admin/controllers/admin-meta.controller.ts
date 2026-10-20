@@ -5,7 +5,7 @@ import {
   AdminReasonCode,
   AnnouncementChannel,
   AnnouncementState,
-  BriefState,
+  ServiceRequestState,
   BriefUrgency,
   DealProblemState,
   DealTrack,
@@ -152,7 +152,7 @@ export class AdminMetaController {
         managedRequestStates: codes(Object.values(ManagedRequestState)),
         managedRequestSubjects: codes(Object.values(ManagedRequestSubject)),
         managedClosedReasons: codes(Object.values(ManagedRequestClosedReason)),
-        briefStates: codes(Object.values(BriefState)),
+        briefStates: codes(Object.values(ServiceRequestState)),
         briefUrgencies: codes(Object.values(BriefUrgency)),
         // §5.17's five.
         disputeStates: codes(Object.values(DisputeState)),

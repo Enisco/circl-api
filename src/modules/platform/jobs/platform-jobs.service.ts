@@ -35,6 +35,7 @@ import { MediaUploadService } from '../media/services/media-upload.service';
 import { BookingService } from '../professionals/services/booking.service';
 import { CategoryVerificationService } from '../professionals/services/category-verification.service';
 import { ProfessionalsHomeService } from '../professionals/services/professionals-home.service';
+import { ServiceRequestOfferService } from '../professionals/services/service-request-offer.service';
 import { EnquiryService } from '../commerce/services/enquiry.service';
 import { AutoGuideService } from '../intelligence/services/auto-guide.service';
 import { DemandService } from '../intelligence/services/demand.service';
@@ -71,6 +72,7 @@ export class PlatformJobsService {
     private readonly dataExports: DataExportBuilderService,
     private readonly notifications: NotificationFeedService,
     private readonly verifications: CategoryVerificationService,
+    private readonly serviceRequestOffers: ServiceRequestOfferService,
   ) {}
 
   /** A booking auto-completes 7 days after delivery (2.9.5). */
@@ -82,6 +84,30 @@ export class PlatformJobsService {
         const closed = await this.bookings.runAutoComplete();
 
         return closed ? `closed ${closed} delivered bookings` : null;
+      },
+      context,
+    );
+  }
+
+  /**
+   * An offer nobody answered lapses after 72 hours.
+   *
+   * Hourly rather than nightly, because the window is short enough that a daily sweep would make
+   * the real expiry anything between 72 and 96 hours depending on the hour it was offered — and
+   * "ASAP" requests are the ones most likely to be waiting on it.
+   *
+   * Nobody is notified. The professional did not do anything, and the member was never told the
+   * offer existed; what this is for is the staff queue, where a request held open by somebody who
+   * never answered looks exactly like one being considered.
+   */
+  @Cron(CronExpression.EVERY_HOUR, { name: 'service-request-offers.expire' })
+  async expireServiceRequestOffers(context: JobRunContext = CRON_RUN) {
+    await this.run(
+      'service-request-offers.expire',
+      async () => {
+        const expired = await this.serviceRequestOffers.runExpiry();
+
+        return expired ? `expired ${expired} unanswered offers` : null;
       },
       context,
     );
@@ -508,6 +534,7 @@ export class PlatformJobsService {
     const jobs: Record<string, (context: JobRunContext) => Promise<void>> = {
       'bookings.auto-complete': context => this.autoCompleteBookings(context),
       'enquiries.expire': context => this.expireEnquiries(context),
+      'service-request-offers.expire': context => this.expireServiceRequestOffers(context),
       'requests.expire': context => this.expireRequests(context),
       'verifications.expire': context => this.expireVerifications(context),
       'media.sweep-orphans': context => this.sweepOrphanMedia(context),

@@ -320,6 +320,9 @@ export const KIND_FOR_CONTEXT: Record<ThreadContextType, ThreadKind> = {
   [ThreadContextType.REQUEST]: ThreadKind.COMMUNITY,
   [ThreadContextType.OFFER]: ThreadKind.COMMUNITY,
   [ThreadContextType.PROFESSIONAL]: ThreadKind.PROFESSIONAL,
+  // A thread opened by accepting a service request files under Professional, like every other
+  // conversation between a member and somebody they are hiring.
+  [ThreadContextType.SERVICE_REQUEST]: ThreadKind.PROFESSIONAL,
   [ThreadContextType.SERVICE]: ThreadKind.PROFESSIONAL,
   [ThreadContextType.BOOKING]: ThreadKind.PROFESSIONAL,
   [ThreadContextType.CONNECT_PROFILE]: ThreadKind.CONNECT,

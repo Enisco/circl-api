@@ -99,6 +99,15 @@ export const JOB_CATALOGUE: JobDefinition[] = [
     onDemand: true,
   },
   {
+    name: 'service-request-offers.expire',
+    schedule: CronExpression.EVERY_HOUR,
+    description:
+      'Lapses "let Circl handle it" offers nobody answered inside 72 hours, so a request is not ' +
+      'held open by somebody who never replied.',
+    surface: 'platform',
+    onDemand: true,
+  },
+  {
     name: 'enquiries.expire',
     schedule: CronExpression.EVERY_HOUR,
     description: 'Expires shop enquiries nobody answered inside the seller’s window.',

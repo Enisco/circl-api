@@ -207,7 +207,10 @@ const ATTENTION: Array<{
     label: 'Managed requests open',
     permission: 'support:read',
     severity: 'normal',
-    href: '/support/managed?tab=briefs',
+    // The pipeline itself, not a `briefs` tab: that tab was the Smart Match shortlist screen and
+    // is gone. This card counts `managed_requests`, which is the storefront and placement work —
+    // service requests have their own queue at `/support/service-requests`.
+    href: '/support/managed',
     count: database =>
       oldestAndCount(
         database,

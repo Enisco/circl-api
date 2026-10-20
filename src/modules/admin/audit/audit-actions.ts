@@ -167,6 +167,14 @@ export const AUDIT_ACTIONS = {
   'managed.brief_placed': AuditArea.SUPPORT,
   /// A brief moved state without a placement — matched, closed, or opened again (§7.7).
   'managed.brief_updated': AuditArea.SUPPORT,
+  /// Staff decided what kind of help a request needs, beside the member's own guess.
+  'service_request.category_set': AuditArea.SUPPORT,
+  /// Staff put a request in front of professionals. The metadata holds who was asked, which is
+  /// the record of a judgement call made in Circl's name.
+  'service_request.offered': AuditArea.SUPPORT,
+  'service_request.offer_withdrawn': AuditArea.SUPPORT,
+  /// Staff told the member how it went — including, and especially, that nobody was found.
+  'service_request.outcome_sent': AuditArea.SUPPORT,
   'dispute.updated': AuditArea.SUPPORT,
   'dispute.resolved': AuditArea.SUPPORT,
   'deal.problem_resolved': AuditArea.SUPPORT,

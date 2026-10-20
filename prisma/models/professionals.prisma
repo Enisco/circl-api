@@ -292,28 +292,76 @@ model CategoryVerification {
 
 // ─── Managed briefs and Smart Match (Circl Intelligence) ─────────────────────
 
-model ManagedBrief {
+/**
+ * "Let Circl handle it" — a member describing a problem they cannot name a professional for.
+ * Still `managed_briefs` in the database, because the columns are the same ones and a table rename
+ * buys nothing a reader of this file cannot see. What changed is the theory: this used to feed a
+ * scoring matcher (`BriefMatch`), and now it feeds a person. A member describes the problem, staff
+ * read it and offer it to professionals they judge suitable, and up to three of them introduce
+ * themselves. The value is that a human did the thinking, so nothing here ranks anybody.
+ */
+model ServiceRequest {
   id     String @id @default(uuid())
-  userId String @map("user_id")
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String @map("user_id")
 
-  categoryCode String       @map("category_code")
-  description  String       @map("description")
-  urgency      BriefUrgency @default(FLEXIBLE) @map("urgency")
-  budget       Int?         @map("budget") // pence, display only
-  currency     String       @default("GBP") @map("currency")
+  /**
+   * The member's own guess, and optional on purpose.
+   * Absent means "I do not know what I need", which is the whole reason this route exists: asking
+   * somebody to classify their own problem is the thing browsing already fails at. It is never
+   * defaulted and never rejected.
+   */
+  categoryCode String? @map("category_code")
 
+  /**
+   * The category staff decided on, held separately from the member's guess.
+   * Two columns rather than one overwritten field, so nobody later mistakes a member's hunch for
+   * Circl's judgement — and so a wrong guess can be corrected without erasing what they said.
+   */
+  adminCategoryCode String? @map("admin_category_code")
+
+  description String       @map("description")
+  urgency     BriefUrgency @default(FLEXIBLE) @map("urgency")
+
+  /// Pence, display only, and only ever set when the member typed a single figure.
+  budget   Int?   @map("budget")
+  currency String @default("GBP") @map("currency")
+
+  /**
+   * What the member actually typed, when it was not a single figure.
+   * The form takes words — "Under 50", "50-100", "Flexible" — and the wire took pence, so anything
+   * that was not one number could not travel and staff never learned the member had mentioned a
+   * budget at all. Held verbatim and shown to staff as typed. Nothing parses it, and nothing
+   * should: "50-100" read as £50,100 is the bug this column exists to end.
+   */
+  budgetText String? @map("budget_text")
+
+  /// Taken from the member's profile at submission: there is no city picker on this screen, and
+  /// staff need it to search, so asking somebody to restate where they live is a question the
+  /// account already answers.
   cityId String? @map("city_id")
   city   City?   @relation(fields: [cityId], references: [id])
 
-  state BriefState @default(OPEN) @map("state")
+  state ServiceRequestState @default(SUBMITTED) @map("state")
 
+  /**
+   * Circl's own sentence to the member, shown under the status. Never templated.
+   * This is where "we have asked two agencies" goes — the half of the outcome a status word cannot
+   * carry.
+   */
+  note String? @map("note")
+
+  /// When staff sent the outcome, and who. The pipeline's own clock: a request with offers out and
+  /// no outcome is one somebody still owes an answer on.
+  outcomeSentAt DateTime? @map("outcome_sent_at") @db.Timestamptz
+  outcomeById   String?   @map("outcome_by_id")
+
+  /// The Smart Match leftovers (deprecated). Written only by the superseded `briefs` endpoints,
+  /// which answer until the app that calls them is gone.
   chosenListingId String? @map("chosen_listing_id")
   bookingId       String? @map("booking_id")
 
-  /// Who placed it, when staff did (§5.16). Null for a brief the member placed themselves, which
-  /// is the difference between "Circl chose this professional" and "the member did" — and that
-  /// difference is the first thing asked if the placement goes badly.
+  /// Who placed it, when staff did (§5.16).
   placedById String?   @map("placed_by_id")
   placedAt   DateTime? @map("placed_at") @db.Timestamptz
 
@@ -322,16 +370,67 @@ model ManagedBrief {
 
   matches  BriefMatch[]
   bookings Booking[]
+  offers   ServiceRequestOffer[]
 
   @@index([userId, state])
+  /// The staff queue: newest first within a state.
+  @@index([state, createdAt])
   @@map("managed_briefs")
+}
+
+/**
+ * One request, offered to one professional (§2, professional side).
+ * An offer, not an assignment: the professional still chooses, and the wording staff see says so.
+ * The member is **not** named on it — they agreed to hear from professionals Circl chose, not to
+ * have their name circulated to everyone who was asked. Their city travels, because judging
+ * whether you can take something on without knowing where it is is guesswork.
+ */
+model ServiceRequestOffer {
+  id        String         @id @default(uuid())
+  requestId String         @map("request_id")
+  request   ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  /// The professional's account, not their listing: the offer follows the person, and a listing
+  /// can be taken down between the offer and the answer.
+  professionalId String @map("professional_id")
+  professional   User   @relation("ServiceRequestOffers", fields: [professionalId], references: [id], onDelete: Cascade)
+
+  /// Which listing staff were looking at when they offered it. Display only, and nullable because
+  /// the listing may be gone by the time anybody reads the row back.
+  listingId String? @map("listing_id")
+
+  status ServiceRequestOfferStatus @default(PENDING) @map("status")
+
+  /// No foreign key, like every other staff reference: who offered this outlives the staff account.
+  offeredById String   @map("offered_by_id")
+  offeredAt   DateTime @default(now()) @map("offered_at") @db.Timestamptz
+
+  /// Unanswered offers lapse rather than hold a request open for ever.
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz
+  respondedAt DateTime? @map("responded_at") @db.Timestamptz
+
+  /// Set on acceptance: the thread the professional's introduction was posted into.
+  conversationId String? @map("conversation_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  /// One offer per professional per request. Offering twice is a mistake, not a second chance.
+  @@unique([requestId, professionalId])
+  /// Their own inbox, answered rows included.
+  @@index([professionalId, status, offeredAt])
+  /// "Who has answered" on the request, and the acceptance count the cap is read from.
+  @@index([requestId, status])
+  /// The expiry sweep reads exactly this.
+  @@index([status, expiresAt])
+  @@map("service_request_offers")
 }
 
 // Scores are 0..1 with a one-word qualifier computed server-side, so the four mini-bars and their labels agree everywhere (2.8.2).
 model BriefMatch {
-  id      String       @id @default(uuid())
-  briefId String       @map("brief_id")
-  brief   ManagedBrief @relation(fields: [briefId], references: [id], onDelete: Cascade)
+  id      String         @id @default(uuid())
+  briefId String         @map("brief_id")
+  brief   ServiceRequest @relation(fields: [briefId], references: [id], onDelete: Cascade)
 
   listingId String              @map("listing_id")
   listing   ProfessionalListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
@@ -371,8 +470,8 @@ model Booking {
   serviceId String?              @map("service_id")
   service   ProfessionalService? @relation(fields: [serviceId], references: [id])
 
-  briefId String?       @map("brief_id")
-  brief   ManagedBrief? @relation(fields: [briefId], references: [id])
+  briefId String?         @map("brief_id")
+  brief   ServiceRequest? @relation(fields: [briefId], references: [id])
 
   // Copied from the service or the brief at creation.
   serviceName        String  @map("service_name")

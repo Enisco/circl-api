@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
-  BriefState,
+  ServiceRequestState,
   BriefUrgency,
   JobState,
   ManagedRequestClosedReason,
@@ -49,15 +49,25 @@ const REQUEST_TRANSITIONS: Record<ManagedRequestState, ManagedRequestState[]> = 
   CLOSED: [],
 };
 
-const BRIEF_TRANSITIONS: Record<BriefState, BriefState[]> = {
-  // A draft is the member's own, before they send it. Staff never see one in the pipeline, and
-  // listing it here rather than leaving the record incomplete is what makes the table exhaustive:
-  // the day `DRAFT` reaches this service, it is refused rather than crashing on a missing key.
-  DRAFT: [BriefState.OPEN, BriefState.CLOSED],
-  OPEN: [BriefState.MATCHED, BriefState.CLOSED],
-  MATCHED: [BriefState.OPEN, BriefState.CLOSED],
-  PLACED: [BriefState.OPEN, BriefState.CLOSED],
-  CLOSED: [],
+const BRIEF_TRANSITIONS: Record<ServiceRequestState, ServiceRequestState[]> = {
+  SUBMITTED: [
+    ServiceRequestState.MATCHING,
+    ServiceRequestState.NO_MATCH,
+    ServiceRequestState.CANCELLED,
+  ],
+  MATCHING: [
+    ServiceRequestState.MATCHED,
+    ServiceRequestState.NO_MATCH,
+    ServiceRequestState.CANCELLED,
+  ],
+  // Back to `MATCHING` to offer it to somebody else. The lead's call, as re-placing was.
+  MATCHED: [ServiceRequestState.MATCHING, ServiceRequestState.CANCELLED],
+  // Circl looked and found nobody — until somebody new signs up, which is exactly when staff
+  // offer it again.
+  NO_MATCH: [ServiceRequestState.MATCHING, ServiceRequestState.CANCELLED],
+  // Final. The member withdrew it; a member who comes back raises a new one, which is the honest
+  // record — two requests and two outcomes, rather than one row whose history now reads wrong.
+  CANCELLED: [],
 };
 
 /** Most urgent first, on the enum's own order rather than alphabetically. */
@@ -302,7 +312,7 @@ export class AdminManagedService {
   async listBriefs(query: ListBriefsDto) {
     query.assertDepth();
 
-    const where: Prisma.ManagedBriefWhereInput = {
+    const where: Prisma.ServiceRequestWhereInput = {
       ...(query.state?.length ? { state: { in: query.state } } : {}),
       ...(query.urgency?.length ? { urgency: { in: query.urgency } } : {}),
       ...(query.categories?.length ? { categoryCode: { in: query.categories } } : {}),
@@ -318,8 +328,8 @@ export class AdminManagedService {
     };
 
     const [total, rows] = await this.database.$transaction([
-      this.database.managedBrief.count({ where }),
-      this.database.managedBrief.findMany({
+      this.database.serviceRequest.count({ where }),
+      this.database.serviceRequest.findMany({
         where,
         select: BRIEF_SELECT,
         orderBy:
@@ -345,7 +355,7 @@ export class AdminManagedService {
   }
 
   async briefDetail(id: string) {
-    const row = await this.database.managedBrief.findUnique({
+    const row = await this.database.serviceRequest.findUnique({
       where: { id },
       select: BRIEF_SELECT,
     });
@@ -430,17 +440,17 @@ export class AdminManagedService {
    * difference matters the first time a placement goes badly.
    */
   async placeBrief(actor: AdminPrincipal, id: string, dto: PlaceBriefDto) {
-    const brief = await this.database.managedBrief.findUnique({
+    const brief = await this.database.serviceRequest.findUnique({
       where: { id },
       select: { ...BRIEF_SELECT, userId: true },
     });
 
     if (!brief) throw ApiException.notFound('No such brief.');
 
-    if (brief.state === BriefState.CLOSED) {
+    if (brief.state === ServiceRequestState.CANCELLED) {
       throw ApiException.conflict(
         ApiErrorCode.INVALID_TRANSITION,
-        'That brief is closed. Reopen it before placing anybody.',
+        'That request was withdrawn by the member.',
         { data: { state: brief.state } },
       );
     }
@@ -472,14 +482,14 @@ export class AdminManagedService {
         targetId: id,
         before: { state: brief.state, chosenListingId: brief.chosenListingId },
         after: {
-          state: BriefState.PLACED,
+          state: ServiceRequestState.MATCHED,
           chosenListingId: dto.listingId,
           bookingId: placedBrief.bookingId,
         },
         metadata: { note: dto.note ?? null, listingId: dto.listingId },
       }),
       tx =>
-        tx.managedBrief.update({
+        tx.serviceRequest.update({
           where: { id },
           // `BookingService` has already set `state`, `bookingId` and `chosenListingId` — it does
           // that for a member's own choice too. These two columns are the only thing this path
@@ -496,7 +506,7 @@ export class AdminManagedService {
 
   /** §7.7's brief transitions. `PLACED → OPEN` is the one that needs a lead. */
   async updateBrief(actor: AdminPrincipal, id: string, dto: UpdateBriefDto) {
-    const brief = await this.database.managedBrief.findUnique({
+    const brief = await this.database.serviceRequest.findUnique({
       where: { id },
       select: { ...BRIEF_SELECT, userId: true },
     });
@@ -511,11 +521,11 @@ export class AdminManagedService {
 
     this.assertTransition(BRIEF_TRANSITIONS, brief.state, dto.state, 'brief');
 
-    if (brief.state === BriefState.PLACED && dto.state === BriefState.OPEN) {
+    if (brief.state === ServiceRequestState.MATCHED && dto.state === ServiceRequestState.MATCHING) {
       if (!actor.permissions.has('moderation:assign')) {
         throw ApiException.forbidden(
           ApiErrorCode.FORBIDDEN,
-          'Placing a brief again is a lead’s call (`moderation:assign`).',
+          'Offering a request again is a lead’s call (`moderation:assign`).',
         );
       }
 
@@ -532,13 +542,13 @@ export class AdminManagedService {
         metadata: { note: dto.note ?? null },
       },
       tx =>
-        tx.managedBrief.update({
+        tx.serviceRequest.update({
           where: { id },
           data: {
             state: dto.state,
             // Re-placing clears the choice, because a brief that is open again with last time's
             // professional still named on it reads as placed to every screen that checks.
-            ...(dto.state === BriefState.OPEN
+            ...(dto.state === ServiceRequestState.MATCHING
               ? { chosenListingId: null, bookingId: null, placedById: null, placedAt: null }
               : {}),
           },
@@ -706,7 +716,7 @@ export class AdminManagedService {
   }
 
   private async briefRow(id: string) {
-    const row = await this.database.managedBrief.findUnique({
+    const row = await this.database.serviceRequest.findUnique({
       where: { id },
       select: BRIEF_SELECT,
     });
@@ -842,7 +852,7 @@ const BRIEF_SELECT = {
   placedAt: true,
   createdAt: true,
   user: { select: caseMemberSelect },
-} satisfies Prisma.ManagedBriefSelect;
+} satisfies Prisma.ServiceRequestSelect;
 
 type RequestRow = Prisma.ManagedRequestGetPayload<{ select: typeof REQUEST_SELECT }>;
-type BriefRow = Prisma.ManagedBriefGetPayload<{ select: typeof BRIEF_SELECT }>;
+type BriefRow = Prisma.ServiceRequestGetPayload<{ select: typeof BRIEF_SELECT }>;

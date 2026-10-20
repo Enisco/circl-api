@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  BriefState,
+  ServiceRequestState,
   BriefUrgency,
   ManagedRequestClosedReason,
   ManagedRequestState,
@@ -146,13 +146,13 @@ export const BRIEF_SORTS = ['createdAt', 'urgency'] as const;
 export type BriefSort = (typeof BRIEF_SORTS)[number];
 
 export class ListBriefsDto extends AdminPageOptionsDto {
-  @ApiPropertyOptional({ enum: BriefState, isArray: true, description: 'CSV.' })
+  @ApiPropertyOptional({ enum: ServiceRequestState, isArray: true, description: 'CSV.' })
   @CsvArray()
   @IsArray()
-  @IsEnum(BriefState, { each: true })
+  @IsEnum(ServiceRequestState, { each: true })
   @ArrayMaxSize(6)
   @IsOptional()
-  state?: BriefState[];
+  state?: ServiceRequestState[];
 
   @ApiPropertyOptional({ enum: BriefUrgency, isArray: true, description: 'CSV.' })
   @CsvArray()
@@ -217,13 +217,21 @@ export class PlaceBriefDto {
 
 export class UpdateBriefDto {
   @ApiProperty({
-    enum: [BriefState.OPEN, BriefState.MATCHED, BriefState.CLOSED],
+    enum: [
+      ServiceRequestState.MATCHING,
+      ServiceRequestState.MATCHED,
+      ServiceRequestState.NO_MATCH,
+      ServiceRequestState.CANCELLED,
+    ],
     description:
-      '`OPEN → MATCHED`, anything `→ CLOSED`, and `PLACED → OPEN` to place it again — which ' +
-      'needs `moderation:assign` (§7.7). Anything else is 409 `INVALID_TRANSITION`.',
+      'Superseded by `admin/service-requests`, which moves a request by doing the work — ' +
+      'offering it, and sending the outcome — rather than by setting a word.\n\n' +
+      '`SUBMITTED → MATCHING`, `MATCHING → MATCHED | NO_MATCH`, anything open `→ CANCELLED`, and ' +
+      '`MATCHED → MATCHING` to offer it again, which needs `moderation:assign` (§7.7). Anything ' +
+      'else is 409 `INVALID_TRANSITION`.',
   })
-  @IsEnum(BriefState)
-  state: BriefState;
+  @IsEnum(ServiceRequestState)
+  state: ServiceRequestState;
 
   @ApiPropertyOptional({ maxLength: 2000 })
   @Trim()

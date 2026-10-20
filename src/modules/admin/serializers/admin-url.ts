@@ -30,6 +30,29 @@ const CONTENT_PATHS: Partial<Record<ReportTargetType, string>> = {
   USER: '/members',
 };
 
+/**
+ * The support surface's own targets, which are not reportable content.
+ *
+ * `CONTENT_PATHS` is keyed on `ReportTargetType` — the things a member can report — and the
+ * audit trail records plenty that nobody can report: a service request, a brief. Those rows had
+ * no path, so the portal rendered the most consequential entries in the log (who a member's
+ * problem was offered to, and by whom) as plain text.
+ *
+ * `BRIEF` points at the same page as `SERVICE_REQUEST`: it is the same record under the name the
+ * superseded endpoints still use for it.
+ */
+const SUPPORT_PATHS: Record<string, string> = {
+  SERVICE_REQUEST: '/support/service-requests',
+  BRIEF: '/support/service-requests',
+  MANAGED_REQUEST: '/support/managed',
+};
+
+export const supportAdminUrl = (targetType: string, targetId: string): string | null => {
+  const base = SUPPORT_PATHS[targetType];
+
+  return base ? `${base}/${targetId}` : null;
+};
+
 export const contentAdminUrl = (targetType: ReportTargetType, targetId: string): string | null => {
   const base = CONTENT_PATHS[targetType];
 

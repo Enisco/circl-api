@@ -220,9 +220,9 @@ export class BookingService {
       );
 
       if (brief) {
-        await tx.managedBrief.update({
+        await tx.serviceRequest.update({
           where: { id: brief.id },
-          data: { state: 'PLACED', bookingId: created.id, chosenListingId: listing.id },
+          data: { state: 'MATCHED', bookingId: created.id, chosenListingId: listing.id },
         });
       }
 
@@ -693,7 +693,7 @@ export class BookingService {
   }
 
   private async loadBrief(userId: string, briefId: string) {
-    const brief = await this.database.managedBrief.findUnique({ where: { id: briefId } });
+    const brief = await this.database.serviceRequest.findUnique({ where: { id: briefId } });
 
     if (!brief || brief.userId !== userId) {
       throw ApiException.notFound('That brief could not be found.');

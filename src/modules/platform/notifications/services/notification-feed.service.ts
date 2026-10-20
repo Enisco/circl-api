@@ -27,7 +27,19 @@ export type NotificationTargetType =
   | 'CONNECT_REQUEST'
   | 'DEAL'
   | 'PROFILE'
-  | 'VERIFICATION';
+  | 'VERIFICATION'
+  /// A "let Circl handle it" request. Routed at the request and never at a conversation: the
+  /// other outcome of that flow is that there is no conversation to open.
+  | 'SERVICE_REQUEST'
+  /**
+   * One offer of that request to one professional.
+   *
+   * Its own type because a request belongs to the member who raised it: `GET
+   * /professionals/service-requests/:id` answers 404 to anybody else, so a professional sent to
+   * the request lands on a screen they are not allowed to read. The offer is the thing that is
+   * theirs.
+   */
+  | 'SERVICE_REQUEST_OFFER';
 
 export interface NotificationTarget {
   type: NotificationTargetType;

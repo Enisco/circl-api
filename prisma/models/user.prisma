@@ -121,7 +121,10 @@ model User {
   professionalListing   ProfessionalListing?
   /// Keyed on the person, not their listing: a licence check survives a profile being rebuilt.
   categoryVerifications CategoryVerification[]
-  briefs                ManagedBrief[]
+  serviceRequests       ServiceRequest[]
+  /// Work Circl offered them. Named, because a professional is on one side of this and never the
+  /// other: the member who asked is a `ServiceRequest.user`.
+  serviceRequestOffers  ServiceRequestOffer[]  @relation("ServiceRequestOffers")
   bookingsAsClient      Booking[]              @relation("BookingClient")
   bookingsAsPro         Booking[]              @relation("BookingProfessional")
   disputesRaised        Dispute[]

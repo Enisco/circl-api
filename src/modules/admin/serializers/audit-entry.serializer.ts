@@ -1,6 +1,6 @@
 import { AuditArea, AuditLog, Prisma } from '@prisma/client';
 import { StaffRefView } from './admin-staff.serializer';
-import { contentAdminUrl, memberAdminUrl } from './admin-url';
+import { contentAdminUrl, memberAdminUrl, supportAdminUrl } from './admin-url';
 import { AdminPrincipal } from '../common/admin-principal';
 
 export interface AuditEntryView {
@@ -104,5 +104,5 @@ const adminUrlFor = (targetType: string | null, targetId: string | null): string
 
   if (targetType === 'MEMBER' || targetType === 'USER') return memberAdminUrl(targetId);
 
-  return contentAdminUrl(targetType as never, targetId);
+  return supportAdminUrl(targetType, targetId) ?? contentAdminUrl(targetType as never, targetId);
 };

@@ -328,7 +328,7 @@ export class AdminNoteService {
       case NoteSubjectType.MANAGED_REQUEST:
         return this.database.managedRequest.count({ where });
       case NoteSubjectType.BRIEF:
-        return this.database.managedBrief.count({ where });
+        return this.database.serviceRequest.count({ where });
       case NoteSubjectType.DEAL:
         return this.database.deal.count({ where });
       // The three that used to return `null` here, in the order their sections landed. A note

@@ -367,8 +367,8 @@ async function main() {
 
   check('the placement lands', placed.status === 200, placed.status || placed.body?.error);
   check(
-    'the brief is PLACED with a real booking behind it',
-    placed.body?.data?.state === 'PLACED' &&
+    'the brief is MATCHED with a real booking behind it',
+    placed.body?.data?.state === 'MATCHED' &&
       !!placed.body?.data?.bookingId &&
       placed.body?.data?.chosenListingId === listingId,
     {
@@ -423,14 +423,14 @@ async function main() {
     null,
     'PATCH',
     `/admin/managed/briefs/${briefId}`,
-    { state: 'OPEN', note: 'They did not get on; finding somebody else.' },
+    { state: 'MATCHING', note: 'They did not get on; finding somebody else.' },
     { ...asLead, ...key() },
   );
 
   check('a lead can open it again', rePlace.status === 200, rePlace.body?.error);
   check(
     'and the previous choice is cleared, so no screen still reads it as placed',
-    rePlace.body?.data?.state === 'OPEN' &&
+    rePlace.body?.data?.state === 'MATCHING' &&
       rePlace.body?.data?.chosenListingId === null &&
       rePlace.body?.data?.placedBy === null,
     rePlace.body?.data,
@@ -497,7 +497,7 @@ async function main() {
     null,
     'PATCH',
     `/admin/managed/briefs/${briefId}`,
-    { state: 'OPEN', note: 'Changed my mind again.' },
+    { state: 'MATCHING', note: 'Changed my mind again.' },
     { ...asLead, ...key() },
   );
 

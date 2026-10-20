@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
-  BriefState,
+  ServiceRequestState,
   ListingVerificationStatus,
   ManagedRequestSubject,
   SystemMessageType,
@@ -56,7 +56,7 @@ export class BriefService {
     const media = await this.media.validate(dto.mediaKeys, userId);
 
     const brief = await this.database.$transaction(async tx => {
-      const created = await tx.managedBrief.create({
+      const created = await tx.serviceRequest.create({
         data: {
           userId,
           categoryCode: dto.categoryCode,
@@ -64,7 +64,7 @@ export class BriefService {
           urgency: dto.urgency ?? undefined,
           budget: dto.budget ?? null,
           cityId: cityId ?? null,
-          state: BriefState.OPEN,
+          state: ServiceRequestState.SUBMITTED,
         },
       });
 
@@ -165,9 +165,10 @@ export class BriefService {
         })),
       });
 
-      await tx.managedBrief.update({
+      await tx.serviceRequest.update({
         where: { id: brief.id },
-        data: { state: BriefState.MATCHED },
+        // A shortlist existed. In the words the member's screen now uses, that is offers out.
+        data: { state: ServiceRequestState.MATCHING },
       });
     });
 
@@ -218,7 +219,7 @@ export class BriefService {
   async choose(userId: string, id: string, dto: ChooseMatchDto) {
     const brief = await this.load(userId, id);
 
-    if (brief.state === BriefState.PLACED && brief.bookingId) {
+    if (brief.state === ServiceRequestState.MATCHED && brief.bookingId) {
       throw ApiException.conflict(
         ApiErrorCode.CONFLICT,
         'You have already chosen someone for this brief.',
@@ -302,7 +303,7 @@ export class BriefService {
   }
 
   private async load(userId: string, id: string) {
-    const brief = await this.database.managedBrief.findUnique({ where: { id } });
+    const brief = await this.database.serviceRequest.findUnique({ where: { id } });
 
     if (!brief || brief.userId !== userId) {
       throw ApiException.notFound('That brief could not be found.');
@@ -319,7 +320,7 @@ export class BriefService {
     budget: number | null;
     currency: string;
     cityId: string | null;
-    state: BriefState;
+    state: ServiceRequestState;
     createdAt: Date;
   }) {
     const [labels, city] = await Promise.all([

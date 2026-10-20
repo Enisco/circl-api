@@ -159,6 +159,11 @@ export const ApiErrorCode = {
   CODE_EXPIRED: 'CODE_EXPIRED',
   EXPORT_ALREADY_PENDING: 'EXPORT_ALREADY_PENDING',
 
+  // ─── Managed service requests ──────────────────────────────────────────────
+  /// Three professionals accepted before this one answered. A cap, not a refusal of them: the app
+  /// says so in grey rather than red, and the offer is revoked rather than left waiting.
+  SERVICE_REQUEST_FILLED: 'SERVICE_REQUEST_FILLED',
+
   // ═══ Admin portal ═══════════════════════════════════════════════════════════
   //
   // ─── Staff authentication ──────────────────────────────────────────────────

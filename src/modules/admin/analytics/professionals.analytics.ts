@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { BriefState, BriefUrgency, ExperienceLevel, Prisma, TaxonomyKind } from '@prisma/client';
+import { BriefUrgency, ExperienceLevel, Prisma, TaxonomyKind } from '@prisma/client';
 import { TaxonomyService } from '@/modules/platform/shared';
 import { AnalyticsRunnerService } from './analytics-runner.service';
 import {
@@ -19,13 +19,17 @@ import { ProfessionalFilters } from '../dtos/admin-analytics.dto';
 /** The review contexts that are about professional work, not community help. */
 const WORK_REVIEWS = ['PROFESSIONAL', 'BOOKING', 'PRIOR_WORK'];
 
-/** The brief funnel, in the order a brief moves through. `DRAFT` is nobody's brief yet. */
-const BRIEF_FUNNEL = [
-  BriefState.OPEN,
-  BriefState.MATCHED,
-  BriefState.PLACED,
-  BriefState.CLOSED,
-] as const;
+/**
+ * The request funnel: three stages that nest, rather than four states that do not.
+ *
+ * Written as stages rather than as `ServiceRequestState` values because the states are not a
+ * funnel — `NO_MATCH` and `CANCELLED` are both endings, and neither is a later step than
+ * `MATCHED`. A funnel whose last bar counted departures would read as "most requests get there".
+ *
+ * Each stage contains the one after it: everything taken on was offered, and everything offered
+ * was submitted. That is what makes "never rises" a property of the data rather than a hope.
+ */
+const BRIEF_FUNNEL = ['SUBMITTED', 'OFFERED', 'TAKEN_ON'] as const;
 
 /** How many cities the supply and demand matrices share. Both get the same rows and columns. */
 const SUPPLY_DEMAND_CITIES = 10;
@@ -348,19 +352,19 @@ export class ProfessionalsAnalytics {
                mb."state"::text AS state, mb."city_id", mb."chosen_listing_id", mb."created_at"
         FROM "managed_briefs" mb
         JOIN pop ON pop."user_id" = mb."user_id"
-        WHERE mb."state" <> 'DRAFT'${parts.length ? Prisma.sql` AND ${Prisma.join(parts, ' AND ')}` : Prisma.empty}
+        ${parts.length ? Prisma.sql`WHERE ${Prisma.join(parts, ' AND ')}` : Prisma.empty}
       )`;
   }
 
   /**
-   * How far briefs get: open, matched, placed, closed.
+   * How far requests get: submitted, offered, taken on.
    *
-   * A brief's state is a single column rather than a history, so "reached" has to be inferred — and
-   * the same way as the enquiry funnel, from every fact that evidences it. A brief at `PLACED` was
-   * matched whether or not anybody recorded the matching, and one with a `chosen_listing_id` was
-   * matched by definition. Monotonic by construction, which a funnel read off one column is not:
-   * taken literally, a brief at `CLOSED` would count in `CLOSED` and nowhere else, and the chart
-   * would show four unrelated bars rather than a funnel.
+   * A request's state is a single column rather than a history, so "reached" has to be inferred —
+   * the same way the enquiry funnel does it, from every fact that evidences it. A request that was
+   * answered and closed inside the window was still offered, and the offers table says so whatever
+   * the state column now reads. Monotonic by construction, which a funnel read off one column is
+   * not: taken literally, a request at `MATCHED` would count in one bar and nowhere else, and the
+   * chart would show unrelated bars rather than a funnel.
    */
   private async briefsFunnel(
     filter: ResolvedMemberFilter,
@@ -368,21 +372,25 @@ export class ProfessionalsAnalytics {
     extra: ProfessionalFilters,
   ): Promise<FunnelChart> {
     const [row] = await this.runner.query(
-      tx => tx.$queryRaw<
-        Array<{ opened: bigint; matched: bigint; placed: bigint; closed: bigint }>
-      >`
+      tx => tx.$queryRaw<Array<{ submitted: bigint; offered: bigint; taken_on: bigint }>>`
         WITH ${this.briefs(filter, extra)}
-        SELECT COUNT(*) AS opened,
+        SELECT COUNT(*) AS submitted,
+               -- Staff put it in front of somebody. The state alone is not enough: a request can
+               -- be answered and closed within the window, and it was still offered.
                COUNT(CASE WHEN
-                 briefs."state" IN ('MATCHED', 'PLACED', 'CLOSED')
-                 OR briefs."chosen_listing_id" IS NOT NULL
-                 OR EXISTS (SELECT 1 FROM "brief_matches" bm WHERE bm."brief_id" = briefs."id")
-               THEN 1 END) AS matched,
+                 briefs."state" IN ('MATCHING', 'MATCHED')
+                 OR EXISTS (
+                   SELECT 1 FROM "service_request_offers" o WHERE o."request_id" = briefs."id"
+                 )
+               THEN 1 END) AS offered,
+               -- Somebody took it on, which is the only ending this funnel is measuring.
                COUNT(CASE WHEN
-                 briefs."state" IN ('PLACED', 'CLOSED')
-                 OR briefs."chosen_listing_id" IS NOT NULL
-               THEN 1 END) AS placed,
-               COUNT(CASE WHEN briefs."state" = 'CLOSED' THEN 1 END) AS closed
+                 briefs."state" = 'MATCHED'
+                 OR EXISTS (
+                   SELECT 1 FROM "service_request_offers" o
+                   WHERE o."request_id" = briefs."id" AND o."status" = 'ACCEPTED'
+                 )
+               THEN 1 END) AS taken_on
         FROM briefs
         WHERE briefs."created_at" >= ${range.fromInstant}
           AND briefs."created_at" < ${range.toInstant}
@@ -390,10 +398,9 @@ export class ProfessionalsAnalytics {
     );
 
     const values = [
-      Number(row?.opened ?? 0),
-      Number(row?.matched ?? 0),
-      Number(row?.placed ?? 0),
-      Number(row?.closed ?? 0),
+      Number(row?.submitted ?? 0),
+      Number(row?.offered ?? 0),
+      Number(row?.taken_on ?? 0),
     ];
     const start = values[0];
 
@@ -495,8 +502,7 @@ export class ProfessionalsAnalytics {
             SELECT mb."category_code" AS profession, mb."city_id" AS city
             FROM "managed_briefs" mb
             JOIN pop ON pop."user_id" = mb."user_id"
-            WHERE mb."state" <> 'DRAFT'
-              AND mb."created_at" >= ${range.fromInstant} AND mb."created_at" < ${range.toInstant}
+            WHERE mb."created_at" >= ${range.fromInstant} AND mb."created_at" < ${range.toInstant}
             UNION ALL
             SELECT plc."code" AS profession, pl."city_id" AS city
             FROM "bookings" b

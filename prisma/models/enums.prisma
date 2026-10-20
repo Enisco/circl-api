@@ -600,12 +600,35 @@ enum BriefUrgency {
   FLEXIBLE
 }
 
-enum BriefState {
-  DRAFT
-  OPEN
+/**
+ * Where a service request has got to — the five words the member's own screen is written in.
+ * Replaces `BriefState` (`DRAFT`/`OPEN`/`MATCHED`/`PLACED`/`CLOSED`), which counted a different
+ * thing: `MATCHED` there meant a shortlist had been **computed**, and the member was never told
+ * about it. Here it means a professional has taken the request on and written to them.
+ * `SUBMITTED` and `MATCHING` are deliberately not collapsed. "Nobody has read it yet" and "Circl
+ * has asked people" are different promises, and the member's screen says so in words.
+ */
+enum ServiceRequestState {
+  SUBMITTED
+  MATCHING
   MATCHED
-  PLACED
-  CLOSED
+  /// Circl looked and found nobody. An ending, and one the member is told about explicitly.
+  NO_MATCH
+  CANCELLED
+}
+
+/**
+ * One professional's answer to one offer.
+ * `REVOKED` is distinct from `DECLINED` and must stay that way: revoked is Circl withdrawing the
+ * offer, usually because three others accepted first. Collapsing the two makes a professional who
+ * did nothing wrong look like they turned work down.
+ */
+enum ServiceRequestOfferStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  REVOKED
+  EXPIRED
 }
 
 // "Circl takes no payment, so these are stages of work, never states of money."
@@ -802,6 +825,9 @@ enum ThreadContextType {
   BRIEF
   MANAGED_REQUEST
   DISPUTE
+  /// The thread a professional opens by accepting a service request. Not `SERVICE`: there is no
+  /// service behind it, and a strip that links to one would link to a page that does not exist.
+  SERVICE_REQUEST
 }
 
 enum ParticipantRole {
@@ -916,6 +942,10 @@ enum NotificationKind {
   /// so a member who has turned every notification off still hears that their post was removed and
   /// how to appeal. A notification somebody can switch off is not a notice (§7.3).
   MODERATION
+  /// The outcome of a "let Circl handle it" request: either people are taking it on, or nobody
+  /// was found. Routed on `target`, never on this, and the second one matters more than the
+  /// first — a request that goes quiet is worse for the member than one that was refused.
+  SERVICE_REQUEST
 }
 
 /**
