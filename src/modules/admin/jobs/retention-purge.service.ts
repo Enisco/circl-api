@@ -23,9 +23,10 @@ import { AdminAnnouncementService } from '../comms/admin-announcement.service';
  *    record of monthly actives rather than compress it. It is left alone until the rollup it is
  *    meant to fold into exists — a smaller fault than a dashboard that silently loses two years.
  *  - **Evidence snapshots under legal hold (§13.8)** have no table yet; there is nothing to purge.
- *  - **`InternalNote`** is "life of the subject + 6 years", and nothing deletes a subject: members
- *    are anonymised rather than removed, and cases, threads and deals are kept. The one case that
- *    can arise is a note about a member row that is genuinely gone, which is handled below.
+ *  - **`InternalNote`** is "life of the subject + 6 years", and almost nothing deletes a subject:
+ *    members are anonymised rather than removed, and cases, threads and deals are kept. Two cases
+ *    arise and both are handled below — a note about a member row that is genuinely gone, and a
+ *    note about a website submission, which is the one subject this job deletes outright.
  */
 @Injectable()
 export class RetentionPurgeService {
@@ -59,6 +60,9 @@ export class RetentionPurgeService {
     add('report snapshots cleared', await this.clearReportSnapshots(now));
     add('orphaned notes', await this.purgeOrphanedNotes(now));
     add('member export files', await this.purgeMemberExportFiles(now));
+    add('website submissions', await this.purgeWebsiteSubmissions(now));
+    add('website deletion requests', await this.purgeWebsiteDeletionRequests(now));
+    add('deletion requests redacted', await this.redactWebsiteDeletionRequests(now));
 
     const summary = counts.length ? counts.join(', ') : null;
 
@@ -267,10 +271,132 @@ export class RetentionPurgeService {
 
     return cleared;
   }
+
+  // ─── The public website's forms (§5.27) ────────────────────────────────────
+
+  /**
+   * Messages and suggestions, two years on.
+   *
+   * The shorter clock of the two the website's forms are kept on, and it is the right way round: a
+   * question about an account or an idea for the app has no legal weight and no further use once it
+   * has been answered. A deletion request does, and is handled separately below.
+   *
+   * **The notes go with the submission**, in one statement, which is a deliberate reading of
+   * §13.6's "life of the subject + 6 years". That rule exists for notes about *people* — a
+   * judgement recorded where its subject cannot see it, which stays accountable only while the
+   * record of who wrote it survives. A note on a website enquiry is about an enquiry, and keeping
+   * it for six years after the enquiry has been deleted leaves a staff comment about nothing
+   * anybody can look up. Deleted together, or not at all.
+   */
+  private async purgeWebsiteSubmissions(now: Date): Promise<number> {
+    const cutoff = yearsBefore(now, WEBSITE_SUBMISSION_YEARS);
+
+    return this.database.$transaction(async tx => {
+      const doomed = await tx.websiteSubmission.findMany({
+        where: {
+          type: { in: ['CONTACT_MESSAGE', 'FEATURE_SUGGESTION'] },
+          createdAt: { lte: cutoff },
+        },
+        select: { id: true },
+        take: WEBSITE_BATCH,
+      });
+
+      if (!doomed.length) return 0;
+
+      const ids = doomed.map(row => row.id);
+
+      await tx.internalNote.deleteMany({
+        where: { subjectType: 'WEBSITE_SUBMISSION', subjectId: { in: ids } },
+      });
+
+      const { count } = await tx.websiteSubmission.deleteMany({ where: { id: { in: ids } } });
+
+      return count;
+    });
+  }
+
+  /**
+   * Deletion requests, six years on — the same clock as the audit trail, and for the same reason.
+   *
+   * A request to have an account deleted is a data-subject request, and the record that it was
+   * received and what was done about it is the evidence of having complied. Six years is the UK
+   * limitation period, so the record outlives any claim that it was mishandled. The row by then
+   * holds no free text — `redactWebsiteDeletionRequests` cleared that years earlier — so what is
+   * being deleted here is an address, four dates and an outcome.
+   */
+  private async purgeWebsiteDeletionRequests(now: Date): Promise<number> {
+    const cutoff = yearsBefore(now, AUDIT_YEARS);
+
+    return this.database.$transaction(async tx => {
+      const doomed = await tx.websiteSubmission.findMany({
+        where: { type: 'DELETION_REQUEST', createdAt: { lte: cutoff } },
+        select: { id: true },
+        take: WEBSITE_BATCH,
+      });
+
+      if (!doomed.length) return 0;
+
+      const ids = doomed.map(row => row.id);
+
+      await tx.internalNote.deleteMany({
+        where: { subjectType: 'WEBSITE_SUBMISSION', subjectId: { in: ids } },
+      });
+
+      const { count } = await tx.websiteSubmission.deleteMany({ where: { id: { in: ids } } });
+
+      return count;
+    });
+  }
+
+  /**
+   * The free text off a finished deletion request, a month after it was finished.
+   *
+   * Six years is the right clock for *that a request was made and handled*. It is far too long for
+   * the paragraph somebody wrote about why they are leaving, which is often the most personal thing
+   * in the whole table — a bad experience, a safety worry, a relationship. So the row is kept and
+   * the words are not: `name` and `body` go, and the address, the reason code, the dates and the
+   * outcome stay, which is exactly what makes it evidence of compliance.
+   *
+   * The month's grace is so that somebody querying how their request was handled can still be
+   * answered from the record while it is fresh. After that the answer is the outcome, not the prose.
+   *
+   * Keyed on `completedAt` rather than `createdAt`, so this can never reach a request still being
+   * worked — redacting one of those would delete the details from under the person working it.
+   */
+  private async redactWebsiteDeletionRequests(now: Date): Promise<number> {
+    const { count } = await this.database.websiteSubmission.updateMany({
+      where: {
+        type: 'DELETION_REQUEST',
+        // Finished for a month, by whichever clock applies. `DONE` has a `completedAt`; `SPAM`
+        // never does, because it is set by the per-email limit and nobody ever worked it — so
+        // keying only on `completedAt` would have kept the free text of every throttled request
+        // for the full six years, which is the one group whose text was never needed at all.
+        OR: [
+          { completedAt: { lte: daysBefore(now, WEBSITE_REDACT_DAYS) } },
+          { state: 'SPAM', createdAt: { lte: daysBefore(now, WEBSITE_REDACT_DAYS) } },
+        ],
+        // Only rows that still hold something, so a second pass counts nothing and the summary
+        // does not report work it did not do.
+        NOT: { name: null, body: null },
+      },
+      data: { name: null, body: null },
+    });
+
+    return count;
+  }
 }
 
 /** Six years: the UK limitation period, which is what the audit rules are keyed on (S11.4). */
 const AUDIT_YEARS = 6;
+
+/** Twenty-four months for a website message or suggestion, as the product owner settled it. */
+const WEBSITE_SUBMISSION_YEARS = 2;
+
+/** How long after a deletion request is finished its free text is kept. */
+const WEBSITE_REDACT_DAYS = 30;
+
+/** How many submissions one pass deletes. A backlog clears over a few nights. */
+const WEBSITE_BATCH = 500;
 
 /** How many announcements one pass clears the deliveries of. Each one is a freeze and a delete. */
 const ANNOUNCEMENT_BATCH = 100;

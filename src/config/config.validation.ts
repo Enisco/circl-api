@@ -62,6 +62,17 @@ export const configValidationSchema = Joi.object({
   JWT_REFRESH_EXPIRY: Joi.string().default('30d'),
   CLIENT_URL: Joi.string().uri().required(),
 
+  // ── The public website ──────────────────────────────────────────────────────
+  /**
+   * Where the marketing site is served, comma-separated, for CORS.
+   *
+   * Optional: an environment with no website should still boot. Not a `uri()` because the value
+   * holds several — `https://circl.app,https://www.circl.app` — and Joi would reject the pair.
+   */
+  WEBSITE_URLS: Joi.string().allow('').optional(),
+  /** Where website submissions are emailed. Falls back to `SUPPORT_EMAIL`. */
+  WEBSITE_TEAM_EMAIL: Joi.string().email().allow('').optional(),
+
   // ── Admin portal ────────────────────────────────────────────────────────────
   // Distinct from the member secrets on purpose, and the startup check below refuses a deployment
   // that reuses one: a single leaked secret must not mint both kinds of token.

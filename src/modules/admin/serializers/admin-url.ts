@@ -57,6 +57,7 @@ const SUPPORT_PATHS: Record<string, string> = {
   SERVICE_REQUEST: '/support/service-requests',
   BRIEF: '/support/service-requests',
   MANAGED_REQUEST: '/support/managed',
+  WEBSITE_SUBMISSION: '/support/website',
 };
 
 export const supportAdminUrl = (targetType: string, targetId: string): string | null => {

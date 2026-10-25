@@ -25,11 +25,14 @@ export class ResendProvider implements EmailProvider {
     return 'RESEND';
   }
 
-  async send({ to, template, attachments }: EmailProviderOptions): Promise<void> {
+  async send({ to, template, attachments, replyTo }: EmailProviderOptions): Promise<void> {
     try {
       await this.resend.emails.send({
         from: `${this.fromName} <${this.fromEmail}>`,
         to,
+        // Spread rather than passed as `undefined`: the key being absent is what leaves the
+        // provider's default in place, and every existing caller omits it.
+        ...(replyTo ? { replyTo } : {}),
         subject: template.subject,
         html: template.html,
         text: template.text,

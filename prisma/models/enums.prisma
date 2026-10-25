@@ -1160,6 +1160,12 @@ enum NoteSubjectType {
   BRIEF
   DEAL
   ESCALATION
+  /// A submission from the public website's forms.
+  ///
+  /// Here rather than a `notes` column on `website_submissions`, which is what the first draft of
+  /// that queue proposed: §4.7's table already has soft deletion, pinning, authorship and "who may
+  /// read this", and a second place to keep a staff note is a second copy of all four.
+  WEBSITE_SUBMISSION
 }
 
 /// What a staff export is of (§5.26). One row per kind the portal can ask for, even where the
@@ -1243,4 +1249,23 @@ enum RiskTermHitOutcome {
   PENDING
   CONFIRMED
   FALSE_POSITIVE
+}
+
+/// Which of the public website's three forms a submission came from.
+enum WebsiteSubmissionType {
+  CONTACT_MESSAGE
+  FEATURE_SUGGESTION
+  DELETION_REQUEST
+}
+
+/// How far a member of staff has got with one.
+///
+/// `NEW` until somebody looks. There is no queue in the portal yet — every submission is emailed
+/// to the team — so today this moves only when somebody sets it by hand, and it exists so that the
+/// queue, when it ships, has the state it will need rather than a migration on its first day.
+enum WebsiteSubmissionState {
+  NEW
+  IN_PROGRESS
+  DONE
+  SPAM
 }

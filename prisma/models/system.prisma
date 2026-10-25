@@ -60,3 +60,68 @@ model QueueJobLog {
   @@index([operation, createdAt])
   @@map("queue_job_logs")
 }
+
+// ─── Website Submissions ──────────────────────────────────────────────────────
+// The three forms on the public site: a message, a feature suggestion, and a request to have an
+// account deleted by somebody who cannot or would rather not do it in the app.
+
+/// One submission from the public website.
+///
+/// One table for all three forms rather than three, because they are the same thing to the people
+/// who read them — something arrived from the website and somebody has to deal with it — and
+/// because the queue the portal will grow wants one list, not three tabs that each need their own
+/// paging, filters and counts. The per-type fields are nullable and documented below; which ones
+/// are set is a function of `type`, and the DTOs on the way in are what guarantee it.
+///
+/// **No foreign key to `users`, and no relation.** A submission is from whoever filled the form
+/// in: usually not a member, sometimes a member who cannot sign in, and in the deletion case
+/// possibly somebody typing a stranger's address. `matchedUserId` records what the address matched
+/// *at the time it was checked*, which is evidence about the request and not a link to a person.
+model WebsiteSubmission {
+  id    String                 @id @default(uuid())
+  type  WebsiteSubmissionType
+  state WebsiteSubmissionState @default(NEW)
+
+  name  String? @map("name")
+  /// Lowercased and trimmed, so a per-email limit and a later lookup cannot be fooled by case.
+  /// Absent only on a suggestion sent without one — the other two forms require it.
+  email String? @map("email")
+
+  /// CONTACT_MESSAGE: GENERAL | ACCOUNT | PROS_AND_SELLERS | PARTNERSHIPS | PRESS
+  topic  String? @map("topic")
+  /// FEATURE_SUGGESTION: COMMUNITY | PROFESSIONALS | CONNECT | COMMERCE | SOMETHING_NEW
+  area   String? @map("area")
+  /// DELETION_REQUEST: NOT_USING | PRIVACY | BAD_EXPERIENCE | OTHER_ACCOUNT | OTHER
+  reason String? @map("reason")
+
+  /// FEATURE_SUGGESTION only.
+  title String? @map("title")
+  /// The message, the suggestion's details, or the deletion request's details.
+  body  String? @map("body")
+
+  /// DELETION_REQUEST only: the account the address matched when it was checked, if any.
+  ///
+  /// Written after the response has been sent, which is deliberate — see
+  /// `WebsiteSubmissionService`. Null means either "no account" or "not checked yet", and the two
+  /// are told apart by `checkedAt`.
+  matchedUserId String?   @map("matched_user_id")
+  checkedAt     DateTime? @map("checked_at") @db.Timestamptz(6)
+  /// When staff finished with it: the deletion was run, or the message was answered.
+  completedAt   DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  /// A hash of the caller's address, for spotting abuse without keeping the address.
+  ///
+  /// Salted with the app secret, as `ipHash` is on a failed staff sign-in: an unsalted SHA-256 of
+  /// an IPv4 address is reversible by brute force in seconds, so it would be the address with
+  /// extra steps.
+  ipHash String? @map("ip_hash")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// The queue's list: everything of one type still open, newest first.
+  @@index([type, state, createdAt])
+  /// The per-email limit on deletion requests, and the history of one address.
+  @@index([email, type, createdAt])
+  @@map("website_submissions")
+}

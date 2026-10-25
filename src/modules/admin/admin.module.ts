@@ -36,6 +36,7 @@ import { AdminConfigService } from './services/admin-config.service';
 import { AdminDisputeService } from './services/admin-dispute.service';
 import { AdminManagedService } from './services/admin-managed.service';
 import { AdminServiceRequestService } from './services/admin-service-request.service';
+import { AdminWebsiteSubmissionService } from './services/admin-website-submission.service';
 import { AdminPlacesService } from './services/admin-places.service';
 import { AdminThreadAccessService } from './services/admin-thread-access.service';
 import { AdminEnforcementService } from './services/admin-enforcement.service';
@@ -54,6 +55,7 @@ import { AdminConfigController } from './controllers/admin-config.controller';
 import { AdminDisputeController } from './controllers/admin-dispute.controller';
 import { AdminManagedController } from './controllers/admin-managed.controller';
 import { AdminServiceRequestController } from './controllers/admin-service-request.controller';
+import { AdminWebsiteSubmissionController } from './controllers/admin-website-submission.controller';
 import { AdminPlacesController } from './controllers/admin-places.controller';
 import { AdminSupportController } from './controllers/admin-support.controller';
 import { AdminMediaController } from './controllers/admin-media.controller';
@@ -147,6 +149,7 @@ const CONTROLLERS = [
   AdminDisputeController,
   AdminManagedController,
   AdminServiceRequestController,
+  AdminWebsiteSubmissionController,
   AdminPlacesController,
   AdminSupportController,
   AdminMediaController,
@@ -266,6 +269,7 @@ const CONTROLLERS = [
     AdminDisputeService,
     AdminManagedService,
     AdminServiceRequestService,
+    AdminWebsiteSubmissionService,
     AdminPlacesService,
     AdminThreadAccessService,
     AdminContentTargetService,

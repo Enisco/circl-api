@@ -25,6 +25,7 @@ import { SearchModule } from './search/search.module';
 import { PlatformSharedModule } from './shared/shared.module';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
 import { TrustModule } from './trust/trust.module';
+import { WebsiteModule } from './website/website.module';
 
 /** The product sections, in dependency order. */
 export const PLATFORM_MODULES = [
@@ -49,6 +50,9 @@ export const PLATFORM_MODULES = [
   ModerationModule,
   CirclGuardModule,
   AccountModule,
+  // The public website's forms. Nothing depends on it and it depends on nothing but the mailer,
+  // so its place in the list is arbitrary — last, with the other leaf.
+  WebsiteModule,
   PlatformJobsModule,
 ];
 

@@ -37,6 +37,7 @@ const SUBJECT_PERMISSION: Record<NoteSubjectType, string> = {
   BRIEF: 'managed:manage',
   DEAL: 'disputes:manage',
   ESCALATION: 'reports:read',
+  WEBSITE_SUBMISSION: 'support:read',
 };
 
 /** The audit area a note takes, which is its subject's and not its own. */
@@ -50,6 +51,7 @@ const SUBJECT_AREA: Record<NoteSubjectType, AuditArea> = {
   BRIEF: AuditArea.SUPPORT,
   DEAL: AuditArea.SUPPORT,
   ESCALATION: AuditArea.SAFETY,
+  WEBSITE_SUBMISSION: AuditArea.SUPPORT,
 };
 
 /**
@@ -340,6 +342,8 @@ export class AdminNoteService {
         return this.database.escalation.count({ where });
       case NoteSubjectType.SUPPORT_THREAD:
         return this.database.supportThread.count({ where: { conversationId: subjectId } });
+      case NoteSubjectType.WEBSITE_SUBMISSION:
+        return this.database.websiteSubmission.count({ where });
       // Nothing reaches this today: every `NoteSubjectType` is listed above. It is the landing
       // place for the next one somebody adds to the enum without adding it here, which is a 400
       // saying so rather than a note filed against a table that was never checked.

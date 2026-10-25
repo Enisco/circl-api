@@ -175,6 +175,13 @@ export const AUDIT_ACTIONS = {
   'service_request.offer_withdrawn': AuditArea.SUPPORT,
   /// Staff told the member how it went — including, and especially, that nobody was found.
   'service_request.outcome_sent': AuditArea.SUPPORT,
+  /// Somebody picked up, closed or binned a submission from the public website (§5.27).
+  ///
+  /// Audited where a support thread's state change is audited, and for a sharper reason: one of
+  /// the three forms is "delete my account", so "who marked this done, and when" is the record
+  /// that a data request was handled. The note that usually accompanies it is a `note.created`
+  /// entry of its own.
+  'website_submission.state_changed': AuditArea.SUPPORT,
   'dispute.updated': AuditArea.SUPPORT,
   'dispute.resolved': AuditArea.SUPPORT,
   'deal.problem_resolved': AuditArea.SUPPORT,

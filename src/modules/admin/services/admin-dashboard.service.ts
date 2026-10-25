@@ -9,6 +9,7 @@ import { AdminPrincipal } from '../common/admin-principal';
 import { MemberFilterBuilder, ResolvedMemberFilter } from '../filters/member-filter.builder';
 import { DashboardFilterDto } from '../dtos/admin-analytics.dto';
 import { OPEN_REQUEST_STATES } from '../dtos/admin-service-request.dto';
+import { OPEN_SUBMISSION_STATES } from '../dtos/admin-website-submission.dto';
 import { AuditEntryView, auditScopeFor, toAuditEntry } from '../serializers/audit-entry.serializer';
 import { staffRefSelect, toStaffRef } from '../serializers/admin-staff.serializer';
 import { MediaService } from '@/modules/platform/shared';
@@ -232,6 +233,30 @@ const ATTENTION: Array<{
         SELECT COUNT(*)::int AS count, MIN(r."created_at") AS oldest
         FROM "managed_briefs" r
         WHERE r."state"::text IN (${Prisma.join(OPEN_REQUEST_STATES)})
+      `,
+      ),
+  },
+  {
+    /**
+     * What arrived from the public website and nobody has picked up (§5.27).
+     *
+     * `support:read`, and the same states the queue opens on, imported rather than retyped so the
+     * badge and the page cannot disagree. It matters more than its `normal` severity suggests for
+     * one of the three forms: the website promises somebody asking to have their account deleted
+     * an answer within 24 to 72 hours, and this card is the only thing watching that clock.
+     */
+    id: 'openWebsiteSubmissions',
+    label: 'Website submissions open',
+    permission: 'support:read',
+    severity: 'normal',
+    href: '/support/website',
+    count: database =>
+      oldestAndCount(
+        database,
+        Prisma.sql`
+        SELECT COUNT(*)::int AS count, MIN(w."created_at") AS oldest
+        FROM "website_submissions" w
+        WHERE w."state"::text IN (${Prisma.join(OPEN_SUBMISSION_STATES)})
       `,
       ),
   },

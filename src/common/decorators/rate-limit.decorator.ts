@@ -60,6 +60,21 @@ export const RATE_LIMITS = {
    * loop would.
    */
   ADMIN_CLIENT_EVENT: { limit: 120, ttl: 3_600_000 },
+
+  // ─── The public website ────────────────────────────────────────────────────
+  /**
+   * The website's three forms — contact, suggestion, deletion request. Five an hour per IP.
+   *
+   * These are the only unauthenticated writes on the platform that anybody can reach without an
+   * account, so the limit is the whole defence on this side: the website drops the obvious bots
+   * before calling (a honeypot field, and a form sent inside 2.5 seconds), and nothing smarter is
+   * stopped by either. Five is generous for a person and useless for a script.
+   *
+   * Deletion requests carry a second, per-email limit as well, which this cannot express: it
+   * protects a *person's inbox* from somebody moving between networks, not the API from a flood.
+   * See `WebsiteSubmissionService`.
+   */
+  WEBSITE_FORM: { limit: 5, ttl: 3_600_000 },
 } as const;
 
 type LimitName = keyof typeof RATE_LIMITS;

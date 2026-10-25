@@ -67,10 +67,20 @@ const GAP_ENDPOINTS = [
    * `app/version-policy` is public because a build below the forced-update floor cannot sign in,
    * so an endpoint behind authentication could not tell it why it is stuck (§5.21). It returns a
    * version policy and nothing about anybody.
+   *
+   * The three `website/*` forms are public because the visitor filling them in may have no account
+   * — and, in the case of the deletion request, may have one they cannot get into, which is the
+   * entire reason that form exists. They are writes, so each one is rate limited at five an hour
+   * per address, the deletion request answers `202` identically whether or not the address belongs
+   * to an account, and none of them reads anything out.
    */
   check(
     'only the public routes are unauthenticated',
-    open.every(route => /auth\/(register|verify)|\/taxonomy$|\/app\/version-policy$/.test(route)),
+    open.every(route =>
+      /auth\/(register|verify)|\/taxonomy$|\/app\/version-policy$|\/website\/(contact-messages|feature-suggestions|deletion-requests)$/.test(
+        route,
+      ),
+    ),
     open,
   );
   check(

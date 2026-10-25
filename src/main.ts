@@ -37,6 +37,14 @@ async function bootstrap() {
     origin = [
       config.getOrThrow<string>('CLIENT_URL'),
       config.getOrThrow<string>('ADMIN_CLIENT_URL'),
+      // The public website, whose forms are called from the visitor's own browser rather than
+      // from a server — so its origin has to be allowed by name or the preflight fails and the
+      // visitor is told the form is broken.
+      //
+      // Comma-separated and optional: production serves the site at both the apex and `www`, and
+      // a browser treats those as two origins. Optional because an environment without a website
+      // deployed should not fail to boot over it.
+      ...websiteOrigins(config.get<string>('WEBSITE_URLS')),
     ];
   }
 
@@ -136,6 +144,18 @@ async function bootstrap() {
     logger.info(`Circl API is running on port ${port}`);
   });
 }
+
+/**
+ * The website origins allowed through CORS, from one comma-separated setting.
+ *
+ * Trailing slashes are stripped because a browser's `Origin` header never has one, and an entry
+ * with one would silently never match — a CORS failure that looks like the API being down.
+ */
+const websiteOrigins = (value: string | undefined): string[] =>
+  (value ?? '')
+    .split(',')
+    .map(entry => entry.trim().replace(/\/$/, ''))
+    .filter(Boolean);
 
 /** Fails fast and by name when something else already holds the port. */
 const assertPortIsFree = (port: number): Promise<void> =>
