@@ -7,6 +7,16 @@ interface ServicePricing {
   /** `[name, pricePence, description]`, in the order the professional arranged them. */
   packages?: Array<[string, number, string | null]>;
   consultationFeePence?: number;
+  /**
+   * `[title, body, daysAgo]` — what the professional has posted about this service.
+   *
+   * Dated apart on purpose: the profile gathers posts from every service into one newest-first
+   * feed (PROFILE-SERVICE-AGGREGATES §3.2), and three rows stamped the same second prove nothing
+   * about the order a client will draw.
+   */
+  updates?: Array<[string | null, string, number]>;
+  /** `[label, year, issuer]`, in the professional's own order. Never sorted by year. */
+  milestones?: Array<[string, number | null, string | null]>;
 }
 
 /**
@@ -158,6 +168,18 @@ const LISTINGS = [
         'I read the whole application before you submit it',
         18000,
         'PER_JOB',
+        {
+          // A second service with work on it, so the profile's gathered feed spans more than one
+          // and the service tag on each item has something to distinguish.
+          updates: [
+            [
+              'Fee change from 9 April',
+              'The Home Office application fee rises on 9 April. Submit before then if you can.',
+              11,
+            ],
+          ],
+          milestones: [['Admitted as a solicitor', 2017, 'SRA']],
+        },
       ],
       [
         'dependant',
@@ -245,6 +267,18 @@ const LISTINGS = [
             ['Half day', 15000, 'Up to four hours, one appointment'],
             ['Full day', 26000, 'A whole day, however many appointments it takes'],
             ['Two days', 48000, null],
+          ],
+          updates: [
+            [
+              'Court work from November',
+              'I am taking day bookings for tribunal hearings from the start of November.',
+              3,
+            ],
+            [null, 'Two days in a row is cheaper than two separate bookings.', 26],
+          ],
+          milestones: [
+            ['Registered with the NRPSI', 2014, 'NRPSI'],
+            ['Over 400 appointments interpreted', null, null],
           ],
         },
       ],
@@ -643,6 +677,38 @@ export const seedProfessionals = async (ctx: DemoSeedContext) => {
           where: { id: packageId },
           update: packageData,
           create: { id: packageId, ...packageData },
+        });
+      }
+
+      // What the service carries, which the profile gathers up one level. Deterministic ids for
+      // the same reason as the packages: re-running updates these rows rather than appending more.
+      for (const [position, entry] of (pricing?.updates ?? []).entries()) {
+        const [title, body, daysOld] = entry;
+        const updateId = seedId(`service-update:${listing.label}:${slug}:${position}`);
+        const updateData = {
+          serviceId,
+          title,
+          body,
+          publishedAt: daysAgo(daysOld),
+          sort: position,
+        };
+
+        await prisma.serviceUpdate.upsert({
+          where: { id: updateId },
+          update: updateData,
+          create: { id: updateId, ...updateData },
+        });
+      }
+
+      for (const [position, entry] of (pricing?.milestones ?? []).entries()) {
+        const [label, year, issuer] = entry;
+        const milestoneId = seedId(`service-milestone:${listing.label}:${slug}:${position}`);
+        const milestoneData = { serviceId, label, year, issuer, sort: position };
+
+        await prisma.serviceMilestone.upsert({
+          where: { id: milestoneId },
+          update: milestoneData,
+          create: { id: milestoneId, ...milestoneData },
         });
       }
     }

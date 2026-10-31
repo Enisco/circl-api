@@ -13,9 +13,11 @@ import { PrismaService } from '@/infrastructure';
 import {
   ContentSafetyService,
   MediaService,
+  MediaView,
   ResolvedMediaSet,
   SERVICE_MEDIA_RULES,
   TaxonomyService,
+  toMediaView,
   toMediaViews,
 } from '@/modules/platform/shared';
 import {
@@ -76,6 +78,71 @@ const SERVICE_INCLUDE = {
 } satisfies Prisma.ProfessionalServiceInclude;
 
 type ServiceRow = Prisma.ProfessionalServiceGetPayload<{ include: typeof SERVICE_INCLUDE }>;
+
+/**
+ * What the two bulk gate lookups actually read, rather than a whole `ServiceRow`.
+ *
+ * Structural so a caller that selected three columns can resolve the gate without fetching the
+ * packages, the media and the professional's name to do it. `ServiceRow` satisfies both.
+ */
+type GateRow = { categoryCode: string | null; subcategoryCode: string | null };
+type StateRow = { categoryCode: string | null; listing: { userId: string } };
+
+/**
+ * How much of a professional's work a profile gathers (PROFILE-SERVICE-AGGREGATES §3.3).
+ *
+ * Caps rather than paging: the profile is the one page whose payload grows with the size of
+ * somebody's business, and eight services with ten photographs each is 80 nested objects on a page
+ * opened to read one sentence and a price. The totals travel beside each array so a client can say
+ * "and 6 more on their services" rather than truncating in silence.
+ */
+export const PROFILE_AGGREGATE_LIMITS = {
+  media: 24,
+  updates: 10,
+  milestones: 20,
+} as const;
+
+const UPDATE_SELECT = { id: true, title: true, body: true, publishedAt: true } as const;
+const MILESTONE_SELECT = { id: true, label: true, year: true, issuer: true } as const;
+
+/**
+ * Where a gathered item came from.
+ *
+ * Required on every one of the three arrays, and not decoration: on a profile with six offers on
+ * it, a photograph of a kitchen with no service beside it is a picture rather than evidence, and
+ * "Over 400 cases handled" is a claim nobody can place. `serviceName` is the service's name **as
+ * it is now** — these are navigation labels, not a historical record, so the tag has to read as
+ * whatever the reader will find when they tap it.
+ */
+export interface ServiceAttribution {
+  serviceId: string;
+  serviceName: string;
+}
+
+export interface ProfileAggregates {
+  /** Which of the listing's services this viewer may see, so `services[]` is filtered the same. */
+  visibleIds: Set<string>;
+  serviceMedia: Array<MediaView & ServiceAttribution>;
+  serviceMediaCount: number;
+  serviceUpdates: Array<
+    ServiceAttribution & {
+      id: string;
+      title: string | null;
+      body: string;
+      publishedAt: string;
+    }
+  >;
+  serviceUpdateCount: number;
+  serviceMilestones: Array<
+    ServiceAttribution & {
+      id: string;
+      label: string;
+      year: number | null;
+      issuer: string | null;
+    }
+  >;
+  serviceMilestoneCount: number;
+}
 
 /**
  * Services: the thing members search, read and judge (v2 §5).
@@ -1020,6 +1087,149 @@ export class ServiceCatalogueService {
     return view;
   }
 
+  // ─── The profile's gathered view ───────────────────────────────────────────
+
+  /**
+   * Everything a professional's services carry, gathered one level up for their profile.
+   *
+   * The profile is the page somebody decides on, and until now the evidence — the photographs, the
+   * posts, the claimed credentials — sat one tap further in, on each service's own page. So a
+   * visitor decided on a price list (PROFILE-SERVICE-AGGREGATES §1).
+   *
+   * This lives here, in the service catalogue, rather than in the browse service that serves the
+   * profile, for one reason: **the gate is derived and it is derived in exactly one place.** A
+   * second copy of "which of this listing's services may this viewer see" is how a flattened array
+   * publishes through the back door what the Services list withholds — an unverified immigration
+   * adviser whose photographs appear on their profile is an unverified immigration adviser
+   * advertising, and the client cannot re-apply the rule to an array we have already flattened.
+   *
+   * `visibleIds` comes back with the arrays because the profile's own `services[]` has to be
+   * filtered by the same answer, computed once.
+   */
+  async profileAggregates(listingId: string, viewerId: string): Promise<ProfileAggregates> {
+    // visibility: every service on the listing, filtered below by derived status — the owner sees
+    // their own pending, hidden and suspended work, a stranger sees published and nothing else.
+    // Deliberately unfiltered in SQL: the status is a function of the category's verification read
+    // fresh, so it cannot be expressed as a `where`.
+    const rows = await this.database.professionalService.findMany({
+      where: { listingId },
+      orderBy: { sort: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        categoryCode: true,
+        subcategoryCode: true,
+        ownerState: true,
+        visibilityState: true,
+        updates: { orderBy: { publishedAt: 'desc' }, select: UPDATE_SELECT },
+        milestones: { orderBy: { sort: 'asc' }, select: MILESTONE_SELECT },
+        listing: { select: { userId: true } },
+      },
+    });
+
+    if (!rows.length)
+      return {
+        visibleIds: new Set(),
+        serviceMedia: [],
+        serviceMediaCount: 0,
+        serviceUpdates: [],
+        serviceUpdateCount: 0,
+        serviceMilestones: [],
+        serviceMilestoneCount: 0,
+      };
+
+    const [gateFlags, states] = await Promise.all([this.gateFlags(rows), this.statesFor(rows)]);
+
+    const visible = rows.filter(row => {
+      if (row.listing.userId === viewerId) return true;
+
+      const gated = row.categoryCode
+        ? (gateFlags.get(`${row.categoryCode}:${row.subcategoryCode ?? ''}`) ?? false)
+        : false;
+
+      return isPublic(
+        statusOf({
+          ownerState: row.ownerState,
+          visibilityState: row.visibilityState,
+          gated,
+          verification: row.categoryCode
+            ? (states.get(`${row.listing.userId}:${row.categoryCode}`) ?? 'NOT_SUBMITTED')
+            : 'NOT_SUBMITTED',
+        }),
+      );
+    });
+
+    const visibleIds = new Set(visible.map(row => row.id));
+
+    // visibility: media belonging only to services this viewer may already see, resolved above.
+    const media = visibleIds.size
+      ? await this.database.media.findMany({
+          where: { ownerType: SERVICE_MEDIA_OWNER, ownerId: { in: [...visibleIds] } },
+          orderBy: { position: 'asc' },
+        })
+      : [];
+
+    /**
+     * Service order, then the order within each service.
+     *
+     * The professional chose which file leads their service; gathering them up should not quietly
+     * rearrange that. `visible` is already in `sort` order and the query is in `position` order, so
+     * walking the services and taking each one's files preserves both.
+     */
+    const serviceMedia = visible.flatMap(row =>
+      media
+        .filter(file => file.ownerId === row.id)
+        .map(file => ({
+          ...toMediaView(file, this.media.sign),
+          serviceId: row.id,
+          serviceName: row.name,
+        })),
+    );
+
+    // Newest first across every service, which is the only order a gathered feed can have.
+    const serviceUpdates = visible
+      .flatMap(row =>
+        row.updates.map(update => ({
+          id: update.id,
+          serviceId: row.id,
+          serviceName: row.name,
+          title: update.title,
+          body: update.body,
+          publishedAt: update.publishedAt.toISOString(),
+        })),
+      )
+      .sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
+
+    /**
+     * The professional's own order, never by year.
+     *
+     * A milestone is a claim rather than a record, and ordering claims by date dresses them as
+     * one. Service order, then the order they wrote them in.
+     */
+    const serviceMilestones = visible.flatMap(row =>
+      row.milestones.map(milestone => ({
+        id: milestone.id,
+        serviceId: row.id,
+        serviceName: row.name,
+        label: milestone.label,
+        year: milestone.year,
+        issuer: milestone.issuer,
+      })),
+    );
+
+    return {
+      visibleIds,
+      // The counts are the totals, not the remainders: a client subtracting what it was given is
+      // one subtraction, and a remainder is a number nobody can check against anything.
+      serviceMedia: serviceMedia.slice(0, PROFILE_AGGREGATE_LIMITS.media),
+      serviceMediaCount: serviceMedia.length,
+      serviceUpdates: serviceUpdates.slice(0, PROFILE_AGGREGATE_LIMITS.updates),
+      serviceUpdateCount: serviceUpdates.length,
+      serviceMilestones: serviceMilestones.slice(0, PROFILE_AGGREGATE_LIMITS.milestones),
+      serviceMilestoneCount: serviceMilestones.length,
+    };
+  }
+
   /**
    * Rows to views, with the gate resolved in bulk.
    *
@@ -1157,7 +1367,7 @@ export class ServiceCatalogueService {
   }
 
   /** `category:subcategory` → whether it is gated, for every pair on the page. */
-  private async gateFlags(rows: ServiceRow[]): Promise<Map<string, boolean>> {
+  private async gateFlags(rows: GateRow[]): Promise<Map<string, boolean>> {
     const pairs = new Map<string, { category: string; subcategory: string | null }>();
 
     for (const row of rows) {
@@ -1185,7 +1395,7 @@ export class ServiceCatalogueService {
    * has passed is `EXPIRED` here whether or not the nightly job has reached the column yet. Taking
    * `status` straight off the row made a lapsed approval keep publishing until 03:00.
    */
-  private async statesFor(rows: ServiceRow[]): Promise<Map<string, VerificationState>> {
+  private async statesFor(rows: StateRow[]): Promise<Map<string, VerificationState>> {
     const records = await this.database.categoryVerification.findMany({
       where: { userId: { in: [...new Set(rows.map(row => row.listing.userId))] } },
       select: { userId: true, categoryCode: true, status: true, expiresAt: true },

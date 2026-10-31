@@ -4,6 +4,7 @@ import { createHash } from 'crypto';
 import { SYSTEM_CONFIG_KEYS } from '@/common';
 import { CityService, SystemConfigService, TaxonomyService, TermRecord } from '../../shared';
 import { SERVICE_LIMITS } from '../../professionals/dtos/service.dto';
+import { PROFILE_AGGREGATE_LIMITS } from '../../professionals/services/service-catalogue.service';
 
 export interface CatalogueTerm {
   code: string;
@@ -124,11 +125,24 @@ export interface TaxonomyLimits {
    * The client asked us to enforce its three numbers or to send ours. Sending them is the better
    * half of that: a cap only the client holds is one somebody gets past with a replayed request,
    * and a cap only the server holds is a refusal at save — the worst place to learn about a
-   * length. Both read the same number, and raising it is a config change rather than a release.
+   * length. Both read the same number, so raising it takes one release rather than two, and no
+   * app release at all. It is not operator config: these are constants, not `SystemConfig` keys.
    */
   maxServicePackages: number;
   maxServicePackageName: number;
   maxServicePackageDescription: number;
+  /**
+   * How much of their services a professional's profile gathers
+   * (PROFILE-SERVICE-AGGREGATES §3.3).
+   *
+   * Served for the same reason as the package caps, and for one more: the client draws "and 6 more
+   * on their services" from the difference between what it was sent and the total beside the
+   * array, and a client holding its own idea of the cap would word that sentence wrongly rather
+   * than not at all.
+   */
+  maxProfileServiceMedia: number;
+  maxProfileServiceUpdates: number;
+  maxProfileServiceMilestones: number;
   maxSkills: number;
   maxCustomSkills: number;
   maxSkillLabel: number;
@@ -183,6 +197,10 @@ export const TAXONOMY_LIMITS: TaxonomyLimits = {
   maxServicePackages: SERVICE_LIMITS.packages,
   maxServicePackageName: SERVICE_LIMITS.packageName,
   maxServicePackageDescription: SERVICE_LIMITS.packageDescription,
+  // From the catalogue's own constants, so the number served and the number sliced are one.
+  maxProfileServiceMedia: PROFILE_AGGREGATE_LIMITS.media,
+  maxProfileServiceUpdates: PROFILE_AGGREGATE_LIMITS.updates,
+  maxProfileServiceMilestones: PROFILE_AGGREGATE_LIMITS.milestones,
   maxSkills: 10,
   maxCustomSkills: 3,
   maxSkillLabel: 30,

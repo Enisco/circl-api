@@ -130,7 +130,12 @@ async function main() {
       // so both sides read one number and raising it needs no app release.
       limits.maxServicePackages === 6 &&
       limits.maxServicePackageName === 60 &&
-      limits.maxServicePackageDescription === 200,
+      limits.maxServicePackageDescription === 200 &&
+      // What the profile gathers, so the client can word "and 6 more on their services" from the
+      // same numbers we slice on (PROFILE-SERVICE-AGGREGATES §3.3).
+      limits.maxProfileServiceMedia === 24 &&
+      limits.maxProfileServiceUpdates === 10 &&
+      limits.maxProfileServiceMilestones === 20,
     limits,
   );
 
@@ -461,6 +466,83 @@ async function main() {
     'and it is not in the service search',
     res.status === 200 && !(res.body?.data ?? []).some(row => row.id === pending.id),
     (res.body?.data ?? []).map(row => row.name),
+  );
+
+  /**
+   * And it is nowhere on the profile either — not as a row, and not as its contents.
+   *
+   * The profile used to send **every** non-deleted service, so a stranger reading somebody's page
+   * saw their draft, hidden and pending work beside their live offers. That was already a
+   * disclosure, and gathering each service's media up to the profile would have made it a louder
+   * one: an unverified immigration adviser whose photographs appear on their profile is an
+   * unverified immigration adviser advertising (PROFILE-SERVICE-AGGREGATES §3.1).
+   */
+  const pendingPng = await uploadPng(pro.token, 'PROFESSIONAL', 800, 600);
+
+  res = await api(
+    pro.token,
+    'PATCH',
+    `/professionals/listings/${listingId}/services/${pending.id}`,
+    {
+      mediaKeys: [{ key: pendingPng, role: 'SHOWCASE' }],
+      updates: [{ title: 'Taking new cases', body: 'I have room for two more applications.' }],
+      milestones: [{ label: 'Admitted as a solicitor', year: 2017, issuer: 'SRA' }],
+    },
+  );
+
+  check('the owner can still fill in a service that is waiting', res.status === 200, {
+    status: res.status,
+    error: res.body?.error,
+  });
+
+  res = await api(visitor.token, 'GET', `/professionals/${listingId}`);
+  const strangerProfile = res.body?.data;
+
+  check(
+    'a stranger’s profile does not list the waiting service at all',
+    res.status === 200 && !(strangerProfile?.services ?? []).some(row => row.id === pending.id),
+    (strangerProfile?.services ?? []).map(row => row.name),
+  );
+  check(
+    'nor any of its photographs, posts or claims',
+    !(strangerProfile?.serviceMedia ?? []).some(item => item.serviceId === pending.id) &&
+      !(strangerProfile?.serviceUpdates ?? []).some(item => item.serviceId === pending.id) &&
+      !(strangerProfile?.serviceMilestones ?? []).some(item => item.serviceId === pending.id),
+    {
+      media: (strangerProfile?.serviceMedia ?? []).map(item => item.serviceName),
+      updates: (strangerProfile?.serviceUpdates ?? []).map(item => item.serviceName),
+      milestones: (strangerProfile?.serviceMilestones ?? []).map(item => item.serviceName),
+    },
+  );
+  check(
+    'and the counts beside them do not betray it either',
+    (strangerProfile?.serviceMilestoneCount ?? 0) === 0,
+    {
+      mediaCount: strangerProfile?.serviceMediaCount,
+      milestoneCount: strangerProfile?.serviceMilestoneCount,
+    },
+  );
+
+  res = await api(pro.token, 'GET', `/professionals/${listingId}`);
+  const ownProfile = res.body?.data;
+
+  check(
+    'while the owner sees their waiting service on their own profile',
+    (ownProfile?.services ?? []).some(row => row.id === pending.id),
+    (ownProfile?.services ?? []).map(row => row.name),
+  );
+  check(
+    'with its photograph, its post and its claim, each naming the service',
+    (ownProfile?.serviceMedia ?? []).some(item => item.serviceId === pending.id) &&
+      (ownProfile?.serviceUpdates ?? []).some(
+        item => item.serviceId === pending.id && item.serviceName === pending.name,
+      ) &&
+      (ownProfile?.serviceMilestones ?? []).some(item => item.label === 'Admitted as a solicitor'),
+    {
+      media: ownProfile?.serviceMedia,
+      updates: ownProfile?.serviceUpdates,
+      milestones: ownProfile?.serviceMilestones,
+    },
   );
 
   // ── 6. The decision, and what it does to every waiting service ────────────
@@ -1590,6 +1672,188 @@ async function main() {
 
   await prisma.booking.deleteMany({ where: { id: { in: [booked?.id, unpackaged?.id] } } });
   await prisma.professionalService.deleteMany({ where: { id: wedding.id } });
+
+  // ── 7f. The profile gathers what the services carry ───────────────────────
+  /**
+   * A profile is where somebody decides, and the evidence was one tap further in.
+   *
+   * The photographs, the posts and the claimed credentials all live on a service, reachable only
+   * by opening the services one at a time — so a visitor decided on a price list. The profile now
+   * gathers all three up one level, flat, capped and attributed, and every item names the service
+   * it came from because an unplaceable photograph on somebody's profile is a picture rather than
+   * evidence (PROFILE-SERVICE-AGGREGATES).
+   *
+   * On its own service rather than on `web`, which later sections read for an exact media count.
+   */
+  heading('7f. a profile gathers its services’ work, attributed');
+
+  const shotA = await uploadPng(pro.token, 'PROFESSIONAL', 1600, 1200);
+  const shotB = await uploadPng(pro.token, 'PROFESSIONAL', 1200, 1600);
+
+  res = await api(pro.token, 'POST', `/professionals/listings/${listingId}/services`, {
+    name: 'Brand photography',
+    description: 'A morning in your workplace, and the edited photographs a week later.',
+    categoryCode: 'TECH_SOFTWARE',
+    subcategoryCode: 'TECH_WEB',
+    pricePence: 40000,
+    mediaKeys: [
+      { key: shotA, role: 'SHOWCASE' },
+      { key: shotB, role: 'PROMO' },
+    ],
+    updates: [
+      { title: 'Booked until March', body: 'I am taking work from the start of March.' },
+      { title: 'New pricing', body: 'Smaller shoots now start lower than they did.' },
+    ],
+    // Deliberately not in year order: 2025 first, then 2017. A milestone is a claim rather than a
+    // record, and sorting claims by date dresses them as one.
+    milestones: [
+      { label: '200 shoots delivered', year: 2025 },
+      { label: 'First commercial client', year: 2017 },
+    ],
+  });
+  const gallery = res.body?.data;
+
+  check(
+    'a second service carries work of its own',
+    res.status === 201 && gallery?.media?.length === 2 && gallery?.updates?.length === 2,
+    { status: res.status, error: res.body?.error },
+  );
+
+  /**
+   * One update backdated, because `publishedAt` is stamped on write.
+   *
+   * Two updates written in the same request are a few milliseconds apart, which proves nothing
+   * about ordering across services. Backdating the other service's post makes "newest first"
+   * something the test can actually fail.
+   */
+  await prisma.serviceUpdate.updateMany({
+    where: { serviceId: pending.id },
+    data: { publishedAt: new Date('2026-01-04T09:00:00.000Z') },
+  });
+
+  res = await api(visitor.token, 'GET', `/professionals/${listingId}`);
+  const gathered = res.body?.data;
+  const media = gathered?.serviceMedia ?? [];
+  const updates = gathered?.serviceUpdates ?? [];
+  const milestones = gathered?.serviceMilestones ?? [];
+
+  check(
+    'the profile carries all three arrays, drawn from more than one service',
+    res.status === 200 &&
+      media.length >= 3 &&
+      updates.length >= 3 &&
+      milestones.length >= 3 &&
+      new Set(media.map(item => item.serviceId)).size >= 2,
+    {
+      media: media.length,
+      updates: updates.length,
+      milestones: milestones.length,
+      services: [...new Set(media.map(item => item.serviceName))],
+    },
+  );
+
+  const listed = new Set((gathered?.services ?? []).map(row => row.id));
+
+  check(
+    'every item names a service the viewer can actually open',
+    [...media, ...updates, ...milestones].every(
+      item => !!item.serviceId && !!item.serviceName && listed.has(item.serviceId),
+    ),
+    [...media, ...updates, ...milestones]
+      .filter(item => !item.serviceId || !listed.has(item.serviceId))
+      .slice(0, 3),
+  );
+  check(
+    'and the name is the service’s name as it is now, not a stored copy',
+    media.every(
+      item =>
+        item.serviceName ===
+        (gathered?.services ?? []).find(row => row.id === item.serviceId)?.name,
+    ),
+    media.map(item => item.serviceName),
+  );
+
+  // Service order, then the professional's own order inside each service: a photograph they chose
+  // to lead their service should still lead it after being gathered up.
+  const shots = media.filter(item => item.serviceId === gallery?.id);
+  const firstShot = media.findIndex(item => item.serviceId === gallery?.id);
+
+  check(
+    'media keeps service order, then the order within each service',
+    shots.length === 2 &&
+      shots[0].role === 'SHOWCASE' &&
+      shots[1].role === 'PROMO' &&
+      media
+        .slice(firstShot, firstShot + shots.length)
+        .every(item => item.serviceId === gallery?.id),
+    media.map(item => `${item.serviceName}:${item.role}`),
+  );
+
+  check(
+    'updates are newest first across every service, so the backdated one is last',
+    updates.every(
+      (item, index) => index === 0 || item.publishedAt <= updates[index - 1].publishedAt,
+    ) && updates[updates.length - 1].serviceId === pending.id,
+    updates.map(item => `${item.serviceName}:${item.publishedAt}`),
+  );
+
+  const claims = milestones.filter(item => item.serviceId === gallery?.id);
+
+  check(
+    'milestones keep the professional’s order and are never sorted by year',
+    claims.length === 2 && claims[0].year === 2025 && claims[1].year === 2017,
+    milestones.map(item => `${item.label}:${item.year}`),
+  );
+
+  check(
+    'each array carries its total, so a client can say how many more there are',
+    gathered?.serviceMediaCount === media.length &&
+      gathered?.serviceUpdateCount === updates.length &&
+      gathered?.serviceMilestoneCount === milestones.length,
+    {
+      media: [media.length, gathered?.serviceMediaCount],
+      updates: [updates.length, gathered?.serviceUpdateCount],
+      milestones: [milestones.length, gathered?.serviceMilestoneCount],
+    },
+  );
+
+  /**
+   * The cap bites on the array and not on the count.
+   *
+   * Over the cap of ten, the client is sent ten and told the total, which is how it draws "and 2
+   * more on their services" rather than truncating in silence.
+   */
+  const updatesBefore = gathered?.serviceUpdateCount ?? 0;
+
+  await prisma.serviceUpdate.createMany({
+    data: Array.from({ length: 9 }, (_, index) => ({
+      serviceId: gallery?.id,
+      body: `Filler post ${index + 1}, written to push the array past its cap.`,
+      publishedAt: new Date(Date.now() - (index + 1) * 60_000),
+    })),
+  });
+
+  res = await api(visitor.token, 'GET', `/professionals/${listingId}`);
+
+  check(
+    'over the cap, the array is cut and the total is not',
+    res.body?.data?.serviceUpdates?.length === 10 &&
+      res.body?.data?.serviceUpdateCount === updatesBefore + 9,
+    {
+      sent: res.body?.data?.serviceUpdates?.length,
+      total: res.body?.data?.serviceUpdateCount,
+      before: updatesBefore,
+    },
+  );
+  check(
+    'and what survives the cut is the newest, not the first ten found',
+    (res.body?.data?.serviceUpdates ?? []).every(
+      (item, index, all) => index === 0 || item.publishedAt <= all[index - 1].publishedAt,
+    ) && !(res.body?.data?.serviceUpdates ?? []).some(item => item.serviceId === pending.id),
+    (res.body?.data?.serviceUpdates ?? []).map(item => item.publishedAt),
+  );
+
+  await prisma.professionalService.deleteMany({ where: { id: gallery?.id } });
 
   // ── 8. Revoking, and what it takes down ───────────────────────────────────
   heading('8. a revocation suspends every service in the category');

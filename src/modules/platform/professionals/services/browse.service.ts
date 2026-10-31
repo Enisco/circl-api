@@ -40,6 +40,7 @@ import { CategoryVerificationService } from './category-verification.service';
 import { ReputationService } from '../../trust/services/reputation.service';
 import { BrowseProfessionalsDto } from '../dtos/browse.dto';
 import { ListingService } from './listing.service';
+import { ServiceCatalogueService } from './service-catalogue.service';
 
 const LISTING_INCLUDE = {
   user: { select: authorSelect },
@@ -68,6 +69,7 @@ export class BrowseService {
     private readonly media: MediaService,
     private readonly activity: ActivityService,
     private readonly verifications: CategoryVerificationService,
+    private readonly services: ServiceCatalogueService,
   ) {}
 
   // ─── 2.3 Browse ────────────────────────────────────────────────────────────
@@ -684,8 +686,8 @@ export class BrowseService {
       });
     }
 
-    const [professionLabels, summary, trust, booking, conversation, ownerStats] = await Promise.all(
-      [
+    const [professionLabels, summary, trust, booking, conversation, ownerStats, gathered] =
+      await Promise.all([
         this.taxonomy.labels(TaxonomyKind.PROFESSION),
         this.reputation.summaryFor(listing.userId),
         this.trustBlock(listing.userId),
@@ -703,8 +705,10 @@ export class BrowseService {
         }),
         // Their own two figures, and nobody else's business: not fetched at all for a visitor.
         isOwner ? this.listings.ownerStats(listing.id, listing.userId) : Promise.resolve(null),
-      ],
-    );
+        // The work their services carry, gathered up one level (PROFILE-SERVICE-AGGREGATES). The
+        // catalogue resolves it, because it owns the one copy of the visibility rule.
+        this.services.profileAggregates(listing.id, viewerId),
+      ]);
 
     const categories = listing.categories.map(category =>
       toTermView(category.code, professionLabels),
@@ -737,10 +741,34 @@ export class BrowseService {
       priceBasisLabel: toPriceBasisLabel(listing.priceBasis),
       isAcceptingWork: listing.isAcceptingWork,
       freeConsultation: listing.freeConsultation,
-      // One serializer rather than this shape spelled out a second time: the pricing summary has
-      // to be identical here and on the legacy routes, and two copies of it is how one of them
-      // ends up without the package count.
-      services: listing.services.map(toServiceView),
+      /**
+       * One serializer rather than this shape spelled out a second time: the pricing summary has
+       * to be identical here and on the legacy routes, and two copies of it is how one of them
+       * ends up without the package count.
+       *
+       * Filtered by the same derived status as the three gathered arrays and as
+       * `GET /professionals/:listingId/services`. This read used to carry **every** non-deleted
+       * service, so a stranger's profile listed somebody's draft, hidden and
+       * pending-verification work beside their live offers — the disclosure the gathered arrays
+       * were warned about, already open on the row above them.
+       */
+      services: listing.services
+        .filter(service => gathered.visibleIds.has(service.id))
+        .map(toServiceView),
+      /**
+       * What their services carry, gathered for the profile (PROFILE-SERVICE-AGGREGATES §2).
+       *
+       * Flat, capped and pre-sorted rather than a fuller `services[]`: this is the page whose
+       * payload would otherwise grow with the size of somebody's business. Each item names the
+       * service it came from, and the counts are the totals so a client can say how many more are
+       * on the services themselves.
+       */
+      serviceMedia: gathered.serviceMedia,
+      serviceMediaCount: gathered.serviceMediaCount,
+      serviceUpdates: gathered.serviceUpdates,
+      serviceUpdateCount: gathered.serviceUpdateCount,
+      serviceMilestones: gathered.serviceMilestones,
+      serviceMilestoneCount: gathered.serviceMilestoneCount,
       trust,
       isRegulated: await this.listings.isRegulated(listing.categories.map(c => c.code)),
       // v2 §2.5: approved records only, with the provenance the chip's sheet reads. A pending or

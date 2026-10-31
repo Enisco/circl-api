@@ -458,7 +458,15 @@ export class ProfessionalsController {
     summary: 'A professional profile',
     description:
       "Accepts either a listing id or the professional's user id, so a link from a community post, " +
-      'a message thread or a review resolves without the client having to know which id it holds.',
+      'a message thread or a review resolves without the client having to know which id it holds.\n\n' +
+      'Carries three gathered arrays beside `services[]` — `serviceMedia`, `serviceUpdates` and ' +
+      '`serviceMilestones` — each item naming the `serviceId` and `serviceName` it came from, with ' +
+      'a `…Count` total beside it for what the cap left out. Media is in service order then the ' +
+      "professional's own order within each service; updates are newest first across every " +
+      "service; milestones keep the professional's order, never year, because they are claims " +
+      'rather than a record. `services[]` and all three arrays carry only what the viewer may ' +
+      'see: published services for a stranger, and the owner’s own draft, hidden and pending work ' +
+      'for the owner.',
   })
   async profile(@CurrentUserId() userId: string, @Param('id') id: string) {
     const data = await this.browse.profile(userId, id);
