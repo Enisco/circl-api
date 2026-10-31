@@ -1,6 +1,13 @@
-import { JobStage, JobState } from '@prisma/client';
+import { JobStage, JobState, ServicePricingKind } from '@prisma/client';
 import { DemoSeedContext, HOME_CITY, userId } from './seed-demo';
 import { daysAgo, daysAhead, hoursAgo, seedId } from './ids';
+
+/** The optional sixth element of a service fixture: how it is priced, where that is not flat. */
+interface ServicePricing {
+  /** `[name, pricePence, description]`, in the order the professional arranged them. */
+  packages?: Array<[string, number, string | null]>;
+  consultationFeePence?: number;
+}
 
 /**
  * The professions this demo world's operator has gated (§2.9).
@@ -216,6 +223,30 @@ const LISTINGS = [
         'I come with you and speak for you',
         5500,
         'PER_HOUR',
+      ],
+      /**
+       * The one service in the dataset priced in **packages** (SERVICE-PRICING), so every client
+       * has a real one to render rather than having to create it first.
+       *
+       * The `price` here is ignored for a packaged service: the seeder recomputes it from the
+       * cheapest package exactly as the API does, so the demo cannot drift from the rule. Farida
+       * is the right owner because her listing is `freeConsultation: false`, which makes a
+       * consultation fee on one of her services coherent rather than a contradiction.
+       */
+      [
+        'day',
+        'Interpreting by the day',
+        'For a hearing or a hospital stay, where an hour at a time is not enough',
+        0,
+        'PER_DAY',
+        {
+          consultationFeePence: 2000,
+          packages: [
+            ['Half day', 15000, 'Up to four hours, one appointment'],
+            ['Full day', 26000, 'A whole day, however many appointments it takes'],
+            ['Two days', 48000, null],
+          ],
+        },
       ],
     ],
   },
@@ -564,19 +595,26 @@ export const seedProfessionals = async (ctx: DemoSeedContext) => {
     }
 
     for (const [index, service] of listing.services.entries()) {
-      const [slug, name, description, price, basis] = service as [
+      const [slug, name, description, price, basis, pricing] = service as [
         string,
         string,
         string,
         number,
         string,
+        ServicePricing | undefined,
       ];
+      const packages = pricing?.packages ?? [];
       const serviceId = seedId(`service:${listing.label}:${slug}`);
       const serviceData = {
         listingId: id,
         name,
         description,
-        price,
+        // The cheapest package on a packaged service, recomputed here rather than taken from the
+        // fixture, exactly as the API does on every write (SERVICE-PRICING §2.4). A fixture that
+        // stated its own number could disagree with its own packages.
+        price: packages.length ? Math.min(...packages.map(([, pence]) => pence)) : price,
+        pricingKind: packages.length ? ServicePricingKind.PACKAGES : ServicePricingKind.FLAT,
+        consultationFeePence: pricing?.consultationFeePence ?? null,
         priceBasis: basis as never,
         isActive: true,
         sort: index,
@@ -587,6 +625,26 @@ export const seedProfessionals = async (ctx: DemoSeedContext) => {
         update: serviceData,
         create: { id: serviceId, ...serviceData },
       });
+
+      // Deterministic ids, like everything else here, so re-running the seeder updates the same
+      // three rows rather than appending three more.
+      for (const [position, entry] of packages.entries()) {
+        const [packageName, pricePence, packageDescription] = entry;
+        const packageId = seedId(`package:${listing.label}:${slug}:${position}`);
+        const packageData = {
+          serviceId,
+          name: packageName,
+          pricePence,
+          description: packageDescription,
+          sort: position,
+        };
+
+        await prisma.servicePackage.upsert({
+          where: { id: packageId },
+          update: packageData,
+          create: { id: packageId, ...packageData },
+        });
+      }
     }
   }
 

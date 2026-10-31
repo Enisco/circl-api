@@ -2,6 +2,7 @@ import {
   CategoryVerificationStatus,
   ContentVisibilityState,
   ServiceOwnerState,
+  ServicePricingKind,
 } from '@prisma/client';
 import { MediaView } from '@/modules/platform/shared';
 import { VerificationState } from '../services/category-verification.service';
@@ -30,6 +31,16 @@ export interface BlockedByView {
   note: string | null;
 }
 
+/** One named option, as a client reads it (SERVICE-PRICING §2.2). */
+export interface ServicePackageView {
+  id: string;
+  name: string;
+  description: string | null;
+  /** Both spellings: the platform's `Money` shape, and the raw pence the write field uses. */
+  price: { amount: number; currency: string };
+  pricePence: number;
+}
+
 export interface ServiceView {
   id: string;
   listingId: string;
@@ -37,8 +48,22 @@ export interface ServiceView {
   description: string | null;
   category: { code: string; label: string } | null;
   subcategory: { code: string; label: string } | null;
+  /**
+   * The one number every surface quotes — the flat rate, or the **cheapest package**.
+   *
+   * Recomputed from the packages server-side on every write, so a card, a search row and a thread
+   * subject never advertise a price the page does not offer.
+   */
   price: { amount: number; currency: string } | null;
   priceLabel: string | null;
+  pricingKind: ServicePricingKind;
+  /** In the professional's own order. Empty on a `FLAT` service. */
+  packages: ServicePackageView[];
+  /** Carried separately so a list payload can drop the array and still say "3 packages". */
+  packageCount: number;
+  /** Null means not charged for, which is not the same as free. Never folded into `price`. */
+  consultationFee: { amount: number; currency: string } | null;
+  consultationFeePence: number | null;
   status: ServiceStatus;
   blockedBy: BlockedByView | null;
   isVerifiedCategory: boolean;
@@ -63,13 +88,27 @@ export interface ProfessionalRefView {
 }
 
 /**
- * "Starts from £250" — one wording, in one place (§5.2).
+ * The price in words — one wording, in one place (§5.2), and **it depends on the kind**.
  *
  * Sent as well as the amount so four clients cannot word it four ways, which is the same reason
- * `priceBasisLabel` exists. Whole pounds where the price is whole pounds, because "Starts from
- * £250.00" is a price written by a computer.
+ * `priceBasisLabel` exists. Whole pounds where the price is whole pounds, because "£250.00" is a
+ * price written by a computer.
+ *
+ * | Kind | Reads | Why |
+ * |---|---|---|
+ * | `FLAT` | `£65` | It *is* the price. "Starts from £65" invites a buyer to expect it to climb. |
+ * | `PACKAGES` | `Starts from £120` | The number is the cheapest of several, so a floor is honest. |
+ *
+ * Every service said "Starts from" until packages arrived, which was the wrong word for a flat
+ * rate and the right one for nothing. The failure this guards against is the opposite: a service
+ * with a £120 package still reading "Starts from £65" because the label was written while it was
+ * flat (SERVICE-PRICING §3).
  */
-export const toPriceLabel = (pence: number | null, currency = 'GBP'): string | null => {
+export const toPriceLabel = (
+  pence: number | null,
+  currency = 'GBP',
+  kind: ServicePricingKind = ServicePricingKind.FLAT,
+): string | null => {
   if (pence === null || pence <= 0) return null;
 
   const symbol = currency === 'GBP' ? '£' : `${currency} `;
@@ -78,7 +117,9 @@ export const toPriceLabel = (pence: number | null, currency = 'GBP'): string | n
     ? pounds.toLocaleString('en-GB')
     : pounds.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  return `Starts from ${symbol}${amount}`;
+  return kind === ServicePricingKind.PACKAGES
+    ? `Starts from ${symbol}${amount}`
+    : `${symbol}${amount}`;
 };
 
 /**

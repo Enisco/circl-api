@@ -3,6 +3,7 @@ import { PrismaService } from '@/infrastructure';
 import { ApiErrorCode, ApiException, OTP_LENGTH, Util } from '@/common';
 import { EventBusService, UserLoginOtpEvent } from '@/modules/infrastructure/events';
 import { ChangeEmailDto, ConfirmEmailChangeDto } from '../dtos/account.dto';
+import { AccountDeletionService } from './account-deletion.service';
 
 /** The same TTL and attempt ceiling as the sign-in code, rather than a second set of rules. */
 const CODE_TTL_SECONDS = 600;
@@ -18,6 +19,7 @@ export class EmailChangeService {
   constructor(
     private readonly database: PrismaService,
     private readonly eventBus: EventBusService,
+    private readonly deletion: AccountDeletionService,
   ) {}
 
   async request(userId: string, dto: ChangeEmailDto) {
@@ -45,6 +47,17 @@ export class EmailChangeService {
       throw ApiException.conflict(
         ApiErrorCode.EMAIL_TAKEN,
         'That address is already in use on another account.',
+      );
+    }
+
+    // An address that belonged to a deleted account is refused here for the same reason
+    // registration refuses it (0.15.3): a one-way hash of it is kept so the deletion cannot be
+    // undone by claiming the address again, and allowing it in through this door would be the
+    // same takeover by a longer route.
+    if (await this.deletion.isDeletedEmail(dto.newEmail)) {
+      throw ApiException.conflict(
+        ApiErrorCode.EMAIL_TAKEN,
+        'That address cannot be used on Circl.',
       );
     }
 
@@ -125,7 +138,19 @@ export class EmailChangeService {
 
       return tx.user.update({
         where: { id: userId },
-        data: { email: pending.newEmail },
+        data: {
+          email: pending.newEmail,
+          // The code that just arrived proves this address, so the account's verified state is
+          // about the new one. Left alone, a member who changed address kept whatever the old one
+          // had — which is a verified flag about an inbox nobody has proved, and the deletion and
+          // export flows both read it before they promise somebody an email.
+          userAuth: {
+            upsert: {
+              create: { emailVerifiedAt: new Date() },
+              update: { emailVerifiedAt: new Date() },
+            },
+          },
+        },
         select: { id: true, email: true, firstName: true, lastName: true, username: true },
       });
     });

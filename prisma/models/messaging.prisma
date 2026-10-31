@@ -100,6 +100,18 @@ model Message {
   /// client measures in, and are stored as sent rather than recomputed from the text.
   mentions Json? @map("mentions")
 
+  /// Where this message came from, when that is not what the thread is about.
+  ///
+  /// A Connect conversation is between two people, and the profile one of them wrote from is a
+  /// label on the message rather than the subject of the thread: a long conversation may carry
+  /// several, and none of them splits it. Keying the thread on the profile instead is what gave
+  /// two people one conversation per profile, with the reply stranded in whichever was first.
+  ///
+  /// Stored as sent and echoed back, with no lookup: it is what the sender's screen was showing,
+  /// not an authorisation, and a profile deleted afterwards must not make the message unreadable.
+  tagKind ThreadContextType? @map("tag_kind")
+  tagId   String?            @map("tag_id")
+
   /// Said by somebody else first. Without it a forward reads as the sender's own words, which is
   /// how a rumour gets attributed to whoever passed it on.
   isForwarded Boolean @default(false) @map("is_forwarded")

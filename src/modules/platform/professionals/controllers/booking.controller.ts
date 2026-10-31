@@ -41,7 +41,14 @@ export class BookingController {
     description:
       'Send `serviceId` or `briefId`, never the values behind them — the server copies name, ' +
       'description and price across so a later edit to the listing cannot rewrite what was agreed. ' +
-      'Creates the conversation and returns its id.',
+      'Creates the conversation and returns its id.\n\n' +
+      'Where the service is priced in **packages** (SERVICE-PRICING), send `packageId` beside ' +
+      '`serviceId` to say which one. `quotedAmount` is then that package’s price rather than the ' +
+      'service’s cheapest — which is what a card quotes and the wrong figure for a booking — and ' +
+      '`package.name` is snapshotted so the record stays legible after the professional removes ' +
+      'the option. Omit it on a flat-rate service. A `packageId` with no `serviceId`, one on a ' +
+      'flat-rate service, or one that is not on that service is `422`; the last of those returns ' +
+      'the options that *are* available in `data.available`.',
   })
   async create(@CurrentUserId() userId: string, @Body() dto: CreateBookingDto) {
     const data = await this.bookings.create(userId, dto);

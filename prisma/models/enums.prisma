@@ -193,6 +193,19 @@ enum PriceBasis {
   NEGOTIABLE
 }
 
+/**
+ * How one service is priced: one number, or several named packages.
+ *
+ * The two are exclusive, and that is the product rule rather than a storage convenience — a page
+ * showing a flat rate beside a package list is two answers to the one question a buyer is asking.
+ * `FLAT` is the default and the right answer for every service written before packages existed,
+ * so no backfill is needed.
+ */
+enum ServicePricingKind {
+  FLAT
+  PACKAGES
+}
+
 enum MediaType {
   IMAGE
   VIDEO

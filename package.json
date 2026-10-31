@@ -37,7 +37,8 @@
     "admin:bootstrap": "ts-node --transpile-only scripts/admin-bootstrap.ts",
     "start:admin": "APP_SURFACE=admin nest start",
     "start:member": "APP_SURFACE=member nest start",
-    "backfill:country-codes": "ts-node --transpile-only scripts/backfill-country-codes.ts"
+    "backfill:country-codes": "ts-node --transpile-only scripts/backfill-country-codes.ts",
+    "merge:connect-threads": "ts-node --transpile-only scripts/merge-connect-threads.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.991.0",

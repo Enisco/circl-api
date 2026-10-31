@@ -415,6 +415,7 @@ export class AdminListingReviewService {
       // An approval opens the listing; a rejection opens the form, because the body tells them to
       // change something and a read-only screen is where that instruction dies. See LISTING_ROUTE.
       route: approving ? LISTING_ROUTE.view : LISTING_ROUTE.edit,
+      outcome: approving ? 'APPROVED' : 'REJECTED',
     });
 
     return { data: await this.detail(id), auditId };

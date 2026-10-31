@@ -31,7 +31,11 @@ import {
   toPriceBasisLabel,
   toTermView,
 } from '../../shared';
-import { toListingPictures, toVerifiedCategories } from '../serializers/listing.serializer';
+import {
+  toListingPictures,
+  toServiceView,
+  toVerifiedCategories,
+} from '../serializers/listing.serializer';
 import { CategoryVerificationService } from './category-verification.service';
 import { ReputationService } from '../../trust/services/reputation.service';
 import { BrowseProfessionalsDto } from '../dtos/browse.dto';
@@ -649,7 +653,10 @@ export class BrowseService {
         user: { select: authorSelect },
         city: { select: { id: true, name: true, region: true } },
         categories: true,
-        services: { orderBy: { sort: 'asc' } },
+        // `_count` rather than the packages themselves: a profile page lists services as cards,
+        // and a card says "3 packages" rather than printing the price list (SERVICE-PRICING §4).
+        // The full list is on the service's own page.
+        services: { orderBy: { sort: 'asc' }, include: { _count: { select: { packages: true } } } },
       },
     });
 
@@ -730,15 +737,10 @@ export class BrowseService {
       priceBasisLabel: toPriceBasisLabel(listing.priceBasis),
       isAcceptingWork: listing.isAcceptingWork,
       freeConsultation: listing.freeConsultation,
-      services: listing.services.map(service => ({
-        id: service.id,
-        name: service.name,
-        description: service.description,
-        price: money(service.price, service.currency),
-        priceBasis: service.priceBasis,
-        priceBasisLabel: toPriceBasisLabel(service.priceBasis),
-        isActive: service.isActive,
-      })),
+      // One serializer rather than this shape spelled out a second time: the pricing summary has
+      // to be identical here and on the legacy routes, and two copies of it is how one of them
+      // ends up without the package count.
+      services: listing.services.map(toServiceView),
       trust,
       isRegulated: await this.listings.isRegulated(listing.categories.map(c => c.code)),
       // v2 §2.5: approved records only, with the provenance the chip's sheet reads. A pending or

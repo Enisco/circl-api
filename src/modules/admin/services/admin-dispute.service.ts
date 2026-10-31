@@ -632,6 +632,11 @@ export class AdminDisputeService {
         where: { id: row.bookingId },
         select: {
           serviceName: true,
+          // Which package was booked, where the service is priced in packages. This is the one
+          // place it matters most: a moderator reading "£1,500 agreed" against a service whose
+          // cheapest option is £450 needs to know the buyer chose the two-day package, and the
+          // snapshot says so even after the professional has deleted it.
+          packageName: true,
           agreedAmount: true,
           quotedAmount: true,
           state: true,
@@ -642,7 +647,9 @@ export class AdminDisputeService {
       if (!booking) return null;
 
       return {
-        title: booking.serviceName,
+        title: booking.packageName
+          ? `${booking.serviceName} — ${booking.packageName}`
+          : booking.serviceName,
         amountPence: booking.agreedAmount ?? booking.quotedAmount,
         state: booking.state,
         events: booking.events.map(event => ({

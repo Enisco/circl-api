@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { MediaRole, PriceBasis } from '@prisma/client';
+import { MediaRole, PriceBasis, ServicePricingKind } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -10,16 +10,27 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { PageOptionsDto } from '@/common';
 import { PROFESSIONAL_SORTS, ProfessionalSort } from './browse.dto';
 
 const Trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
+/**
+ * `Number()`, except that it leaves null alone: `Number(null)` is 0, and here those differ.
+ *
+ * `enableImplicitConversion` would otherwise turn an explicit `consultationFeePence: null` — "this
+ * professional does not charge for a first conversation" — into a £0 fee, which is a different
+ * claim and one the page would print.
+ */
+const NullableNumber = () =>
+  Transform(({ value }) => (value === null || value === undefined ? value : Number(value)));
 
 /** §3.5's service limits, which the taxonomy also serves so a change needs no release. */
 export const SERVICE_LIMITS = {
@@ -34,15 +45,35 @@ export const SERVICE_LIMITS = {
   updateTitle: 80,
   milestones: 6,
   milestoneLabel: 80,
+  /** How many packages one service may hold (SERVICE-PRICING §2.2). The client's own cap. */
+  packages: 6,
+  packageName: 60,
+  packageDescription: 200,
   /** How many services one listing may hold. Asked for by §8: tell us the number. */
   perListing: 30,
 } as const;
 
 /** One attachment and what it is *of* (§5.5, §9.1). */
 export class ServiceMediaKeyDto {
-  @ApiProperty({ description: 'The storage key the upload returned.' })
+  @ApiPropertyOptional({
+    description:
+      'The storage key the upload returned, for a file being **added**. Send this or `id`.',
+  })
+  @ValidateIf(entry => !entry.id)
   @IsString()
-  key: string;
+  @MaxLength(512)
+  key?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'The `id` of a file this record **already has**, as a `GET` returned it. Send this or ' +
+      '`key`. It is what makes the array the whole set in display order rather than a list of ' +
+      'additions: keep a photo by naming its id, remove it by leaving it out, reorder by moving ' +
+      'it. An id that is not on this record is refused, and on a create there is nothing to name.',
+  })
+  @IsUUID()
+  @IsOptional()
+  id?: string;
 
   @ApiPropertyOptional({ enum: MediaRole, default: MediaRole.SHOWCASE })
   @IsEnum(MediaRole)
@@ -60,6 +91,51 @@ export class ServiceMediaKeyDto {
   @MaxLength(512)
   @IsOptional()
   posterKey?: string;
+}
+
+/**
+ * One named option on a service priced in packages (SERVICE-PRICING §2.2).
+ *
+ * A name, a price and a sentence. No type enum, no duration, no deliverables — the work decides
+ * what the tiers are, and we are not shipping a Bronze/Silver/Gold for professionals to write
+ * around.
+ */
+export class ServicePackageDto {
+  @ApiPropertyOptional({
+    description:
+      'The `id` of a package this service **already has**, as a `GET` returned it. Absent on one ' +
+      'written in this session. It is what makes the array the whole set in display order rather ' +
+      'than a list of additions: keep a package by naming its id, remove it by leaving it out, ' +
+      'reorder by moving it. An id that is not on this service is refused rather than ignored.',
+  })
+  @IsUUID()
+  @IsOptional()
+  id?: string;
+
+  @ApiProperty({
+    minLength: 1,
+    maxLength: SERVICE_LIMITS.packageName,
+    description: 'What the professional calls this option.',
+  })
+  @Trim()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(SERVICE_LIMITS.packageName)
+  name: string;
+
+  @ApiProperty({
+    description: 'Pence, greater than zero. A package carries no currency of its own.',
+  })
+  @IsInt()
+  @Min(1, { message: 'A package has to cost more than nothing.' })
+  pricePence: number;
+
+  @ApiPropertyOptional({ maxLength: SERVICE_LIMITS.packageDescription })
+  @Trim()
+  @IsString()
+  @MaxLength(SERVICE_LIMITS.packageDescription)
+  @IsOptional()
+  description?: string;
 }
 
 export class ServiceUpdateDto {
@@ -166,11 +242,58 @@ export class CreateServiceDto {
   @IsOptional()
   subcategoryCode?: string;
 
-  @ApiPropertyOptional({ description: 'Pence, greater than zero. Rendered as “Starts from £250”.' })
+  @ApiPropertyOptional({
+    description:
+      'Pence, greater than zero. **The authority on a `FLAT` write and a hint on a `PACKAGES` ' +
+      'one**, where the server recomputes it from the cheapest package.',
+  })
   @IsInt()
   @Min(1, { message: 'A price has to be more than nothing.' })
   @IsOptional()
   pricePence?: number;
+
+  @ApiPropertyOptional({
+    enum: ServicePricingKind,
+    default: ServicePricingKind.FLAT,
+    description:
+      'One price, or several named packages — never both. Absent reads as `FLAT`, which is what ' +
+      'every service written before packages existed is.',
+  })
+  @IsEnum(ServicePricingKind)
+  @IsOptional()
+  pricingKind?: ServicePricingKind;
+
+  @ApiPropertyOptional({
+    type: [ServicePackageDto],
+    maxItems: SERVICE_LIMITS.packages,
+    description:
+      'The **whole set**, in the order the professional arranged it — the same contract as ' +
+      '`mediaKeys`. A package already here is named by its `id` and keeps it; one written in ' +
+      'this session has none; **leaving one out removes it**. An empty array clears the set, and ' +
+      'on a `PATCH` omitting the key leaves the stored packages alone. The order is stored and ' +
+      'returned as sent: nothing sorts it by price or by name.',
+  })
+  @IsArray()
+  @ArrayMaxSize(SERVICE_LIMITS.packages)
+  @ValidateNested({ each: true })
+  @Type(() => ServicePackageDto)
+  @IsOptional()
+  packages?: ServicePackageDto[];
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'What a first conversation costs, in pence, or an explicit `null` for “not charged for”. ' +
+      'Three cases that stay distinguishable: a number sets the fee, `null` removes it, and ' +
+      'omitting the key leaves whatever is stored. It is **not part of the price**: never folded ' +
+      'into `pricePence`, never the cheapest package, never what a card quotes, and never in a ' +
+      'price filter.',
+  })
+  @NullableNumber()
+  @IsInt()
+  @Min(1, { message: 'A consultation fee has to be more than nothing. Send null for no fee.' })
+  @IsOptional()
+  consultationFeePence?: number | null;
 
   @ApiPropertyOptional({
     deprecated: true,
@@ -256,11 +379,58 @@ export class UpdateServiceDto {
   @IsOptional()
   subcategoryCode?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description:
+      'The authority on a `FLAT` write and a hint on a `PACKAGES` one, where it is recomputed ' +
+      'from the cheapest package.',
+  })
   @IsInt()
   @Min(1)
   @IsOptional()
   pricePence?: number;
+
+  @ApiPropertyOptional({
+    enum: ServicePricingKind,
+    default: ServicePricingKind.FLAT,
+    description:
+      'One price, or several named packages — never both. Absent reads as `FLAT`, which is what ' +
+      'every service written before packages existed is.',
+  })
+  @IsEnum(ServicePricingKind)
+  @IsOptional()
+  pricingKind?: ServicePricingKind;
+
+  @ApiPropertyOptional({
+    type: [ServicePackageDto],
+    maxItems: SERVICE_LIMITS.packages,
+    description:
+      'The **whole set**, in the order the professional arranged it — the same contract as ' +
+      '`mediaKeys`. A package already here is named by its `id` and keeps it; one written in ' +
+      'this session has none; **leaving one out removes it**. An empty array clears the set, and ' +
+      'on a `PATCH` omitting the key leaves the stored packages alone. The order is stored and ' +
+      'returned as sent: nothing sorts it by price or by name.',
+  })
+  @IsArray()
+  @ArrayMaxSize(SERVICE_LIMITS.packages)
+  @ValidateNested({ each: true })
+  @Type(() => ServicePackageDto)
+  @IsOptional()
+  packages?: ServicePackageDto[];
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'What a first conversation costs, in pence, or an explicit `null` for “not charged for”. ' +
+      'Three cases that stay distinguishable: a number sets the fee, `null` removes it, and ' +
+      'omitting the key leaves whatever is stored. It is **not part of the price**: never folded ' +
+      'into `pricePence`, never the cheapest package, never what a card quotes, and never in a ' +
+      'price filter.',
+  })
+  @NullableNumber()
+  @IsInt()
+  @Min(1, { message: 'A consultation fee has to be more than nothing. Send null for no fee.' })
+  @IsOptional()
+  consultationFeePence?: number | null;
 
   @ApiPropertyOptional({ deprecated: true, description: 'The older name for `pricePence`.' })
   @IsInt()

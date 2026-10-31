@@ -16,7 +16,7 @@ import {
   ageFromDateOfBirth,
 } from '@/common';
 import { AccountDeletionService, DataExportService } from '@/modules/platform/account';
-import { NotificationFeedService } from '@/modules/platform/notifications';
+import { NotificationFeedService, NotificationOutcome } from '@/modules/platform/notifications';
 import {
   CityService,
   SessionRevocationService,
@@ -744,6 +744,7 @@ export class AdminMemberActionService {
     await this.database.pushDevice.deleteMany({ where: { userId: id } });
 
     this.tellMember(id, {
+      outcome: 'REJECTED',
       title: 'Your Circl account has been suspended',
       body: this.suspensionMessage(endsAt, reason.note),
     });
@@ -881,6 +882,7 @@ export class AdminMemberActionService {
     );
 
     this.tellMember(id, {
+      outcome: 'APPROVED',
       title: 'Your Circl account is active again',
       body: reason.note ?? 'You can sign in as usual.',
     });
@@ -953,6 +955,7 @@ export class AdminMemberActionService {
     void result;
 
     this.tellMember(id, {
+      outcome: 'REJECTED',
       title: 'A warning about your Circl account',
       body: dto.message ?? 'Something you posted broke our community guidelines.',
     });
@@ -1160,6 +1163,7 @@ export class AdminMemberActionService {
       title: message.title,
       body: message.body,
       route: message.route ?? null,
+      outcome: message.outcome ?? null,
     });
   }
 
@@ -1191,6 +1195,14 @@ interface MemberNotice {
   body: string;
   /** Where it opens, for the few that have somewhere. Nothing means the row is the whole message. */
   route?: string | null;
+  /**
+   * Whether the decision went their way, for the notices that report one.
+   *
+   * Without it every one of these is `kind: MODERATION` and a client can only tell an approval
+   * from a refusal by reading our wording, which is a contract nobody agreed to and copy editing
+   * breaks.
+   */
+  outcome?: NotificationOutcome | null;
 }
 
 /** The profile columns an edit can touch, and therefore the ones a `before` has to read. */

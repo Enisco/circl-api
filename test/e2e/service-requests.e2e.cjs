@@ -529,6 +529,20 @@ const submit = async (member, body) => {
 
   check('the member has it unread', unread?.unreadCount === 1, unread);
 
+  // BACKEND-TODO 3.6: the card above the thread followed `context.route`, and this thread's
+  // snapshot carries a title and no route — so the card read as a link and did nothing. The path
+  // is the one the outcome notification about the same record already sends.
+  r = await api(member.token, 'GET', `/messages/${accepted.conversationId}`);
+  const strip = r.body?.data?.context;
+
+  check(
+    'the thread strip knows what it is about, and where that is',
+    strip?.type === 'SERVICE_REQUEST' &&
+      strip?.id === request.id &&
+      strip?.route === `/service-requests/${request.id}`,
+    strip,
+  );
+
   r = await api(alice.token, 'POST', `/professionals/me/service-request-offers/${offer.id}/accept`);
   check(
     'accepting twice is not an error — the same thread comes back',

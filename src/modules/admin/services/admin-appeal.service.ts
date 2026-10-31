@@ -303,6 +303,7 @@ export class AdminAppealService {
         (overturning
           ? 'We looked at this again and have reversed it. Thanks for telling us.'
           : 'We looked at this again and the original decision stands.'),
+      outcome: overturning ? 'APPROVED' : 'REJECTED',
     });
 
     return this.view(id);

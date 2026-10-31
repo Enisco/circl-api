@@ -118,6 +118,17 @@ export interface TaxonomyLimits {
   maxServiceDescription: number;
   maxServiceUpdates: number;
   maxServiceMilestones: number;
+  /**
+   * The package limits (SERVICE-PRICING §2.2), served rather than compiled in.
+   *
+   * The client asked us to enforce its three numbers or to send ours. Sending them is the better
+   * half of that: a cap only the client holds is one somebody gets past with a replayed request,
+   * and a cap only the server holds is a refusal at save — the worst place to learn about a
+   * length. Both read the same number, and raising it is a config change rather than a release.
+   */
+  maxServicePackages: number;
+  maxServicePackageName: number;
+  maxServicePackageDescription: number;
   maxSkills: number;
   maxCustomSkills: number;
   maxSkillLabel: number;
@@ -167,6 +178,11 @@ export const TAXONOMY_LIMITS: TaxonomyLimits = {
   maxServiceDescription: 1500,
   maxServiceUpdates: 10,
   maxServiceMilestones: 6,
+  // From the DTO's own constants, for the same reason as `maxServicesPerListing` above: the
+  // number the form is told and the number the write refuses on cannot drift apart.
+  maxServicePackages: SERVICE_LIMITS.packages,
+  maxServicePackageName: SERVICE_LIMITS.packageName,
+  maxServicePackageDescription: SERVICE_LIMITS.packageDescription,
   maxSkills: 10,
   maxCustomSkills: 3,
   maxSkillLabel: 30,

@@ -86,6 +86,19 @@ export class CreateBookingDto {
 
   @ApiPropertyOptional({
     description:
+      'Which package of that service is being booked, where it is priced in packages ' +
+      '(SERVICE-PRICING). Send it with `serviceId`, never on its own. The server copies **that ' +
+      'package’s** name and price rather than the service’s cheapest, so the booking quotes the ' +
+      'figure the buyer actually pressed. Omit it on a flat-rate service; sending one there, or ' +
+      'an id that is not on that service, is a `422`.',
+  })
+  @Trim()
+  @IsString()
+  @IsOptional()
+  packageId?: string;
+
+  @ApiPropertyOptional({
+    description:
       'Required unless serviceId is given. The server copies description, urgency and budget from ' +
       'it, so the brief is written once and survives all three steps (2.1.5).',
   })

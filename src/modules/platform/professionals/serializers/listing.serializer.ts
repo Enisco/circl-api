@@ -4,6 +4,7 @@ import {
   ListingVerificationStatus,
   PriceBasis,
   Prisma,
+  ServicePricingKind,
 } from '@prisma/client';
 import { money } from '@/common';
 import { AuthorView, CityView, TermView, toPriceBasisLabel } from '../../shared';
@@ -86,11 +87,25 @@ export interface ProfessionalServiceView {
   id: string;
   name: string;
   description: string | null;
+  /** The flat rate, or the cheapest package on a service priced that way. */
   price: { amount: number; currency: string } | null;
   priceBasis: PriceBasis;
   /** The same value in words, so the client renders one rather than keeping its own map. */
   priceBasisLabel: string;
   isActive: boolean;
+  /**
+   * The pricing summary a card needs (SERVICE-PRICING §4).
+   *
+   * This shape is a **summary** — it never carries the packages themselves, because a card does
+   * not print a price list: it says "3 packages" or "Flat rate", and "Consultation" where there
+   * is a fee. The count travels so a client counting a missing array cannot read a packaged
+   * service as a flat-rate one. The full list is on the service page and on the owner's own
+   * panel, both of which serve the catalogue's `ServiceView`.
+   */
+  pricingKind: ServicePricingKind;
+  packageCount: number;
+  consultationFee: { amount: number; currency: string } | null;
+  consultationFeePence: number | null;
 }
 
 export interface ProfessionalProfileView extends Omit<
@@ -149,6 +164,11 @@ export const toServiceView = (service: {
   priceBasis: PriceBasis;
   currency: string;
   isActive: boolean;
+  pricingKind?: ServicePricingKind;
+  consultationFeePence?: number | null;
+  /** Either the rows themselves, or Prisma's `_count` — a caller that has only the number. */
+  packages?: unknown[];
+  _count?: { packages?: number };
 }): ProfessionalServiceView => ({
   // Required: each service row is individually bookable and the booking call sends this id, not the name and price (2.4).
   id: service.id,
@@ -158,6 +178,12 @@ export const toServiceView = (service: {
   priceBasis: service.priceBasis,
   priceBasisLabel: toPriceBasisLabel(service.priceBasis),
   isActive: service.isActive,
+  // A caller that selected neither the packages nor their count is reading a legacy row, and
+  // `FLAT` with no packages is what a legacy row is.
+  pricingKind: service.pricingKind ?? ServicePricingKind.FLAT,
+  packageCount: service.packages?.length ?? service._count?.packages ?? 0,
+  consultationFee: money(service.consultationFeePence ?? null, service.currency),
+  consultationFeePence: service.consultationFeePence ?? null,
 });
 
 /**

@@ -5,6 +5,7 @@ import {
   JobState,
   NotificationKind,
   Prisma,
+  ServicePricingKind,
   SystemMessageType,
   ThreadContextType,
   ThreadKind,
@@ -123,14 +124,25 @@ export class BookingService {
       );
     }
 
+    if (dto.packageId && !dto.serviceId) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'A package belongs to a service, so send the service it is on.',
+        { details: [{ field: 'serviceId', message: 'Required when packageId is given.' }] },
+      );
+    }
+
     // The server copies the values; the client sends the id.
     let serviceName = '';
     let serviceDescription: string | null = null;
     let quotedAmount: number | null = null;
+    let packageId: string | null = null;
+    let packageName: string | null = null;
 
     if (dto.serviceId) {
       const service = await this.database.professionalService.findUnique({
         where: { id: dto.serviceId },
+        include: { packages: { orderBy: { sort: 'asc' } } },
       });
 
       if (!service || service.listingId !== listing.id) {
@@ -151,6 +163,61 @@ export class BookingService {
       serviceName = service.name;
       serviceDescription = service.description;
       quotedAmount = service.price;
+
+      /**
+       * The package the buyer chose, where they chose one (SERVICE-PRICING).
+       *
+       * `service.price` is the **cheapest** package on a service priced that way, because that is
+       * the one figure a card can render. It is the wrong figure for a booking: somebody who
+       * pressed "Two days, £1,500" must not be sent a booking that says £450, and the professional
+       * must not be sent one either. So where a package is named, its own price is what both
+       * sides see and its name is recorded beside the service's.
+       */
+      if (dto.packageId) {
+        if (service.pricingKind !== ServicePricingKind.PACKAGES) {
+          throw ApiException.unprocessable(
+            ApiErrorCode.VALIDATION_FAILED,
+            'That service has one price rather than packages, so there is no package to book.',
+            {
+              details: [{ field: 'packageId', message: 'This service is priced flat.' }],
+              data: { serviceId: service.id, pricingKind: service.pricingKind },
+            },
+          );
+        }
+
+        const chosen = service.packages.find(entry => entry.id === dto.packageId);
+
+        if (!chosen) {
+          /**
+           * Refused rather than quietly booking something else.
+           *
+           * An id that is not on this service means the client is working from a stale read — the
+           * professional may have removed that option since the page was loaded. Falling back to
+           * the service's own price would book the buyer onto a figure they never saw, which is
+           * worse than making them look at the price list again.
+           */
+          throw ApiException.unprocessable(
+            ApiErrorCode.VALIDATION_FAILED,
+            'That package is not on this service any more. Have another look at the options.',
+            {
+              details: [{ field: 'packageId', message: 'Not on this service.' }],
+              data: {
+                serviceId: service.id,
+                packageId: dto.packageId,
+                available: service.packages.map(entry => ({
+                  id: entry.id,
+                  name: entry.name,
+                  pricePence: entry.pricePence,
+                })),
+              },
+            },
+          );
+        }
+
+        packageId = chosen.id;
+        packageName = chosen.name;
+        quotedAmount = chosen.pricePence;
+      }
     }
 
     let brief: Awaited<ReturnType<typeof this.loadBrief>> | null = null;
@@ -162,6 +229,15 @@ export class BookingService {
       quotedAmount ??= brief.budget;
     }
 
+    /**
+     * What this booking is *of*, in words, for the places that render one line.
+     *
+     * The thread strip, the system message and the notification each have room for a single
+     * phrase, and `serviceName` alone is ambiguous once a service has six packages. The columns
+     * stay separate so a client can lay them out however it likes; this is only for the one-liners.
+     */
+    const subject = packageName ? `${serviceName} — ${packageName}` : serviceName;
+
     const booking = await this.database.$transaction(async tx => {
       const created = await tx.booking.create({
         data: {
@@ -169,9 +245,11 @@ export class BookingService {
           professionalId: listing.userId,
           listingId: listing.id,
           serviceId: dto.serviceId ?? null,
+          packageId,
           briefId: dto.briefId ?? null,
           serviceName,
           serviceDescription,
+          packageName,
           quotedAmount,
           agreedAmount: dto.agreedAmount ?? null,
           preferredDate: dto.preferredDate && !dto.isFlexible ? new Date(dto.preferredDate) : null,
@@ -197,7 +275,10 @@ export class BookingService {
           contextType: ThreadContextType.BOOKING,
           contextId: created.id,
           snapshot: {
-            title: serviceName,
+            // The option, where there is one: "Brand photography day — Two days". Both sides read
+            // this strip for the life of the thread, and a booking for one of six packages that
+            // names only the service is a strip neither of them can act on.
+            title: subject,
             subtitle: listing.professionTitle,
             trailing: quotedAmount ? `£${(quotedAmount / 100).toFixed(2)}` : null,
             route: `/bookings/${created.id}`,
@@ -214,7 +295,7 @@ export class BookingService {
       await this.conversations.postSystemMessage(
         conversation.id,
         SystemMessageType.BOOKING_CREATED,
-        `Booking requested: ${serviceName}.`,
+        `Booking requested: ${subject}.`,
         { bookingId: created.id },
         tx,
       );
@@ -239,7 +320,7 @@ export class BookingService {
       kind: NotificationKind.BOOKING,
       categoryCode: 'BOOKINGS',
       title: `${client} requested a booking`,
-      body: booking.serviceName,
+      body: subject,
       route: `/bookings/${booking.id}`,
       target: { type: 'BOOKING', id: booking.id },
       metadata: { bookingId: booking.id },
@@ -322,9 +403,20 @@ export class BookingService {
       state: booking.state,
       serviceName: booking.serviceName,
       serviceDescription: booking.serviceDescription,
+      /**
+       * The package this booking is for, as it was when it was made (SERVICE-PRICING).
+       *
+       * Null on a flat-rate service and on a brief. `name` is the snapshot and survives the
+       * professional deleting the option; `id` is nulled with it, so a client that wants to link
+       * back has to cope with a name and no id — which is the honest state of a booking for
+       * something that is no longer offered.
+       */
+      package: booking.packageName ? { id: booking.packageId, name: booking.packageName } : null,
       listing: { id: booking.listingId, professionTitle: booking.listing.professionTitle },
+      // The price the buyer pressed. Read `agreedAmount ?? quotedAmount` for "the number for this
+      // booking"; `toSummary` carries the same pair for the same reason.
       quotedAmount: money(booking.quotedAmount, booking.currency),
-      // D12: self-declared, unverified, display only.
+      // D12: self-declared, unverified, display only, and null unless the client sent one.
       agreedAmount: money(booking.agreedAmount, booking.currency),
       preferredDate: toDateOnly(booking.preferredDate),
       preferredTimeSlot: booking.preferredTimeSlot,
@@ -660,7 +752,21 @@ export class BookingService {
       id: booking.id,
       state: booking.state,
       serviceName: booking.serviceName,
+      // A row has one line for the subject, so the option travels with it rather than being
+      // something the client has to open the booking to discover.
+      packageName: booking.packageName,
       counterpart,
+      /**
+       * Both figures, because they answer different questions and a row renders one of them.
+       *
+       * `quotedAmount` is ours: the price the buyer pressed — the chosen package's, the service's,
+       * or the brief's budget. `agreedAmount` is theirs: an optional record of what the two of
+       * them settled on, sent once at creation and never revised. A client wanting "the number for
+       * this booking" reads `agreedAmount ?? quotedAmount`, which is what a dispute's subject line
+       * already does. The row used to carry only the second, so a booking nobody typed a figure
+       * into showed no price at all — including every packaged one (SERVICE-PRICING-REPLY §3.1).
+       */
+      quotedAmount: money(booking.quotedAmount, booking.currency),
       agreedAmount: money(booking.agreedAmount, booking.currency),
       conversationId: booking.conversationId,
       timeline: this.timeline(booking.events),

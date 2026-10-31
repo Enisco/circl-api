@@ -19,10 +19,12 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { CsvArray, PageOptionsDto, ToBoolean } from '@/common';
@@ -316,10 +318,25 @@ export class StoreStatusDto {
  * features show the same three things, and the code is what matters to the server.
  */
 export class ItemMediaKeyDto {
-  @ApiProperty({ description: 'The storage key the upload returned.' })
+  @ApiPropertyOptional({
+    description:
+      'The storage key the upload returned, for a file being **added**. Send this or `id`.',
+  })
+  @ValidateIf(entry => !entry.id)
   @IsString()
   @MaxLength(512)
-  key: string;
+  key?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'The `id` of a file this record **already has**, as a `GET` returned it. Send this or ' +
+      '`key`. It is what makes the array the whole set in display order rather than a list of ' +
+      'additions: keep a photo by naming its id, remove it by leaving it out, reorder by moving ' +
+      'it. An id that is not on this record is refused, and on a create there is nothing to name.',
+  })
+  @IsUUID()
+  @IsOptional()
+  id?: string;
 
   @ApiPropertyOptional({ enum: MediaRole, default: MediaRole.SHOWCASE })
   @IsEnum(MediaRole)
@@ -406,7 +423,14 @@ export class ItemDto {
   @IsOptional()
   isAvailable?: boolean;
 
-  @ApiPropertyOptional({ type: [String], description: 'Max 5. The first is the cover.' })
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Max 5. The first is the cover. Photographs only, and the whole set in display order: an ' +
+      'entry that is a uuid is a photo this item already has, anything else is an upload key.' +
+      '\n\n**Ignored entirely when `mediaKeys` is present**, however full or empty that array ' +
+      'is. Send one array or the other, never both.',
+  })
   @IsArray()
   @ArrayMaxSize(5)
   @IsOptional()
@@ -419,7 +443,11 @@ export class ItemDto {
     description:
       'Photos **and video** with what each one is of (v2 §9): the thing itself, a customer ' +
       'speaking, or an advert. Five photos — the same allowance as `photoKeys` — and up to three ' +
-      'videos besides. Absent leaves the media alone; `[]` removes all of it.',
+      'videos besides. The whole set in display order: `{id}` for a file this item already has, ' +
+      '`{key}` for a fresh upload.' +
+      '\n\n**This array decides whenever the key is present**, and `photoKeys` is then ignored ' +
+      'rather than merged or applied after it. Absent leaves the media alone; `[]` removes all ' +
+      'of it — so omit the key rather than sending an empty array unless you mean to clear it.',
   })
   @IsArray()
   @ArrayMaxSize(10)

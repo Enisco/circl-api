@@ -294,6 +294,9 @@ export class AdminVerificationService {
         : (dto.note?.trim() ??
           'Open your profile to see what needs changing, then send your documents again.'),
       route: LISTING_ROUTE.view,
+      // The whole decision, in one field. The two titles above are copy — they may be edited or
+      // translated — and this is what the row should be drawn from.
+      outcome: approving ? 'APPROVED' : 'REJECTED',
     });
 
     return {
@@ -369,6 +372,9 @@ export class AdminVerificationService {
         ? `${dto.note} ${affected === 1 ? 'Your service' : `Your ${affected} services`} in ${label} ${affected === 1 ? 'is' : 'are'} no longer visible.`
         : dto.note,
       route: LISTING_ROUTE.view,
+      // A withdrawal is not a refusal of a submission, but it is the same news to the member and
+      // the same red rail: their work is off the platform.
+      outcome: 'REJECTED',
     });
 
     return { ...this.toRow(result, labels, new Map(), new Map()), servicesSuspended: affected };

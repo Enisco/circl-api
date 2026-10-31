@@ -214,6 +214,35 @@ export class AccountDeletionService {
       // Every handset, not the current one: a deleted account must not keep pushing to a phone.
       await tx.pushDevice.deleteMany({ where: { userId } });
 
+      // ── What the checks said about their documents ─────────────────────────
+      //
+      // Deleting the files is not deleting the data. A trust check keeps `documentType`,
+      // `issuingBody` and `reference` — which for a passport check is a passport number — and a
+      // category verification keeps `licenceSeen`, the registration number a reviewer read off a
+      // certificate, plus the member's own note and the reviewer's words about them. The user row
+      // is anonymised rather than removed, so none of it cascades: the files went and the numbers
+      // stayed, attached to a row called "Deleted account", with no sweep that would ever reach
+      // them.
+      //
+      // The **fact** of a check survives and should: which check, its verdict, when it was taken
+      // and by whom, so a dispute about a decision can still be answered and the trail is not
+      // falsified by a deletion. What goes is everything that identifies the person or their
+      // document.
+      await tx.trustCheck.updateMany({
+        where: { userId },
+        data: {
+          documentType: null,
+          issuingBody: null,
+          reference: null,
+          rejectionReason: null,
+          rejectedFields: Prisma.DbNull,
+        },
+      });
+      await tx.categoryVerification.updateMany({
+        where: { userId },
+        data: { note: null, decisionNote: null, licenceSeen: null },
+      });
+
       // ── Uploads: the rows here, the objects after the commit ───────────────
       //
       // Their avatar, their supporting documents, and anything reserved but never attached.
@@ -242,6 +271,21 @@ export class AccountDeletionService {
       );
 
       await tx.media.deleteMany({ where: uploads });
+
+      // ── A data export they asked for, and the link already in their inbox ──
+      //
+      // The archive is the whole account in one file and it is delivered as an emailed link, so
+      // deleting the account while one is live leaves the most complete copy of it sitting in a
+      // bucket behind a URL that goes on working. The rows go here and the objects go with the
+      // uploads below, which makes the emailed link dead rather than merely unlisted.
+      const exports = await tx.dataExportRequest.findMany({
+        where: { userId, downloadKey: { not: null } },
+        select: { downloadKey: true },
+      });
+
+      storageKeys.push(...exports.map(row => row.downloadKey!));
+
+      await tx.dataExportRequest.deleteMany({ where: { userId } });
 
       // ── Connect: deleted outright, with every pending request both ways ────
       await tx.connectionRequest.deleteMany({

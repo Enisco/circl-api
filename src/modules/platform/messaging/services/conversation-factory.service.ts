@@ -56,6 +56,18 @@ export interface EnsureConversationInput {
    * thread is never relabelled as anything else. See `support-thread.rules.ts`.
    */
   supportType?: SupportThreadType;
+  /**
+   * Whether an existing thread with the same context **kind** counts as a match, whatever its
+   * context id.
+   *
+   * One kind asks for this: a Connect profile. Every other subject is a thing — an item, an offer,
+   * a service — and two threads about two of them are genuinely two conversations. A Connect
+   * profile is where a conversation started rather than what it is about, and a member may hold
+   * several, edit them or delete them; keying a thread on one makes the thread as unstable as the
+   * profile, and writing to somebody from a second profile opened a second conversation with the
+   * reply to the first stranded in it.
+   */
+  anyContextId?: boolean;
 }
 
 /** Creates and finds conversations for the sections that own a subject. */
@@ -80,7 +92,14 @@ export class ConversationFactoryService {
     const contextId = input.contextId ?? null;
 
     const existing = await client.conversation.findFirst({
-      where: { participantKey, contextType, contextId },
+      where: {
+        participantKey,
+        contextType,
+        ...(input.anyContextId ? {} : { contextId }),
+      },
+      // Only matters when the context id is being ignored and several may match: the one they
+      // have been talking in. Deterministic, so both devices land on the same thread.
+      orderBy: [{ lastMessageAt: 'desc' }, { createdAt: 'desc' }],
     });
 
     if (existing) {

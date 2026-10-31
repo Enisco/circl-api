@@ -164,6 +164,9 @@ export class ProfessionalsHomeService {
       activeBookings: activeBookings.map(booking => ({
         id: booking.id,
         serviceName: booking.serviceName,
+        // Which option, where the service is priced in packages: the card has one subject line,
+        // and "Brand photography day" is ambiguous once that service offers six of them.
+        packageName: booking.packageName,
         counterpart: toAuthorView(
           booking.clientId === userId ? booking.professional : booking.client,
           { sign: this.media.sign },

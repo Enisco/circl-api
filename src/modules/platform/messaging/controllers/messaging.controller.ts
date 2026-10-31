@@ -18,6 +18,7 @@ import { Response } from 'express';
 import { CurrentUserId, Idempotent, JwtAuthGuard, RateLimit, SuccessMessage } from '@/common';
 import {
   EditMessageDto,
+  FindThreadDto,
   ListConversationsDto,
   ListMessagesDto,
   MarkReadDto,
@@ -104,6 +105,24 @@ export class MessagingController {
     const data = await this.conversations.unreadTotal(userId);
 
     return { data, message: 'Unread counts loaded' };
+  }
+
+  @Get('find')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'The thread about a subject, without opening one',
+    description:
+      'For "is there already a conversation about this item?" — `200` with the thread, `404` ' +
+      'when there is none. It creates nothing, which is what separates it from `POST /messages`.' +
+      '\n\nOnly the caller’s own threads are searched.\n\n`CONNECT_PROFILE` is not a useful ' +
+      'subject here: two members have one Connect conversation whatever profile it was opened ' +
+      'from, so `POST /messages` with a `CONNECT_PROFILE` context is what returns it.',
+  })
+  @ApiResponse({ status: 404, description: 'No thread about that subject yet.' })
+  async find(@CurrentUserId() userId: string, @Query() query: FindThreadDto) {
+    const data = await this.conversations.findByContext(userId, query.contextType, query.contextId);
+
+    return { data, message: SuccessMessage.RESOURCE_FETCHED('Conversation') };
   }
 
   @Get(':conversationId')

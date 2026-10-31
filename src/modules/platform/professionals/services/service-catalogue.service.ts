@@ -2,11 +2,10 @@ import { Injectable } from '@nestjs/common';
 import {
   ContentScanTrigger,
   ContentVisibilityState,
-  Media,
-  MediaRole,
   Prisma,
   ReportTargetType,
   ServiceOwnerState,
+  ServicePricingKind,
   TaxonomyKind,
 } from '@prisma/client';
 import { ApiErrorCode, ApiException, PageMeta, buildPageMeta } from '@/common';
@@ -14,6 +13,7 @@ import { PrismaService } from '@/infrastructure';
 import {
   ContentSafetyService,
   MediaService,
+  ResolvedMediaSet,
   SERVICE_MEDIA_RULES,
   TaxonomyService,
   toMediaViews,
@@ -24,11 +24,13 @@ import {
   SERVICE_LIMITS,
   ServiceMediaKeyDto,
   ServiceMilestoneDto,
+  ServicePackageDto,
   ServiceUpdateDto,
   UpdateServiceDto,
 } from '../dtos/service.dto';
 import {
   ProfessionalRefView,
+  ServicePackageView,
   ServiceView,
   isPublic,
   statusOf,
@@ -57,6 +59,9 @@ export const SERVICE_POSTER_OWNER = 'PROFESSIONAL_SERVICE_POSTER';
 const SERVICE_INCLUDE = {
   updates: { orderBy: { publishedAt: 'desc' } },
   milestones: { orderBy: { sort: 'asc' } },
+  // The professional's own order, never price or name: sorting here would quietly rearrange
+  // somebody's offer and they would have no way to tell why (SERVICE-PRICING §2.2).
+  packages: { orderBy: { sort: 'asc' } },
   listing: {
     select: {
       id: true,
@@ -132,7 +137,14 @@ export class ServiceCatalogueService {
         );
       }
 
-      if (dto.pricePence === undefined && dto.price === undefined) {
+      // A price, or the packages that stand in for one: the cheapest package *is* the price on a
+      // service priced that way, so demanding `pricePence` beside a package list would be asking
+      // for a number we are about to recompute and throw away.
+      if (
+        dto.pricePence === undefined &&
+        dto.price === undefined &&
+        dto.pricingKind !== ServicePricingKind.PACKAGES
+      ) {
         throw ApiException.unprocessable(
           ApiErrorCode.VALIDATION_FAILED,
           'A service needs a price.',
@@ -164,7 +176,33 @@ export class ServiceCatalogueService {
       );
     }
 
-    const media = await this.prepareMedia(userId, dto.mediaKeys);
+    // A create has no record to reference, so every entry here is a fresh upload.
+    const media = await this.prepareMedia(userId, dto.mediaKeys, {
+      type: SERVICE_MEDIA_OWNER,
+      id: null,
+    });
+
+    // Same rule as media's, and the same refusal: an `id` names a package this service already
+    // has, and this service is being created. Refused rather than ignored, because a client
+    // sending one is working from a stale read and silently dropping it writes the wrong set.
+    const namedOnCreate = (dto.packages ?? []).filter(entry => entry.id).map(entry => entry.id!);
+
+    if (namedOnCreate.length) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'An id names a package this service already has, and this service is being created.',
+        {
+          details: [{ field: 'packages', message: 'Leave id off on a create.' }],
+          data: { ids: namedOnCreate },
+        },
+      );
+    }
+
+    const pricing = this.resolvePricing(dto, {
+      pricingKind: ServicePricingKind.FLAT,
+      price: null,
+      packages: [],
+    });
 
     const created = await this.database.$transaction(async tx => {
       const service = await tx.professionalService.create({
@@ -174,7 +212,10 @@ export class ServiceCatalogueService {
           description: dto.description ?? null,
           categoryCode,
           subcategoryCode: dto.subcategoryCode ?? null,
-          price: dto.pricePence ?? dto.price ?? null,
+          price: pricing.price,
+          pricingKind: pricing.pricingKind,
+          // Absent and null both mean "not charged for", which is not the same as free.
+          consultationFeePence: dto.consultationFeePence ?? null,
           priceBasis: dto.priceBasis ?? undefined,
           sort: count,
           // An older client's `isActive: false` means "created hidden", which is the only thing
@@ -186,6 +227,11 @@ export class ServiceCatalogueService {
 
       await this.writeUpdates(tx, service.id, dto.updates);
       await this.writeMilestones(tx, service.id, dto.milestones);
+
+      if (pricing.packages?.length) {
+        await this.writePackages(tx, service.id, pricing.packages);
+      }
+
       await this.media.attach(tx, media.files, SERVICE_MEDIA_OWNER, service.id, media.roles);
       await this.media.attachPosters(tx, media.posters, SERVICE_POSTER_OWNER, service.id);
 
@@ -267,7 +313,26 @@ export class ServiceCatalogueService {
     }
 
     const media =
-      dto.mediaKeys === undefined ? null : await this.prepareMedia(userId, dto.mediaKeys);
+      dto.mediaKeys === undefined
+        ? null
+        : await this.prepareMedia(userId, dto.mediaKeys, {
+            type: SERVICE_MEDIA_OWNER,
+            id: serviceId,
+          });
+
+    // Resolved against what is stored, because the three pricing decisions are not independent:
+    // the kind may be unchanged while the packages move, and the headline price is a function of
+    // both. Read before the transaction so a refusal costs nothing.
+    const storedPackages = await this.database.servicePackage.findMany({
+      where: { serviceId },
+      select: { id: true, pricePence: true },
+      orderBy: { sort: 'asc' },
+    });
+    const pricing = this.resolvePricing(dto, {
+      pricingKind: service.pricingKind,
+      price: service.price,
+      packages: storedPackages,
+    });
 
     await this.database.$transaction(async tx => {
       await tx.professionalService.update({
@@ -277,10 +342,21 @@ export class ServiceCatalogueService {
           ...(dto.description === undefined ? {} : { description: dto.description }),
           ...(dto.categoryCode === undefined ? {} : { categoryCode: dto.categoryCode }),
           ...(dto.subcategoryCode === undefined ? {} : { subcategoryCode: dto.subcategoryCode }),
-          // Either name, with the v2 one winning where both arrive.
-          ...(dto.pricePence === undefined && dto.price === undefined
+          /**
+           * The resolved number, not the one that arrived.
+           *
+           * On a `FLAT` write this is the client's own figure, as it always was. On a `PACKAGES`
+           * one it is the cheapest package, recomputed here however confident the client was:
+           * trusting theirs would let a card advertise a price the page does not offer the moment
+           * a package was added or the cheapest deleted from somewhere else.
+           */
+          price: pricing.price,
+          pricingKind: pricing.pricingKind,
+          // Absent leaves it; an explicit null removes the fee. `NullableNumber` in the DTO is
+          // what keeps those two apart — implicit conversion would have made null a £0 fee.
+          ...(dto.consultationFeePence === undefined
             ? {}
-            : { price: dto.pricePence ?? dto.price }),
+            : { consultationFeePence: dto.consultationFeePence }),
           ...(dto.priceBasis === undefined ? {} : { priceBasis: dto.priceBasis }),
           // An older client's only lever (§5.5.1). `false` means hide it; `true` means the owner
           // wants it live, which is not the same as it *being* live.
@@ -303,13 +379,22 @@ export class ServiceCatalogueService {
         await this.writeMilestones(tx, serviceId, dto.milestones);
       }
 
+      // Null means the client did not send the array, so the stored packages are left alone.
+      if (pricing.packages !== null) {
+        await this.writePackages(tx, serviceId, pricing.packages);
+      }
+
       if (media) {
-        await this.media.releaseOwner(tx, SERVICE_MEDIA_OWNER, serviceId);
-        // The posters go with the set they belonged to. Left behind they would be attached to a
-        // video that is no longer here, which is a file nothing renders and nothing collects.
-        await this.media.releaseOwner(tx, SERVICE_POSTER_OWNER, serviceId);
-        await this.media.attach(tx, media.files, SERVICE_MEDIA_OWNER, serviceId, media.roles);
-        await this.media.attachPosters(tx, media.posters, SERVICE_POSTER_OWNER, serviceId);
+        // What the client sent is the whole set: a file named by id stays as the row it already
+        // is, one left out goes, and a poster goes with the video it is a frame of.
+        await this.media.syncOwner(tx, SERVICE_MEDIA_OWNER, serviceId, media.files, media.roles);
+        await this.media.syncPosters(
+          tx,
+          SERVICE_POSTER_OWNER,
+          serviceId,
+          media.posters,
+          media.files,
+        );
       }
 
       if (dto.name !== undefined || dto.description !== undefined) {
@@ -683,27 +768,199 @@ export class ServiceCatalogueService {
   private async prepareMedia(
     userId: string,
     keys: ServiceMediaKeyDto[] | undefined,
-  ): Promise<{
-    files: Awaited<ReturnType<MediaService['validate']>>;
-    roles: Map<string, MediaRole>;
-    posters: Map<string, Media>;
-  }> {
+    owner: { type: string; id: string | null },
+  ): Promise<ResolvedMediaSet> {
     if (!keys?.length) return { files: [], roles: new Map(), posters: new Map() };
 
-    const files = await this.media.validate(
-      keys.map(entry => entry.key),
-      userId,
-      SERVICE_MEDIA_RULES,
-      'mediaKeys',
-    );
+    return this.media.resolveSet(keys, userId, owner, SERVICE_MEDIA_RULES, 'mediaKeys');
+  }
+
+  /**
+   * The pricing decisions on one write, resolved before anything is stored (SERVICE-PRICING §2).
+   *
+   * Pricing is three decisions, two of which are exclusive, so working them out field by field at
+   * the point of the update is how a service ends up with a flat rate sitting behind a package
+   * list. This takes the request and what is already stored and answers once: the kind, the
+   * packages to write, and the **one number every surface quotes**.
+   *
+   * Three rules live here and nowhere else:
+   *
+   *  - **`price` is recomputed from the packages, not trusted.** On a `PACKAGES` service it is the
+   *    cheapest package, worked out server-side. The client's own figure is a hint: if a package
+   *    were added through another client, or the cheapest one deleted, a trusted figure would go
+   *    stale and the card would advertise a price the page does not offer. Every price sort and
+   *    the `maxPricePence` filter read that column, so a stale one also hides the service from
+   *    every price filter on the platform.
+   *  - **The consultation fee is never part of it.** Not folded into `price`, not the cheapest
+   *    package, not in a filter. A buyer reading one figure for two things has been misled.
+   *  - **A move to `FLAT` clears the packages.** Leaving them stored would be a price list behind
+   *    a price, reachable by nothing and ready to reappear.
+   */
+  private resolvePricing(
+    dto: {
+      pricingKind?: ServicePricingKind;
+      packages?: ServicePackageDto[];
+      pricePence?: number;
+      price?: number;
+      consultationFeePence?: number | null;
+    },
+    stored: {
+      pricingKind: ServicePricingKind;
+      price: number | null;
+      packages: Array<{ id: string; pricePence: number }>;
+    },
+  ): {
+    pricingKind: ServicePricingKind;
+    price: number | null;
+    /** Null means "the client did not send the array, so leave the stored packages alone". */
+    packages: ServicePackageDto[] | null;
+  } {
+    const kind = dto.pricingKind ?? stored.pricingKind;
+    const sentPrice = dto.pricePence ?? dto.price;
+
+    if (kind === ServicePricingKind.FLAT) {
+      /**
+       * Packages on a service that is priced flat, refused rather than stored.
+       *
+       * It catches two shapes with one rule: a write that says `FLAT` and sends a package list in
+       * the same breath, and one that sends packages to a flat service without saying the kind has
+       * changed. Writing them either way would leave a service whose `pricingKind` is `FLAT`,
+       * whose price is the flat rate, and which nonetheless reports three packages — incoherent,
+       * and incoherent in a way that reads to a client as a page with two prices on it.
+       */
+      if (dto.packages?.length) {
+        throw ApiException.unprocessable(
+          ApiErrorCode.VALIDATION_FAILED,
+          'A service is priced either flat or in packages, not both.',
+          {
+            details: [
+              { field: 'packages', message: 'Remove these, or send pricingKind: PACKAGES.' },
+            ],
+            data: { pricingKind: kind, packageCount: dto.packages.length },
+          },
+        );
+      }
+
+      return {
+        pricingKind: kind,
+        // Absent is not empty, here as everywhere else: the app sends `pricingKind` on **every**
+        // write, so reading a missing `pricePence` beside it as "clear the price" would wipe the
+        // rate off a service whose owner was editing its name.
+        price: sentPrice ?? stored.price,
+        // Explicitly flat means the packages go, whether or not the client thought to send `[]` —
+        // otherwise a price list sits behind a price, reachable by nothing and ready to reappear.
+        // A write carrying neither a kind nor packages is editing something else, and its
+        // omission must not clear anything.
+        packages: dto.pricingKind === ServicePricingKind.FLAT ? [] : (dto.packages ?? null),
+      };
+    }
+
+    // `PACKAGES` from here. Whatever the client sent is the whole set; absent means the stored one.
+    const packages = dto.packages ?? null;
+    const effective = packages ?? stored.packages.map(row => ({ pricePence: row.pricePence }));
+
+    if (!effective.length) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'A service priced in packages needs at least one package.',
+        {
+          details: [{ field: 'packages', message: 'Add a package, or price the service flat.' }],
+          data: { pricingKind: kind },
+        },
+      );
+    }
 
     return {
-      files,
-      roles: new Map(keys.map(entry => [entry.key, entry.role ?? MediaRole.SHOWCASE])),
-      // The still frames, validated against the videos they claim to be of before anything is
-      // written: a poster paired with a photograph is a client bug, not a thumbnail.
-      posters: await this.media.posters(keys, files, userId, 'mediaKeys'),
+      pricingKind: kind,
+      // The cheapest package, every time. Never the client's number and never the old flat rate.
+      price: Math.min(...effective.map(entry => entry.pricePence)),
+      packages,
     };
+  }
+
+  /**
+   * The packages, as the whole set in the order they arrived (SERVICE-PRICING §2.2).
+   *
+   * Delete-and-recreate would be simpler and wrong: a package's id is in somebody's screenshot and
+   * in the link they sent a client, so one kept by id keeps it. An id naming a package this
+   * service does not have is **refused**, not ignored — the same answer media gives, and for the
+   * same reason: ignoring it while applying the rest of the set removes a package the professional
+   * never touched.
+   */
+  private async writePackages(
+    tx: Prisma.TransactionClient,
+    serviceId: string,
+    packages: ServicePackageDto[],
+  ): Promise<void> {
+    const existing = await tx.servicePackage.findMany({
+      where: { serviceId },
+      select: { id: true },
+    });
+    const known = new Set(existing.map(row => row.id));
+    const named = packages.filter(entry => entry.id).map(entry => entry.id!);
+    const unknown = named.filter(id => !known.has(id));
+
+    if (unknown.length) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'One of those packages is not on this service.',
+        {
+          details: [{ field: 'packages', message: `Not on this service: ${unknown.join(', ')}` }],
+          data: { unknown },
+        },
+      );
+    }
+
+    if (new Set(named).size !== named.length) {
+      const repeated = [...new Set(named.filter((id, index) => named.indexOf(id) !== index))];
+
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'The same package is in this set twice.',
+        {
+          details: [{ field: 'packages', message: `Sent more than once: ${repeated.join(', ')}` }],
+          data: { repeated },
+        },
+      );
+    }
+
+    // Anything the client did not name is gone, which is what makes the array the whole set.
+    const doomed: Prisma.ServicePackageWhereInput = named.length
+      ? { serviceId, id: { notIn: named } }
+      : { serviceId };
+
+    await tx.servicePackage.deleteMany({ where: doomed });
+
+    for (const [index, entry] of packages.entries()) {
+      const data = {
+        name: entry.name,
+        pricePence: entry.pricePence,
+        description: entry.description ?? null,
+        sort: index,
+      };
+
+      // Every id that reached here is one this service holds — the refusal above guarantees it —
+      // so a named package is updated in place and keeps the id somebody already has.
+      if (entry.id) {
+        await tx.servicePackage.update({ where: { id: entry.id }, data });
+      } else {
+        await tx.servicePackage.create({ data: { serviceId, ...data } });
+      }
+    }
+  }
+
+  /** Rows to the client's shape, in the professional's own order. */
+  private toPackageViews(
+    rows: Array<{ id: string; name: string; description: string | null; pricePence: number }>,
+    currency: string,
+  ): ServicePackageView[] {
+    return rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      price: { amount: row.pricePence, currency },
+      pricePence: row.pricePence,
+    }));
   }
 
   private async writeUpdates(
@@ -839,7 +1096,18 @@ export class ServiceCatalogueService {
             }
           : null,
         price: row.price === null ? null : { amount: row.price, currency: row.currency },
-        priceLabel: toPriceLabel(row.price, row.currency),
+        // Worded by kind: a flat rate reads "£65", a package list "Starts from £120".
+        priceLabel: toPriceLabel(row.price, row.currency, row.pricingKind),
+        pricingKind: row.pricingKind,
+        packages: this.toPackageViews(row.packages, row.currency),
+        // Carried beside the array so a payload that trims the list can still say "3 packages" —
+        // a client counting a missing array reads a packaged service as a flat-rate one.
+        packageCount: row.packages.length,
+        consultationFee:
+          row.consultationFeePence === null
+            ? null
+            : { amount: row.consultationFeePence, currency: row.currency },
+        consultationFeePence: row.consultationFeePence,
         status,
         /**
          * Only where the **gate** is what is holding it.

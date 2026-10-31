@@ -9,6 +9,7 @@ import {
   ProfessionalListing,
   ReportTargetType,
   ServiceOwnerState,
+  ServicePricingKind,
   TaxonomyKind,
   ThreadContextType,
 } from '@prisma/client';
@@ -47,7 +48,12 @@ import {
   toVerifiedCategories,
 } from '../serializers/listing.serializer';
 import { CategoryVerificationService, effectiveStatus } from './category-verification.service';
-import { SERVICE_MEDIA_OWNER, SERVICE_POSTER_OWNER } from './service-catalogue.service';
+import {
+  SERVICE_MEDIA_OWNER,
+  SERVICE_POSTER_OWNER,
+  ServiceCatalogueService,
+} from './service-catalogue.service';
+import { SERVICE_LIMITS } from '../dtos/service.dto';
 
 /**
  * Everything the owner's view of a listing reads, declared once.
@@ -81,6 +87,20 @@ export interface RegistrationStep {
 /** Below this, `responseRate` is null (2.4): one missed message should not read as a bad record. */
 const MIN_ENQUIRIES_FOR_RATE = 3;
 
+/**
+ * What a **legacy** service edit may do to the stored price (SERVICE-PRICING §2.4).
+ *
+ * On a flat-rate service, whatever the client sent — the behaviour this route has always had. On
+ * one priced in packages, nothing: the stored number is the cheapest package, recomputed by the
+ * catalogue on every write, and a build that predates packages must not be able to put a flat
+ * rate in front of a price list it cannot see.
+ */
+const updatedPricePence = (
+  service: { pricingKind: ServicePricingKind; price: number | null },
+  sent: number | null | undefined,
+): number | null | undefined =>
+  service.pricingKind === ServicePricingKind.PACKAGES ? undefined : sent;
+
 @Injectable()
 export class ListingService {
   constructor(
@@ -94,6 +114,9 @@ export class ListingService {
     private readonly reviews: ListingReviewService,
     private readonly documents: ListingDocumentService,
     private readonly verifications: CategoryVerificationService,
+    // The services on the owner's own payload are the catalogue's own rows rather than a second,
+    // thinner copy of them. See `toOwnerView`.
+    private readonly catalogue: ServiceCatalogueService,
   ) {}
 
   // ─── 2.1.2 Registration prefill ────────────────────────────────────────────
@@ -763,10 +786,20 @@ export class ListingService {
       data: {
         name: dto.name,
         description: dto.description,
-        price: dto.price,
+        /**
+         * **Ignored on a service priced in packages** (SERVICE-PRICING §2.4).
+         *
+         * This route belongs to a build that predates packages, so it cannot be a way to put a
+         * flat rate behind a package list: the stored number is the cheapest package, and a
+         * client that does not know packages exist is in no position to overwrite it. Its other
+         * edits — the name, the description, hiding it — go through as they always did, because
+         * refusing the whole write would strand a member on an older app.
+         */
+        price: updatedPricePence(service, dto.price),
         priceBasis: dto.priceBasis,
         isActive: dto.isActive,
       },
+      include: { _count: { select: { packages: true } } },
     });
 
     // A service's name and description are published copy (§6.1), so they are scanned like any
@@ -803,6 +836,7 @@ export class ListingService {
       const deactivated = await this.database.professionalService.update({
         where: { id: serviceId },
         data: { isActive: false, ownerState: ServiceOwnerState.HIDDEN },
+        include: { _count: { select: { packages: true } } },
       });
 
       return { removed: false, service: toServiceView(deactivated) };
@@ -830,6 +864,40 @@ export class ListingService {
    */
   async replaceServices(userId: string, listingId: string, dto: ReplaceServicesDto) {
     const listing = await this.assertOwned(userId, listingId);
+
+    /**
+     * Refused where a service is priced in packages (SERVICE-PRICING §2.2).
+     *
+     * This route deletes the service rows and writes new ones, which is how it has always worked
+     * and was survivable while a service was a name and a price. It is not survivable now: the
+     * body cannot carry packages, so a bulk save from an older build would destroy a
+     * professional's price list and hand back flat-rate services with new ids — silently, and
+     * with nothing to recover it from.
+     *
+     * Refusing strands one screen on an old build, which §10 would normally forbid. Between
+     * stranding a save and destroying the data the save was about, this is the better failure: the
+     * member is told what happened and what to do, and every other screen still works. The
+     * per-service routes have carried packages since they shipped.
+     */
+    // visibility: the caller's own services, counted before a write that would replace them. A
+    // held or hidden service is still theirs and its packages are still worth protecting, so this
+    // is deliberately every row.
+    const packaged = await this.database.professionalService.count({
+      where: { listingId: listing.id, pricingKind: ServicePricingKind.PACKAGES },
+    });
+
+    if (packaged) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'Some of your services are priced in packages, which this version of the app cannot save. Update the app to edit them.',
+        {
+          details: [
+            { field: 'services', message: 'Edit services one at a time on a newer version.' },
+          ],
+          data: { packagedServices: packaged },
+        },
+      );
+    }
 
     await this.database.$transaction(async tx => {
       // visibility: the caller's own services, replaced wholesale.
@@ -884,6 +952,9 @@ export class ListingService {
     const services = await this.database.professionalService.findMany({
       where: { listingId: listing.id },
       orderBy: { sort: 'asc' },
+      // A booked service was only hidden rather than replaced, so one of these may well be priced
+      // in packages even though this route cannot write them.
+      include: { _count: { select: { packages: true } } },
     });
 
     // The whole set is replaced, so the whole set is scanned. The content hash means the ones
@@ -1014,7 +1085,16 @@ export class ListingService {
       contactHours: hours.hours,
       isContactableNow: hours.contactableNow,
       serviceCount: listing.services?.length ?? 0,
-      services: (listing.services ?? []).map(toServiceView),
+      /**
+       * The **whole** service, not a summary of it (v2 §5.5).
+       *
+       * This used to carry name, description and price and nothing else, so the editor opened on
+       * a service that had a category, photographs, updates and milestones with three of its four
+       * sections empty — and a save from that screen could write the emptiness back. The same
+       * rows `GET /professionals/listings/:id/services` serves, built by the catalogue, so the two
+       * cannot drift; the owner is the viewer, so a held service is here with its reason.
+       */
+      services: await this.ownServices(listing.id, listing.userId, listing.services?.length ?? 0),
       stats: {
         jobsCompleted: listing.jobsCompleted,
         medianResponseMinutes: listing.medianResponseMinutes,
@@ -1024,6 +1104,21 @@ export class ListingService {
       },
       createdAt: listing.createdAt.toISOString(),
     };
+  }
+
+  /** The owner's own services, in full. Nothing to fetch when the listing has none. */
+  private async ownServices(listingId: string, userId: string, count: number) {
+    if (!count) return [];
+
+    const { data } = await this.catalogue.forListing(listingId, userId, {
+      skip: 0,
+      // A listing holds up to `SERVICE_LIMITS.perListing`, so one page is all of them.
+      take: SERVICE_LIMITS.perListing,
+      currentPage: 1,
+      perPage: SERVICE_LIMITS.perListing,
+    });
+
+    return data;
   }
 
   /**

@@ -343,6 +343,9 @@ export class MessageService {
           replyToMessageId,
           mentions: mentions.length ? toJson(mentions) : undefined,
           isForwarded: dto.isForwarded === true || forwarded !== null,
+          // Stored as sent. What the sender's screen was showing, not a claim the server checks.
+          tagKind: dto.tag?.kind ?? null,
+          tagId: dto.tag?.id ?? null,
           attachments: {
             create: [
               ...attachments.map((media, position) => ({ mediaId: media.id, position })),
@@ -905,6 +908,8 @@ export class MessageService {
       /** Aggregated, with `mine` answering for this caller alone. */
       reactions: this.aggregateReactions(message.reactions, viewerId),
       isForwarded: message.isForwarded,
+      /** What it was sent from, where the sender said so. Null on every message that carried none. */
+      tag: message.tagKind && message.tagId ? { kind: message.tagKind, id: message.tagId } : null,
       status: message.status,
       systemType: message.systemType,
       systemData: message.systemData,

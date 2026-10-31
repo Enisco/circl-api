@@ -597,6 +597,7 @@ export class AdminQueueService {
       this.actions.notifyMember(row.subjectUserId, {
         title: 'Your post was not approved',
         body: dto.memberMessage,
+        outcome: 'REJECTED',
       });
     }
 
@@ -608,6 +609,7 @@ export class AdminQueueService {
       this.actions.notifyMember(row.subjectUserId, {
         title: 'Your anonymous post is live',
         body: 'Somebody from our team read it and published it.',
+        outcome: 'APPROVED',
       });
     }
 

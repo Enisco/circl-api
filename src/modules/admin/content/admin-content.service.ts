@@ -321,17 +321,21 @@ export class AdminContentService {
         ...fields,
       },
       /**
-       * A service's updates and milestones (v2 §5.3), which exist on no other kind.
+       * A service's updates, milestones and packages (v2 §5.3, SERVICE-PRICING §2.2), which exist
+       * on no other kind.
        *
-       * Named for what they are: **the member's own claims about their own work**, unverified by
+       * Named for what they are: **the member's own words about their own work**, unverified by
        * anybody. They are published copy, so they are reportable and removable like anything else
        * — and a reviewer deciding about a service could not see them at all, because they live in
        * their own tables and the detail reads one row.
        *
        * Deliberately not folded into `body`, which is "every **scanned** field by name" and is
-       * what the risk signals' offsets are measured against. These are not scanned: the classifier
-       * re-reads a target from its own table when it runs, so a field it cannot re-read is one a
-       * rescan would silently drop. Flagged to circl-mobile rather than quietly left out.
+       * what the risk signals' offsets are measured against. **None of the three is scanned**: the
+       * classifier re-reads a target from its own table when it runs, so a field it cannot re-read
+       * is one a rescan would silently drop. Fixing that means teaching `ContentSource` to read a
+       * child table, which is a change to the pipeline every scannable kind shares — so for now a
+       * reviewer can see this copy and the classifier cannot, and that is said out loud here and
+       * to circl-mobile rather than quietly left out.
        */
       selfReported,
       media,
@@ -637,6 +641,7 @@ export class AdminContentService {
       this.actions.notifyMember(authorId, {
         title: 'Something you posted was removed',
         body: reason.note ?? 'It did not meet our community guidelines.',
+        outcome: 'REJECTED',
       });
     }
 
@@ -711,6 +716,7 @@ export class AdminContentService {
       this.actions.notifyMember(authorId, {
         title: 'Something of yours is back',
         body: reason.note ?? 'We looked again and have put it back.',
+        outcome: 'APPROVED',
       });
     }
 
@@ -861,6 +867,8 @@ export class AdminContentService {
           ? 'Your shop has been suspended'
           : 'Your shop’s status has changed',
       body: reason.note ?? `Your shop is now ${dto.complianceState.toLowerCase()}.`,
+      // A suspension is the bad news; every other state change here is a shop coming back.
+      outcome: dto.complianceState === StoreComplianceState.SUSPENDED ? 'REJECTED' : 'APPROVED',
     });
 
     return { data: await this.detail('stores', id), auditId };
@@ -1327,9 +1335,9 @@ export class AdminContentService {
    * portal is asked to present them.
    */
   private async serviceSelfReported(serviceId: string) {
-    const [updates, milestones] = await Promise.all([
-      // visibility: child rows of one service a reviewer already has open, and neither table
-      // carries a visibility state of its own — they are taken down with the service.
+    const [updates, milestones, packages] = await Promise.all([
+      // visibility: child rows of one service a reviewer already has open, and none of these
+      // tables carries a visibility state of its own — they are taken down with the service.
       this.database.serviceUpdate.findMany({
         where: { serviceId },
         orderBy: { publishedAt: 'desc' },
@@ -1339,6 +1347,23 @@ export class AdminContentService {
         where: { serviceId },
         orderBy: [{ year: 'desc' }, { label: 'asc' }],
         select: { id: true, label: true, year: true, issuer: true },
+      }),
+      /**
+       * The packages, which are the offer itself rather than a claim about it.
+       *
+       * Here for the same reason the two above are: a package's name and its sentence are the
+       * member's own words, published on the service page to every buyer, and a reviewer deciding
+       * about a reported service could not read them at all — the detail reads one row and these
+       * live in their own table. A professional with a clean description and six abusively named
+       * packages was invisible to the person deciding about them.
+       *
+       * In the professional's own order, because that is the order a buyer reads, and the price
+       * with each one so the figures a reviewer is judging are the figures on the page.
+       */
+      this.database.servicePackage.findMany({
+        where: { serviceId },
+        orderBy: { sort: 'asc' },
+        select: { id: true, name: true, description: true, pricePence: true },
       }),
     ]);
 
@@ -1350,6 +1375,7 @@ export class AdminContentService {
         publishedAt: update.publishedAt.toISOString(),
       })),
       milestones,
+      packages,
     };
   }
 

@@ -59,6 +59,7 @@ export class ProfileService {
         profileImageUrl: true,
         email: true,
         createdAt: true,
+        userAuth: { select: { emailVerifiedAt: true } },
         profile: {
           select: {
             gender: true,
@@ -89,7 +90,7 @@ export class ProfileService {
 
     const profile = user.profile;
 
-    const { avatarKey, ...rest } = user;
+    const { avatarKey, userAuth, ...rest } = user;
     const photoReview = await this.avatarReview(userId, avatarKey);
 
     return {
@@ -102,6 +103,17 @@ export class ProfileService {
         // whole design, forty read sites need no new rule — so this is the one screen that can
         // say why it went, and the only place it would make sense to ask.
         avatarReview: photoReview,
+        /**
+         * Whether the address on the account has been confirmed (§13.7, 0.15).
+         *
+         * Two flows send a code to it and then ask the member to wait: deleting the account and
+         * exporting it. An export built for an unconfirmed address still reaches `READY` and no
+         * email goes out; a deletion code sent to one is a countdown the member cannot finish.
+         * Neither screen could say so, because nothing in any payload said whether the address
+         * works — so both pointed at an inbox nothing had been sent to.
+         */
+        isEmailVerified:
+          userAuth?.emailVerifiedAt !== null && userAuth?.emailVerifiedAt !== undefined,
         // Beside the name, exactly as it is on the shared author object (0.9), so the screen that
         // draws your own row does not need a different rule from the one that draws everybody else's.
         countryCode: toCountryCode(profile?.countryOfOrigin),

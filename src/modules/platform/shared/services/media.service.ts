@@ -38,6 +38,41 @@ const SELLING_PURPOSES: MediaPurpose[] = [MediaPurpose.COMMERCE, MediaPurpose.PR
 /** Sixty seconds, as published. Checked where the duration is known — see `validate`. */
 export const MAX_SELLING_VIDEO_MS = 60_000;
 
+/**
+ * One entry of a media set, as a client may send it (v2 §9.1).
+ *
+ * `key` is a fresh upload. `id` is a file **already attached to this record**, which is what makes
+ * the array the whole set rather than a list of additions: without it a member who has three
+ * photographs and adds a fourth can only name the one they just picked, and the server has to read
+ * that either as "these four" or as "this one, and lose the three" — the second of which is what it
+ * used to do.
+ */
+export interface MediaSetEntry {
+  key?: string;
+  id?: string;
+  role?: MediaRole;
+  posterKey?: string;
+}
+
+/**
+ * One entry of a flat `photoKeys`-style list, which carries no role and no poster.
+ *
+ * A uuid is the id of a file already here and anything else is a storage key: the two cannot be
+ * confused, since a storage key is a path (`circl/commerce/…/…jpg`). This is what the app believed
+ * `photoKeys` already did, and now it does.
+ */
+export const mediaSetEntry = (value: string): MediaSetEntry =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    ? { id: value }
+    : { key: value };
+
+/** A resolved set: the rows in render order, their roles, and the posters arriving with them. */
+export interface ResolvedMediaSet {
+  files: Media[];
+  roles: Map<string, MediaRole>;
+  posters: Map<string, Media>;
+}
+
 export interface MediaRules {
   maxImages: number;
   allowVideo: boolean;
@@ -198,14 +233,41 @@ export class MediaService {
     }
   }
 
-  /** Validates a set of media ids against the rules and returns them in the order the client sent, which is the order they render in. */
+  /**
+   * Validates a set of media ids against the rules and returns them in the order the client sent,
+   * which is the order they render in.
+   *
+   * `alongside` is media that is **already attached** to the record these keys are joining, and it
+   * is counted against the limits without being revalidated. Without it a professional adding a
+   * fourth photograph to a service that has three is checked as though they were attaching one
+   * file, and the tenth could be the fifteenth.
+   */
   async validate(
     mediaKeys: string[] | undefined,
     ownerId: string,
     rules: MediaRules = POST_MEDIA_RULES,
     field = 'mediaKeys',
+    alongside: Media[] = [],
   ): Promise<Media[]> {
     if (!mediaKeys?.length) return [];
+
+    // The same key twice would be one row for two slots, and the length check below would then
+    // report it as *missing* — "Not found:" with nothing after it, which is the least useful
+    // refusal this method can produce. Named for what it is instead.
+    if (new Set(mediaKeys).size !== mediaKeys.length) {
+      const repeated = [
+        ...new Set(mediaKeys.filter((key, index) => mediaKeys.indexOf(key) !== index)),
+      ];
+
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'The same file is in this set twice.',
+        {
+          details: [{ field, message: `Sent more than once: ${repeated.slice(0, 5).join(', ')}` }],
+          data: { repeated },
+        },
+      );
+    }
 
     // Keyed by storageKey, because the client now sends keys rather than ids (0.11.2).
     const rows = await this.database.media.findMany({
@@ -213,10 +275,18 @@ export class MediaService {
     });
 
     if (rows.length !== mediaKeys.length) {
+      // Named, not counted. "One or more could not be found" over a list of six sends the client
+      // back to guess-and-retry, which is exactly how the app spent two sessions on this field.
+      const found = new Set(rows.map(row => row.storageKey));
+      const missing = mediaKeys.filter(key => !found.has(key));
+
       throw ApiException.unprocessable(
         ApiErrorCode.MEDIA_NOT_FOUND,
         'One or more of the attached files could not be found. Please re-upload them.',
-        { details: [{ field, message: 'One or more attachments could not be found.' }] },
+        {
+          details: [{ field, message: `Not found: ${missing.slice(0, 5).join(', ')}` }],
+          data: { missing },
+        },
       );
     }
 
@@ -254,9 +324,12 @@ export class MediaService {
       }
     }
 
-    const images = rows.filter(row => row.type === MediaType.IMAGE);
-    const videos = rows.filter(row => row.type === MediaType.VIDEO);
-    const audio = rows.filter(row => row.type === MediaType.AUDIO);
+    // The whole set as it will stand once this write lands: what is already here, plus what is
+    // arriving. `rows` alone counts an edit as though the record were empty.
+    const whole = [...alongside, ...rows];
+    const images = whole.filter(row => row.type === MediaType.IMAGE);
+    const videos = whole.filter(row => row.type === MediaType.VIDEO);
+    const audio = whole.filter(row => row.type === MediaType.AUDIO);
 
     // Images and video together is not allowed, unless the caller's own rules say otherwise.
     if (!rules.allowMixed && images.length && videos.length) {
@@ -319,7 +392,7 @@ export class MediaService {
       }
     }
 
-    if (rules.maxTotal !== undefined && rows.length > rules.maxTotal) {
+    if (rules.maxTotal !== undefined && whole.length > rules.maxTotal) {
       const message = `You can attach up to ${rules.maxTotal} photos and videos in total.`;
 
       throw ApiException.unprocessable(
@@ -342,6 +415,167 @@ export class MediaService {
     const order = new Map(mediaKeys.map((key, index) => [key, index]));
 
     return rows.sort((a, b) => (order.get(a.storageKey) ?? 0) - (order.get(b.storageKey) ?? 0));
+  }
+
+  /**
+   * A whole media set, from the two kinds of entry a client can send: `{key}` for a file it has
+   * just uploaded and `{id}` for one this record already holds.
+   *
+   * The ids are looked up **against this record only**. A member cannot name somebody else's photo,
+   * or one of their own attached to a different service, and have it move: an id that is not on
+   * this record is as unfound as an id that never existed.
+   *
+   * On a create there is nothing to reference yet, so an id there is a client bug and is refused
+   * by name rather than treated as a missing file.
+   */
+  async resolveSet(
+    entries: MediaSetEntry[],
+    uploaderId: string,
+    owner: { type: string; id: string | null },
+    rules: MediaRules = POST_MEDIA_RULES,
+    field = 'mediaKeys',
+  ): Promise<ResolvedMediaSet> {
+    if (!entries.length) return { files: [], roles: new Map(), posters: new Map() };
+
+    const blank = entries.findIndex(entry => !entry.id && !entry.key);
+
+    if (blank !== -1) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'Each attachment needs either a key, for a new upload, or an id, for one already here.',
+        { details: [{ field: `${field}[${blank}]`, message: 'Send key or id.' }] },
+      );
+    }
+
+    const ids = entries.filter(entry => entry.id).map(entry => entry.id!);
+
+    if (new Set(ids).size !== ids.length) {
+      throw ApiException.unprocessable(
+        ApiErrorCode.VALIDATION_FAILED,
+        'The same file is in this set twice.',
+        { details: [{ field, message: 'Each file may appear once.' }] },
+      );
+    }
+
+    let kept: Media[] = [];
+
+    if (ids.length) {
+      if (!owner.id) {
+        throw ApiException.unprocessable(
+          ApiErrorCode.MEDIA_NOT_FOUND,
+          'An id names a file this record already has, and this record is being created. Send the upload keys.',
+          { details: [{ field, message: 'Use key on a create.' }], data: { ids } },
+        );
+      }
+
+      // visibility: media attached to the record the caller has already been allowed to edit.
+      kept = await this.database.media.findMany({
+        where: { id: { in: ids }, ownerType: owner.type, ownerId: owner.id },
+      });
+
+      if (kept.length !== ids.length) {
+        const found = new Set(kept.map(row => row.id));
+        const missing = ids.filter(id => !found.has(id));
+
+        throw ApiException.unprocessable(
+          ApiErrorCode.MEDIA_NOT_FOUND,
+          'One or more of the attached files could not be found. Please re-upload them.',
+          {
+            details: [{ field, message: `Not on this record: ${missing.slice(0, 5).join(', ')}` }],
+            data: { missing },
+          },
+        );
+      }
+    }
+
+    const keys = entries.filter(entry => !entry.id && entry.key).map(entry => entry.key!);
+    const fresh = keys.length ? await this.validate(keys, uploaderId, rules, field, kept) : [];
+    const byId = new Map(kept.map(row => [row.id, row]));
+    const byKey = new Map(fresh.map(row => [row.storageKey, row]));
+
+    const files = entries.map(entry => (entry.id ? byId.get(entry.id)! : byKey.get(entry.key!)!));
+    const roles = new Map(
+      files.map((file, index) => [
+        file.storageKey,
+        // A kept file with no role sent keeps the role it has. Defaulting it to SHOWCASE would
+        // quietly demote somebody's advert every time they reordered their photographs.
+        entries[index].role ?? (entries[index].id ? file.role : null) ?? MediaRole.SHOWCASE,
+      ]),
+    );
+
+    return {
+      files,
+      roles,
+      // Keyed by storage key rather than by what the client sent, so a poster can be sent for a
+      // video that is already here as well as for one arriving with it.
+      posters: await this.posters(
+        entries.map((entry, index) => ({
+          key: files[index].storageKey,
+          posterKey: entry.posterKey,
+        })),
+        files,
+        uploaderId,
+        field,
+      ),
+    };
+  }
+
+  /**
+   * Makes `files` the whole set attached to this record: what is in it stays or arrives, what is
+   * not is deleted.
+   *
+   * The pair this replaces — release everything, then attach what the client sent — destroyed the
+   * rows on every write, which is why a file already here could not be referenced on the next one.
+   */
+  async syncOwner(
+    tx: Prisma.TransactionClient,
+    ownerType: string,
+    ownerId: string,
+    files: Media[],
+    roles?: Map<string, MediaRole>,
+  ): Promise<void> {
+    await this.releaseOwner(
+      tx,
+      ownerType,
+      ownerId,
+      files.map(file => file.id),
+    );
+    await this.attach(tx, files, ownerType, ownerId, roles);
+  }
+
+  /**
+   * The same for the poster frames, which hang under their own owner type.
+   *
+   * A poster is kept when the video it is a frame of is kept and no new frame came with it. The
+   * release-everything version dropped the poster of a video that stayed, leaving the grey box the
+   * poster exists to prevent.
+   */
+  async syncPosters(
+    tx: Prisma.TransactionClient,
+    posterOwnerType: string,
+    ownerId: string,
+    posters: Map<string, Media>,
+    files: Media[],
+  ): Promise<void> {
+    const replaced = new Set(posters.keys());
+    const keepKeys = new Set(
+      files
+        .filter(file => file.thumbnailKey && !replaced.has(file.storageKey))
+        .map(file => file.thumbnailKey!),
+    );
+
+    const existing = await tx.media.findMany({
+      where: { ownerType: posterOwnerType, ownerId },
+      select: { id: true, storageKey: true },
+    });
+
+    await this.releaseOwner(
+      tx,
+      posterOwnerType,
+      ownerId,
+      existing.filter(row => keepKeys.has(row.storageKey)).map(row => row.id),
+    );
+    await this.attachPosters(tx, posters, posterOwnerType, ownerId, files);
   }
 
   /** Stamps the owner so the orphan sweeper leaves these alone. */
@@ -497,13 +731,30 @@ export class MediaService {
     return posters;
   }
 
-  /** Detaches and removes media when its owning resource is hard-deleted. */
-  async releaseOwner(tx: Prisma.TransactionClient, ownerType: string, ownerId: string) {
-    const going = await tx.media.findMany({ where: { ownerType, ownerId }, select: { id: true } });
-
-    await tx.media.deleteMany({ where: { ownerType, ownerId } });
+  /**
+   * Detaches and removes media when its owning resource is hard-deleted, or when an edit leaves it
+   * out of the set.
+   *
+   * `exceptIds` is what the edit kept: those rows stay where they are, so a photograph that was
+   * here before the edit and is still in the set afterwards is the same row, with the same id, and
+   * the client can name it again next time.
+   */
+  async releaseOwner(
+    tx: Prisma.TransactionClient,
+    ownerType: string,
+    ownerId: string,
+    exceptIds: string[] = [],
+  ) {
+    const where: Prisma.MediaWhereInput = {
+      ownerType,
+      ownerId,
+      ...(exceptIds.length ? { id: { notIn: exceptIds } } : {}),
+    };
+    const going = await tx.media.findMany({ where, select: { id: true } });
 
     if (!going.length) return;
+
+    await tx.media.deleteMany({ where: { id: { in: going.map(row => row.id) } } });
 
     // An image scanned in its own right (§6.1 — today an avatar) keeps its verdict in
     // `content_safety`, which is polymorphic and so has no foreign key to cascade through.

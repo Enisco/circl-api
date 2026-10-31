@@ -179,6 +179,29 @@ export class MentionDto {
   length: number;
 }
 
+/**
+ * Where a message came from, when that is not what the thread is about (5.0).
+ *
+ * The one case is Connect: two people have one conversation, and "this came from their Language
+ * Exchange profile" belongs on the message rather than on the thread. A long conversation may
+ * carry several tags and none of them splits it.
+ *
+ * Stored as sent and echoed back on the message, with no lookup — it is a label, not an
+ * authorisation, and a profile deleted a month later must not make an old message unreadable.
+ */
+export class MessageTagDto {
+  @ApiProperty({ enum: ThreadContextType, example: ThreadContextType.CONNECT_PROFILE })
+  @IsEnum(ThreadContextType)
+  kind: ThreadContextType;
+
+  @ApiProperty({ maxLength: 64 })
+  @Trim()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  id: string;
+}
+
 export class SendMessageDto {
   @ApiProperty({
     maxLength: 64,
@@ -268,6 +291,18 @@ export class SendMessageDto {
   @MaxLength(512, { each: true })
   attachmentKeys?: string[];
 
+  @ApiPropertyOptional({
+    type: MessageTagDto,
+    description:
+      'Where this message came from, when the thread is not about it — today, the Connect ' +
+      'profile the sender wrote from. Echoed back on the message in `GET /messages/:id/messages`. ' +
+      'It never changes which thread the message lands in.',
+  })
+  @ValidateNested()
+  @Type(() => MessageTagDto)
+  @IsOptional()
+  tag?: MessageTagDto;
+
   /** The same keys under the name an early client shipped: uploads only ever return a `key`. */
   @ApiPropertyOptional({
     type: [String],
@@ -338,6 +373,31 @@ export const KIND_FOR_CONTEXT: Record<ThreadContextType, ThreadKind> = {
 /** A thread about nothing in particular is the only DIRECT one. */
 export const kindForContext = (contextType: ThreadContextType | null): ThreadKind =>
   contextType ? KIND_FOR_CONTEXT[contextType] : ThreadKind.DIRECT;
+
+/**
+ * "Is there already a thread about this?", asked without creating one (5.3.5).
+ *
+ * The inbox answers it for the threads a device has loaded and cannot answer it past the first
+ * page, and `POST /messages` answers it by creating the thread — which is the wrong answer to a
+ * question. One read, 200 with the thread or 404 with nothing.
+ */
+export class FindThreadDto {
+  @ApiProperty({
+    enum: Object.keys(START_THREAD_CONTEXTS),
+    description: 'The same names `POST /messages` takes, aliases and all.',
+    example: 'OFFER',
+  })
+  @Trim()
+  @IsIn(Object.keys(START_THREAD_CONTEXTS))
+  contextType: keyof typeof START_THREAD_CONTEXTS;
+
+  @ApiProperty({ description: 'The subject id, as the record carries it.' })
+  @Trim()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  contextId: string;
+}
 
 export class ThreadContextDto {
   @ApiProperty({

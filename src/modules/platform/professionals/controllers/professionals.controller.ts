@@ -214,7 +214,12 @@ export class ProfessionalsController {
       'The category gate is applied **here** and not taken from the client: a gated category with ' +
       'no approved verification is `403 VERIFICATION_REQUIRED`, carrying the category in `data`. ' +
       'A **pending** verification is not a refusal — the service is created with ' +
-      '`status: PENDING_VERIFICATION` and is invisible to everybody but its owner.',
+      '`status: PENDING_VERIFICATION` and is invisible to everybody but its owner.\n\n' +
+      'Pricing is three decisions (SERVICE-PRICING). `pricingKind` is `FLAT` or `PACKAGES` and ' +
+      'the two are exclusive; `packages[]` is the whole set in the professional’s own order, with ' +
+      'no `id` on a create; and `consultationFeePence` is its own number, never folded into the ' +
+      'price. On a `PACKAGES` write the server **recomputes** `price` from the cheapest package, ' +
+      'so `pricePence` is a hint there and the authority on a `FLAT` one.',
   })
   async addService(
     @CurrentUserId() userId: string,
@@ -235,7 +240,14 @@ export class ProfessionalsController {
       'only the name, while `mediaKeys: []` clears the media. An edit that moves the service into ' +
       'a gated category is checked against *that* category.\n\n' +
       'An edit never rewrites what was already agreed: a booking copied the name, description and ' +
-      'price when it was made (2.9.2).',
+      'price when it was made (2.9.2).\n\n' +
+      '`packages` follows the same whole-set rule as `mediaKeys`: a package kept by `id` keeps ' +
+      'it, one left out is removed, `[]` clears the set and omitting the key leaves it alone. An ' +
+      '`id` that is not on this service is `422`, naming it in `data.unknown`, rather than being ' +
+      'ignored — ignoring it would remove a package the professional never touched. ' +
+      '`consultationFeePence` distinguishes three cases: a number sets the fee, an explicit ' +
+      '`null` removes it, and omitting the key leaves whatever is stored. Moving to ' +
+      '`pricingKind: FLAT` clears the packages.',
   })
   async updateService(
     @CurrentUserId() userId: string,

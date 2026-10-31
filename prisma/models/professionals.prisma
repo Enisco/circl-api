@@ -119,10 +119,34 @@ model ProfessionalService {
   /// Required on create, nullable on read: services written before v2 have none, and rendering one
   /// without a description is better than hiding somebody's live work (v2 §10).
   description String?    @map("description")
-  price       Int?       @map("price") // pence; null means "on request"
+  /**
+   * Pence; null means "on request".
+   *
+   * **The one number every surface quotes.** A card, a search row, a thread subject and a
+   * notification can each render one figure and none of them can render a list, so on a
+   * `PACKAGES` service this holds the **cheapest package's** price and is recomputed from the
+   * packages on every write — the client's own figure is a hint, never the authority. Price
+   * sorting and the `maxPricePence` filter read this column for the same reason: filtering on a
+   * stale flat rate would hide a service whose cheapest package is well inside the filter.
+   */
+  price       Int?       @map("price")
   priceBasis  PriceBasis @default(NEGOTIABLE) @map("price_basis")
   currency    String     @default("GBP") @map("currency")
   sort        Int        @default(0) @map("sort")
+
+  /// One number or several named packages, never both. `FLAT` for every service written before
+  /// packages existed, which is why the default is correct without a backfill.
+  pricingKind ServicePricingKind @default(FLAT) @map("pricing_kind")
+
+  /**
+   * What a first conversation costs, in pence, or null for "not charged for".
+   *
+   * **Not part of the price and not a package.** It is never folded into `price`, never becomes
+   * the cheapest package, and is never what a card quotes — a buyer reading one figure for two
+   * things is a buyer who has been misled. It is also kept out of every price filter and sort for
+   * the same reason.
+   */
+  consultationFeePence Int? @map("consultation_fee_pence")
 
   /// The category this service is sold under — **not** necessarily one of the listing's three
   /// profile categories (v2, decision 1). Backfilled from the listing's primary category for
@@ -147,6 +171,7 @@ model ProfessionalService {
   bookings   Booking[]
   updates    ServiceUpdate[]
   milestones ServiceMilestone[]
+  packages   ServicePackage[]
 
   // Never hard-deleted while a booking references it, or the booking loses its own subject (2.6.3).
 
@@ -198,6 +223,39 @@ model ServiceMilestone {
 
   @@index([serviceId, sort])
   @@map("service_milestones")
+}
+
+/**
+ * One named option on a service priced in packages: a name, a price, and a sentence.
+ *
+ * Its own table rather than JSON on the service, because `sort` is the professional's own ordering
+ * and has to be queryable, and because the cheapest package is read on every write to recompute
+ * the service's headline price.
+ *
+ * Deliberately **no** type enum, duration, availability or deliverables. There is no
+ * Bronze/Silver/Gold: the work decides what the tiers are, and a vocabulary we invented would be
+ * one professionals have to write around.
+ */
+model ServicePackage {
+  id        String              @id @default(uuid())
+  serviceId String              @map("service_id")
+  service   ProfessionalService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  name        String  @map("name")
+  /// Pence, greater than zero. A package carries no currency of its own — the service says.
+  pricePence  Int     @map("price_pence")
+  description String? @map("description")
+  /// The professional's own order, which is meaningful: they decide which option is read first.
+  /// Returned in it, and never sorted by price or by name on the way out.
+  sort        Int     @default(0) @map("sort")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  bookings Booking[]
+
+  @@index([serviceId, sort])
+  @@map("service_packages")
 }
 
 /// A coded skill on a listing (v2 §4.1). `TaxonomyKind.SKILL`.
@@ -470,12 +528,32 @@ model Booking {
   serviceId String?              @map("service_id")
   service   ProfessionalService? @relation(fields: [serviceId], references: [id])
 
+  /**
+   * Which package of that service was booked, where it is priced in packages.
+   *
+   * A reference beside a snapshot, exactly as `serviceId` sits beside `serviceName`: the id is for
+   * linkage and `packageName` is the record. `SetNull` rather than a cascade, because a package the
+   * professional later deletes must not take a booking with it — the name and the price stay, so
+   * what was agreed is still legible once the row it came from is gone.
+   */
+  packageId String?         @map("package_id")
+  package   ServicePackage? @relation(fields: [packageId], references: [id], onDelete: SetNull)
+
   briefId String?         @map("brief_id")
   brief   ServiceRequest? @relation(fields: [briefId], references: [id])
 
   // Copied from the service or the brief at creation.
   serviceName        String  @map("service_name")
   serviceDescription String? @map("service_description")
+  /// The chosen package's name, snapshotted. Null on a flat-rate service and on a brief.
+  packageName        String? @map("package_name")
+  /**
+   * What the two of them are talking about, in pence.
+   *
+   * The chosen package's price where one was named, the service's price otherwise. Not a sum
+   * anybody owes and not money Circl holds (D12) — but it has to be the figure the buyer actually
+   * pressed, or the booking contradicts the page it came from.
+   */
   quotedAmount       Int?    @map("quoted_amount")
   agreedAmount       Int?    @map("agreed_amount") // D12: a record, not financial data
   currency           String  @default("GBP") @map("currency")

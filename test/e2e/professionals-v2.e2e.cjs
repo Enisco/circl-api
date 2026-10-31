@@ -125,7 +125,12 @@ async function main() {
       limits.maxVideoSeconds === 60 &&
       limits.maxVideoBytes === 50 * 1024 * 1024 &&
       // The cap the client was holding its own copy of, until it was served (§8).
-      limits.maxServicesPerListing === 30,
+      limits.maxServicesPerListing === 30 &&
+      // The three the client asked us to either enforce or name (SERVICE-PRICING §2.2). Served,
+      // so both sides read one number and raising it needs no app release.
+      limits.maxServicePackages === 6 &&
+      limits.maxServicePackageName === 60 &&
+      limits.maxServicePackageDescription === 200,
     limits,
   );
 
@@ -233,8 +238,29 @@ async function main() {
   );
   check(
     'with the price in pence and the wording the server owns',
-    web?.price?.amount === 45000 && web?.priceLabel === 'Starts from £450',
+    web?.price?.amount === 45000 && web?.priceLabel === '£450',
     { price: web?.price, label: web?.priceLabel },
+  );
+  /**
+   * A flat rate is the price, not a floor.
+   *
+   * "Starts from £450" on a service with one price invites a buyer to expect it to climb, which
+   * is a promise about somebody else's fee that we have no business making. The wording belongs
+   * to the kind, and §7d below checks the other half of the rule.
+   */
+  check(
+    'and a flat service is FLAT, with no packages and no fee',
+    web?.pricingKind === 'FLAT' &&
+      web?.packages?.length === 0 &&
+      web?.packageCount === 0 &&
+      web?.consultationFeePence === null &&
+      web?.consultationFee === null,
+    {
+      kind: web?.pricingKind,
+      packages: web?.packages,
+      count: web?.packageCount,
+      fee: web?.consultationFeePence,
+    },
   );
   check(
     'its category and subcategory come back as code and label',
@@ -777,6 +803,793 @@ async function main() {
   res = await api(visitor.token, 'GET', `/professionals/services/${pending.id}`);
 
   check('and the gate publishes it again, unchanged', res.status === 200, res.status);
+
+  // ── 7d. Pricing: a flat rate, packages, and a consultation fee ────────────
+  /**
+   * SERVICE-PRICING, end to end.
+   *
+   * A service is priced **either** flat **or** in packages, never both, and the consultation fee
+   * is a third decision independent of the other two. The rule that carries the most weight is
+   * the one about the headline number: a card, a search row and a thread subject can each render
+   * one figure and none of them can render a list, so `price` on a packaged service is the
+   * cheapest package, **recomputed server-side on every write**. A client's own figure is a hint,
+   * because a package added or deleted from anywhere else makes it stale and a stale one has the
+   * card advertising a price the page does not offer.
+   */
+  heading('7d. one price or several, and a consultation that is neither');
+
+  const packaged = async (over = {}) =>
+    api(pro.token, 'POST', `/professionals/listings/${listingId}/services`, {
+      name: 'Brand photography day',
+      description:
+        'A full day on location, the edited photographs, and the licence to use them anywhere.',
+      categoryCode: 'TECH_SOFTWARE',
+      subcategoryCode: 'TECH_WEB',
+      pricingKind: 'PACKAGES',
+      packages: [
+        { name: 'Half day', pricePence: 45000, description: 'Four hours and twenty photographs.' },
+        { name: 'Full day', pricePence: 80000 },
+        { name: 'Two days', pricePence: 150000 },
+      ],
+      ...over,
+    });
+
+  res = await packaged();
+  const tiers = res.body?.data;
+
+  check('a service can be created priced in packages', res.status === 201, {
+    status: res.status,
+    error: res.body?.error,
+  });
+  check(
+    'and the three packages come back with ids, in the order they were sent',
+    tiers?.packages?.length === 3 &&
+      tiers.packages.every(entry => typeof entry.id === 'string' && entry.id.length > 0) &&
+      tiers.packages.map(entry => entry.name).join('|') === 'Half day|Full day|Two days',
+    tiers?.packages,
+  );
+  check(
+    'each carrying its price both ways, and its sentence where it has one',
+    tiers?.packages?.[0]?.pricePence === 45000 &&
+      tiers?.packages?.[0]?.price?.amount === 45000 &&
+      tiers?.packages?.[0]?.price?.currency === 'GBP' &&
+      tiers?.packages?.[0]?.description?.startsWith('Four hours') &&
+      tiers?.packages?.[1]?.description === null,
+    tiers?.packages,
+  );
+  /**
+   * The headline number, and the whole reason the server owns it.
+   *
+   * No `pricePence` was sent at all here — on a packaged write there is nothing for the client to
+   * send that we would not throw away.
+   */
+  check(
+    'the headline price is the cheapest package, worked out here',
+    tiers?.price?.amount === 45000 && tiers?.packageCount === 3,
+    { price: tiers?.price, count: tiers?.packageCount },
+  );
+  check(
+    'and the wording is a floor, because the figure is the cheapest of several',
+    tiers?.priceLabel === 'Starts from £450' && tiers?.pricingKind === 'PACKAGES',
+    { label: tiers?.priceLabel, kind: tiers?.pricingKind },
+  );
+
+  // ── The client's own number is a hint, and only that ──
+  res = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/services/${tiers.id}`, {
+    pricingKind: 'PACKAGES',
+    pricePence: 1,
+    packages: tiers.packages.map(entry => ({
+      id: entry.id,
+      name: entry.name,
+      pricePence: entry.pricePence,
+      description: entry.description ?? undefined,
+    })),
+  });
+
+  check(
+    'a pricePence the client insists on is ignored on a packaged write',
+    res.status === 200 && res.body?.data?.price?.amount === 45000,
+    { status: res.status, price: res.body?.data?.price, error: res.body?.error },
+  );
+  check(
+    'and every package kept its id, so a link somebody already sent still resolves',
+    (res.body?.data?.packages ?? []).map(entry => entry.id).join('|') ===
+      tiers.packages.map(entry => entry.id).join('|'),
+    {
+      before: tiers.packages.map(entry => entry.id),
+      after: (res.body?.data?.packages ?? []).map(entry => entry.id),
+    },
+  );
+
+  // ── The whole set, in the professional's own order ──
+  const kept = res.body?.data?.packages ?? [];
+
+  res = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/services/${tiers.id}`, {
+    packages: [
+      // The dearest first, which is the professional's decision about what is read first.
+      { id: kept[2].id, name: 'Two days', pricePence: 150000 },
+      { id: kept[1].id, name: 'A full day on location', pricePence: 90000 },
+      { name: 'An hour, for a headshot', pricePence: 12000 },
+      // kept[0], the half day, is left out — which removes it.
+    ],
+  });
+  const reordered = res.body?.data;
+
+  check(
+    'the array is the whole set: left out is removed, and a new one needs no id',
+    res.status === 200 &&
+      reordered?.packages?.length === 3 &&
+      !reordered.packages.some(entry => entry.id === kept[0].id) &&
+      reordered.packages.some(entry => entry.name === 'An hour, for a headshot'),
+    { status: res.status, packages: reordered?.packages, error: res.body?.error },
+  );
+  /**
+   * Returned in the order sent, not sorted.
+   *
+   * Sorting by price would be the obvious thing and the wrong one: the professional decides which
+   * option is read first, and a list silently rearranged is one they have no way to explain.
+   */
+  check(
+    'and in the order they arranged it, dearest first, not sorted by price',
+    reordered?.packages?.map(entry => entry.pricePence).join(',') === '150000,90000,12000',
+    reordered?.packages?.map(entry => [entry.name, entry.pricePence]),
+  );
+  check(
+    'a rename and a re-price on a kept package land on the same row',
+    reordered?.packages?.[1]?.id === kept[1].id &&
+      reordered?.packages?.[1]?.name === 'A full day on location' &&
+      reordered?.packages?.[1]?.pricePence === 90000,
+    reordered?.packages?.[1],
+  );
+  check(
+    'and the headline price followed the cheapest package down',
+    reordered?.price?.amount === 12000 && reordered?.priceLabel === 'Starts from £120',
+    { price: reordered?.price, label: reordered?.priceLabel },
+  );
+
+  // ── Refusals ──
+  res = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/services/${tiers.id}`, {
+    packages: [
+      { id: kept[0].id, name: 'The one that was removed', pricePence: 10000 },
+      { id: reordered.packages[0].id, name: 'Two days', pricePence: 150000 },
+    ],
+  });
+
+  /**
+   * Refused, not ignored.
+   *
+   * An id this service does not hold means the client is working from a stale read. Applying the
+   * rest of the set and dropping the unknown entry would remove a package the professional never
+   * touched, which is the one outcome that must not happen.
+   */
+  check(
+    'an id this service does not have is 422, naming it',
+    res.status === 422 && (res.body?.data?.unknown ?? []).includes(kept[0].id),
+    { status: res.status, code: res.body?.error?.code, data: res.body?.data },
+  );
+
+  res = await api(pro.token, 'GET', `/professionals/services/${tiers.id}`);
+
+  check(
+    'and the refused write changed nothing at all',
+    res.body?.data?.packages?.length === 3 &&
+      res.body?.data?.packages?.map(entry => entry.pricePence).join(',') === '150000,90000,12000',
+    res.body?.data?.packages?.map(entry => [entry.name, entry.pricePence]),
+  );
+
+  res = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/services/${tiers.id}`, {
+    pricingKind: 'PACKAGES',
+    packages: [],
+  });
+
+  check('priced in packages with none written is refused', res.status === 422, {
+    status: res.status,
+    message: res.body?.error?.message,
+  });
+
+  res = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/services/${tiers.id}`, {
+    pricingKind: 'FLAT',
+    pricePence: 50000,
+    packages: [{ name: 'Both at once', pricePence: 10000 }],
+  });
+
+  check(
+    'and so is a flat rate sent beside a package list: a page cannot show both',
+    res.status === 422,
+    { status: res.status, message: res.body?.error?.message },
+  );
+
+  const flatOne = await api(
+    pro.token,
+    'POST',
+    `/professionals/listings/${listingId}/services`,
+    serviceBody({ name: 'A flat service that is sent packages' }),
+  );
+
+  res = await api(
+    pro.token,
+    'PATCH',
+    `/professionals/listings/${listingId}/services/${flatOne.body?.data?.id}`,
+    { packages: [{ name: 'Smuggled in', pricePence: 10000 }] },
+  );
+
+  /**
+   * The same refusal, reached the other way.
+   *
+   * Packages sent to a flat service without saying the kind has changed would otherwise store a
+   * service whose `pricingKind` is `FLAT`, whose price is the flat rate, and which nonetheless
+   * reports three packages. A client reads that as a page with two prices on it.
+   */
+  check(
+    'packages sent to a flat service without naming the kind are refused too',
+    res.status === 422,
+    { status: res.status, message: res.body?.error?.message },
+  );
+
+  await prisma.professionalService.deleteMany({ where: { id: flatOne.body?.data?.id } });
+
+  res = await packaged({
+    name: 'A service that names a package it cannot have',
+    packages: [{ id: kept[1].id, name: 'Full day', pricePence: 80000 }],
+  });
+
+  check(
+    'an id on a create names nothing, so it is refused there too',
+    res.status === 422 && (res.body?.data?.ids ?? []).includes(kept[1].id),
+    { status: res.status, data: res.body?.data },
+  );
+
+  res = await packaged({
+    name: 'Seven packages',
+    packages: Array.from({ length: 7 }, (_, index) => ({
+      name: `Option ${index + 1}`,
+      pricePence: 10000 * (index + 1),
+    })),
+  });
+
+  check(
+    'seven packages is one too many, and the cap is the server’s to hold',
+    res.status === 400 || res.status === 422,
+    { status: res.status, message: res.body?.error?.message },
+  );
+
+  res = await packaged({
+    name: 'A package with no name',
+    packages: [{ name: '', pricePence: 10000 }],
+  });
+
+  check('a package with no name is refused', res.status === 400 || res.status === 422, res.status);
+
+  res = await packaged({
+    name: 'A free package',
+    packages: [{ name: 'Nothing at all', pricePence: 0 }],
+  });
+
+  check('and one priced at zero is refused', res.status === 400 || res.status === 422, res.status);
+
+  res = await packaged({
+    name: 'A package named at length',
+    packages: [{ name: 'x'.repeat(61), pricePence: 10000 }],
+  });
+
+  /**
+   * The other two caps the client asked us to hold (SERVICE-PRICING §2.2).
+   *
+   * They are also *served*, as `maxServicePackageName` and `maxServicePackageDescription`, so the
+   * form and the write read one number — a limit only the client holds is one somebody gets past
+   * with a replayed request, and one only the server holds is a refusal at save.
+   */
+  check(
+    'a package name over sixty characters is refused',
+    res.status === 400 || res.status === 422,
+    {
+      status: res.status,
+      message: res.body?.error?.message,
+    },
+  );
+
+  res = await packaged({
+    name: 'A package described at length',
+    packages: [{ name: 'Fine', pricePence: 10000, description: 'y'.repeat(201) }],
+  });
+
+  check('and a description over two hundred', res.status === 400 || res.status === 422, {
+    status: res.status,
+    message: res.body?.error?.message,
+  });
+
+  res = await packaged({
+    name: 'A package right on both limits',
+    packages: [{ name: 'z'.repeat(60), pricePence: 10000, description: 'w'.repeat(200) }],
+  });
+
+  // The boundary itself is allowed, or the served number would be a character out and every form
+  // built against it would refuse a name the member was told they could use.
+  check('while exactly sixty and exactly two hundred are allowed', res.status === 201, {
+    status: res.status,
+    error: res.body?.error,
+  });
+
+  await prisma.professionalService.deleteMany({ where: { id: res.body?.data?.id } });
+
+  // ── The consultation fee: a third decision, and not part of the price ─────
+  res = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/services/${tiers.id}`, {
+    consultationFeePence: 4000,
+  });
+
+  check(
+    'a consultation fee is set on its own, with the packages untouched',
+    res.status === 200 &&
+      res.body?.data?.consultationFeePence === 4000 &&
+      res.body?.data?.consultationFee?.amount === 4000 &&
+      res.body?.data?.packages?.length === 3,
+    {
+      status: res.status,
+      fee: res.body?.data?.consultationFeePence,
+      packages: res.body?.data?.packages?.length,
+      error: res.body?.error,
+    },
+  );
+  /**
+   * Never folded in, and never the cheapest package.
+   *
+   * £40 is less than the £120 hour, so a fee that leaked into the pricing would have taken the
+   * headline figure down with it. A buyer reading one number for two things has been misled.
+   */
+  check(
+    'and the price is still the cheapest package, not the fee',
+    res.body?.data?.price?.amount === 12000 && res.body?.data?.priceLabel === 'Starts from £120',
+    { price: res.body?.data?.price, label: res.body?.data?.priceLabel },
+  );
+
+  res = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/services/${tiers.id}`, {
+    name: 'Brand photography',
+  });
+
+  check(
+    'an edit that does not mention the fee leaves it alone',
+    res.status === 200 && res.body?.data?.consultationFeePence === 4000,
+    { status: res.status, fee: res.body?.data?.consultationFeePence },
+  );
+
+  res = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/services/${tiers.id}`, {
+    consultationFeePence: null,
+  });
+
+  /**
+   * An explicit null is a different claim from a £0 fee, and from an absent key.
+   *
+   * `null` is "this professional does not charge for a first conversation", which is not the same
+   * as free — and `enableImplicitConversion` would have turned it into `0`, a fee the page would
+   * print. `NullableNumber` in the DTO is what keeps the two apart.
+   */
+  check(
+    'an explicit null removes the fee rather than setting it to nothing',
+    res.status === 200 &&
+      res.body?.data?.consultationFeePence === null &&
+      res.body?.data?.consultationFee === null,
+    { status: res.status, fee: res.body?.data?.consultationFeePence, error: res.body?.error },
+  );
+
+  res = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/services/${tiers.id}`, {
+    consultationFeePence: 0,
+  });
+
+  check(
+    'while a fee of nothing is refused: send null to mean no fee',
+    res.status === 400 || res.status === 422,
+    { status: res.status, message: res.body?.error?.message },
+  );
+
+  // ── The price filter reads the recomputed number ──
+  res = await api(visitor.token, 'GET', '/professionals/services?maxPricePence=20000');
+
+  check(
+    'a price filter finds a packaged service by its cheapest package',
+    (res.body?.data ?? []).some(row => row.id === tiers.id),
+    {
+      ids: (res.body?.data ?? []).map(row => [row.name, row.price?.amount]),
+    },
+  );
+
+  // ── A card does not print a price list ───────────────────────────────────
+  res = await api(visitor.token, 'GET', `/professionals/${listingId}`);
+  const card = (res.body?.data?.services ?? []).find(row => row.id === tiers.id);
+
+  check(
+    'a profile card says how many packages there are rather than listing them',
+    card?.pricingKind === 'PACKAGES' &&
+      card?.packageCount === 3 &&
+      card?.price?.amount === 12000 &&
+      card?.consultationFeePence === null,
+    card,
+  );
+
+  res = await api(pro.token, 'GET', '/professionals/me');
+  const mine = (res.body?.data?.services ?? []).find(row => row.id === tiers.id);
+
+  /**
+   * The editor's own payload, which has to be the whole service.
+   *
+   * The editor opens on what `me` hands it and the first save writes that back, so a trimmed
+   * payload here is a save that silently drops the packages it was never told about.
+   */
+  check(
+    'while the owner’s own panel carries the packages in full, for the editor to open on',
+    mine?.packages?.length === 3 &&
+      mine.packages.map(entry => entry.pricePence).join(',') === '150000,90000,12000',
+    mine?.packages,
+  );
+
+  // ── The thread strip about a packaged service ───────────────────────
+  res = await api(visitor.token, 'POST', '/messages', {
+    context: { kind: 'SERVICE', id: tiers.id },
+  });
+
+  /**
+   * The strip is a record, and a record that says £120 for a service whose options run to £1,500
+   * is a wrong one.
+   *
+   * It stores the service's own price, which on a packaged service is the cheapest package — the
+   * only number a one-line strip can hold. "From" is the honest word for it. A flat service's
+   * strip is unchanged and still reads the figure alone, which `section-workflows` holds.
+   */
+  check(
+    'a thread about a packaged service says the figure is a floor',
+    res.status === 201 && res.body?.data?.context?.trailing === 'From £120.00',
+    { status: res.status, context: res.body?.data?.context, error: res.body?.error },
+  );
+
+  await prisma.conversation.deleteMany({ where: { contextId: tiers.id } });
+
+  // ── The older bulk save, which would otherwise destroy the price list ────
+  res = await api(pro.token, 'PUT', `/professionals/listings/${listingId}/services`, {
+    services: [
+      {
+        name: 'Everything, one price',
+        description: 'A bulk save from an old build.',
+        price: 50000,
+      },
+    ],
+  });
+
+  /**
+   * Refused, because this route deletes the rows and writes new ones.
+   *
+   * Its body cannot carry packages, so letting it through would hand the professional back
+   * flat-rate services with new ids and no price list — silently, and with nothing to recover it
+   * from. Stranding one screen on an old build is the better failure, and §10's rule about not
+   * stranding older clients does not extend to letting one destroy data it cannot see.
+   */
+  check(
+    'the older bulk save is refused while a service is priced in packages',
+    res.status === 422 && res.body?.data?.packagedServices >= 1,
+    { status: res.status, data: res.body?.data, message: res.body?.error?.message },
+  );
+
+  res = await api(pro.token, 'GET', `/professionals/services/${tiers.id}`);
+
+  check(
+    'and the packages it could not save are all still there',
+    res.body?.data?.packages?.length === 3,
+    res.body?.data?.packages?.map(entry => entry.name),
+  );
+
+  // ── Back to a flat rate ──────────────────────────────────────────────────
+  res = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/services/${tiers.id}`, {
+    pricingKind: 'FLAT',
+    pricePence: 60000,
+    packages: [],
+  });
+
+  check(
+    'moving back to a flat rate clears the packages and takes the price given',
+    res.status === 200 &&
+      res.body?.data?.pricingKind === 'FLAT' &&
+      res.body?.data?.packages?.length === 0 &&
+      res.body?.data?.packageCount === 0 &&
+      res.body?.data?.price?.amount === 60000,
+    {
+      status: res.status,
+      kind: res.body?.data?.pricingKind,
+      packages: res.body?.data?.packages,
+      price: res.body?.data?.price,
+      error: res.body?.error,
+    },
+  );
+  /**
+   * The wording has to move with the kind.
+   *
+   * This is the failure SERVICE-PRICING §3 is about, in reverse: a service that was packaged at
+   * £120 now priced flat at £600 must not still read "Starts from", and one that moves the other
+   * way must not read as a fixed price.
+   */
+  check(
+    'and the wording stops being a floor the moment the kind changes',
+    res.body?.data?.priceLabel === '£600',
+    res.body?.data?.priceLabel,
+  );
+
+  res = await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/services/${tiers.id}`, {
+    pricingKind: 'FLAT',
+    name: 'Brand photography, one price',
+  });
+
+  /**
+   * The app sends `pricingKind` on **every** write, so this is the shape of most of them.
+   *
+   * A flat kind arriving with no price must not read as "clear the price": absent is not empty
+   * here as everywhere else, and the first version of this read it the other way and would have
+   * wiped the rate off any service whose owner was editing its name.
+   */
+  check(
+    'a flat write that mentions no price leaves the price alone',
+    res.status === 200 && res.body?.data?.price?.amount === 60000,
+    { status: res.status, price: res.body?.data?.price, error: res.body?.error },
+  );
+
+  // ── A create that sets the fee, and a move to flat that names no price ────
+  res = await api(pro.token, 'POST', `/professionals/listings/${listingId}/services`, {
+    name: 'A consultation charged for from the start',
+    description: 'Checking that a fee can be set on the create rather than only on a later edit.',
+    categoryCode: 'TECH_SOFTWARE',
+    subcategoryCode: 'TECH_WEB',
+    pricePence: 30000,
+    consultationFeePence: 2500,
+  });
+  const charged = res.body?.data;
+
+  check(
+    'a consultation fee can be set on the create, not only on an edit',
+    res.status === 201 &&
+      charged?.consultationFeePence === 2500 &&
+      charged?.consultationFee?.amount === 2500 &&
+      charged?.price?.amount === 30000,
+    {
+      status: res.status,
+      fee: charged?.consultationFeePence,
+      price: charged?.price,
+      error: res.body?.error,
+    },
+  );
+
+  const chargedPath = `/professionals/listings/${listingId}/services/${charged.id}`;
+
+  res = await api(pro.token, 'PATCH', chargedPath, {
+    pricingKind: 'PACKAGES',
+    packages: [
+      { name: 'The cheap one', pricePence: 11000 },
+      { name: 'The dear one', pricePence: 90000 },
+    ],
+  });
+
+  check(
+    'a flat service moves to packages, and the price becomes the cheapest',
+    res.status === 200 && res.body?.data?.price?.amount === 11000,
+    { status: res.status, price: res.body?.data?.price, error: res.body?.error },
+  );
+
+  res = await api(pro.token, 'PATCH', chargedPath, {
+    pricingKind: 'FLAT',
+    packages: [],
+  });
+
+  /**
+   * A move back to flat that names no price keeps the number the page was last showing.
+   *
+   * The alternative is nulling it, which would quietly turn a priced service into an "on request"
+   * one. Carrying the last figure over is the smaller surprise: the cheapest package is what the
+   * card was quoting a moment ago, so that is what the flat rate becomes until somebody edits it.
+   */
+  check(
+    'and a move back to flat with no price keeps the figure the card was quoting',
+    res.status === 200 &&
+      res.body?.data?.pricingKind === 'FLAT' &&
+      res.body?.data?.price?.amount === 11000 &&
+      res.body?.data?.priceLabel === '£110' &&
+      res.body?.data?.packageCount === 0,
+    {
+      status: res.status,
+      kind: res.body?.data?.pricingKind,
+      price: res.body?.data?.price,
+      label: res.body?.data?.priceLabel,
+      error: res.body?.error,
+    },
+  );
+  check(
+    'with the consultation fee untouched throughout: it is a separate decision',
+    res.body?.data?.consultationFeePence === 2500,
+    res.body?.data?.consultationFeePence,
+  );
+
+  await prisma.professionalService.deleteMany({ where: { id: charged.id } });
+
+  await prisma.professionalService.deleteMany({ where: { id: tiers.id } });
+
+  // ── 7e. Booking one package rather than the cheapest ──────────────────────
+  /**
+   * The figure a booking quotes has to be the one the buyer pressed.
+   *
+   * A service's stored price is its **cheapest** package, because that is the one number a card
+   * can render. It is the wrong number for a booking: somebody who chose "Two days, £1,500" must
+   * not be sent a booking that says £450, and neither must the professional. So the booking body
+   * takes an optional `packageId`, and the name travels with the price as a snapshot — a record
+   * that stays legible after the professional deletes the option it came from.
+   */
+  heading('7e. a booking quotes the package the buyer chose');
+
+  res = await api(pro.token, 'POST', `/professionals/listings/${listingId}/services`, {
+    name: 'Wedding photography',
+    description: 'Coverage of the day, the edited photographs, and an album you can hold.',
+    categoryCode: 'TECH_SOFTWARE',
+    subcategoryCode: 'TECH_WEB',
+    pricingKind: 'PACKAGES',
+    packages: [
+      { name: 'Half day', pricePence: 45000 },
+      { name: 'Two days', pricePence: 150000, description: 'The day before as well.' },
+    ],
+  });
+  const wedding = res.body?.data;
+  const twoDays = wedding?.packages?.find(entry => entry.name === 'Two days');
+
+  check(
+    'a packaged service to book, whose headline price is the cheaper option',
+    res.status === 201 && wedding?.price?.amount === 45000 && !!twoDays?.id,
+    {
+      status: res.status,
+      price: wedding?.price,
+      packages: wedding?.packages,
+      error: res.body?.error,
+    },
+  );
+
+  res = await api(visitor.token, 'POST', '/bookings', {
+    listingId,
+    serviceId: wedding.id,
+    packageId: twoDays.id,
+  });
+  const booked = res.body?.data;
+
+  check('a booking names the package it is for', res.status === 201, {
+    status: res.status,
+    error: res.body?.error,
+  });
+  check('and quotes that package, not the cheapest one', booked?.quotedAmount?.amount === 150000, {
+    quoted: booked?.quotedAmount,
+    error: res.body?.error,
+  });
+  check(
+    'with the option recorded beside the service, both readable',
+    booked?.serviceName === 'Wedding photography' &&
+      booked?.package?.name === 'Two days' &&
+      booked?.package?.id === twoDays.id,
+    { serviceName: booked?.serviceName, package: booked?.package },
+  );
+
+  res = await api(visitor.token, 'GET', '/bookings?role=CLIENT');
+  const row = (res.body?.data ?? []).find(entry => entry.id === booked?.id);
+
+  check(
+    'a list row carries the option too, so the client need not open it to see which',
+    row?.packageName === 'Two days',
+    row,
+  );
+
+  /**
+   * A row has to carry a figure, and `agreedAmount` is not one.
+   *
+   * `agreedAmount` is optional on the create body, written once and never revised — so it is null
+   * on every booking the app makes without asking the member to type a number. The row used to
+   * carry only that, which left a packaged booking showing no price at all on the one screen a
+   * client opens first. Both travel now, and `agreedAmount ?? quotedAmount` answers "the number
+   * for this booking" on the row and the detail alike (SERVICE-PRICING-REPLY §3.1).
+   */
+  check(
+    'and the figure it was booked at, which is the package price',
+    row?.quotedAmount?.amount === 150000,
+    { quoted: row?.quotedAmount, agreed: row?.agreedAmount },
+  );
+  check(
+    'while agreedAmount stays null: nobody typed one, so there is nothing to report',
+    row?.agreedAmount === null,
+    row?.agreedAmount,
+  );
+
+  /**
+   * The thread strip is what both of them read for the life of the booking.
+   *
+   * "Wedding photography" alone is ambiguous on a service with two options, and the strip is the
+   * one line neither party can expand.
+   */
+  res = await api(visitor.token, 'GET', `/messages/${booked?.conversationId}`);
+
+  check(
+    'and the thread strip names the option, with that package’s price',
+    res.body?.data?.context?.title === 'Wedding photography — Two days' &&
+      res.body?.data?.context?.trailing === '£1500.00',
+    res.body?.data?.context,
+  );
+
+  // ── Refusals ──
+  res = await api(visitor.token, 'POST', '/bookings', {
+    listingId,
+    serviceId: wedding.id,
+    packageId: '00000000-0000-4000-8000-000000000000',
+  });
+
+  /**
+   * Refused rather than quietly booking the cheapest.
+   *
+   * An id that is not on this service means the professional removed that option since the page
+   * loaded. Falling back to the service's own price would book somebody onto a figure they never
+   * saw, which is worse than making them look at the options again — so the refusal hands back
+   * the ones that do exist.
+   */
+  check(
+    'a package that is not on the service is 422, with the options that are',
+    res.status === 422 &&
+      (res.body?.data?.available ?? []).some(entry => entry.name === 'Two days'),
+    { status: res.status, data: res.body?.data },
+  );
+
+  res = await api(visitor.token, 'POST', '/bookings', {
+    listingId,
+    serviceId: web.id,
+    packageId: twoDays.id,
+  });
+
+  check('a package on a flat-rate service names nothing, so it is refused', res.status === 422, {
+    status: res.status,
+    message: res.body?.error?.message,
+  });
+
+  res = await api(visitor.token, 'POST', '/bookings', { listingId, packageId: twoDays.id });
+
+  check('and a package with no service is refused: a package belongs to one', res.status === 422, {
+    status: res.status,
+    message: res.body?.error?.message,
+  });
+
+  res = await api(visitor.token, 'POST', '/bookings', { listingId, serviceId: wedding.id });
+  const unpackaged = res.body?.data;
+
+  check(
+    'booking a packaged service without choosing still works, at the cheapest',
+    res.status === 201 &&
+      unpackaged?.quotedAmount?.amount === 45000 &&
+      unpackaged?.package === null,
+    { status: res.status, quoted: unpackaged?.quotedAmount, package: unpackaged?.package },
+  );
+
+  /**
+   * The snapshot outlives the row it came from.
+   *
+   * The professional removing an option must not take a booking's record with it — the id goes,
+   * because it no longer names anything, and the name and the price stay, because what the two of
+   * them agreed is still what they agreed.
+   */
+  await api(pro.token, 'PATCH', `/professionals/listings/${listingId}/services/${wedding.id}`, {
+    packages: [
+      {
+        id: wedding.packages.find(entry => entry.name === 'Half day').id,
+        name: 'Half day',
+        pricePence: 45000,
+      },
+    ],
+  });
+
+  res = await api(visitor.token, 'GET', `/bookings/${booked?.id}`);
+
+  check(
+    'deleting the booked package leaves the booking legible: the name and price survive',
+    res.body?.data?.package?.name === 'Two days' &&
+      res.body?.data?.package?.id === null &&
+      res.body?.data?.quotedAmount?.amount === 150000,
+    { package: res.body?.data?.package, quoted: res.body?.data?.quotedAmount },
+  );
+
+  await prisma.booking.deleteMany({ where: { id: { in: [booked?.id, unpackaged?.id] } } });
+  await prisma.professionalService.deleteMany({ where: { id: wedding.id } });
 
   // ── 8. Revoking, and what it takes down ───────────────────────────────────
   heading('8. a revocation suspends every service in the category');

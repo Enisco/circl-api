@@ -10,6 +10,7 @@ import {
   Prisma,
   RequestStatus,
   ReviewContext,
+  ServicePricingKind,
   TaxonomyKind,
   ThreadContextType,
   ThreadKind,
@@ -41,6 +42,26 @@ const priceLabel = (pence: number | null, currency: string): string | null => {
   const symbol = currency === 'GBP' ? '£' : `${currency} `;
 
   return `${symbol}${(pence / 100).toFixed(2)}`;
+};
+
+/**
+ * The same, for a service, where the figure may be a **floor** rather than a price.
+ *
+ * A service priced in packages stores its cheapest package's price, because that is the one number
+ * a strip can render. Printing it bare would have the strip assert £450 for a service whose
+ * options run to £1,500 — the same mistake `priceLabel` on the service payload used to make, in a
+ * different place. "From" is the honest word for a number that is the smallest of several.
+ */
+const servicePriceLabel = (
+  pence: number | null,
+  currency: string,
+  kind: ServicePricingKind,
+): string | null => {
+  const label = priceLabel(pence, currency);
+
+  if (label === null) return null;
+
+  return kind === ServicePricingKind.PACKAGES ? `From ${label}` : label;
 };
 
 /** What a thread's subject contributes: the other party, the uniqueness key, and the pinned strip. */
@@ -456,6 +477,8 @@ export class ConversationService {
       contextType: subject?.contextType ?? null,
       contextId: subject?.contextId ?? null,
       snapshot: subject?.snapshot ?? null,
+      // Two people have one Connect conversation, whichever of their profiles it was opened from.
+      anyContextId: subject?.contextType === ThreadContextType.CONNECT_PROFILE,
     });
 
     const full = await this.database.conversation.findUniqueOrThrow({
@@ -464,6 +487,37 @@ export class ConversationService {
     });
 
     return { conversation: this.toRow(full, userId, null), created };
+  }
+
+  /**
+   * The thread about this subject, if there is one — without opening one (5.3.5).
+   *
+   * `POST /messages` is safe to call twice and still the wrong thing to ask with: a client that
+   * wants to know whether a conversation exists would be creating it to find out, and before this
+   * the only alternative was reading the inbox and hoping the thread was on the first page.
+   *
+   * Scoped to the caller's own threads, so this cannot be used to discover who is talking to whom.
+   * A Connect profile is deliberately not a useful subject here — two people have one Connect
+   * conversation whatever profile it was opened from, so `POST /messages` is the call that finds
+   * it.
+   */
+  async findByContext(userId: string, kind: keyof typeof START_THREAD_CONTEXTS, contextId: string) {
+    // visibility: the caller's own threads only.
+    const conversation = await this.database.conversation.findFirst({
+      where: {
+        contextType: START_THREAD_CONTEXTS[kind],
+        contextId,
+        participants: { some: { userId } },
+      },
+      orderBy: [{ lastMessageAt: 'desc' }, { createdAt: 'desc' }],
+      include: conversationInclude,
+    });
+
+    if (!conversation) {
+      throw ApiException.notFound('There is no thread about that yet.');
+    }
+
+    return this.toRow(conversation, userId, null);
   }
 
   // ─── 5.3.6 Thread actions ──────────────────────────────────────────────────
@@ -629,6 +683,7 @@ export class ConversationService {
           name: true,
           price: true,
           currency: true,
+          pricingKind: true,
           listing: {
             select: {
               id: true,
@@ -653,11 +708,21 @@ export class ConversationService {
         snapshot: {
           title: service.name,
           subtitle: name || service.listing.professionTitle,
-          // The price as listed the day the thread opened. This one snapshot field is a record
-          // rather than a cache: what the strip says must not change because the price list was
-          // edited a fortnight later. `route` still resolves the live listing.
-          trailing: priceLabel(service.price, service.currency),
-          route: `/professionals/profile/${service.listing.id}`,
+          // The price as listed the day the thread opened, and "From …" where that figure is the
+          // cheapest of several packages rather than the price. This one snapshot field is a
+          // record rather than a cache: what the strip says must not change because the price
+          // list was edited a fortnight later.
+          trailing: servicePriceLabel(service.price, service.currency, service.pricingKind),
+          /**
+           * The **service**, not the professional who offers it.
+           *
+           * It pointed at the listing because the listing is what a service thread is ultimately
+           * about, which was the wrong unit: tapping the strip on a thread about one service of
+           * somebody who offers six opened the professional and left the member to find the
+           * service again. The service's own id is the context id, so this needs nothing the
+           * fallback does not already have — see `routeFor`.
+           */
+          route: `/professionals/service/${service.id}`,
         },
       };
     }
@@ -1231,6 +1296,26 @@ export class ConversationService {
         return `/commerce/orders/${conversation.contextId}`;
       case ThreadContextType.STORE:
         return `/commerce/store/${conversation.contextId}`;
+      case ThreadContextType.SERVICE:
+        return `/professionals/service/${conversation.contextId}`;
+      /**
+       * The thread Circl opens when a professional takes on a service request.
+       *
+       * Its snapshot carries a title and a subtitle and no route, so the card above the
+       * conversation read as a link and did nothing when it was pressed. The path is not a guess:
+       * it is the one the outcome notification about the same record already sends
+       * (`admin-service-request.service.ts`), so the strip and the notification now open the same
+       * screen.
+       */
+      case ThreadContextType.SERVICE_REQUEST:
+        return `/service-requests/${conversation.contextId}`;
+      /**
+       * The rest have no route on purpose, rather than by omission.
+       *
+       * `SUPPORT`, `BRIEF`, `MANAGED_REQUEST` and `DISPUTE` are not records with a member-facing
+       * screen of their own: the thread *is* the thing, and a strip linking out of it would link
+       * back to itself or to nothing.
+       */
       default:
         return null;
     }

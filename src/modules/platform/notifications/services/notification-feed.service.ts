@@ -56,6 +56,16 @@ interface PushableNotification extends RaiseNotificationInput {
   notificationId: string;
 }
 
+/**
+ * Whether a decision went the member's way.
+ *
+ * A verification result arrives as `kind: MODERATION` whether it approved or refused, and the two
+ * read identically — "You are verified for Legal", the good news somebody waited days for, drawn
+ * with the same red warning icon as a refusal. The app was telling them apart by matching our own
+ * title templates, which a copy edit or a second language silently breaks.
+ */
+export type NotificationOutcome = 'APPROVED' | 'REJECTED';
+
 /** What a section hands over when something happens worth telling somebody about. */
 export interface RaiseNotificationInput {
   userId: string;
@@ -67,6 +77,8 @@ export interface RaiseNotificationInput {
   route?: string | null;
   /** Set it wherever there is one. Leaving it to each caller's metadata is how they drifted. */
   target?: NotificationTarget | null;
+  /** Set on a row that reports a decision. Absent everywhere else, where there is nothing to report. */
+  outcome?: NotificationOutcome | null;
   actorId?: string | null;
   metadata?: Record<string, unknown>;
   /** Collapses repeats onto one unread row: fifty likes is one notification that says fifty. */
@@ -209,6 +221,7 @@ export class NotificationFeedService {
             metadata: toJsonOrUndefined({
               ...input.metadata,
               ...(input.target ? { target: input.target } : {}),
+              ...(input.outcome ? { outcome: input.outcome } : {}),
               ...(input.isActorAnonymous ? { isActorAnonymous: true } : {}),
               collapseKey: input.collapseKey,
               count,
@@ -232,6 +245,7 @@ export class NotificationFeedService {
         metadata: toJsonOrUndefined({
           ...input.metadata,
           ...(input.target ? { target: input.target } : {}),
+          ...(input.outcome ? { outcome: input.outcome } : {}),
           // Stored rather than derived on read: what was anonymous when it happened stays
           // anonymous, even if the post is later edited or the rule changes.
           ...(input.isActorAnonymous ? { isActorAnonymous: true } : {}),
@@ -347,6 +361,10 @@ export class NotificationFeedService {
         // The structured companion to `route`. Null on a row that goes nowhere, such as an
         // announcement or a declined join request.
         target: targetOf(row.metadata),
+        // `APPROVED` or `REJECTED` on a row that reports a decision, null on every other row —
+        // which is not the same as a decision with no outcome, and nothing else here means
+        // "this went well".
+        outcome: outcomeOf(row.metadata),
         // How many actions this row folded together: 1 unless it collapsed (6.1.2). The title
         // already says it in words; this is for a client that would rather draw it.
         count: countOf(row.metadata),
@@ -410,6 +428,13 @@ const targetOf = (metadata: unknown): NotificationTarget | null => {
     id: target.id,
     ...(target.parent?.type && target.parent?.id ? { parent: target.parent } : {}),
   };
+};
+
+/** Null on the rows that report nothing, which is most of them. */
+const outcomeOf = (metadata: unknown): NotificationOutcome | null => {
+  const outcome = (metadata as { outcome?: NotificationOutcome } | null)?.outcome;
+
+  return outcome === 'APPROVED' || outcome === 'REJECTED' ? outcome : null;
 };
 
 const countOf = (metadata: unknown): number => (metadata as { count?: number } | null)?.count ?? 1;

@@ -21,7 +21,10 @@ import {
   isAllCategories,
   isReachable,
   ITEM_MEDIA_RULES,
+  MediaSetEntry,
+  mediaSetEntry,
   MediaService,
+  ResolvedMediaSet,
   PUBLIC_VISIBILITY,
   TaxonomyService,
   toAuthorView,
@@ -92,10 +95,10 @@ export class ItemService {
 
     /**
      * `mediaKeys` is v2 §9's shape — photos and video with a role each — and `photoKeys` is what
-     * older clients send. Whichever arrives is validated against the same rules; sending both is
-     * answered by `mediaKeys`, because it is the one that can express everything the other can.
+     * older clients send. **`mediaKeys` is read whenever the key is present at all, and
+     * `photoKeys` is then ignored entirely**: see `itemMedia`.
      */
-    const attachments = await this.itemMedia(userId, dto);
+    const attachments = await this.itemMedia(userId, dto, { type: ITEM_MEDIA_OWNER, id: null });
 
     const item = await this.database.$transaction(async tx => {
       const created = await tx.storeItem.create({
@@ -172,7 +175,7 @@ export class ItemService {
     const attachments =
       dto.mediaKeys === undefined && dto.photoKeys === undefined
         ? null
-        : await this.itemMedia(userId, dto);
+        : await this.itemMedia(userId, dto, { type: ITEM_MEDIA_OWNER, id: itemId });
 
     // The set that will be attached once this edit lands, so an edit that does not touch the
     // photos hashes the same (§6.2 step 2).
@@ -182,16 +185,20 @@ export class ItemService {
 
     const updated = await this.database.$transaction(async tx => {
       if (attachments) {
-        await this.media.releaseOwner(tx, ITEM_MEDIA_OWNER, itemId);
-        // The posters go with the set they belonged to, or they are frames of a video that is no
-        // longer here.
-        await this.media.releaseOwner(tx, ITEM_POSTER_OWNER, itemId);
-        await this.media.attach(tx, attachments.files, ITEM_MEDIA_OWNER, itemId, attachments.roles);
-        await this.media.attachPosters(
+        // The set the client sent is the set that remains: a photo named by id keeps its row, one
+        // left out goes, and the posters follow the videos they are frames of.
+        await this.media.syncOwner(
           tx,
-          attachments.posters,
+          ITEM_MEDIA_OWNER,
+          itemId,
+          attachments.files,
+          attachments.roles,
+        );
+        await this.media.syncPosters(
+          tx,
           ITEM_POSTER_OWNER,
           itemId,
+          attachments.posters,
           attachments.files,
         );
       }
@@ -421,6 +428,20 @@ export class ItemService {
         isOpenNow: storeSummary.isOpenNow,
         distanceMiles: storeSummary.distanceMiles,
         rating: storeSummary.rating,
+        /**
+         * How the shop hands things over, and what it will not go below.
+         *
+         * Hand-picked fields, and these two were not picked — so a shop's minimum order showed on
+         * the shop's own page and nowhere else, and the fulfilment pill on an item fell back to
+         * its default, telling shoppers a delivering shop was collection-only. Both come off the
+         * same summary the shop page reads, so the two screens cannot disagree.
+         */
+        fulfilment: storeSummary.fulfilment,
+        /** @deprecated Derived from `fulfilment`, as on the shop payload. */
+        delivers: storeSummary.delivers,
+        minimumOrder: storeSummary.minimumOrder,
+        openingHours: storeSummary.openingHours,
+        timezone: storeSummary.timezone,
         // "Ask the seller" has no recipient without this, so the button was being hidden rather
         // than shown and broken. The same shared author object the shop detail returns (4.5.1).
         owner: toAuthorView(item.store.owner, { sign: this.media.sign }),
@@ -446,34 +467,45 @@ export class ItemService {
    */
   private async itemMedia(
     userId: string,
-    dto: {
-      mediaKeys?: Array<{ key: string; role?: MediaRole; posterKey?: string }>;
-      photoKeys?: string[];
-    },
-  ): Promise<{ files: Media[]; roles: Map<string, MediaRole>; posters: Map<string, Media> }> {
-    // Annotated, because the two arms are no longer the same shape: `photoKeys` carries no role
-    // and no poster, and an inferred union of the two loses the tuple type below.
-    const keys: Array<{ key: string; role?: MediaRole; posterKey?: string }> = dto.mediaKeys?.length
-      ? dto.mediaKeys
-      : (dto.photoKeys ?? []).map(key => ({ key, role: MediaRole.SHOWCASE }));
+    dto: { mediaKeys?: MediaSetEntry[]; photoKeys?: string[] },
+    owner: { type: string; id: string | null },
+  ): Promise<ResolvedMediaSet> {
+    /**
+     * **One array decides, and it is `mediaKeys` whenever the key is present.**
+     *
+     * Presence, not emptiness: `mediaKeys: []` means "no media", so it clears the set and
+     * `photoKeys` is still ignored. The two are never merged and the second is never applied
+     * after the first.
+     *
+     * It used to turn on `mediaKeys?.length`, which made the answer depend on how full the array
+     * was: a client sending the whole photo set in `photoKeys` and only this session's picks in
+     * `mediaKeys` lost every photograph the moment it picked one video, and the same client
+     * sending `mediaKeys: []` got its photographs back — the same request shape, two outcomes,
+     * neither of them stated anywhere. A seller editing a price does not expect to lose a video.
+     */
+    const entries: MediaSetEntry[] =
+      dto.mediaKeys !== undefined
+        ? dto.mediaKeys
+        : (dto.photoKeys ?? []).map(value => {
+            const entry = mediaSetEntry(value);
 
-    if (!keys.length) return { files: [], roles: new Map(), posters: new Map() };
+            // A fresh upload through the legacy array is a showcase photo, since that array has
+            // no way to say otherwise. A file already here keeps the role it has: `photoKeys` not
+            // carrying roles is not the same as it saying every file is a showcase one, and
+            // defaulting would demote somebody's advert the first time they reordered from an old
+            // build.
+            return entry.id ? entry : { ...entry, role: MediaRole.SHOWCASE };
+          });
 
-    const field = dto.mediaKeys?.length ? 'mediaKeys' : 'photoKeys';
-    const files = await this.media.validate(
-      keys.map(entry => entry.key),
+    if (!entries.length) return { files: [], roles: new Map(), posters: new Map() };
+
+    return this.media.resolveSet(
+      entries,
       userId,
+      owner,
       ITEM_MEDIA_RULES,
-      field,
+      dto.mediaKeys !== undefined ? 'mediaKeys' : 'photoKeys',
     );
-
-    return {
-      files,
-      roles: new Map(keys.map(entry => [entry.key, entry.role ?? MediaRole.SHOWCASE])),
-      // The still frames the client sends with its videos. Validated against the videos they claim
-      // to be of before anything is written (v2 §9.2).
-      posters: await this.media.posters(keys, files, userId, field),
-    };
   }
 
   async toView(

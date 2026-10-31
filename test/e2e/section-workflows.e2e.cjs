@@ -118,9 +118,11 @@ const {
     r.body?.data?.context?.trailing === '£400.00',
     r.body?.data?.context?.trailing,
   );
+  // BACKEND-TODO-UPDATED 1.2: it used to resolve the live *listing*, which opened the
+  // professional and left the member to find the service again among the six on offer.
   check(
-    'the route still resolves the live listing',
-    r.body?.data?.context?.route === `/professionals/profile/${listingId}`,
+    'the route resolves the service itself, not the professional offering it',
+    r.body?.data?.context?.route === `/professionals/service/${appealId}`,
     r.body?.data?.context?.route,
   );
   check(
